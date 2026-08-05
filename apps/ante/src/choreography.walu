@@ -2,10 +2,11 @@
 -- beats; this module owns the animation records, board geometry, pile ledgers,
 -- fan motion, timing, and flip-sound cue placement needed to render them.
 
-local engine = require("waluau:engine")
-local graphics_module = require("waluau:engine/graphics")
 local game = require("./game")
 local render = require("./render")
+local card_burn = require("./card_burn")
+local entity = require("./entity")
+local run_module = require("./run")
 local snapshot_data = require("./snapshot")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
@@ -27,7 +28,7 @@ type State = {
     -- Live ash. These are simulations, not settings: they hold the flakes
     -- currently in the air, which is why they are advanced every tick beside
     -- the clocks that release them and are never written to a snapshot.
-    ash: render.CardAsh,
+    ash: card_burn.CardAsh,
     -- The same again for what a spell has in the air: the carrier's trail, the
     -- burst its landing threw, and the dust off a raised ward's grave. Live
     -- simulations, ticked beside the clock that releases them, never
@@ -856,15 +857,13 @@ function restore(snapshot_value: string): State?
 end
 
 function draw(
-    graphics: engine.Graphics,
-    effects: render.EffectShaders,
+    surface: entity.Surface,
     view: game.View,
-    run: render.RunView,
+    run: run_module.View,
     state: State,
-    interaction: Interaction,
-    card_back: graphics_module.Texture?
+    interaction: Interaction
 ): unit
-    render.draw(graphics, effects, {
+    render.draw(surface, {
         viewport = layout.current(),
         view = view,
         run = run,
@@ -899,7 +898,6 @@ function draw(
         ash = state.ash,
         spells = state.spells,
         sheet = state.sheet,
-        card_back = card_back,
     })
 end
 

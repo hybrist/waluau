@@ -1,0 +1,72 @@
+-- The flat card row: the wards, the Arch Mage's sealed hand, and the formation
+-- a settled breach leaves standing. Its slots are also animation anchors, so
+-- these assertions are as much about where a dealt card lands as about where
+-- one is drawn.
+
+require("waluau:vitest")
+
+local entity = require("../entity")
+local card = require("./card")
+local card_row = require("./card_row")
+
+describe("card row", function(): unit
+    it("centres a three-ward row on its authored pitch", function(): unit
+        local bounds = entity.rect(0.0, 40.0, 336.0, card.height)
+        local slots = card_row.slot_rects(3, card_row.flat_pitch, bounds)
+
+        expect(#slots):toBe(3)
+        expect(slots[0].x):toBe(0.0)
+        expect(slots[1].x):toBe(116.0)
+        expect(slots[2].x):toBe(232.0)
+        expect(slots[0].y):toBe(40.0)
+        expect(slots[2].x + slots[2].width):toBe(336.0)
+    end)
+
+    it("measures as the span its slots actually occupy", function(): unit
+        local three = card_row.intrinsic(3, card_row.flat_pitch)
+        local five = card_row.intrinsic(5, card_row.flat_pitch)
+
+        expect(three.preferred_width):toBe(336.0)
+        expect(five.preferred_width):toBe(568.0)
+        expect(five.preferred_height):toBe(card.height)
+    end)
+
+    it("keeps the wards where they were when the formation grows", function(): unit
+        -- The winner's pair extends the ward row to five slots on the same
+        -- pitch, so the three wards must not move out from under it.
+        local wards = card_row.slot_rects(
+            3, card_row.flat_pitch, entity.rect(-168.0, 0.0, 336.0, card.height))
+        local formation = card_row.slot_rects(
+            5, card_row.flat_pitch, entity.rect(-284.0, 0.0, 568.0, card.height))
+
+        expect(formation[1].x):toBe(wards[0].x)
+        expect(formation[2].x):toBe(wards[1].x)
+        expect(formation[3].x):toBe(wards[2].x)
+    end)
+
+    it("tightens its pitch rather than running off a narrow board", function(): unit
+        local roomy = entity.rect(0.0, 0.0, 336.0, card.height)
+        local tight = entity.rect(0.0, 0.0, 300.0, card.height)
+
+        expect(card_row.pitch_in(roomy, 3, card_row.flat_pitch)):toBe(116.0)
+        expect(card_row.pitch_in(tight, 3, card_row.flat_pitch)):toBe(98.0)
+
+        local slots = card_row.slot_rects(
+            3, card_row.pitch_in(tight, 3, card_row.flat_pitch), tight)
+        expect(slots[0].x):toBe(0.0)
+        expect(slots[2].x + slots[2].width):toBe(300.0)
+    end)
+
+    it("overlaps a boss battle's row instead of widening it", function(): unit
+        local bounds = entity.rect(0.0, 0.0, 624.0, card.height)
+        local pitch = card_row.pitch_in(bounds, 11, card_row.flat_pitch)
+        -- Eleven cards over a 520-unit span is a 52 pitch: half a card, so
+        -- every relic covers half of its neighbour.
+        expect(pitch):toBe(52.0)
+
+        local slots = card_row.slot_rects(11, pitch, bounds)
+        expect(slots[0].x):toBe(0.0)
+        expect(slots[10].x + slots[10].width):toBe(624.0)
+        expect(slots[1].x - slots[0].x):toBe(52.0)
+    end)
+end)

@@ -1,0 +1,73 @@
+-- The band under the wards where the vault asks for a decision: a centred row
+-- of capsules while there is something to commit, and a line of type when the
+-- board is still waiting for binds.
+--
+-- The bar owns both the drawing and the hit test, and both go through one
+-- solve of the same entities against the same rectangle. A capsule that moved
+-- because its label grew moves its click target with it; there is no second
+-- description of where the controls are to fall out of step.
+
+local box = require("../box_layout")
+local entity = require("../entity")
+local capsule = require("./capsule")
+local label = require("./label")
+
+const GAP: f64 = 14.0
+const PROMPT_SIZE: f64 = 12.0
+const PROMPT_INK: string = "#fbbf24"
+
+-- One control the band can offer. `active` is whether committing it now would
+-- be accepted, which is the screen's rule to state, not the bar's to guess.
+type Action = { text: string, active: bool }
+
+function action(text: string, active: bool): Action
+    return { text = text, active = active }
+end
+
+function bar_style(): box.Style
+    return entity.row(GAP, box.justify_center, box.align_start)
+end
+
+function capsules(actions: {Action}): {entity.Node}
+    local nodes: {entity.Node} = {}
+    for item in actions do
+        table.insert(nodes, capsule.node(item.text, item.active))
+    end
+    return nodes
+end
+
+function node(actions: {Action}): entity.Node
+    return entity.flow(capsules(actions), bar_style())
+end
+
+-- A band with nothing to commit still says what the board is waiting for. The
+-- prompt takes the same rectangle the capsules would have, so the two states
+-- of the band occupy the same place on the board.
+function prompt(text: string): entity.Node
+    return entity.flow(
+        { label.centered(text, PROMPT_SIZE, PROMPT_INK) },
+        entity.row(0.0, box.justify_center, box.align_center))
+end
+
+-- Which control a point is inside, or -1. Solved from the same actions and
+-- bounds the frame painted.
+function hit(
+    metrics: entity.Metrics, actions: {Action}, bounds: box.Rect, x: f64, y: f64
+): i32
+    local rects: {box.Rect} = entity.place(
+        metrics, capsules(actions), bar_style(), bounds)
+    for index = 0::i32, #rects - 1 do
+        if entity.contains(rects[index], x, y) then return index end
+    end
+    return -1
+end
+
+return {
+    node = node,
+    action = action,
+    capsules = capsules,
+    bar_style = bar_style,
+    prompt = prompt,
+    hit = hit,
+    prompt_size = PROMPT_SIZE,
+}

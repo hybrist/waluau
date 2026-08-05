@@ -8,6 +8,8 @@ local resources = require("waluau:engine/resources")
 local audio = require("waluau:engine/audio")
 local effect_shaders = require("./effect_shaders")
 local render = require("./render")
+local entity = require("./entity")
+local layout = require("./layout")
 
 type State = {
     image_source: resources.Resource,
@@ -16,7 +18,7 @@ type State = {
     flip_sound: resources.Resource,
     texture: graphics_module.Texture?,
     font: graphics_module.Font?,
-    effects: render.EffectShaders,
+    effects: effect_shaders.EffectShaders,
     effect_set: effect_shaders.State,
     graphics: engine.Graphics?,
     image_finished: bool,
@@ -180,14 +182,28 @@ function can_update(state: State): bool
     return #state.fatal_audio_code == 0 and state.sound_finished and state.audio_unlocked
 end
 
+-- The surface every entity of the game draws on: the live graphics, the effect
+-- programs, and the packaged card back once it has arrived. This module owns
+-- all three, so it is where the three become one value.
+function surface(state: State, graphics: engine.Graphics): entity.Surface
+    return {
+        graphics = graphics,
+        effects = state.effects,
+        card_back = state.texture,
+    }
+end
+
 function draw_failure(state: State, graphics: engine.Graphics): bool
+    local board: entity.Surface = surface(state, graphics)
+    local viewport: layout.State = layout.current()
     if #state.fatal_shader_error > 0 then
-        render.draw_shader_error(graphics, state.fatal_shader_error)
+        render.draw_shader_error(board, viewport, state.fatal_shader_error)
         return true
     end
     if #state.fatal_audio_code > 0 then
         render.draw_audio_error(
-            graphics, SOUND_PATH, state.fatal_audio_code, state.fatal_audio_message)
+            board, viewport, SOUND_PATH, state.fatal_audio_code,
+            state.fatal_audio_message)
         return true
     end
     return false
@@ -217,6 +233,7 @@ return {
     unlock_audio = unlock_audio,
     play_flip = play_flip,
     can_update = can_update,
+    surface = surface,
     draw_failure = draw_failure,
     dispose = dispose,
 }

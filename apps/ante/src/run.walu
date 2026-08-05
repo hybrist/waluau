@@ -104,9 +104,9 @@ end
 -- Boss vaults take the largest steps, which is what makes the end of an act a
 -- mana wall as well as an eleven-relic one.
 --
--- The table is written out inside the function rather than held module-side: a
--- top-level `local` is invisible to a `function` declaration, and the values
--- belong next to the reasoning about them anyway.
+-- The table is written out inside the function rather than held module-side so
+-- the values sit next to the reasoning about them. (An array literal at module
+-- scope would compile; the record-literal case that does not is waluau-tku6.)
 function ante_at(vault: i32, rush: bool): i32
     local table_values: {i32} = { 3, 5, 8, 12, 16, 21, 25, 29, 34 }
     if rush then table_values = { 5, 10, 16, 23, 30 } end
@@ -155,6 +155,42 @@ function outcome_of(
     -- stays in, so this is the vault the table ends on and no vault after it.
     if vault == run_length(rush) then return OUTCOME_WON end
     return OUTCOME_ADVANCE
+end
+
+-- The run as the board reads it: which vault of the sequence this is, how many
+-- the robbers have already taken, whether this one and the next are boss
+-- battles, the mana the run carried in, what leaving this vault and the next
+-- one costs, how far the authored curve runs, and the verdict on the live
+-- vault. Read-only, the way game.View is — a screen showing the run must not be
+-- able to move it.
+--
+-- `outcome` is the rules module's answer about a vault this module has not
+-- settled yet, so it arrives rather than being re-derived here; a live vault
+-- passes OUTCOME_NONE.
+type View = {
+    vault: i32,
+    cleared: i32,
+    boss: bool,
+    next_is_boss: bool,
+    carried_mana: i32,
+    ante: i32,
+    ante_ahead: i32,
+    run_length: i32,
+    outcome: i32
+}
+
+function view(state: State, outcome: i32): View
+    return {
+        vault = state.vault,
+        cleared = state.cleared,
+        boss = state:boss(),
+        next_is_boss = state:next_is_boss(),
+        carried_mana = state.mana,
+        ante = state:ante(),
+        ante_ahead = ante_at(state.vault + 1, state.rush),
+        run_length = run_length(state.rush),
+        outcome = outcome,
+    }
 end
 
 -- The live vault has been fought to a verdict. Taking it advances the run,
@@ -311,6 +347,7 @@ end
 
 return {
     new = new,
+    view = view,
     boss_at = boss_at,
     ante_at = ante_at,
     run_length = run_length,

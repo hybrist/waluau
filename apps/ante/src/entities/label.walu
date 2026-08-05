@@ -1,0 +1,105 @@
+-- A line of type as an entity. It measures itself against the font that is
+-- actually loaded — the packaged display face once that has arrived, the
+-- built-in bitmap font until then — so a row of labels reflows when the real
+-- face lands instead of holding a gap sized for a guess.
+--
+-- The box is the line's own: as wide as the pen travels, as tall as the size,
+-- with the baseline at its bottom edge. That is the engine's own convention
+-- for where `print` puts a string, so a row of labels aligned on baselines
+-- lines up the way reading it says it should.
+
+local box = require("../box_layout")
+local entity = require("../entity")
+local ink = require("../ink")
+
+const ALIGN_LEFT: i32 = 0
+const ALIGN_CENTER: i32 = 1
+const ALIGN_RIGHT: i32 = 2
+
+function measure(metrics: entity.Metrics, value: string, size: f64): box.Intrinsic
+    local width: f64 = entity.text_width(metrics, value, size)
+    return {
+        min_width = width,
+        preferred_width = width,
+        max_width = width,
+        min_height = size,
+        preferred_height = size,
+        max_height = size,
+        baseline = size,
+    }
+end
+
+-- Where the pen starts, given how the line sits in the box layout handed it.
+function pen_x(bounds: box.Rect, width: f64, align: i32): f64
+    if align == ALIGN_CENTER then return bounds.x + (bounds.width - width) * 0.5 end
+    if align == ALIGN_RIGHT then return bounds.x + bounds.width - width end
+    return bounds.x
+end
+
+function node(value: string, size: f64, color: string, align: i32): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return measure(metrics, value, size)
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local width: f64 = entity.text_width(
+                entity.metrics_of(surface), value, size)
+            ink.text(
+                surface.graphics, value,
+                pen_x(bounds, width, align), bounds.y + size, size, color)
+        end)
+end
+
+-- A line that takes whatever width the flow around it stretches it to, and
+-- aligns its type inside that. A centred caption needs a box to be centred in;
+-- this is how it gets one without a caller measuring the column for it.
+function filling(value: string, size: f64, color: string, align: i32): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            local width: f64 = entity.text_width(metrics, value, size)
+            return {
+                min_width = width,
+                preferred_width = width,
+                max_width = box.unbounded,
+                min_height = size,
+                preferred_height = size,
+                max_height = size,
+                baseline = size,
+            }
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local width: f64 = entity.text_width(
+                entity.metrics_of(surface), value, size)
+            ink.text(
+                surface.graphics, value,
+                pen_x(bounds, width, align), bounds.y + size, size, color)
+        end)
+end
+
+function left(value: string, size: f64, color: string): entity.Node
+    return node(value, size, color, ALIGN_LEFT)
+end
+
+function centered(value: string, size: f64, color: string): entity.Node
+    return node(value, size, color, ALIGN_CENTER)
+end
+
+function right(value: string, size: f64, color: string): entity.Node
+    return node(value, size, color, ALIGN_RIGHT)
+end
+
+function middle(value: string, size: f64, color: string): entity.Node
+    return filling(value, size, color, ALIGN_CENTER)
+end
+
+return {
+    node = node,
+    middle = middle,
+    left = left,
+    centered = centered,
+    right = right,
+    measure = measure,
+    align_left = ALIGN_LEFT,
+    align_center = ALIGN_CENTER,
+    align_right = ALIGN_RIGHT,
+}

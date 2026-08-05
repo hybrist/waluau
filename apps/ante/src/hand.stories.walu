@@ -4,7 +4,7 @@
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
 local game = require("./game")
-local render = require("./render")
+local card = require("./entities/card")
 local presentation_resources = require("./presentation_resources")
 
 const WIDTH: u32 = 900
@@ -63,6 +63,10 @@ end
 
 local function draw_hand(graphics: engine.Graphics, alpha: f64): unit
     presentation_resources.prepare(assets, graphics)
+    -- The dials below are this laboratory's own, not the fan entity's: the
+    -- point of the story is to tune the arithmetic before it is settled, so it
+    -- places the relics itself and only borrows the card to draw them.
+    local surface = presentation_resources.surface(assets, graphics)
 
     local count: i32 = storybook.arg_i32("count")
     local selected: i32 = controlled_index(storybook.arg_i32("selected"), count)
@@ -101,18 +105,13 @@ local function draw_hand(graphics: engine.Graphics, alpha: f64): unit
         graphics:push()
         graphics:translate(center_x, center_y)
         graphics:rotate(angle)
-        render.draw_card(
-            graphics,
-            assets.effects,
-            assets.texture,
-            card_at(index),
-            -(render.card_width * 0.5),
-            -(render.card_height * 0.5),
-            index == selected,
-            index == focused,
-            false,
-            false,
-            false
+        card.draw_at(
+            surface,
+            card.look(
+                card_at(index), index == selected, index == focused,
+                false, false, false),
+            -(card.width * 0.5),
+            -(card.height * 0.5)
         )
         graphics:pop()
     end

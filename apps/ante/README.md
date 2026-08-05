@@ -206,7 +206,13 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
-| `render.walu` | Playfield/modal drawing behind a single nested frame interface. |
+| `box_layout.walu` | DOM-free intrinsic box layout: rows, columns, gaps, padding, alignment, flex, and paint-order hit testing. |
+| `entity.walu` | The boundary every visible thing shares: measure yourself, draw yourself into this rectangle, compose into flows. |
+| `entities/` | One file per thing on the board — see the entity table below. |
+| `ink.walu` | The drawing vocabulary entities share: type, panels, school colours, and the one fade a screen is taken down by. |
+| `easing.walu` | The four curves the board moves on. |
+| `card_burn.walu` | How a card comes apart: the captured sheet, the advancing front, and the ash that peels off it. |
+| `render.walu` | The board, composed: which entities are on it this frame, which band each gets, and the cards in flight between them. |
 | `spell_cast.walu` | Target-aware spell trajectory and shared impact geometry. |
 | `spell_launch*.walu` | Stable launch seam plus one independently editable carrier/impact module per spell. |
 | `burn_particles.walu` | Shared card-burn shader binding and deterministic ash/ember primitives. |
@@ -222,11 +228,64 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how a run ends, played from a shuffled deck by a reference policy — the numbers the ante table is priced against. |
 | `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
+| `entity.test.walu` | Headless assertions for the boundary: flow measurement, solved rectangles, bands, and the type-sized entities. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |
+| `box_layout.stories.walu` | Storybook stories for the layout solver itself, on synthetic leaves. |
 | `.storybook/main.js` | Storybook configuration: the story glob and the compiler options stories are built with. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
+
+## Entities
+
+Everything visible on the board is an entity, and an entity answers exactly two
+questions: how large would you like to be, and draw yourself into this
+rectangle. That contract is [`src/entity.walu`](src/entity.walu), and it is the
+whole of what one entity knows about another — none of them reads a screen
+coordinate, a viewport scale, or where its neighbours ended up.
+
+Because the contract is uniform, entities compose: `entity.flow` turns a list of
+them into a single entity that measures like the [box
+layout](src/box_layout.walu) of its children and paints by handing each child
+its solved rectangle. A band is a column of rows of leaves, and every level of
+that answers the same two questions as the card at the bottom of it.
+
+Measuring and drawing take different things. Drawing needs a surface — live
+graphics, effect programs, the packaged card back. Measuring needs only metrics,
+and metrics may be empty, so the whole board can be measured DOM-free with no
+canvas at all; that is what `src/entity.test.walu` and the entity tests do. With
+a live context a label asks the font that has actually loaded how wide its
+string is; without one it answers for the built-in bitmap font, which is what
+would be drawn if nothing else had arrived.
+
+Where an entity is asked about a rectangle is also where it is asked about a
+click. The commit capsules and the footer's help target are sized from the type
+they hold, so their hit rectangles are the ones the frame painted rather than a
+second description that can drift; the flat card rows answer their slot
+geometry as a pure function, which is how choreography aims a deal at the same
+frames the row will paint into.
+
+| Entity | What it is |
+| --- | --- |
+| `entities/card.walu` | The relic: rank, school, and the four readings the table can have of it. The atom every other board entity is built from. |
+| `entities/card_row.walu` | Cards laid flat on a pitch: the sealed row, the wards, and the five-card formation a settled breach leaves standing. |
+| `entities/hand_fan.walu` | The player's hand as a tilted, overlapping arc, and the hit test that undoes its rotation. |
+| `entities/ward_panel.walu` | The dark field the wards stand on, sized from the row it backs. |
+| `entities/powered_card.walu` | A ward under a spell: Firebolt's burn, Freeze Ray's shell, Raise Card's grave, Growth's division. |
+| `entities/deck.walu` | The sealed draw pile and its count. |
+| `entities/pile.walu` | One of the three right-edge piles, face up on its last card. |
+| `entities/hud.walu` | The header band: the title block, the breach orbs, the mana on hand. |
+| `entities/orb_track.walu` | The five breaches of a vault as five orbs, and the three outcome colours. |
+| `entities/footer.walu` | The cast hints, the way back to the menu, and the help target. |
+| `entities/capsule.walu` | A clickable control, as wide as its own label. |
+| `entities/action_bar.walu` | The band that asks for a decision, and the hit test for the controls it asked with. |
+| `entities/label.walu` | A line of type that measures itself against the font that is loaded. |
+| `entities/modal.walu` | A titled page laid over the vault, scaled to fit whatever canvas it is on. |
+| `entities/help_card.walu` | The help page: the job, the four schools, the two phases, the orbs, and every control. |
+| `entities/ledger.walu` | The breach ledger, one row per round. |
+| `entities/verdict.walu` | The verdict of a fought vault, read as a moment in the run. |
+| `entities/school_tile.walu` | One school of magic as a swatch, running the card's own field. |
+| `entities/backdrop.walu` | The vault behind everything. |
 
 Vite discovers every `src/shaders/*.frag` file through `shader-sources.js` and
 maps it through the plugin's `shaderSources` option. Production bundles the same source contract; in

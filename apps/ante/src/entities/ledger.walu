@@ -1,0 +1,69 @@
+-- The breach ledger: every round of this vault, who took it, and which two
+-- formations settled it. One row per breach, and the rows are a column rather
+-- than a running y cursor, so the ledger of a five-breach vault and the ledger
+-- of an empty one are the same code.
+
+local game = require("../game")
+local box = require("../box_layout")
+local entity = require("../entity")
+local modal = require("./modal")
+local label = require("./label")
+
+const ROW_GAP: f64 = 30.0
+const ROUND_SIZE: f64 = 13.0
+const VERDICT_SIZE: f64 = 13.0
+const FORMATION_SIZE: f64 = 10.0
+-- The three columns of a ledger row, wide enough for the longest thing each
+-- of them holds so the rows read as a table rather than as ragged lines.
+const ROUND_WIDTH: f64 = 124.0
+const VERDICT_WIDTH: f64 = 180.0
+
+const ROUND_INK: string = "#fbbf24"
+const VERDICT_INK: string = "#f8fafc"
+const FORMATION_INK: string = "#b5b5bd"
+
+function verdict_text(trick: game.Trick): string
+    if trick.winner > 0 then return "ROBBERS +" .. tostring(trick.points) end
+    if trick.winner < 0 then return "ARCH MAGE" end
+    return "STALEMATE"
+end
+
+-- A cell that holds its column's width whatever its own type measures, which
+-- is what keeps the three columns lined up down the card.
+function cell(text: string, size: f64, color: string, width: f64): entity.Node
+    local line: entity.Node = label.left(text, size, color)
+    return entity.flow(
+        { line },
+        entity.style(
+            box.axis_row, 0.0, box.justify_start, box.align_baseline,
+            entity.edges(0.0, 0.0, math.max(0.0, width), 0.0)))
+end
+
+function row(trick: game.Trick): entity.Node
+    return entity.flow({
+        cell("BREACH " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
+        cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
+        label.left(
+            game.category_name(trick.player_value) .. " VS "
+                .. game.category_name(trick.computer_value),
+            FORMATION_SIZE, FORMATION_INK),
+    }, entity.row(0.0, box.justify_start, box.align_baseline))
+end
+
+function body(state: game.View): entity.Node
+    if #state.history == 0 then
+        return modal.column({
+            label.left("NO DEFENSES BREACHED YET.", 16.0, "#8a8a92"),
+        }, ROW_GAP)
+    end
+    local rows: {entity.Node} = {}
+    for trick in state.history do table.insert(rows, row(trick)) end
+    return modal.column(rows, ROW_GAP)
+end
+
+function node(state: game.View): entity.Node
+    return modal.node(
+        "BREACH LEDGER", "H, ESC, OR A CLICK CLOSES THE LEDGER", body(state))
+end
+
+return { node = node }

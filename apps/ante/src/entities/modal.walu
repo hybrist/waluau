@@ -1,0 +1,131 @@
+-- A secondary screen laid over the vault: the ledger, the help card, the
+-- verdict of a fought vault. All three are the same object — a titled shell
+-- around a column of content — so the shell is one entity and each of them is
+-- a body handed to it.
+--
+-- A modal is a page, and a page shrinks rather than reflowing its lines: on a
+-- canvas too narrow or short for the shell plus a small margin, the whole
+-- composition scales down as one. That is `show`, and it is the only place in
+-- the game where an entity is drawn at anything but board scale.
+--
+-- The shell used to be a fixed 776 by 476 whatever it held. It now measures its
+-- own content and holds that as a floor, so every modal is the same page until
+-- one of them genuinely needs more room — which is how the help card grows tall
+-- without the ledger having been authored around its height.
+
+local box = require("../box_layout")
+local entity = require("../entity")
+local label = require("./label")
+
+const PAD_X: f64 = 34.0
+const PAD_TOP: f64 = 25.0
+const PAD_BOTTOM: f64 = 30.0
+const TITLE_SIZE: f64 = 24.0
+const SUBTITLE_SIZE: f64 = 11.0
+-- Daylight under the title, and again under the subtitle before the body.
+const TITLE_GAP: f64 = 17.0
+const HEAD_GAP: f64 = 32.0
+-- Clearance kept around a modal when the canvas decides how large it may be.
+const SCREEN_MARGIN: f64 = 24.0
+-- The page a modal is at least. Sizing from content alone would make an empty
+-- ledger a small card and a full one a large one, which reads as two different
+-- screens rather than one; a floor keeps every modal the same page and lets
+-- only the help card, which genuinely holds more, grow past it.
+const FLOOR_WIDTH: f64 = 776.0
+const FLOOR_HEIGHT: f64 = 476.0
+
+const SHELL_FILL: string = "#09090b"
+const SHELL_EDGE: string = "#a1a1aa"
+const TITLE_INK: string = "#fbbf24"
+const SUBTITLE_INK: string = "#a1a1aa"
+
+function shell(): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return box.fixed(0.0, 0.0)
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local graphics = surface.graphics
+            graphics:set_color(SHELL_FILL)
+            graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            graphics:set_color(SHELL_EDGE)
+            graphics:set_line_width(3.0)
+            graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+        end)
+end
+
+function node(title: string, subtitle: string, body: entity.Node): entity.Node
+    local content: entity.Node = entity.flow({
+        label.left(title, TITLE_SIZE, TITLE_INK),
+        label.left(subtitle, SUBTITLE_SIZE, SUBTITLE_INK),
+        entity.gap(0.0, HEAD_GAP - TITLE_GAP),
+        body,
+    }, entity.style(
+        box.axis_column, TITLE_GAP, box.justify_start, box.align_stretch,
+        entity.edges(PAD_X, PAD_TOP, PAD_X, PAD_BOTTOM)))
+    return entity.layer({
+        shell(), entity.gap(FLOOR_WIDTH, FLOOR_HEIGHT), content,
+    })
+end
+
+-- Park the modal on the canvas at the largest scale that still clears the
+-- margin on both axes, and draw it there. The composition is measured first,
+-- so what is fitted is the modal's real size rather than an authored guess at
+-- it.
+function show(surface: entity.Surface, viewport: box.Rect, content: entity.Node): unit
+    local size: box.Intrinsic = content.measure(entity.metrics_of(surface))
+    local width: f64 = size.preferred_width
+    local height: f64 = size.preferred_height
+    local fit: f64 = 1.0
+    if width > 0.0 then
+        fit = math.min(fit, viewport.width / (width + SCREEN_MARGIN * 2.0))
+    end
+    if height > 0.0 then
+        fit = math.min(fit, viewport.height / (height + SCREEN_MARGIN * 2.0))
+    end
+    local graphics = surface.graphics
+    graphics:push()
+    graphics:translate(
+        viewport.x + viewport.width * 0.5, viewport.y + viewport.height * 0.5)
+    graphics:scale(fit, fit)
+    graphics:translate(-width * 0.5, -height * 0.5)
+    content.paint(surface, entity.rect(0.0, 0.0, width, height))
+    graphics:pop()
+end
+
+-- A body line, at the size and ink the modals read at.
+const BODY_SIZE: f64 = 11.0
+const HEADING_SIZE: f64 = 16.0
+const BODY_INK: string = "#d4d4d8"
+const HEADING_INK: string = "#67e8f9"
+const KEYS_INK: string = "#fbbf24"
+
+function body_line(text: string): entity.Node
+    return label.left(text, BODY_SIZE, BODY_INK)
+end
+
+function heading(text: string): entity.Node
+    return label.left(text, HEADING_SIZE, HEADING_INK)
+end
+
+function keys_line(text: string): entity.Node
+    return label.left(text, BODY_SIZE, KEYS_INK)
+end
+
+function column(children: {entity.Node}, gap: f64): entity.Node
+    return entity.flow(
+        children, entity.column(gap, box.justify_start, box.align_stretch))
+end
+
+return {
+    node = node,
+    show = show,
+    body_line = body_line,
+    heading = heading,
+    keys_line = keys_line,
+    column = column,
+    body_size = BODY_SIZE,
+    body_ink = BODY_INK,
+    heading_ink = HEADING_INK,
+    keys_ink = KEYS_INK,
+}

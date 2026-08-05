@@ -1,0 +1,320 @@
+-- The relic: the smallest piece of Ante Magic's presentation that can be
+-- looked at on its own, and the atom every other board entity is built from.
+-- A card is drawn from a rank, a school, and four readings of what the table
+-- currently thinks of it — bound, focused, sealed, contributing — plus whether
+-- the other side has watched it come off the wards.
+--
+-- Its intrinsic size is the design space its face is authored in. Everything
+-- that arranges cards — the fan, the sealed row, the ward band, the piles —
+-- asks for that measurement rather than restating 104 by 128, and a rectangle
+-- of another size scales the whole face rather than reflowing its insides: a
+-- card is a printed object, so it gets larger, not roomier.
+
+local graphics_module = require("waluau:engine/graphics")
+local game = require("../game")
+local box = require("../box_layout")
+local entity = require("../entity")
+local ink = require("../ink")
+
+-- The design space a card face is drawn in.
+const WIDTH: f64 = 104.0
+const HEIGHT: f64 = 128.0
+
+const SELECTION_HIGHLIGHT: string = "#fbbf24"
+-- How far a bound relic lifts out of its row, along the card's own up.
+const BIND_LIFT: f64 = 10.0
+
+-- The watched-relic mark, in parchment ink rather than either side's colour:
+-- the same eye means the same thing on both rows, and it must not be mistaken
+-- for a SELECTION_HIGHLIGHT focus edge or a school-coloured bind. The mark says
+-- something about the card itself, not about what the cursor is doing.
+const EYE_INK: string = "#e8dfbd"
+const EYE_GROUND: string = "#0b0b10"
+-- The eye rides the middle of a card's top edge, centred on the edge itself so
+-- half of it stands clear of the card: it reads as a tag pinned to the relic
+-- rather than part of the artwork, and it stays off the rank, the school and
+-- the seal's ward. The card's middle rather than a corner: the fan tucks every
+-- relic's right edge under its neighbour, so a mark out there is invisible on
+-- four of the five, and the left corner already carries the rank.
+const EYE_HALF_W: f64 = 7.0
+const EYE_LID: f64 = 4.6
+
+-- Everything the board can currently think about one relic. Grouped rather
+-- than passed as five loose booleans: a card's state is one reading, and a new
+-- one extends this record instead of every call site.
+type Look = {
+    card: game.Card,
+    selected: bool,
+    focused: bool,
+    hidden: bool,
+    colored: bool,
+    known: bool
+}
+
+function look(
+    card: game.Card, selected: bool, focused: bool,
+    hidden: bool, colored: bool, known: bool
+): Look
+    return {
+        card = card,
+        selected = selected,
+        focused = focused,
+        hidden = hidden,
+        colored = colored,
+        known = known,
+    }
+end
+
+function plain(card: game.Card): Look
+    return look(card, false, false, false, false, false)
+end
+
+function sealed(card: game.Card, known: bool): Look
+    return look(card, false, false, true, false, known)
+end
+
+function intrinsic(): box.Intrinsic
+    return box.fixed(WIDTH, HEIGHT)
+end
+
+-- The four school fields, bound as one call. Selection runs the school's
+-- grayscale pattern; a contributing card runs its coloured variant. The help
+-- legend demonstrates the same four through this seam, so a school only ever
+-- looks like one thing on screen.
+--
+-- TODO(waluau-engine): Typed shader parameter blocks would let all four
+-- school effects share one checked binding path instead of repeating
+-- use_shader plus individual string-keyed uniform writes.
+function use_school_field(
+    surface: entity.Surface, suit: i32, selected: bool, colored: bool, aspect: f64
+): bool
+    local maybe_shader: graphics_module.Shader? = surface.effects.red_fire.shader
+    if suit == 1 then maybe_shader = surface.effects.blue_caustics.shader
+    elseif suit == 2 then maybe_shader = surface.effects.black_hole.shader
+    elseif suit == 3 then maybe_shader = surface.effects.green_growth.shader end
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not surface.graphics:use_shader(shader) then return false end
+    local selected_value: f64 = 0.0
+    if selected then selected_value = 1.0 end
+    local colored_value: f64 = 0.0
+    if colored then colored_value = 1.0 end
+    local aspect_ok: bool = surface.graphics:set_uniform_float("u_aspect", aspect)
+    local selected_ok: bool = surface.graphics:set_uniform_float(
+        "u_selected", selected_value)
+    local colored_ok: bool = surface.graphics:set_uniform_float(
+        "u_colored", colored_value)
+    return aspect_ok and selected_ok and colored_ok
+end
+
+function draw_sigil(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
+    -- Every school mark sits on the same compact ink seal. Active shaders can
+    -- become bright directly beneath a line, so relying on contrast from the
+    -- card field alone would let the colored symbol disappear frame-to-frame.
+    local graphics = surface.graphics
+    graphics:set_color("#09090b")
+    graphics:fill_circle(x + 11.0, y + 3.0, 18.0)
+    graphics:set_color(ink.school_color(suit))
+    graphics:set_line_width(3.0)
+    if suit == 0 then
+        -- Red school: a cut gem — flat crown, girdle line, pointed pavilion.
+        graphics:line(x + 5.0, y - 9.0, x + 17.0, y - 9.0)
+        graphics:line(x + 17.0, y - 9.0, x + 22.0, y - 1.0)
+        graphics:line(x + 22.0, y - 1.0, x + 11.0, y + 17.0)
+        graphics:line(x + 11.0, y + 17.0, x, y - 1.0)
+        graphics:line(x, y - 1.0, x + 5.0, y - 9.0)
+        graphics:line(x, y - 1.0, x + 22.0, y - 1.0)
+    elseif suit == 1 then
+        graphics:fill_circle(x + 11.0, y + 3.0, 12.0)
+        graphics:set_color("#111827")
+        graphics:fill_circle(x + 11.0, y - 1.0, 6.0)
+    elseif suit == 2 then
+        graphics:fill_rectangle(x, y - 9.0, 22.0, 22.0)
+        graphics:set_color("#09090b")
+        graphics:fill_rectangle(x + 6.0, y - 3.0, 10.0, 10.0)
+    else
+        -- Green school: a leaf blade with a midrib and two side veins.
+        graphics:line(x, y + 16.0, x + 22.0, y - 9.0)
+        graphics:line(x + 7.0, y + 8.0, x + 12.0, y + 13.0)
+        graphics:line(x + 14.0, y, x + 19.0, y + 5.0)
+    end
+end
+
+-- The mark a relic carries once the other side has watched it come off the
+-- wards: an open eye, drawn about its own centre on its own dark ground so it
+-- reads over both a card's face and its seal. Both quadratic lids share one
+-- path and use control points twice their centre offset so the curve peaks at
+-- EYE_LID halfway across.
+function draw_eye(surface: entity.Surface, x: f64, y: f64): unit
+    local graphics = surface.graphics
+    graphics:set_color(EYE_GROUND)
+    graphics:fill_circle(x, y, 9.0)
+    graphics:set_color(EYE_INK)
+    graphics:set_line_width(1.3)
+    graphics:begin_path()
+    graphics:move_to(x - EYE_HALF_W, y)
+    graphics:quadratic_curve_to(x, y - EYE_LID * 2.0, x + EYE_HALF_W, y)
+    graphics:move_to(x - EYE_HALF_W, y)
+    graphics:quadratic_curve_to(x, y + EYE_LID * 2.0, x + EYE_HALF_W, y)
+    graphics:stroke()
+    graphics:fill_circle(x, y, 2.4)
+end
+
+-- The packaged image is the card back. While it is unavailable, retain only a
+-- sealed dark silhouette rather than maintaining a second procedural design.
+function draw_back(surface: entity.Surface, x: f64, y: f64, veiled: bool): unit
+    local graphics = surface.graphics
+    local maybe_texture: graphics_module.Texture? = surface.card_back
+    if maybe_texture ~= nil then
+        local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
+        if veiled then graphics:set_color("#ffffff80") else graphics:set_color("#ffffffff") end
+        if graphics:draw_sprite(
+            texture, x, y, WIDTH, HEIGHT,
+            0.0, 0.0, texture.width::f64, texture.height::f64
+        ) then
+            return
+        end
+    end
+    local fill: string = "#111118"
+    if veiled then fill = "#11111880" end
+    ink.panel(graphics, x, y, WIDTH, HEIGHT, fill, "#3f3f46")
+end
+
+function draw_face(surface: entity.Surface, value: Look, x: f64, y: f64): unit
+    local graphics = surface.graphics
+    local card: game.Card = value.card
+    -- Suit marks always keep their school color. Selection activates the
+    -- school's grayscale pattern; contributing cards use its colored variant.
+    if value.colored or value.selected then
+        use_school_field(
+            surface, card.suit, value.selected, value.colored,
+            (WIDTH - 4.0) / (HEIGHT - 4.0))
+    end
+    graphics:set_color("#17171c")
+    graphics:fill_rectangle(x + 2.0, y + 2.0, WIDTH - 4.0, HEIGHT - 4.0)
+    if value.colored or value.selected then ink.stop_effect(graphics) end
+    graphics:set_color(ink.school_color(card.suit))
+    graphics:fill_rectangle(x + 7.0, y + 7.0, 5.0, HEIGHT - 14.0)
+    ink.text(graphics, game.rank_name(card.rank), x + 20.0, y + 31.0, 24, "#f8fafc")
+    -- The school never appears in words on a card: the accent stripe and the
+    -- sigil carry it, the same pairing the help legend teaches.
+    draw_sigil(surface, card.suit, x + 42.0, y + 82.0)
+    if value.selected then
+        ink.text_centered(
+            graphics, "BOUND", x + WIDTH * 0.5, y + 119.0, 9, SELECTION_HIGHLIGHT)
+    end
+end
+
+-- One relic at a top-left corner, in whatever transform the caller is under.
+-- `known` says the opponent has seen this card, which the eye announces on
+-- either face. A sealed card that is also known is drawn face first and then
+-- veiled by its own seal, so the player reads the Arch Mage's relic through the
+-- back instead of having to remember it.
+function draw_at(surface: entity.Surface, value: Look, x: f64, y: f64): unit
+    local graphics = surface.graphics
+    if value.selected then y -= BIND_LIFT end
+    local edge: string = "#52525b"
+    if value.focused then edge = SELECTION_HIGHLIGHT
+    elseif value.selected then edge = ink.school_color(value.card.suit) end
+    ink.panel(graphics, x, y, WIDTH, HEIGHT, "#17171c", edge)
+    if value.hidden then
+        if value.known then
+            draw_face(surface, look(value.card, false, false, false, false, false), x, y)
+        end
+        draw_back(surface, x, y, value.known)
+    else
+        draw_face(surface, value, x, y)
+    end
+    if value.known then draw_eye(surface, x + WIDTH * 0.5, y) end
+end
+
+-- Capture the complete live card into one texture. The rank, school shader,
+-- sigil, and border then share a single UV space, letting one noisy front eat
+-- the object instead of dissolving each drawing primitive — and letting a
+-- card be handed whole to an effect that has to treat it as a surface rather
+-- than as the dozen primitives it is drawn from.
+function capture(surface: entity.Surface, value: Look): graphics_module.RenderTarget?
+    local graphics = surface.graphics
+    ink.stop_effect(graphics)
+    local result: graphics_module.RenderTargetResult = graphics:create_render_target(
+        WIDTH::i32, HEIGHT::i32)
+    if not result.ok then return nil end
+    local target: graphics_module.RenderTarget = result.target
+    if not graphics:set_render_target(target) then
+        graphics:release_render_target(target)
+        return nil
+    end
+    -- A capture draws in the target's own pixels, whatever transform the
+    -- screen was under. Without this, a board drawn at a viewport scale
+    -- captures a card too large for its target and every consumer of the
+    -- capture shows a zoomed crop of a face.
+    graphics:push_identity()
+    graphics:clear("#00000000")
+    draw_at(surface, look(
+        value.card, false, false, value.hidden, value.colored, value.known), 0.0, 0.0)
+    -- The target owns a texture exactly the size of the card. Reassert the two
+    -- thin identity layers last: the ordinary renderer can safely batch them
+    -- among the face primitives, but on a target boundary the frame stroke is
+    -- partially clipped and the five-pixel school stripe can otherwise
+    -- disappear at the handoff. They remain part of this texture, so the burn
+    -- shader chars and removes them only when its front reaches them. A sealed
+    -- card shows neither: its back is the packaged image, edge to edge.
+    if not value.hidden then
+        graphics:set_color("#52525b")
+        graphics:set_line_width(2.0)
+        graphics:stroke_rectangle(1.0, 1.0, WIDTH - 2.0, HEIGHT - 2.0)
+        graphics:set_color(ink.school_color(value.card.suit))
+        graphics:fill_rectangle(7.0, 7.0, 5.0, HEIGHT - 14.0)
+    end
+    graphics:pop()
+    graphics:set_screen_target()
+    return target
+end
+
+-- The face alone, which is what every burn in the game captures.
+function capture_face(surface: entity.Surface, value: Look): graphics_module.RenderTarget?
+    return capture(surface, look(
+        value.card, false, false, false, value.colored, value.known))
+end
+
+-- The relic as an entity: it measures as the design space its face is authored
+-- in, and a rectangle of any other size scales the whole printed object into
+-- it rather than reflowing the rank, stripe, and sigil inside it.
+function node(value: Look): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return intrinsic()
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            if bounds.width == WIDTH and bounds.height == HEIGHT then
+                draw_at(surface, value, bounds.x, bounds.y)
+                return
+            end
+            local graphics = surface.graphics
+            graphics:push()
+            graphics:translate(bounds.x, bounds.y)
+            graphics:scale(bounds.width / WIDTH, bounds.height / HEIGHT)
+            draw_at(surface, value, 0.0, 0.0)
+            graphics:pop()
+        end)
+end
+
+return {
+    node = node,
+    look = look,
+    plain = plain,
+    sealed = sealed,
+    intrinsic = intrinsic,
+    draw_at = draw_at,
+    draw_face = draw_face,
+    draw_back = draw_back,
+    draw_sigil = draw_sigil,
+    draw_eye = draw_eye,
+    capture = capture,
+    capture_face = capture_face,
+    use_school_field = use_school_field,
+    width = WIDTH,
+    height = HEIGHT,
+    bind_lift = BIND_LIFT,
+    selection_highlight = SELECTION_HIGHLIGHT,
+}

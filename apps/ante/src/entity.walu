@@ -1,0 +1,359 @@
+-- The boundary every visible thing on Ante Magic's board shares. An entity
+-- answers two questions and nothing else: how large would you like to be, and
+-- draw yourself into this rectangle. It never reads a screen coordinate, a
+-- viewport scale, or where its neighbours ended up — the rectangle it is
+-- handed is the whole of what layout decided for it.
+--
+-- That is what makes an entity a file rather than a paragraph inside one. A
+-- deck, a pile, a capsule, and a whole ward band all satisfy the same two
+-- questions, so they compose: `flow` turns a list of entities into a single
+-- entity that measures like the box layout of its children and paints by
+-- handing each child its solved rectangle. Composition bottoms out at leaves
+-- that know how to draw one thing.
+--
+-- Measuring and drawing take different things, and deliberately so. Drawing
+-- needs a surface: the live graphics, the effect programs, the packaged card
+-- back. Measuring needs only metrics, and metrics are allowed to be empty —
+-- which is what lets the whole board be measured DOM-free, in a test with no
+-- canvas at all, and still get honest answers. With a live context a label
+-- asks the font that has actually loaded how wide its string is; without one
+-- it answers for the built-in bitmap font, which is what would be drawn if
+-- nothing else had arrived.
+
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local effect_shaders = require("./effect_shaders")
+local box = require("./box_layout")
+local ink = require("./ink")
+
+-- Everything an entity needs to put ink on the board. Nothing here says where
+-- the board is; that arrives with the rectangle.
+type Surface = {
+    graphics: engine.Graphics,
+    effects: effect_shaders.EffectShaders,
+    card_back: graphics_module.Texture?
+}
+
+type Metrics = { graphics: engine.Graphics? }
+
+-- grow and shrink belong to a node's relationship with the flow around it,
+-- exactly as they do in the box layout this forwards them to.
+type Node = {
+    measure: (Metrics) -> box.Intrinsic,
+    paint: (Surface, box.Rect) -> unit,
+    grow: f64,
+    shrink: f64
+}
+
+function metrics_of(surface: Surface): Metrics
+    return { graphics = surface.graphics }
+end
+
+-- Measurement with no context behind it, for tests and for anything asking how
+-- large the board wants to be before a frame exists.
+function headless(): Metrics
+    return { graphics = nil }
+end
+
+-- Advance per character of the built-in bitmap font, as a share of the font
+-- size: a five-pixel glyph plus its separator, on the engine's eight-pixel
+-- em. This is a fallback, not a model of the display face.
+const FALLBACK_ADVANCE: f64 = 0.75
+
+function text_width(metrics: Metrics, value: string, size: f64): f64
+    local maybe: engine.Graphics? = metrics.graphics
+    if maybe == nil then return (#value::f64) * size * FALLBACK_ADVANCE end
+    return ink.text_width(maybe::engine.Graphics, value, size)
+end
+
+-- The composite's own children are keyed by their index inside one solve, and
+-- the wrapping flow is keyed below zero so the layout emits no frame for it.
+const ROOT_KEY: i32 = -1
+
+function rect(x: f64, y: f64, width: f64, height: f64): box.Rect
+    return { x = x, y = y, width = width, height = height }
+end
+
+function edges(left: f64, top: f64, right: f64, bottom: f64): box.Edges
+    return { left = left, top = top, right = right, bottom = bottom }
+end
+
+function even_padding(horizontal: f64, vertical: f64): box.Edges
+    return edges(horizontal, vertical, horizontal, vertical)
+end
+
+function no_padding(): box.Edges
+    return edges(0.0, 0.0, 0.0, 0.0)
+end
+
+-- A row or column style spelled as the four things a flow actually decides.
+function style(axis: i32, gap: f64, justify: i32, align: i32, padding: box.Edges): box.Style
+    return {
+        axis = axis,
+        gap = gap,
+        justify = justify,
+        align = align,
+        padding = padding,
+    }
+end
+
+function row(gap: f64, justify: i32, align: i32): box.Style
+    return style(box.axis_row, gap, justify, align, no_padding())
+end
+
+function column(gap: f64, justify: i32, align: i32): box.Style
+    return style(box.axis_column, gap, justify, align, no_padding())
+end
+
+-- An entity whose size does not depend on anything but itself, which is most
+-- of the board: a card is a card, a capsule is as wide as it was authored.
+function sized(
+    width: f64, height: f64, paint: (Surface, box.Rect) -> unit
+): Node
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            return box.fixed(width, height)
+        end,
+        paint = paint,
+        grow = 0.0,
+        shrink = 1.0,
+    }
+end
+
+-- An entity that measures itself, for content whose size is a reading rather
+-- than a constant — text against the live font, a row that reflows with the
+-- cards it holds.
+function measured(
+    measure: (Metrics) -> box.Intrinsic,
+    paint: (Surface, box.Rect) -> unit
+): Node
+    return { measure = measure, paint = paint, grow = 0.0, shrink = 1.0 }
+end
+
+-- Nothing, at a size. A spacer is how a band says "share the leftover height
+-- with me", which is the only honest way to express the clearances the board
+-- used to spend fractions of a magic number on.
+function gap(node_width: f64, node_height: f64): Node
+    return sized(node_width, node_height, function(surface: Surface, bounds: box.Rect): unit end)
+end
+
+function flexible(node: Node, node_grow: f64, node_shrink: f64): Node
+    return {
+        measure = node.measure,
+        paint = node.paint,
+        grow = node_grow,
+        shrink = node_shrink,
+    }
+end
+
+-- A spacer that takes a share of whatever room is left over. `weight` is the
+-- share against its sibling spacers, and the unbounded maximum is what lets it
+-- actually absorb the room rather than stopping at a preferred size.
+function stretch(weight: f64): Node
+    local empty: (Surface, box.Rect) -> unit =
+        function(surface: Surface, bounds: box.Rect): unit end
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            return {
+                min_width = 0.0,
+                preferred_width = 0.0,
+                max_width = box.unbounded,
+                min_height = 0.0,
+                preferred_height = 0.0,
+                max_height = box.unbounded,
+                baseline = -1.0,
+            }
+        end,
+        paint = empty,
+        grow = weight,
+        shrink = 1.0,
+    }
+end
+
+-- A node that takes all the width a stretching flow offers it while keeping
+-- its own preferred size. This is how a centred row inside a column gets
+-- something to be centred in: without it a row of fixed tiles is exactly as
+-- wide as its tiles, and centring inside itself does nothing.
+function wide(node: Node): Node
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            local value: box.Intrinsic = node.measure(metrics)
+            return {
+                min_width = value.min_width,
+                preferred_width = value.preferred_width,
+                max_width = box.unbounded,
+                min_height = value.min_height,
+                preferred_height = value.preferred_height,
+                max_height = value.max_height,
+                baseline = value.baseline,
+            }
+        end,
+        paint = node.paint,
+        grow = node.grow,
+        shrink = node.shrink,
+    }
+end
+
+-- One box-layout tree holding a flow over the given children. Children are
+-- leaves carrying their own measurement, so a composite child is measured
+-- whole here and solves its own interior later, against the rectangle this
+-- flow gives it.
+function build(
+    metrics: Metrics, children: {Node}, flow_style: box.Style
+): box.Tree
+    local tree: box.Tree = box.new()
+    local handles: {i32} = {}
+    for index = 0::i32, #children - 1 do
+        local child: Node = children[index]
+        local handle: i32 = tree:leaf(index, child.measure(metrics))
+        tree:flex(handle, child.grow, child.shrink)
+        table.insert(handles, handle)
+    end
+    tree:flow(ROOT_KEY, handles, flow_style)
+    return tree
+end
+
+-- The wrapping flow is always the last node built, which is what makes the
+-- root handle derivable rather than a second return value.
+function root_of(tree: box.Tree): i32
+    return #tree.nodes - 1
+end
+
+function measure_flow(
+    metrics: Metrics, children: {Node}, flow_style: box.Style
+): box.Intrinsic
+    local tree: box.Tree = build(metrics, children, flow_style)
+    return tree:measure(root_of(tree))
+end
+
+-- Where each child of a flow landed, in child order. Hit testing reads this
+-- from the same entities and the same bounds the frame drew, so a capsule can
+-- never be clicked anywhere but where it appeared.
+function place(
+    metrics: Metrics, children: {Node}, flow_style: box.Style, bounds: box.Rect
+): {box.Rect}
+    local tree: box.Tree = build(metrics, children, flow_style)
+    local result: box.Result = tree:solve(root_of(tree), bounds)
+    local rects: {box.Rect} = {}
+    for index = 0::i32, #children - 1 do
+        local frame: box.Frame? = box.frame(result, index)
+        if frame == nil then
+            table.insert(rects, rect(bounds.x, bounds.y, 0.0, 0.0))
+        else
+            table.insert(rects, (frame::box.Frame).rect)
+        end
+    end
+    return rects
+end
+
+-- A list of entities as one entity. This is the whole composition rule: a band
+-- is a column of rows of leaves, and every level of that answers the same two
+-- questions as the card at the bottom of it.
+function flow(children: {Node}, flow_style: box.Style): Node
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            return measure_flow(metrics, children, flow_style)
+        end,
+        paint = function(surface: Surface, bounds: box.Rect): unit
+            local rects: {box.Rect} = place(
+                metrics_of(surface), children, flow_style, bounds)
+            for index = 0::i32, #children - 1 do
+                children[index].paint(surface, rects[index])
+            end
+        end,
+        grow = 0.0,
+        shrink = 1.0,
+    }
+end
+
+-- Entities drawn one on top of the next in the same rectangle: a panel under
+-- its contents, a halo under the formation it lights. Every child is given the
+-- whole of the bounds, and the stack measures as the largest of them.
+function layer(children: {Node}): Node
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            local total: box.Intrinsic = box.fixed(0.0, 0.0)
+            for child in children do
+                local value: box.Intrinsic = child.measure(metrics)
+                total = {
+                    min_width = math.max(total.min_width, value.min_width),
+                    preferred_width = math.max(
+                        total.preferred_width, value.preferred_width),
+                    max_width = math.max(total.max_width, value.max_width),
+                    min_height = math.max(total.min_height, value.min_height),
+                    preferred_height = math.max(
+                        total.preferred_height, value.preferred_height),
+                    max_height = math.max(total.max_height, value.max_height),
+                    baseline = math.max(total.baseline, value.baseline),
+                }
+            end
+            return total
+        end,
+        paint = function(surface: Surface, bounds: box.Rect): unit
+            for child in children do child.paint(surface, bounds) end
+        end,
+        grow = 0.0,
+        shrink = 1.0,
+    }
+end
+
+-- Draw an entity into a rectangle. Screens call this once on a root entity;
+-- everything below it is reached by the flows.
+function paint(node: Node, surface: Surface, bounds: box.Rect): unit
+    node.paint(surface, bounds)
+end
+
+-- The rectangle an entity would take if nothing pushed back: its preferred
+-- size, parked at an origin. Useful where a band is measured to decide how
+-- much of the board it needs before the board is divided up.
+function natural(metrics: Metrics, node: Node, x: f64, y: f64): box.Rect
+    local value: box.Intrinsic = node.measure(metrics)
+    return rect(x, y, value.preferred_width, value.preferred_height)
+end
+
+-- A band across the board: the screen owns where it starts and how wide it is,
+-- and the entity owns how tall it needs to be. This is the ordinary way a
+-- screen hands a rectangle over — the two halves of the decision meet here
+-- rather than in a constant somewhere that has to be re-tuned when the type
+-- inside the band changes size.
+function band(
+    metrics: Metrics, node: Node, x: f64, y: f64, width: f64
+): box.Rect
+    return rect(x, y, width, node.measure(metrics).preferred_height)
+end
+
+-- The same, hung off a bottom edge instead of a top one.
+function band_above(
+    metrics: Metrics, node: Node, x: f64, bottom: f64, width: f64
+): box.Rect
+    local height: f64 = node.measure(metrics).preferred_height
+    return rect(x, bottom - height, width, height)
+end
+
+function contains(bounds: box.Rect, x: f64, y: f64): bool
+    return x >= bounds.x and x <= bounds.x + bounds.width
+        and y >= bounds.y and y <= bounds.y + bounds.height
+end
+
+return {
+    rect = rect,
+    metrics_of = metrics_of,
+    headless = headless,
+    text_width = text_width,
+    edges = edges,
+    even_padding = even_padding,
+    style = style,
+    row = row,
+    column = column,
+    sized = sized,
+    measured = measured,
+    gap = gap,
+    stretch = stretch,
+    wide = wide,
+    flow = flow,
+    layer = layer,
+    place = place,
+    band = band,
+    band_above = band_above,
+    contains = contains,
+}

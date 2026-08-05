@@ -17,7 +17,7 @@ local city_map = require("./city_map")
 local city_map_render = require("./city_map_render")
 local menu = require("./menu")
 local game_screen = require("./game_screen")
-local render = require("./render")
+local ink = require("./ink")
 local layout = require("./layout")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
@@ -98,7 +98,8 @@ function install_ante_magic(): unit
         presentation_resources.prepare(assets, graphics)
         if not presentation_resources.draw_failure(assets, graphics) then
             if city.cover < 1.0 then
-                game_screen.draw_vault(heist, graphics, assets.effects, assets.texture)
+                game_screen.draw_vault(
+                    heist, presentation_resources.surface(assets, graphics))
             end
             if city_map.visible(city) then
                 -- The menu's map is a drifting view of a city nobody is running,
@@ -108,7 +109,7 @@ function install_ante_magic(): unit
                     landmark = game_screen.landmark_stop(heist)
                 end
                 city_map_render.draw(
-                    city, graphics, render.school_color(city.streak_suit),
+                    city, graphics, ink.school_color(city.streak_suit),
                     city.cover, landmark)
             end
             if screen == SCREEN_MENU then

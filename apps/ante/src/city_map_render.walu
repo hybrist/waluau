@@ -13,7 +13,7 @@
 -- becomes the room the vault's own backdrop fades in behind.
 
 local engine = require("waluau:engine")
-local render = require("./render")
+local ink = require("./ink")
 local city_map = require("./city_map")
 
 type Graphics = engine.Graphics
@@ -47,14 +47,14 @@ function roof_tone(tone: i32): string
 end
 
 function draw_rooftop(graphics: Graphics, building: city_map.Building, alpha: f64): unit
-    graphics:set_color(render.fade("#07080d", alpha))
+    graphics:set_color(ink.fade("#07080d", alpha))
     graphics:fill_rectangle(
         building.x + 3.0, building.y + 4.0,
         building.width, building.height)
-    graphics:set_color(render.fade(roof_tone(building.tone), alpha))
+    graphics:set_color(ink.fade(roof_tone(building.tone), alpha))
     graphics:fill_rectangle(
         building.x, building.y, building.width, building.height)
-    graphics:set_color(render.fade("#292b36", alpha))
+    graphics:set_color(ink.fade("#292b36", alpha))
     graphics:set_line_width(1.0)
     graphics:stroke_rectangle(
         building.x, building.y, building.width, building.height)
@@ -63,9 +63,9 @@ function draw_rooftop(graphics: Graphics, building: city_map.Building, alpha: f6
     local unit_y: f64 = building.y + building.height * 0.5 - 5.0
     if building.detail == 1 then unit_x = building.x + 9.0 end
     if building.detail == 2 then unit_y = building.y + 9.0 end
-    graphics:set_color(render.fade("#0d0f16", alpha))
+    graphics:set_color(ink.fade("#0d0f16", alpha))
     graphics:fill_rectangle(unit_x, unit_y, 14.0, 10.0)
-    graphics:set_color(render.fade("#30323d", alpha))
+    graphics:set_color(ink.fade("#30323d", alpha))
     graphics:stroke_rectangle(unit_x, unit_y, 14.0, 10.0)
 end
 
@@ -87,7 +87,7 @@ function draw_street_marks(
     if first < 8 then first = 8 end
     local last: i32 = math.floor(along_high)::i32 + 28
     if last > limit - 8 then last = limit - 8 end
-    graphics:set_color(render.fade("#252833", alpha))
+    graphics:set_color(ink.fade("#252833", alpha))
     graphics:set_line_width(1.0)
     for street in streets do
         if street >= across_low and street <= across_high then
@@ -133,21 +133,21 @@ function draw_streak(state: city_map.State, graphics: Graphics, color: string, a
     tail = clamp(tail, 0.0, limit)
 
     graphics:set_blend_mode("add")
-    graphics:set_color(render.fade(color, alpha * 0.14))
+    graphics:set_color(ink.fade(color, alpha * 0.14))
     graphics:set_line_width(16.0)
     if state.streak_horizontal then
         graphics:line(tail, state.streak_street, head, state.streak_street)
     else
         graphics:line(state.streak_street, tail, state.streak_street, head)
     end
-    graphics:set_color(render.fade(color, alpha * 0.44))
+    graphics:set_color(ink.fade(color, alpha * 0.44))
     graphics:set_line_width(6.0)
     if state.streak_horizontal then
         graphics:line(tail, state.streak_street, head, state.streak_street)
     else
         graphics:line(state.streak_street, tail, state.streak_street, head)
     end
-    graphics:set_color(render.fade("#ffffff", alpha))
+    graphics:set_color(ink.fade("#ffffff", alpha))
     if state.streak_horizontal then
         graphics:fill_circle(head, state.streak_street, 2.2)
     else
@@ -187,7 +187,7 @@ function draw_route_ahead(state: city_map.State, graphics: Graphics, alpha: f64)
     local standing: Point = city_map.position_at(state, state.travel)
     local next_stop: i32 = math.floor(state.travel)::i32 + 1
     if next_stop > last then return end
-    graphics:set_color(render.fade(ROUTE_AHEAD, alpha * 0.85))
+    graphics:set_color(ink.fade(ROUTE_AHEAD, alpha * 0.85))
     graphics:set_line_width(2.0)
     local from_x: f64 = standing.x
     local from_y: f64 = standing.y
@@ -209,7 +209,7 @@ function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64):
         passed = city_map.stop_count(state) - 1
     end
     if passed < 0 then return end
-    graphics:set_color(render.fade(ROUTE_DONE, alpha * 0.30))
+    graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.30))
     graphics:set_line_width(9.0)
     for index = 0::i32, passed - 1 do
         graphics:line(
@@ -217,7 +217,7 @@ function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64):
             state.stops[index + 1].x, state.stops[index + 1].y)
     end
     graphics:line(state.stops[passed].x, state.stops[passed].y, standing.x, standing.y)
-    graphics:set_color(render.fade(ROUTE_DONE, alpha * 0.92))
+    graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.92))
     graphics:set_line_width(2.5)
     for index = 0::i32, passed - 1 do
         graphics:line(
@@ -247,11 +247,11 @@ function draw_vault_stop(
     alpha: f64,
     label_alpha: f64
 ): unit
-    local ink: string = VAULT_DIM
-    if reached then ink = VAULT_INK end
-    graphics:set_color(render.fade("#0b0c12", alpha))
+    local tone: string = VAULT_DIM
+    if reached then tone = VAULT_INK end
+    graphics:set_color(ink.fade("#0b0c12", alpha))
     graphics:fill_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
-    graphics:set_color(render.fade(ink, alpha))
+    graphics:set_color(ink.fade(tone, alpha))
     graphics:set_line_width(2.0)
     graphics:stroke_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
     graphics:line(stop.x - 18.0, stop.y - 12.0, stop.x, stop.y - 24.0)
@@ -264,7 +264,7 @@ function draw_vault_stop(
     -- The dial is the marker saying "vault", not part of the building: a house
     -- being walked into keeps its walls and gives that up, rather than hanging
     -- a storey-high disc in the room.
-    graphics:set_color(render.fade(ink, label_alpha))
+    graphics:set_color(ink.fade(tone, label_alpha))
     graphics:fill_circle(stop.x, stop.y + 1.0, 4.0)
     local writing: string = "VAULT " .. label
     local plate: f64 = 52.0
@@ -272,11 +272,11 @@ function draw_vault_stop(
         writing = writing .. "   LAST"
         plate = 86.0
     end
-    graphics:set_color(render.fade("#0b0c12", label_alpha * 0.9))
+    graphics:set_color(ink.fade("#0b0c12", label_alpha * 0.9))
     graphics:fill_rectangle(stop.x - plate * 0.5, stop.y + 19.0, plate, 17.0)
-    render.text_centered(
+    ink.text_centered(
         graphics, writing, stop.x, stop.y + 32.0, 10,
-        render.fade(ink, label_alpha))
+        ink.fade(tone, label_alpha))
 end
 
 -- A street vendor: a stall with an awning, small enough that the houses stay
@@ -287,11 +287,11 @@ function draw_vendor_stop(
     reached: bool,
     alpha: f64
 ): unit
-    local ink: string = VENDOR_DIM
-    if reached then ink = VENDOR_INK end
-    graphics:set_color(render.fade("#0b0c12", alpha))
+    local tone: string = VENDOR_DIM
+    if reached then tone = VENDOR_INK end
+    graphics:set_color(ink.fade("#0b0c12", alpha))
     graphics:fill_rectangle(stop.x - 11.0, stop.y - 4.0, 22.0, 14.0)
-    graphics:set_color(render.fade(ink, alpha))
+    graphics:set_color(ink.fade(tone, alpha))
     graphics:set_line_width(2.0)
     graphics:stroke_rectangle(stop.x - 11.0, stop.y - 4.0, 22.0, 14.0)
     graphics:line(stop.x - 14.0, stop.y - 5.0, stop.x + 14.0, stop.y - 5.0)
@@ -349,12 +349,12 @@ function draw_party(state: city_map.State, graphics: Graphics, alpha: f64): unit
     local standing: Point = city_map.position_at(state, state.travel)
     local pulse: f64 = 6.5 + math.sin(state.pan_clock * 3.1) * 1.6
     graphics:set_blend_mode("add")
-    graphics:set_color(render.fade("#fde68a", alpha * 0.24))
+    graphics:set_color(ink.fade("#fde68a", alpha * 0.24))
     graphics:fill_circle(standing.x, standing.y, pulse + 7.0)
     graphics:set_blend_mode("alpha")
-    graphics:set_color(render.fade("#fde68a", alpha))
+    graphics:set_color(ink.fade("#fde68a", alpha))
     graphics:fill_circle(standing.x, standing.y, 4.6)
-    graphics:set_color(render.fade("#3b2a06", alpha))
+    graphics:set_color(ink.fade("#3b2a06", alpha))
     graphics:fill_circle(standing.x, standing.y, 2.0)
 end
 
@@ -380,7 +380,7 @@ function draw(
     -- A map that owns the frame clears it; one handing the screen to a vault
     -- must leave the vault underneath it to come through.
     if alpha >= 1.0 then graphics:clear(NIGHT) end
-    graphics:set_color(render.fade(ASPHALT, alpha))
+    graphics:set_color(ink.fade(ASPHALT, alpha))
     graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)
 
     -- Going into a house sheds the map in two passes, so the last thing left
@@ -397,7 +397,7 @@ function draw(
 
     if city_ink > 0.0 then
         apply_camera(state, graphics)
-        graphics:set_color(render.fade(BLOCK, city_ink))
+        graphics:set_color(ink.fade(BLOCK, city_ink))
         for building in state.buildings do
             if building.x + building.width >= left and building.x <= right
                 and building.y + building.height >= top and building.y <= bottom then
@@ -424,7 +424,7 @@ function draw(
 
     -- The rooftops go under a scrim so a list of options reads over them; the
     -- route goes on top of it, because the route is the thing being said.
-    graphics:set_color(render.fade(SCRIM, SCRIM_STRENGTH * city_ink))
+    graphics:set_color(ink.fade(SCRIM, SCRIM_STRENGTH * city_ink))
     graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)
 
     apply_camera(state, graphics)

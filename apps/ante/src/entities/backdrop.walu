@@ -1,0 +1,41 @@
+-- The vault behind everything: a flat dark field crossed by a fan of faint
+-- diagonals that meet along its own edges. It takes whatever rectangle the
+-- board is, and the diagonals are struck at a fixed spacing, so a wider canvas
+-- gets more of them rather than a stretched few.
+
+local box = require("../box_layout")
+local entity = require("../entity")
+
+const CLEAR: string = "#09090b"
+const FIELD: string = "#111114"
+const RULE: string = "#1e1e24"
+const RULE_PITCH: f64 = 48.0
+
+function draw_at(surface: entity.Surface, bounds: box.Rect): unit
+    local graphics = surface.graphics
+    graphics:clear(CLEAR)
+    graphics:set_color(FIELD)
+    graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+    graphics:set_color(RULE)
+    graphics:set_line_width(1.0)
+    local columns: i32 = math.ceil(bounds.width / RULE_PITCH)::i32
+    for column = 0::i32, columns do
+        local x: f64 = (column::f64) * RULE_PITCH
+        graphics:line(
+            bounds.x + x, bounds.y,
+            bounds.x + bounds.width - x, bounds.y + bounds.height)
+    end
+end
+
+function node(): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return box.fixed(0.0, 0.0)
+        end,
+        draw_at)
+end
+
+return {
+    node = node,
+    draw_at = draw_at,
+}
