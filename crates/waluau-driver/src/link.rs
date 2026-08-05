@@ -661,7 +661,14 @@ fn extend_unique_type_declarations(
             .iter()
             .find(|existing| existing.name == declaration.name)
         {
-            if existing == &declaration {
+            // `file_path` is source provenance, not part of an ambient type's
+            // definition. DOM and TFJS both declare shared host types such as
+            // `Promise`; those declarations remain compatible even though
+            // they were parsed from different virtual extern files.
+            if existing.type_params == declaration.type_params
+                && existing.ty == declaration.ty
+                && existing.module_opaque == declaration.module_opaque
+            {
                 continue;
             }
             return Err(Diagnostic::new(format!(
@@ -2742,6 +2749,34 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
     use waluau_ast::{Expr, Stmt};
+
+    #[test]
+    fn shared_ambient_types_from_dom_and_tfjs_do_not_conflict() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                local tf = require("tfjs")
+                local window = require("dom:window")
+
+                function main(): i32
+                    return 0
+                end
+            "#,
+        )
+        .expect("main should write");
+
+        let program =
+            link_program(&dir.path().join("main.walu")).expect("shared ambient types should merge");
+        assert_eq!(
+            program
+                .type_declarations
+                .iter()
+                .filter(|declaration| declaration.name == "Promise")
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn imported_top_level_statements_are_merged_and_mangled() {
