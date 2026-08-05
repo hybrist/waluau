@@ -878,7 +878,29 @@ fn compute_module_export(
     );
     let (re_exports, namespaces, _) =
         process_reexport_bindings(&module.program.top_level, &imports);
-    let constants = module_constants(&module.program)?;
+    let mut constants = module_constants(&module.program)?;
+    let type_names = module
+        .program
+        .type_declarations
+        .iter()
+        .map(|decl| decl.name.clone())
+        .collect::<HashSet<_>>();
+    let type_namespaces = module_type_namespaces(modules, module, entry_id);
+    let empty_names = HashSet::new();
+    let rewriter = Rewriter {
+        prefix: &prefix,
+        func_names: &empty_names,
+        type_names: &type_names,
+        type_namespaces: &type_namespaces,
+        global_names: &empty_names,
+        imports: &imports,
+        re_exports: HashMap::new(),
+        namespaces: HashMap::new(),
+        value_aliases: HashMap::new(),
+    };
+    for value in constants.values_mut() {
+        rewriter.rewrite_expr_types(value);
+    }
 
     let resolved = resolve_module_export(
         module.program.export.as_ref(),
@@ -1438,6 +1460,19 @@ impl Rewriter<'_> {
                     self.rewrite_stmt_types(stmt);
                 }
             }
+            Stmt::Match {
+                value,
+                enum_ty,
+                arms,
+            } => {
+                self.rewrite_type(enum_ty);
+                self.rewrite_expr_types(value);
+                for arm in arms {
+                    for stmt in &mut arm.body {
+                        self.rewrite_stmt_types(stmt);
+                    }
+                }
+            }
             Stmt::While { condition, body } => {
                 self.rewrite_expr_types(condition);
                 for stmt in body {
@@ -1592,7 +1627,12 @@ impl Rewriter<'_> {
                     self.rewrite_type(ty);
                 }
             }
-            Type::Opaque { ty, .. } => self.rewrite_type(ty),
+            Type::Opaque { name, ty } => {
+                if self.type_names.contains(name) {
+                    *name = format!("{}{name}", self.prefix);
+                }
+                self.rewrite_type(ty);
+            }
             Type::ExternSubtype(parent) => self.rewrite_type(parent),
             Type::Nullable(inner) => self.rewrite_type(inner),
             Type::TaggedVariant(variant) => self.rewrite_type(variant.payload.as_mut()),
@@ -1758,6 +1798,12 @@ impl Rewriter<'_> {
                 self.rewrite_block(then_body, &mut then_bound);
                 self.rewrite_block(else_body, &mut bound.clone());
             }
+            Stmt::Match { value, arms, .. } => {
+                self.rewrite_expr(value, bound);
+                for arm in arms {
+                    self.rewrite_block(&mut arm.body, &mut bound.clone());
+                }
+            }
             Stmt::While { condition, body } => {
                 self.rewrite_expr(condition, bound);
                 self.rewrite_block(body, &mut bound.clone());
@@ -1845,6 +1891,7 @@ impl Rewriter<'_> {
                     }
                     if let Some(value) = fields.constants.get(field) {
                         *expr = value.clone();
+                        self.rewrite_expr_types(expr);
                         return;
                     }
                 }
@@ -1890,6 +1937,7 @@ impl Rewriter<'_> {
                         *expr = Expr::Name(resolved.clone(), None, None);
                     } else if let Some(alias) = self.value_aliases.get(name) {
                         *expr = alias.clone();
+                        self.rewrite_expr_types(expr);
                     } else if self.func_names.contains(name) || self.global_names.contains(name) {
                         *name = format!("{}{name}", self.prefix);
                     }
@@ -2026,6 +2074,12 @@ fn strip_unused_namespace_lets_in_stmt(
             strip_unused_namespace_lets_in_expr(value, namespaces);
             strip_unused_namespace_lets(then_body, namespaces);
             strip_unused_namespace_lets(else_body, namespaces);
+        }
+        Stmt::Match { value, arms, .. } => {
+            strip_unused_namespace_lets_in_expr(value, namespaces);
+            for arm in arms {
+                strip_unused_namespace_lets(&mut arm.body, namespaces);
+            }
         }
         Stmt::While { condition, body } => {
             strip_unused_namespace_lets_in_expr(condition, namespaces);
@@ -2234,6 +2288,17 @@ fn rename_stmt(
                 &mut shadowed.clone(),
             );
         }
+        Stmt::Match { value, arms, .. } => {
+            rename_expr(value, renames, available, shadowed);
+            for arm in arms {
+                rename_stmt_block(
+                    &mut arm.body,
+                    renames,
+                    &mut available.clone(),
+                    &mut shadowed.clone(),
+                );
+            }
+        }
         Stmt::While { condition, body } => {
             rename_expr(condition, renames, available, shadowed);
             rename_stmt_block(body, renames, &mut available.clone(), &mut shadowed.clone());
@@ -2435,6 +2500,10 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                 || (binding != name && stmt_mentions_name(name, then_body))
                 || stmt_mentions_name(name, else_body)
         }
+        Stmt::Match { value, arms, .. } => {
+            expr_mentions_name(name, value)
+                || arms.iter().any(|arm| stmt_mentions_name(name, &arm.body))
+        }
         Stmt::While { condition, body } => {
             expr_mentions_name(name, condition) || stmt_mentions_name(name, body)
         }
@@ -2553,6 +2622,12 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                 collect_expr(value, out);
                 collect_block(then_body, out);
                 collect_block(else_body, out);
+            }
+            Stmt::Match { value, arms, .. } => {
+                collect_expr(value, out);
+                for arm in arms {
+                    collect_block(&arm.body, out);
+                }
             }
             Stmt::While { condition, body } | Stmt::Repeat { body, condition } => {
                 collect_expr(condition, out);

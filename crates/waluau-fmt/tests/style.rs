@@ -74,3 +74,12 @@ fn is_idempotent_on_messy_input() {
     let once = fmt(messy);
     assert_eq!(fmt(&once), once);
 }
+
+#[test]
+fn formats_nominal_enums_and_matches() {
+    let src = "enum Direction{north,east,south}\nfunction score(d:Direction):i32\nmatch d do\ncase Direction.north then\nreturn 1\ncase Direction.east then\nreturn 2\ncase Direction.south then\nreturn 3\nend\nend\n";
+    assert_eq!(
+        fmt(src),
+        "enum Direction { north, east, south }\nfunction score(d: Direction): i32\n    match d do\n    case Direction.north then\n        return 1\n    case Direction.east then\n        return 2\n    case Direction.south then\n        return 3\n    end\nend\n"
+    );
+}

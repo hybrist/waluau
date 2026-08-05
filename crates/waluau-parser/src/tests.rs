@@ -23,6 +23,65 @@ fn parses_v0_function() {
 }
 
 #[test]
+fn parses_nominal_enum_values_and_exhaustive_match() {
+    let source = r#"
+        enum Direction { north, east, south }
+        function score(direction: Direction): i32
+            match direction do
+            case Direction.north then return 1
+            case Direction.east then return 2
+            case Direction.south then return 3
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations[0].name, "Direction");
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::Numeric(NumericType::I32)
+    );
+    let Stmt::Match { enum_ty, arms, .. } = &program.functions[0].body[0] else {
+        panic!("expected match statement")
+    };
+    assert_eq!(
+        enum_ty,
+        &Type::Named {
+            name: "Direction".into(),
+            type_args: vec![],
+        }
+    );
+    assert_eq!(
+        arms.iter()
+            .map(|arm| (arm.variant.as_str(), arm.ordinal))
+            .collect::<Vec<_>>(),
+        vec![("north", 0), ("east", 1), ("south", 2)]
+    );
+}
+
+#[test]
+fn rejects_non_exhaustive_and_duplicate_enum_matches() {
+    let missing = parse(
+        "enum Direction { north, south }\nmatch Direction.north do\ncase Direction.north then\nend\n",
+    )
+    .expect_err("match should be non-exhaustive");
+    assert!(
+        missing
+            .to_string()
+            .contains("non-exhaustive match for enum 'Direction'; missing: Direction.south")
+    );
+
+    let duplicate = parse(
+        "enum Direction { north, south }\nmatch Direction.north do\ncase Direction.north then\ncase Direction.north then\ncase Direction.south then\nend\n",
+    )
+    .expect_err("duplicate case should fail");
+    assert!(
+        duplicate
+            .to_string()
+            .contains("duplicate/unreachable match case 'Direction.north'")
+    );
+}
+
+#[test]
 fn parses_numeric_type_aliases() {
     let source = r#"
         function widen(x: number, y: f32, z: u64, w: i64): f64

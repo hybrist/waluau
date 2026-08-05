@@ -47,6 +47,11 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<SymbolId>) {
                 collect_assigned_into(then_body, out);
                 collect_assigned_into(else_body, out);
             }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    collect_assigned_into(&arm.body, out);
+                }
+            }
             Stmt::While { body, .. } => collect_assigned_into(body, out),
             Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
             Stmt::NumericFor { body, .. } => collect_assigned_into(body, out),
@@ -146,6 +151,14 @@ fn collect_expr_captures_from_stmt(
             }
             for s in else_body {
                 collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
+            }
+        }
+        Stmt::Match { value, arms, .. } => {
+            collect_expr_captures(value, bound, env, signatures, captures);
+            for arm in arms {
+                for stmt in &arm.body {
+                    collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+                }
             }
         }
         Stmt::While { condition, body } => {
@@ -374,6 +387,14 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<SymbolId>) {
                 collect_nested_from_stmt(s, out);
             }
         }
+        Stmt::Match { value, arms, .. } => {
+            collect_nested_from_expr(value, out);
+            for arm in arms {
+                for stmt in &arm.body {
+                    collect_nested_from_stmt(stmt, out);
+                }
+            }
+        }
         Stmt::While { condition, body } => {
             collect_nested_from_expr(condition, out);
             for s in body {
@@ -543,6 +564,12 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<SymbolId>, out: &
                 }
                 for s in else_body {
                     collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
+                }
+            }
+            Stmt::Match { value, arms, .. } => {
+                collect_free_names_in_expr(value, bound, out);
+                for arm in arms {
+                    collect_free_names_in_stmts(&arm.body, bound, out);
                 }
             }
             Stmt::While { condition, body } => {

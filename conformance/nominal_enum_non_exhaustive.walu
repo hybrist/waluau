@@ -1,0 +1,12 @@
+-- conformance: error=non-exhaustive match for enum 'Direction'; missing: Direction.south
+enum Direction { north, east, south }
+
+function score(direction: Direction): i32
+    match direction do
+    case Direction.north then
+        return 1
+    case Direction.east then
+        return 2
+    end
+    return 0
+end

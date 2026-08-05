@@ -84,31 +84,35 @@ const HEADLINE_TOP: f64 = 90.0
 
 -- Board anchors card animations travel between. Choreography mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
-const SLOT_PLAYER: i32 = 0
-const SLOT_COMPUTER: i32 = 1
-const SLOT_MIDDLE: i32 = 2
-const SLOT_DECK: i32 = 3
+enum Slot { none, player, computer, middle, deck, aside, computer_won, player_won }
+const SLOT_NONE: Slot = Slot.none
+const SLOT_PLAYER: Slot = Slot.player
+const SLOT_COMPUTER: Slot = Slot.computer
+const SLOT_MIDDLE: Slot = Slot.middle
+const SLOT_DECK: Slot = Slot.deck
 -- The burn pile, mid-height on the right edge: the losing pair, reduced to
 -- embers during the reveal, is recorded here — no one keeps a burned trick.
-const SLOT_ASIDE: i32 = 4
+const SLOT_ASIDE: Slot = Slot.aside
 -- Each side keeps the tricks it won in its own pile, stacked down the right
 -- edge beside that side's hand: the Arch Mage's held wards up by its sealed
 -- row, the player's breached tricks down by the fan, the burn pile between
 -- them. A won trick is the whole five-card formation — the three wards plus the
 -- pair that settled it.
-const SLOT_COMPUTER_WON: i32 = 5
-const SLOT_PLAYER_WON: i32 = 6
+const SLOT_COMPUTER_WON: Slot = Slot.computer_won
+const SLOT_PLAYER_WON: Slot = Slot.player_won
 
 -- Faces an animated card shows along its flight: stay sealed, stay revealed,
 -- or flip between the two mid-flight. Choreography mirrors these values too.
-const FACES_DOWN: i32 = 0
-const FACES_UP: i32 = 1
-const FACES_FLIP_UP: i32 = 2
-const FACES_FLIP_DOWN: i32 = 3
-const EASE_OUT_QUINT: i32 = 0
-const EASE_IN_CUBIC: i32 = 1
-const EASE_IN_OUT_CUBIC: i32 = 2
-const EASE_OUT_BACK: i32 = 3
+enum Face { down, up, flip_up, flip_down }
+const FACES_DOWN: Face = Face.down
+const FACES_UP: Face = Face.up
+const FACES_FLIP_UP: Face = Face.flip_up
+const FACES_FLIP_DOWN: Face = Face.flip_down
+enum Ease { out_quint, in_cubic, in_out_cubic, out_back }
+const EASE_OUT_QUINT: Ease = Ease.out_quint
+const EASE_IN_CUBIC: Ease = Ease.in_cubic
+const EASE_IN_OUT_CUBIC: Ease = Ease.in_out_cubic
+const EASE_OUT_BACK: Ease = Ease.out_back
 const ANIM_EFFECT_MOVE: i32 = 0
 const ANIM_EFFECT_ASH_REAPPEAR: i32 = 1
 const ANIM_EFFECT_THROW: i32 = 2
@@ -165,19 +169,19 @@ const HEADLINE_SIZE: f64 = 14.0
 -- leg stays at the discard anchor and rebuilds a burned card there instead.
 type Anim = {
     card: game.Card,
-    faces: i32,
+    faces: Face,
     known: bool,
     effect: i32,
     from: Point,
     to: Point,
     angle0: f64,
     angle1: f64,
-    easing: i32,
+    easing: Ease,
     start: f64,
     duration: f64,
     appear: f64,
     vanish: f64,
-    dest_kind: i32,
+    dest_kind: Slot,
     dest_index: i32
 }
 
@@ -243,11 +247,13 @@ type Frame = {
     sheet: card_warp.Mesh
 }
 
-function ease_progress(t: f64, kind: i32): f64
-    if kind == EASE_IN_CUBIC then return easing.in_cubic(t) end
-    if kind == EASE_IN_OUT_CUBIC then return easing.in_out_cubic(t) end
-    if kind == EASE_OUT_BACK then return easing.out_back(t) end
-    return easing.out_quint(t)
+function ease_progress(t: f64, kind: Ease): f64
+    match kind do
+    case Ease.out_quint then return easing.out_quint(t)
+    case Ease.in_cubic then return easing.in_cubic(t)
+    case Ease.in_out_cubic then return easing.in_out_cubic(t)
+    case Ease.out_back then return easing.out_back(t)
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -338,38 +344,41 @@ end
 -- opposite the deck, each at its owner's height: the Arch Mage's up beside its
 -- sealed row, the player's down beside the fan, the burn pile centred between.
 -- The count parameter sizes the two hand rows; every other slot ignores it.
-function slot_pos_at(viewport: layout.State, kind: i32, index: i32, count: i32): Point
-    if kind == SLOT_PLAYER then
+function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32): Point
+    match kind do
+    case Slot.player then
         return top_left(hand_slot(viewport, index, 0.0, count))
-    end
-    if kind == SLOT_COMPUTER then
+    case Slot.computer then
         local band: box.Rect = computer_band(viewport)
         return top_left(card_row.slot_rect(
             count, card_row.pitch_in(band, count, card_row.flat_pitch),
             band, index))
-    end
-    if kind == SLOT_MIDDLE then return top_left(row_slot(viewport, 3, index)) end
-    if kind == SLOT_DECK then return point(viewport.side_left, viewport.ward_y) end
-    if kind == SLOT_COMPUTER_WON then
+    case Slot.middle then return top_left(row_slot(viewport, 3, index))
+    case Slot.deck then return point(viewport.side_left, viewport.ward_y)
+    case Slot.computer_won then
         return point(viewport.side_right, viewport.computer_y)
-    end
-    if kind == SLOT_PLAYER_WON then
+    case Slot.player_won then
         return point(viewport.side_right, viewport.player_y - card.height * 0.5 + 7.0)
+    case Slot.none then
+        return point(
+            viewport.side_right + (index::f64) * 4.0,
+            viewport.ward_y + (index::f64) * 12.0)
+    case Slot.aside then
+        return point(
+            viewport.side_right + (index::f64) * 4.0,
+            viewport.ward_y + (index::f64) * 12.0)
     end
-    return point(
-        viewport.side_right + (index::f64) * 4.0,
-        viewport.ward_y + (index::f64) * 12.0)
 end
 
 -- Countless slots — the wards, the deck, and the three piles — never move
 -- with the hand layout; this shorthand names them without inventing a count.
 -- The two hand rows must go through slot_pos_at with their real size.
-function slot_pos(viewport: layout.State, kind: i32, index: i32): Point
+function slot_pos(viewport: layout.State, kind: Slot, index: i32): Point
     return slot_pos_at(viewport, kind, index, 5)
 end
 
 -- Centre of a board slot's card box, in a hand row laid out for `count`.
-function slot_center(viewport: layout.State, kind: i32, index: i32, count: i32): Point
+function slot_center(viewport: layout.State, kind: Slot, index: i32, count: i32): Point
     local slot: Point = slot_pos_at(viewport, kind, index, count)
     return point(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
 end
@@ -408,7 +417,7 @@ function bound_hand_center(viewport: layout.State, index: i32, part: f64, count:
         slot.y + card.height * 0.5 - math.cos(angle) * card.bind_lift)
 end
 
-function slot_hidden(anims: {Anim}, clock: f64, kind: i32, index: i32): bool
+function slot_hidden(anims: {Anim}, clock: f64, kind: Slot, index: i32): bool
     for anim in anims do
         if anim.dest_kind == kind and anim.dest_index == index and clock < anim.vanish then
             return true
@@ -417,7 +426,7 @@ function slot_hidden(anims: {Anim}, clock: f64, kind: i32, index: i32): bool
     return false
 end
 
-function hidden_slots(anims: {Anim}, clock: f64, kind: i32, count: i32): {bool}
+function hidden_slots(anims: {Anim}, clock: f64, kind: Slot, count: i32): {bool}
     local flags: {bool} = {}
     for index = 0::i32, count - 1 do
         table.insert(flags, slot_hidden(anims, clock, kind, index))
@@ -909,8 +918,8 @@ end
 -- How many of a pile's cards have actually arrived: the ledger's total minus
 -- every card still flying a leg that lands on that pile, so the stack only
 -- thickens when a card visibly reaches it. The feint's aside legs pass the burn
--- anchor as a waypoint, but they carry dest_kind -1 and stay uncounted.
-function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: i32): i32
+-- anchor as a waypoint, but they carry slot_none and stay uncounted.
+function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: Slot): i32
     local pending: i32 = 0
     for anim in anims do
         if anim.dest_kind == dest_kind and clock < anim.vanish then pending += 1 end
@@ -920,7 +929,7 @@ end
 
 function draw_pile(
     surface: entity.Surface, viewport: layout.State,
-    cards: {game.Card}, count: i32, kind: i32
+    cards: {game.Card}, count: i32, kind: Slot
 ): unit
     local slot: Point = slot_pos(viewport, kind, 0)
     pile.node(cards, count).paint(
@@ -1462,6 +1471,7 @@ return {
     -- The board anchor, face-mode, and easing vocabulary Anim records use.
     -- Declared once here so choreography builds animations against the same
     -- ids this module interprets, instead of mirroring the integers.
+    slot_none = SLOT_NONE,
     slot_player = SLOT_PLAYER,
     slot_computer = SLOT_COMPUTER,
     slot_middle = SLOT_MIDDLE,

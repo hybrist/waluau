@@ -1717,6 +1717,19 @@ fn infer_expr_inner(
                     if right_ty != Type::Bool {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
+                } else if matches!(&left_ty, Type::Opaque { ty, .. } if ty.is_numeric()) {
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(left_ty.clone()),
+                    )?;
+                    if right_ty != left_ty {
+                        return Err(Diagnostic::new(
+                            "== requires both enum operands to have the same nominal type",
+                        ));
+                    }
                 } else if left_ty.is_numeric() {
                     let _ = infer_numeric_common_type(
                         left,

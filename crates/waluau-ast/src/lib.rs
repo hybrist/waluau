@@ -565,6 +565,11 @@ pub enum Stmt {
         then_body: Vec<Stmt>,
         else_body: Vec<Stmt>,
     },
+    Match {
+        value: Expr,
+        enum_ty: Type,
+        arms: Vec<EnumMatchArm>,
+    },
     While {
         condition: Expr,
         body: Vec<Stmt>,
@@ -601,6 +606,13 @@ pub enum Stmt {
         values: Vec<Expr>,
     },
     Expr(Expr),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumMatchArm {
+    pub variant: String,
+    pub ordinal: i32,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1023,6 +1035,16 @@ impl Resolver {
                     self.resolve_stmt(s)?;
                 }
                 self.exit_scope();
+            }
+            Stmt::Match { value, arms, .. } => {
+                self.resolve_expr(value)?;
+                for arm in arms {
+                    self.enter_scope();
+                    for stmt in &mut arm.body {
+                        self.resolve_stmt(stmt)?;
+                    }
+                    self.exit_scope();
+                }
             }
             Stmt::While { condition, body } => {
                 self.resolve_expr(condition)?;

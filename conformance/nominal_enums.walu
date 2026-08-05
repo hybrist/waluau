@@ -1,0 +1,22 @@
+enum Direction { north, east, south, west }
+enum Facing { north, east, south, west }
+
+function turn_score(direction: Direction): i32
+    local score: i32 = 0
+    match direction do
+    case Direction.north then
+        score = 10
+    case Direction.east then
+        score = 20
+    case Direction.south then
+        score = 30
+    case Direction.west then
+        score = 40
+    end
+    return score
+end
+
+local direction: Direction = Direction.south
+local facing: Facing = Facing.south
+assert(turn_score(direction) == 30)
+assert((facing::i32) == 2)

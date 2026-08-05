@@ -582,6 +582,24 @@ impl<'a> Monomorphizer<'a> {
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<Stmt, Diagnostic> {
         Ok(match stmt {
+            Stmt::Match {
+                value,
+                enum_ty,
+                arms,
+            } => Stmt::Match {
+                value: self.rewrite_expr(value, subst, active, types)?,
+                enum_ty: substitute_type(enum_ty, subst),
+                arms: arms
+                    .iter()
+                    .map(|arm| {
+                        Ok(waluau_ast::EnumMatchArm {
+                            variant: arm.variant.clone(),
+                            ordinal: arm.ordinal,
+                            body: self.rewrite_stmts(&arm.body, subst, active, &mut types.clone())?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Diagnostic>>()?,
+            },
             Stmt::Let {
                 name,
                 symbol_id,

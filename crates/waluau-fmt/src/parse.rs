@@ -151,6 +151,9 @@ impl Parser {
     }
 
     fn parse_top_level_item(&mut self) -> Result<Node, Diagnostic> {
+        if self.at_kw("enum") && self.at_n(1, &ident()) && self.at_n(2, &TokenKind::LBrace) {
+            return self.parse_enum_decl();
+        }
         if self.is_type_decl_start() {
             return self.parse_type_decl();
         }
@@ -167,6 +170,27 @@ impl Parser {
             return self.parse_declare_const();
         }
         self.parse_stmt()
+    }
+
+    fn parse_enum_decl(&mut self) -> Result<Node, Diagnostic> {
+        let mut c = Vec::new();
+        self.bump(&mut c); // enum
+        self.expect(&ident(), &mut c, "expected enum name")?;
+        self.expect(&TokenKind::LBrace, &mut c, "expected '{' after enum name")?;
+        while !self.at(&TokenKind::RBrace) && !self.eof() {
+            let mut variant = Vec::new();
+            self.expect(&ident(), &mut variant, "expected enum variant")?;
+            c.push(Self::tree(SyntaxKind::NameExpr, variant));
+            if !self.eat(&TokenKind::Comma, &mut Vec::new()) {
+                break;
+            }
+        }
+        self.expect(
+            &TokenKind::RBrace,
+            &mut c,
+            "expected '}' after enum variants",
+        )?;
+        Ok(Self::tree(SyntaxKind::EnumDecl, c))
     }
 
     fn is_type_decl_start(&self) -> bool {
@@ -308,6 +332,9 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Node, Diagnostic> {
+        if self.at_kw("match") {
+            return self.parse_match();
+        }
         if self.at(&TokenKind::Local) {
             return self.parse_local();
         }
@@ -343,6 +370,38 @@ impl Parser {
             return self.parse_return();
         }
         self.parse_assign_or_expr()
+    }
+
+    fn parse_match(&mut self) -> Result<Node, Diagnostic> {
+        let mut c = Vec::new();
+        self.bump(&mut c); // match
+        c.push(self.parse_expr()?);
+        self.expect(&TokenKind::Do, &mut c, "expected 'do' after match value")?;
+        while !self.at(&TokenKind::End) && !self.eof() {
+            if !self.at_kw("case") {
+                return Err(self.error("expected 'case' or 'end' in match"));
+            }
+            let mut arm = Vec::new();
+            self.bump(&mut arm); // case
+            let mut pattern = Vec::new();
+            self.expect(&ident(), &mut pattern, "expected enum name")?;
+            self.expect(&TokenKind::Dot, &mut pattern, "expected '.' in match case")?;
+            self.expect(&ident(), &mut pattern, "expected enum variant")?;
+            arm.push(Self::tree(SyntaxKind::FieldExpr, pattern));
+            self.expect(
+                &TokenKind::Then,
+                &mut arm,
+                "expected 'then' after match case",
+            )?;
+            let mut body = Vec::new();
+            while !self.at(&TokenKind::End) && !self.at_kw("case") && !self.eof() {
+                body.push(self.parse_stmt()?);
+            }
+            arm.push(Self::tree(SyntaxKind::Block, body));
+            c.push(Self::tree(SyntaxKind::MatchArm, arm));
+        }
+        self.expect(&TokenKind::End, &mut c, "expected 'end' after match")?;
+        Ok(Self::tree(SyntaxKind::MatchStmt, c))
     }
 
     fn parse_local(&mut self) -> Result<Node, Diagnostic> {

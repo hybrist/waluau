@@ -1,0 +1,6 @@
+-- conformance: error=cannot implicitly convert Facing to Direction
+enum Direction { north, south }
+enum Facing { north, south }
+
+local facing: Facing = Facing.north
+local direction: Direction = facing
