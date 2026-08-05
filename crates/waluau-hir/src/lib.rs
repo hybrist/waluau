@@ -437,6 +437,17 @@ fn localize_stmt_types(stmts: &mut [Stmt], file_path: &str, opaque: &ModuleOpaqu
                 localize_stmt_types(then_body, file_path, opaque);
                 localize_stmt_types(else_body, file_path, opaque);
             }
+            Stmt::Match {
+                value,
+                enum_ty,
+                arms,
+            } => {
+                *enum_ty = type_visible_from_file(enum_ty, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+                for arm in arms {
+                    localize_stmt_types(&mut arm.body, file_path, opaque);
+                }
+            }
             Stmt::While { condition, body } => {
                 localize_expr_types(condition, file_path, opaque);
                 localize_stmt_types(body, file_path, opaque);
@@ -501,7 +512,7 @@ fn function_visible_from_file(function: &Function, opaque: &ModuleOpaqueTypes) -
     visible
 }
 
-fn top_level_functions_for_check(program: &Program) -> Vec<Function> {
+fn top_level_functions_for_check(program: &Program, resolved_body: &[Stmt]) -> Vec<Function> {
     debug_assert_eq!(program.top_level.len(), program.top_level_file_paths.len());
     let mut functions = Vec::new();
     let mut start = 0;
@@ -518,7 +529,7 @@ fn top_level_functions_for_check(program: &Program) -> Vec<Function> {
             params: Vec::new(),
             vararg: false,
             return_type: Some(Type::Unit),
-            body: program.top_level[start..end].to_vec(),
+            body: resolved_body[start..end].to_vec(),
             file_path: file_path.clone(),
         });
         start = end;
@@ -4078,22 +4089,24 @@ fn type_check_and_infer_collect_inner(
     // privacy is checked per source module. This preserves initializer order
     // and storage while preventing an importing module's top level from seeing
     // another module's opaque representation.
-    for function in top_level_functions_for_check(&typed) {
-        let mut visible_function = function_visible_from_file(&function, &module_opaque);
-        let mut visible_signatures =
+    let top_level_body = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .map(|function| function.body.as_slice())
+        .unwrap_or_default();
+    for function in top_level_functions_for_check(&typed, top_level_body) {
+        let visible_function = function_visible_from_file(&function, &module_opaque);
+        let visible_signatures =
             signatures_visible_from_file(&fn_signatures, &function.file_path, &module_opaque);
-        if let Err(error) =
-            resolve_implicit_self_functions(&mut visible_function.body, &mut visible_signatures)
-        {
-            errors.push(error.with_file_path_if_missing(function.file_path.clone()));
-            continue;
-        }
+        let visible_bindings =
+            bindings_visible_from_file(&module_bindings, &function.file_path, &module_opaque);
         errors.extend(
             statements::check_function_collect(
                 &visible_function,
                 &visible_signatures,
                 &HashSet::new(),
-                &HashMap::new(),
+                &visible_bindings,
             )
             .into_iter()
             .map(|error| error.with_file_path_if_missing(function.file_path.clone())),

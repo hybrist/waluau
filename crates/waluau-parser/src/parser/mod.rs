@@ -676,6 +676,8 @@ impl Parser {
             name,
             type_params: Vec::new(),
             ty,
+            module_opaque: false,
+            file_path: self.file_path.clone(),
         })
     }
 
