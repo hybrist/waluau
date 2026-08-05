@@ -68,6 +68,12 @@ pub struct TypeDeclaration {
     pub name: String,
     pub type_params: Vec<String>,
     pub ty: Type,
+    /// Whether importing modules see this alias as an opaque nominal handle.
+    /// The declaring file still type-checks against `ty`; lowering always uses
+    /// `ty`, so this changes no runtime representation.
+    pub module_opaque: bool,
+    /// Source file that owns the representation of a module-opaque alias.
+    pub file_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]

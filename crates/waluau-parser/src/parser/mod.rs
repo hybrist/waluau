@@ -577,7 +577,7 @@ impl Parser {
     }
 
     fn is_type_decl_start(&self) -> bool {
-        matches!(
+        let plain = matches!(
             (
                 self.peek().map(|token| &token.kind),
                 self.peek_n(1).map(|token| &token.kind),
@@ -588,7 +588,22 @@ impl Parser {
                 Some(TokenKind::Identifier(_)),
                 Some(TokenKind::Equal | TokenKind::Less)
             ) if keyword == "type"
-        )
+        );
+        let opaque = matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+                self.peek_n(2).map(|token| &token.kind),
+                self.peek_n(3).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(opaque)),
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Identifier(_)),
+                Some(TokenKind::Equal | TokenKind::Less)
+            ) if opaque == "opaque" && keyword == "type"
+        );
+        plain || opaque
     }
 
     fn is_enum_decl_start(&self) -> bool {
@@ -660,7 +675,13 @@ impl Parser {
     }
 
     fn parse_type_decl(&mut self) -> Result<TypeDeclaration, Diagnostic> {
-        let keyword = self.expect_identifier()?;
+        let first = self.expect_identifier()?;
+        let module_opaque = first == "opaque";
+        let keyword = if module_opaque {
+            self.expect_identifier()?
+        } else {
+            first
+        };
         if keyword != "type" {
             return Err(Diagnostic::new("expected 'type'"));
         }
@@ -673,6 +694,8 @@ impl Parser {
             name,
             type_params,
             ty,
+            module_opaque,
+            file_path: self.file_path.clone(),
         });
         self.type_param_scope.truncate(scope_token);
         if let Ok(declaration) = &parsed {
@@ -689,8 +712,14 @@ impl Parser {
                 0,
             );
             self.definitions[index].detail = Some(format!(
-                "type {}{rendered_params} = {}",
-                declaration.name, declaration.ty
+                "{}type {}{rendered_params} = {}",
+                if declaration.module_opaque {
+                    "opaque "
+                } else {
+                    ""
+                },
+                declaration.name,
+                declaration.ty
             ));
         }
         parsed

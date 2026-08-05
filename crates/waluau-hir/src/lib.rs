@@ -136,6 +136,363 @@ fn function_module_bindings<'a>(
     }
 }
 
+/// Canonical linked opaque type name -> (declaring file, representation).
+///
+/// Module-opaque aliases keep the ordinary `Type::Opaque` lowering path. This
+/// table is used only to replace their representation with `unknown` while a
+/// consumer file is being checked, preserving nominal identity without a
+/// runtime wrapper.
+type ModuleOpaqueTypes = HashMap<String, (String, Type)>;
+
+fn module_opaque_types(program: &Program) -> ModuleOpaqueTypes {
+    program
+        .type_declarations
+        .iter()
+        .filter(|decl| decl.module_opaque)
+        .map(|decl| (decl.name.clone(), (decl.file_path.clone(), decl.ty.clone())))
+        .collect()
+}
+
+fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes) -> Type {
+    match ty {
+        Type::Opaque { name, .. }
+            if opaque
+                .get(name)
+                .is_some_and(|(owner, _)| owner != file_path) =>
+        {
+            Type::Opaque {
+                name: name.clone(),
+                ty: Box::new(Type::Unknown),
+            }
+        }
+        Type::Opaque { name, ty } => Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(type_visible_from_file(ty, file_path, opaque)),
+        },
+        Type::ExternSubtype(parent) => {
+            Type::ExternSubtype(Box::new(type_visible_from_file(parent, file_path, opaque)))
+        }
+        Type::Nullable(inner) => {
+            Type::Nullable(Box::new(type_visible_from_file(inner, file_path, opaque)))
+        }
+        Type::Array(inner) => {
+            Type::Array(Box::new(type_visible_from_file(inner, file_path, opaque)))
+        }
+        Type::Variadic(inner) => {
+            Type::Variadic(Box::new(type_visible_from_file(inner, file_path, opaque)))
+        }
+        Type::Multi(types) => Type::Multi(
+            types
+                .iter()
+                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .collect(),
+        ),
+        Type::Function {
+            params,
+            return_type,
+        } => Type::Function {
+            params: params
+                .iter()
+                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .collect(),
+            return_type: Box::new(type_visible_from_file(return_type, file_path, opaque)),
+        },
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), type_visible_from_file(ty, file_path, opaque)))
+                .collect(),
+        ),
+        Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+        }),
+        Type::TaggedUnion(variants) => Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| waluau_ast::TaggedVariant {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+                })
+                .collect(),
+        ),
+        Type::Named { name, type_args } => Type::Named {
+            name: name.clone(),
+            type_args: type_args
+                .iter()
+                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+fn localize_expr_types(expr: &mut Expr, file_path: &str, opaque: &ModuleOpaqueTypes) {
+    match expr {
+        Expr::Unary { expr, .. } | Expr::IsVariant { expr, .. } => {
+            localize_expr_types(expr, file_path, opaque)
+        }
+        Expr::Cast { expr, ty, .. } => {
+            *ty = type_visible_from_file(ty, file_path, opaque);
+            localize_expr_types(expr, file_path, opaque);
+        }
+        Expr::Binary { left, right, .. } => {
+            localize_expr_types(left, file_path, opaque);
+            localize_expr_types(right, file_path, opaque);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            localize_expr_types(condition, file_path, opaque);
+            localize_expr_types(then_expr, file_path, opaque);
+            localize_expr_types(else_expr, file_path, opaque);
+        }
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            ..
+        } => {
+            localize_expr_types(callee, file_path, opaque);
+            for ty in type_args {
+                *ty = type_visible_from_file(ty, file_path, opaque);
+            }
+            for arg in args {
+                localize_expr_types(arg, file_path, opaque);
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            type_args,
+            args,
+            ..
+        } => {
+            localize_expr_types(receiver, file_path, opaque);
+            for ty in type_args {
+                *ty = type_visible_from_file(ty, file_path, opaque);
+            }
+            for arg in args {
+                localize_expr_types(arg, file_path, opaque);
+            }
+        }
+        Expr::Function(function) => {
+            for param in &mut function.params {
+                param.ty = type_visible_from_file(&param.ty, file_path, opaque);
+            }
+            if let Some(return_type) = &mut function.return_type {
+                *return_type = type_visible_from_file(return_type, file_path, opaque);
+            }
+            localize_stmt_types(&mut function.body, file_path, opaque);
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                localize_expr_types(element, file_path, opaque);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                localize_expr_types(&mut field.value, file_path, opaque);
+            }
+        }
+        Expr::Field { base, .. } => localize_expr_types(base, file_path, opaque),
+        Expr::Index { base, index, .. } => {
+            localize_expr_types(base, file_path, opaque);
+            localize_expr_types(index, file_path, opaque);
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Vararg(..)
+        | Expr::Require(..) => {}
+    }
+}
+
+fn localize_stmt_types(stmts: &mut [Stmt], file_path: &str, opaque: &ModuleOpaqueTypes) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { ty, value, .. } => {
+                if let Some(ty) = ty {
+                    *ty = type_visible_from_file(ty, file_path, opaque);
+                }
+                localize_expr_types(value, file_path, opaque);
+            }
+            Stmt::Assign { value, .. } | Stmt::Return(value) | Stmt::Expr(value) => {
+                localize_expr_types(value, file_path, opaque)
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                localize_expr_types(base, file_path, opaque);
+                localize_expr_types(index, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                localize_expr_types(base, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                localize_expr_types(condition, file_path, opaque);
+                localize_stmt_types(then_body, file_path, opaque);
+                localize_stmt_types(else_body, file_path, opaque);
+            }
+            Stmt::IfCast {
+                target_ty,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                *target_ty = type_visible_from_file(target_ty, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+                localize_stmt_types(then_body, file_path, opaque);
+                localize_stmt_types(else_body, file_path, opaque);
+            }
+            Stmt::While { condition, body } => {
+                localize_expr_types(condition, file_path, opaque);
+                localize_stmt_types(body, file_path, opaque);
+            }
+            Stmt::Repeat { body, condition } => {
+                localize_stmt_types(body, file_path, opaque);
+                localize_expr_types(condition, file_path, opaque);
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                localize_expr_types(start, file_path, opaque);
+                localize_expr_types(stop, file_path, opaque);
+                if let Some(step) = step {
+                    localize_expr_types(step, file_path, opaque);
+                }
+                localize_stmt_types(body, file_path, opaque);
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                localize_expr_types(iterator, file_path, opaque);
+                localize_stmt_types(body, file_path, opaque);
+            }
+            Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
+                for value in values {
+                    localize_expr_types(value, file_path, opaque);
+                }
+            }
+            Stmt::LetMulti { bindings, values } => {
+                for binding in bindings {
+                    if let Some(ty) = &mut binding.ty {
+                        *ty = type_visible_from_file(ty, file_path, opaque);
+                    }
+                }
+                for value in values {
+                    localize_expr_types(value, file_path, opaque);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+}
+
+fn function_visible_from_file(function: &Function, opaque: &ModuleOpaqueTypes) -> Function {
+    // Top-level statements from all linked modules currently share one
+    // synthetic initializer. Keep their representations visible until the
+    // linker gives those statements individual source ownership.
+    if function.name.to_string() == "__waluau_top_level_init" {
+        return function.clone();
+    }
+    let mut visible = function.clone();
+    for param in &mut visible.params {
+        param.ty = type_visible_from_file(&param.ty, &visible.file_path, opaque);
+    }
+    if let Some(return_type) = &mut visible.return_type {
+        *return_type = type_visible_from_file(return_type, &visible.file_path, opaque);
+    }
+    localize_stmt_types(&mut visible.body, &visible.file_path, opaque);
+    visible
+}
+
+fn signatures_visible_from_file(
+    signatures: &HashMap<String, FnSignature>,
+    file_path: &str,
+    opaque: &ModuleOpaqueTypes,
+) -> HashMap<String, FnSignature> {
+    signatures
+        .iter()
+        .map(|(name, signature)| {
+            let signature = match signature {
+                FnSignature::Mono {
+                    params,
+                    vararg,
+                    return_type,
+                } => FnSignature::Mono {
+                    params: params
+                        .iter()
+                        .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                        .collect(),
+                    vararg: *vararg,
+                    return_type: type_visible_from_file(return_type, file_path, opaque),
+                },
+                FnSignature::Generic(scheme) => FnSignature::Generic(GenericScheme {
+                    type_params: scheme.type_params.clone(),
+                    params: scheme
+                        .params
+                        .iter()
+                        .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                        .collect(),
+                    return_type: type_visible_from_file(&scheme.return_type, file_path, opaque),
+                }),
+                FnSignature::Overloaded(variants) => FnSignature::Overloaded(
+                    variants
+                        .iter()
+                        .map(|variant| OverloadVariant {
+                            name: variant.name.clone(),
+                            params: variant
+                                .params
+                                .iter()
+                                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                                .collect(),
+                            return_type: type_visible_from_file(
+                                &variant.return_type,
+                                file_path,
+                                opaque,
+                            ),
+                        })
+                        .collect(),
+                ),
+                FnSignature::Const { ty } => FnSignature::Const {
+                    ty: type_visible_from_file(ty, file_path, opaque),
+                },
+            };
+            (name.clone(), signature)
+        })
+        .collect()
+}
+
+fn bindings_visible_from_file(
+    bindings: &HashMap<String, Binding>,
+    file_path: &str,
+    opaque: &ModuleOpaqueTypes,
+) -> HashMap<String, Binding> {
+    bindings
+        .iter()
+        .map(|(name, binding)| {
+            let mut binding = binding.clone();
+            binding.ty = type_visible_from_file(&binding.ty, file_path, opaque);
+            (name.clone(), binding)
+        })
+        .collect()
+}
+
 fn is_builtin_callee(expr: &Expr) -> bool {
     match expr {
         Expr::Name(name, _, _) => matches!(
