@@ -105,8 +105,7 @@ end
 -- mana wall as well as an eleven-relic one.
 --
 -- The table is written out inside the function rather than held module-side so
--- the values sit next to the reasoning about them. (An array literal at module
--- scope would compile; the record-literal case that does not is waluau-tku6.)
+-- the values sit next to the reasoning about them.
 function ante_at(vault: i32, rush: bool): i32
     local table_values: {i32} = { 3, 5, 8, 12, 16, 21, 25, 29, 34 }
     if rush then table_values = { 5, 10, 16, 23, 30 } end

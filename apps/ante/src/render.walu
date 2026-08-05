@@ -461,26 +461,12 @@ function nowhere(): box.Rect
     return entity.rect(0.0, 0.0, -1.0, -1.0)
 end
 
--- TODO(waluau-tku6): A module-level local whose initializer is a record literal
--- is unnameable from every top-level function in the module, so this
--- constructor exists only to make the initializer a call. Once that is fixed,
--- drop no_targets() and write the record directly:
---
---     local targets: Targets = {
---         help = nowhere(), commit = nowhere(), pass = nowhere(),
---     }
---
---     function clear_targets(): unit
---         targets = { help = nowhere(), commit = nowhere(), pass = nowhere() }
---     end
-function no_targets(): Targets
-    return { help = nowhere(), commit = nowhere(), pass = nowhere() }
-end
-
-local targets: Targets = no_targets()
+local targets: Targets = {
+    help = nowhere(), commit = nowhere(), pass = nowhere(),
+}
 
 function clear_targets(): unit
-    targets = no_targets()
+    targets = { help = nowhere(), commit = nowhere(), pass = nowhere() }
 end
 
 function hit_commit(at: Point): bool
