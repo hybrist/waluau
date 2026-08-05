@@ -512,6 +512,7 @@ fn merge_with_ambient_declarations(
         ambient_sources.extend(vitest_program.sources);
     }
     let mut top_level = Vec::new();
+    let mut top_level_file_paths = Vec::new();
     let mut export_cache = HashMap::new();
 
     for (id, _) in modules.iter().enumerate() {
@@ -624,6 +625,10 @@ fn merge_with_ambient_declarations(
         if id != entry_id {
             rename_imported_top_level_locals(&mut lowered, &prefix);
         }
+        top_level_file_paths.extend(std::iter::repeat_n(
+            module.program.entry_file_path.clone(),
+            lowered.len(),
+        ));
         top_level.extend(lowered);
     }
 
@@ -639,6 +644,7 @@ fn merge_with_ambient_declarations(
         declared_constants,
         type_declarations,
         top_level,
+        top_level_file_paths,
         // A trailing return is dependency-facing module metadata, not the
         // entry module's Wasm export declaration. Inline functions from every
         // module export were hoisted above; discard the entry expression so
@@ -658,7 +664,14 @@ fn extend_unique_type_declarations(
             .iter()
             .find(|existing| existing.name == declaration.name)
         {
-            if existing == &declaration {
+            // `file_path` is source provenance, not part of an ambient type's
+            // definition. DOM and TFJS both declare shared host types such as
+            // `Promise`; those declarations remain compatible even though
+            // they were parsed from different virtual extern files.
+            if existing.type_params == declaration.type_params
+                && existing.ty == declaration.ty
+                && existing.module_opaque == declaration.module_opaque
+            {
                 continue;
             }
             return Err(format!(
@@ -2726,6 +2739,33 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
 mod tests {
     use super::link_programs;
     use waluau_ast::{Expr, Stmt};
+
+    #[test]
+    fn shared_ambient_types_from_dom_and_tfjs_do_not_conflict() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            r#"
+                local tf = require("tfjs")
+                local window = require("dom:window")
+
+                function main(): i32
+                    return 0
+                end
+            "#
+            .to_string(),
+        )]);
+
+        let program =
+            link_programs(&files, "main.walu").expect("shared ambient types should merge");
+        assert_eq!(
+            program
+                .type_declarations
+                .iter()
+                .filter(|declaration| declaration.name == "Promise")
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn bare_vitest_require_merges_test_declarations() {

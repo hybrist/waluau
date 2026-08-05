@@ -37,7 +37,7 @@ type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {
 -- their mana, both the wager stake and the resource each cast burns. Both the
 -- loadout and the mana are dealt in rather than fixed, so a run can hand one
 -- vault what the previous one left standing and whatever it bought since.
-type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: i32 }
+opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: i32 }
 type View = {
     deck_count: i32,
     player_hand: {HandSlot},
@@ -50,6 +50,13 @@ type View = {
     player_tricks: i32,
     computer_tricks: i32,
     swap_open: bool,
+    pot: i32,
+    player_wager: i32,
+    computer_wager: i32,
+    swap_winner: i32,
+    swap_count: i32,
+    swap_hand_indices: {i32},
+    swap_middle_indices: {i32},
     finished: bool,
     spells: {Spell}
 }
@@ -62,9 +69,6 @@ type TrickSide = {
     value: i32,
     hand: {HandSlot}
 }
--- TODO(waluau-language): Opaque exported record types with module-private
--- fields would let State expose only domain operations and read-only views.
--- Until then, test/game_fixture.walu centralizes the one mutable test adapter.
 const MIN_RANK: i32 = 2
 const MAX_RANK: i32 = 14
 const MIN_SUIT: i32 = 0
@@ -932,9 +936,79 @@ function view(state: State): View
         player_tricks = state.player_tricks,
         computer_tricks = state.computer_tricks,
         swap_open = state.swap_open,
+        pot = state.pot,
+        player_wager = state.player_wager,
+        computer_wager = state.computer_wager,
+        swap_winner = state.swap_winner,
+        swap_count = state.swap_count,
+        swap_hand_indices = state.swap_hand_indices,
+        swap_middle_indices = state.swap_middle_indices,
         finished = state.finished,
         spells = state.spells,
     }
+end
+
+-- The deterministic rules adapter used by tests. Representation mutation
+-- stays in this defining module; scenario tests cross the same opaque seam as
+-- production and can only arrange the states named here.
+function test_fresh_slots(cards: {Card}): {HandSlot}
+    local slots: {HandSlot} = {}
+    for card in cards do
+        table.insert(slots, { card = { rank = card.rank, suit = card.suit }, known = false })
+    end
+    return slots
+end
+
+function test_arrange_breach(
+    state: State,
+    middle: {Card},
+    player_hand: {Card},
+    computer_hand: {Card}
+): unit
+    state.middle = clone_cards(middle)
+    state.player_hand = test_fresh_slots(player_hand)
+    state.computer_hand = test_fresh_slots(computer_hand)
+end
+
+function test_arrange_arch_mage(
+    state: State,
+    middle: {Card},
+    computer_hand: {Card}
+): unit
+    state.middle = clone_cards(middle)
+    state.computer_hand = test_fresh_slots(computer_hand)
+end
+
+function test_arrange_player(
+    state: State,
+    player_hand: {Card},
+    player_known: {bool}
+): unit
+    local slots: {HandSlot} = test_fresh_slots(player_hand)
+    for index, known in player_known do slots[index].known = known end
+    state.player_hand = slots
+end
+
+function test_set_player_points(state: State, points: i32): unit
+    state.player_points = points
+end
+
+function test_finish(state: State, computer_tricks: i32): unit
+    state.finished = true
+    state.computer_tricks = computer_tricks
+end
+
+function test_set_swap_trace(
+    state: State,
+    hand_indices: {i32},
+    middle_indices: {i32}
+): unit
+    state.swap_hand_indices = hand_indices
+    state.swap_middle_indices = middle_indices
+end
+
+function test_next_draw(state: State): Card
+    return state.deck[#state.deck - 1]
 end
 
 function State:is_finished(): bool
@@ -1235,6 +1309,13 @@ return {
     restore = restore,
     new_spell = new_spell,
     clone_spells = clone_spells,
+    test_arrange_breach = test_arrange_breach,
+    test_arrange_arch_mage = test_arrange_arch_mage,
+    test_arrange_player = test_arrange_player,
+    test_set_player_points = test_set_player_points,
+    test_finish = test_finish,
+    test_set_swap_trace = test_set_swap_trace,
+    test_next_draw = test_next_draw,
     spell_firebolt = SPELL_FIREBOLT,
     spell_freeze_ray = SPELL_FREEZE_RAY,
     spell_raise_card = SPELL_RAISE_CARD,

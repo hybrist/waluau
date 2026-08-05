@@ -4,31 +4,13 @@
 
 local game = require("../src/game")
 
-function clone_cards(cards: {game.Card}): {game.Card}
-    local copy: {game.Card} = {}
-    for card in cards do table.insert(copy, { rank = card.rank, suit = card.suit }) end
-    return copy
-end
-
--- Hand slots for freshly arranged cards: nothing arranged this way has been
--- watched by the opponent yet.
-function fresh_slots(cards: {game.Card}): {game.HandSlot}
-    local slots: {game.HandSlot} = {}
-    for card in cards do
-        table.insert(slots, { card = { rank = card.rank, suit = card.suit }, known = false })
-    end
-    return slots
-end
-
 function arrange_breach(
     state: game.State,
     middle: {game.Card},
     player_hand: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    state.middle = clone_cards(middle)
-    state.player_hand = fresh_slots(player_hand)
-    state.computer_hand = fresh_slots(computer_hand)
+    game.test_arrange_breach(state, middle, player_hand, computer_hand)
 end
 
 function arrange_arch_mage(
@@ -36,8 +18,7 @@ function arrange_arch_mage(
     middle: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    state.middle = clone_cards(middle)
-    state.computer_hand = fresh_slots(computer_hand)
+    game.test_arrange_arch_mage(state, middle, computer_hand)
 end
 
 function arrange_player(
@@ -45,20 +26,17 @@ function arrange_player(
     player_hand: {game.Card},
     player_known: {bool}
 ): unit
-    local slots: {game.HandSlot} = fresh_slots(player_hand)
-    for index, known in player_known do slots[index].known = known end
-    state.player_hand = slots
+    game.test_arrange_player(state, player_hand, player_known)
 end
 
 function set_player_points(state: game.State, points: i32): unit
-    state.player_points = points
+    game.test_set_player_points(state, points)
 end
 
 -- Force a finished heist holding the given number of wards for the Arch Mage,
 -- so run-level tests reach a verdict without playing five breaches out.
 function finish(state: game.State, computer_tricks: i32): unit
-    state.finished = true
-    state.computer_tricks = computer_tricks
+    game.test_finish(state, computer_tricks)
 end
 
 function set_swap_trace(
@@ -66,8 +44,7 @@ function set_swap_trace(
     hand_indices: {i32},
     middle_indices: {i32}
 ): unit
-    state.swap_hand_indices = hand_indices
-    state.swap_middle_indices = middle_indices
+    game.test_set_swap_trace(state, hand_indices, middle_indices)
 end
 
 return {

@@ -1183,6 +1183,7 @@ fn erase_opaque_types(program: &Program) -> Program {
         declared_constants: program.declared_constants.clone(),
         type_declarations: Vec::new(),
         top_level: program.top_level.iter().map(erase_stmt_opaque_types).collect(),
+        top_level_file_paths: program.top_level_file_paths.clone(),
         export: program.export.as_ref().map(erase_expr_opaque_types),
         sources: program.sources.clone(),
         entry_file_path: program.entry_file_path.clone(),

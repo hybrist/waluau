@@ -159,6 +159,7 @@ impl Parser {
         let mut declared_constants = Vec::new();
         let mut type_declarations = Vec::new();
         let mut top_level = Vec::new();
+        let mut top_level_file_paths = Vec::new();
         let mut export = None;
         while self.peek().is_some() {
             // Luau allows `;` as an optional statement separator.
@@ -236,7 +237,10 @@ impl Parser {
                     Ok(Stmt::ReturnMulti(_)) => self.record_error(Diagnostic::new(
                         "a module return must export a single value",
                     )),
-                    Ok(stmt) => top_level.push(stmt),
+                    Ok(stmt) => {
+                        top_level.push(stmt);
+                        top_level_file_paths.push(self.file_path.clone());
+                    }
                     Err(error) => {
                         self.record_error(error);
                         self.synchronize_statement(&[], self.index);
@@ -251,6 +255,7 @@ impl Parser {
             declared_constants,
             type_declarations,
             top_level,
+            top_level_file_paths,
             export,
             sources: std::collections::BTreeMap::from([(
                 self.file_path.clone(),
@@ -577,7 +582,7 @@ impl Parser {
     }
 
     fn is_type_decl_start(&self) -> bool {
-        matches!(
+        let plain = matches!(
             (
                 self.peek().map(|token| &token.kind),
                 self.peek_n(1).map(|token| &token.kind),
@@ -588,7 +593,22 @@ impl Parser {
                 Some(TokenKind::Identifier(_)),
                 Some(TokenKind::Equal | TokenKind::Less)
             ) if keyword == "type"
-        )
+        );
+        let opaque = matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+                self.peek_n(2).map(|token| &token.kind),
+                self.peek_n(3).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(opaque)),
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Identifier(_)),
+                Some(TokenKind::Equal | TokenKind::Less)
+            ) if opaque == "opaque" && keyword == "type"
+        );
+        plain || opaque
     }
 
     fn is_enum_decl_start(&self) -> bool {
@@ -656,11 +676,19 @@ impl Parser {
             name,
             type_params: Vec::new(),
             ty,
+            module_opaque: false,
+            file_path: self.file_path.clone(),
         })
     }
 
     fn parse_type_decl(&mut self) -> Result<TypeDeclaration, Diagnostic> {
-        let keyword = self.expect_identifier()?;
+        let first = self.expect_identifier()?;
+        let module_opaque = first == "opaque";
+        let keyword = if module_opaque {
+            self.expect_identifier()?
+        } else {
+            first
+        };
         if keyword != "type" {
             return Err(Diagnostic::new("expected 'type'"));
         }
@@ -673,6 +701,8 @@ impl Parser {
             name,
             type_params,
             ty,
+            module_opaque,
+            file_path: self.file_path.clone(),
         });
         self.type_param_scope.truncate(scope_token);
         if let Ok(declaration) = &parsed {
@@ -689,8 +719,14 @@ impl Parser {
                 0,
             );
             self.definitions[index].detail = Some(format!(
-                "type {}{rendered_params} = {}",
-                declaration.name, declaration.ty
+                "{}type {}{rendered_params} = {}",
+                if declaration.module_opaque {
+                    "opaque "
+                } else {
+                    ""
+                },
+                declaration.name,
+                declaration.ty
             ));
         }
         parsed

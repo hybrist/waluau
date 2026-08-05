@@ -45,6 +45,14 @@ fn keeps_short_constructs_on_one_line() {
 }
 
 #[test]
+fn formats_module_opaque_type_declarations() {
+    assert_eq!(
+        fmt("opaque   type State={value:i32}\n"),
+        "opaque type State = { value: i32 }\n"
+    );
+}
+
+#[test]
 fn preserves_comments_and_blank_lines() {
     let src = "-- header\nlocal a = 1 -- trailing\n\nlocal b = 2\n";
     assert_eq!(

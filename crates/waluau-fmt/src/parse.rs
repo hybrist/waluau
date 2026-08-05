@@ -194,13 +194,20 @@ impl Parser {
     }
 
     fn is_type_decl_start(&self) -> bool {
-        self.at_kw("type")
+        (self.at_kw("type")
             && self.at_n(1, &ident())
-            && (self.at_n(2, &TokenKind::Equal) || self.at_n(2, &TokenKind::Less))
+            && (self.at_n(2, &TokenKind::Equal) || self.at_n(2, &TokenKind::Less)))
+            || (self.at_kw("opaque")
+                && self.kw_n(1, "type")
+                && self.at_n(2, &ident())
+                && (self.at_n(3, &TokenKind::Equal) || self.at_n(3, &TokenKind::Less)))
     }
 
     fn parse_type_decl(&mut self) -> Result<Node, Diagnostic> {
         let mut c = Vec::new();
+        if self.at_kw("opaque") {
+            self.bump(&mut c);
+        }
         self.bump(&mut c); // `type`
         self.expect(&ident(), &mut c, "expected type name")?;
         if self.at(&TokenKind::Less) {

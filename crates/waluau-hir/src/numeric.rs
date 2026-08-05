@@ -352,6 +352,12 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             name: expected_name,
             ty: expected_ty,
         }) => match actual {
+            Type::Record(_) if expected_ty.as_ref() == &Type::Unknown => {
+                Err(Diagnostic::new(format!(
+                    "cannot construct opaque type '{}' outside its defining module",
+                    super::module_type_display_name(&expected_name)
+                )))
+            }
             Type::Opaque {
                 name: actual_name,
                 ty: actual_ty,

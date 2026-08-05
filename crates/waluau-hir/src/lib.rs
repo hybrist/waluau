@@ -86,6 +86,20 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
     }
 }
 
+fn module_type_display_name(name: &str) -> &str {
+    let Some(rest) = name.strip_prefix("__waluau_m") else {
+        return name;
+    };
+    let Some((module_id, display)) = rest.split_once('_') else {
+        return name;
+    };
+    if module_id.bytes().all(|byte| byte.is_ascii_digit()) && !display.is_empty() {
+        display
+    } else {
+        name
+    }
+}
+
 fn collect_module_bindings(
     top_level: &[Stmt],
     fn_signatures: &HashMap<String, FnSignature>,
@@ -134,6 +148,465 @@ fn function_module_bindings<'a>(
     } else {
         bindings
     }
+}
+
+/// Canonical linked opaque type name -> (declaring file, representation).
+///
+/// Module-opaque aliases keep the ordinary `Type::Opaque` lowering path. This
+/// table is used only to replace their representation with `unknown` while a
+/// consumer file is being checked, preserving nominal identity without a
+/// runtime wrapper.
+type ModuleOpaqueTypes = HashMap<String, (String, Type)>;
+
+fn module_opaque_types(program: &Program) -> ModuleOpaqueTypes {
+    program
+        .type_declarations
+        .iter()
+        .filter(|decl| decl.module_opaque)
+        .map(|decl| (decl.name.clone(), (decl.file_path.clone(), decl.ty.clone())))
+        .collect()
+}
+
+fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes) -> Type {
+    match ty {
+        Type::Opaque { name, .. }
+            if opaque
+                .get(name)
+                .is_some_and(|(owner, _)| owner != file_path) =>
+        {
+            Type::Opaque {
+                name: name.clone(),
+                ty: Box::new(Type::Unknown),
+            }
+        }
+        Type::Opaque { name, ty } => Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(type_visible_from_file(ty, file_path, opaque)),
+        },
+        Type::ExternSubtype(parent) => {
+            Type::ExternSubtype(Box::new(type_visible_from_file(parent, file_path, opaque)))
+        }
+        Type::Nullable(inner) => {
+            Type::Nullable(Box::new(type_visible_from_file(inner, file_path, opaque)))
+        }
+        Type::Array(inner) => {
+            Type::Array(Box::new(type_visible_from_file(inner, file_path, opaque)))
+        }
+        Type::Variadic(inner) => {
+            Type::Variadic(Box::new(type_visible_from_file(inner, file_path, opaque)))
+        }
+        Type::Multi(types) => Type::Multi(
+            types
+                .iter()
+                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .collect(),
+        ),
+        Type::Function {
+            params,
+            return_type,
+        } => Type::Function {
+            params: params
+                .iter()
+                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .collect(),
+            return_type: Box::new(type_visible_from_file(return_type, file_path, opaque)),
+        },
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), type_visible_from_file(ty, file_path, opaque)))
+                .collect(),
+        ),
+        Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+        }),
+        Type::TaggedUnion(variants) => Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| waluau_ast::TaggedVariant {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+                })
+                .collect(),
+        ),
+        Type::Named { name, type_args } => Type::Named {
+            name: name.clone(),
+            type_args: type_args
+                .iter()
+                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
+    match ty {
+        Type::Opaque { name, .. } if opaque.contains_key(name) => Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(opaque[name].1.clone()),
+        },
+        Type::Opaque { name, ty } => Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(restore_module_opaque_type(ty, opaque)),
+        },
+        Type::ExternSubtype(parent) => {
+            Type::ExternSubtype(Box::new(restore_module_opaque_type(parent, opaque)))
+        }
+        Type::Nullable(inner) => {
+            Type::Nullable(Box::new(restore_module_opaque_type(inner, opaque)))
+        }
+        Type::Array(inner) => Type::Array(Box::new(restore_module_opaque_type(inner, opaque))),
+        Type::Variadic(inner) => {
+            Type::Variadic(Box::new(restore_module_opaque_type(inner, opaque)))
+        }
+        Type::Multi(types) => Type::Multi(
+            types
+                .iter()
+                .map(|ty| restore_module_opaque_type(ty, opaque))
+                .collect(),
+        ),
+        Type::Function {
+            params,
+            return_type,
+        } => Type::Function {
+            params: params
+                .iter()
+                .map(|ty| restore_module_opaque_type(ty, opaque))
+                .collect(),
+            return_type: Box::new(restore_module_opaque_type(return_type, opaque)),
+        },
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), restore_module_opaque_type(ty, opaque)))
+                .collect(),
+        ),
+        Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(restore_module_opaque_type(&variant.payload, opaque)),
+        }),
+        Type::TaggedUnion(variants) => Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| waluau_ast::TaggedVariant {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(restore_module_opaque_type(&variant.payload, opaque)),
+                })
+                .collect(),
+        ),
+        Type::Named { name, type_args } => Type::Named {
+            name: name.clone(),
+            type_args: type_args
+                .iter()
+                .map(|ty| restore_module_opaque_type(ty, opaque))
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+fn localize_expr_types(expr: &mut Expr, file_path: &str, opaque: &ModuleOpaqueTypes) {
+    match expr {
+        Expr::Unary { expr, .. } | Expr::IsVariant { expr, .. } => {
+            localize_expr_types(expr, file_path, opaque)
+        }
+        Expr::Cast { expr, ty, .. } => {
+            *ty = type_visible_from_file(ty, file_path, opaque);
+            localize_expr_types(expr, file_path, opaque);
+        }
+        Expr::Binary { left, right, .. } => {
+            localize_expr_types(left, file_path, opaque);
+            localize_expr_types(right, file_path, opaque);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            localize_expr_types(condition, file_path, opaque);
+            localize_expr_types(then_expr, file_path, opaque);
+            localize_expr_types(else_expr, file_path, opaque);
+        }
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            ..
+        } => {
+            localize_expr_types(callee, file_path, opaque);
+            for ty in type_args {
+                *ty = type_visible_from_file(ty, file_path, opaque);
+            }
+            for arg in args {
+                localize_expr_types(arg, file_path, opaque);
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            type_args,
+            args,
+            ..
+        } => {
+            localize_expr_types(receiver, file_path, opaque);
+            for ty in type_args {
+                *ty = type_visible_from_file(ty, file_path, opaque);
+            }
+            for arg in args {
+                localize_expr_types(arg, file_path, opaque);
+            }
+        }
+        Expr::Function(function) => {
+            for param in &mut function.params {
+                param.ty = type_visible_from_file(&param.ty, file_path, opaque);
+            }
+            if let Some(return_type) = &mut function.return_type {
+                *return_type = type_visible_from_file(return_type, file_path, opaque);
+            }
+            localize_stmt_types(&mut function.body, file_path, opaque);
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                localize_expr_types(element, file_path, opaque);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                localize_expr_types(&mut field.value, file_path, opaque);
+            }
+        }
+        Expr::Field { base, .. } => localize_expr_types(base, file_path, opaque),
+        Expr::Index { base, index, .. } => {
+            localize_expr_types(base, file_path, opaque);
+            localize_expr_types(index, file_path, opaque);
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Vararg(..)
+        | Expr::Require(..) => {}
+    }
+}
+
+fn localize_stmt_types(stmts: &mut [Stmt], file_path: &str, opaque: &ModuleOpaqueTypes) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { ty, value, .. } => {
+                if let Some(ty) = ty {
+                    *ty = type_visible_from_file(ty, file_path, opaque);
+                }
+                localize_expr_types(value, file_path, opaque);
+            }
+            Stmt::Assign { value, .. } | Stmt::Return(value) | Stmt::Expr(value) => {
+                localize_expr_types(value, file_path, opaque)
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                localize_expr_types(base, file_path, opaque);
+                localize_expr_types(index, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                localize_expr_types(base, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                localize_expr_types(condition, file_path, opaque);
+                localize_stmt_types(then_body, file_path, opaque);
+                localize_stmt_types(else_body, file_path, opaque);
+            }
+            Stmt::IfCast {
+                target_ty,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                *target_ty = type_visible_from_file(target_ty, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+                localize_stmt_types(then_body, file_path, opaque);
+                localize_stmt_types(else_body, file_path, opaque);
+            }
+            Stmt::Match {
+                value,
+                enum_ty,
+                arms,
+            } => {
+                *enum_ty = type_visible_from_file(enum_ty, file_path, opaque);
+                localize_expr_types(value, file_path, opaque);
+                for arm in arms {
+                    localize_stmt_types(&mut arm.body, file_path, opaque);
+                }
+            }
+            Stmt::While { condition, body } => {
+                localize_expr_types(condition, file_path, opaque);
+                localize_stmt_types(body, file_path, opaque);
+            }
+            Stmt::Repeat { body, condition } => {
+                localize_stmt_types(body, file_path, opaque);
+                localize_expr_types(condition, file_path, opaque);
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                localize_expr_types(start, file_path, opaque);
+                localize_expr_types(stop, file_path, opaque);
+                if let Some(step) = step {
+                    localize_expr_types(step, file_path, opaque);
+                }
+                localize_stmt_types(body, file_path, opaque);
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                localize_expr_types(iterator, file_path, opaque);
+                localize_stmt_types(body, file_path, opaque);
+            }
+            Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
+                for value in values {
+                    localize_expr_types(value, file_path, opaque);
+                }
+            }
+            Stmt::LetMulti { bindings, values } => {
+                for binding in bindings {
+                    if let Some(ty) = &mut binding.ty {
+                        *ty = type_visible_from_file(ty, file_path, opaque);
+                    }
+                }
+                for value in values {
+                    localize_expr_types(value, file_path, opaque);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+}
+
+fn function_visible_from_file(function: &Function, opaque: &ModuleOpaqueTypes) -> Function {
+    // Top-level statements from all linked modules currently share one
+    // synthetic initializer. Keep their representations visible until the
+    // linker gives those statements individual source ownership.
+    if function.name.to_string() == "__waluau_top_level_init" {
+        return function.clone();
+    }
+    let mut visible = function.clone();
+    for param in &mut visible.params {
+        param.ty = type_visible_from_file(&param.ty, &visible.file_path, opaque);
+    }
+    if let Some(return_type) = &mut visible.return_type {
+        *return_type = type_visible_from_file(return_type, &visible.file_path, opaque);
+    }
+    localize_stmt_types(&mut visible.body, &visible.file_path, opaque);
+    visible
+}
+
+fn top_level_functions_for_check(program: &Program, resolved_body: &[Stmt]) -> Vec<Function> {
+    debug_assert_eq!(program.top_level.len(), program.top_level_file_paths.len());
+    let mut functions = Vec::new();
+    let mut start = 0;
+    while start < program.top_level.len() {
+        let file_path = &program.top_level_file_paths[start];
+        let mut end = start + 1;
+        while end < program.top_level.len() && program.top_level_file_paths[end] == *file_path {
+            end += 1;
+        }
+        functions.push(Function {
+            name: FunctionName::Simple(format!("__waluau_top_level_check_{}", functions.len())),
+            symbol_id: None,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            vararg: false,
+            return_type: Some(Type::Unit),
+            body: resolved_body[start..end].to_vec(),
+            file_path: file_path.clone(),
+        });
+        start = end;
+    }
+    functions
+}
+
+fn signatures_visible_from_file(
+    signatures: &HashMap<String, FnSignature>,
+    file_path: &str,
+    opaque: &ModuleOpaqueTypes,
+) -> HashMap<String, FnSignature> {
+    signatures
+        .iter()
+        .map(|(name, signature)| {
+            let signature = match signature {
+                FnSignature::Mono {
+                    params,
+                    vararg,
+                    return_type,
+                } => FnSignature::Mono {
+                    params: params
+                        .iter()
+                        .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                        .collect(),
+                    vararg: *vararg,
+                    return_type: type_visible_from_file(return_type, file_path, opaque),
+                },
+                FnSignature::Generic(scheme) => FnSignature::Generic(GenericScheme {
+                    type_params: scheme.type_params.clone(),
+                    params: scheme
+                        .params
+                        .iter()
+                        .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                        .collect(),
+                    return_type: type_visible_from_file(&scheme.return_type, file_path, opaque),
+                }),
+                FnSignature::Overloaded(variants) => FnSignature::Overloaded(
+                    variants
+                        .iter()
+                        .map(|variant| OverloadVariant {
+                            name: variant.name.clone(),
+                            params: variant
+                                .params
+                                .iter()
+                                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                                .collect(),
+                            return_type: type_visible_from_file(
+                                &variant.return_type,
+                                file_path,
+                                opaque,
+                            ),
+                        })
+                        .collect(),
+                ),
+                FnSignature::Const { ty } => FnSignature::Const {
+                    ty: type_visible_from_file(ty, file_path, opaque),
+                },
+            };
+            (name.clone(), signature)
+        })
+        .collect()
+}
+
+fn bindings_visible_from_file(
+    bindings: &HashMap<String, Binding>,
+    file_path: &str,
+    opaque: &ModuleOpaqueTypes,
+) -> HashMap<String, Binding> {
+    bindings
+        .iter()
+        .map(|(name, binding)| {
+            let mut binding = binding.clone();
+            binding.ty = type_visible_from_file(&binding.ty, file_path, opaque);
+            (name.clone(), binding)
+        })
+        .collect()
 }
 
 fn is_builtin_callee(expr: &Expr) -> bool {
@@ -1829,7 +2302,8 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
     let mut rewritten = program.clone();
     rewritten.functions.clear();
     rewritten.top_level.clear();
-    let mut pending_methods: Vec<(String, Stmt)> = Vec::new();
+    rewritten.top_level_file_paths.clear();
+    let mut pending_methods: Vec<(String, Stmt, String)> = Vec::new();
     let type_names = program
         .type_declarations
         .iter()
@@ -1889,29 +2363,33 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                             span: None,
                         }),
                     },
+                    function.file_path.clone(),
                 ));
             }
         }
     }
 
-    for stmt in &program.top_level {
+    for (stmt, file_path) in program.top_level.iter().zip(&program.top_level_file_paths) {
         rewritten.top_level.push(stmt.clone());
+        rewritten.top_level_file_paths.push(file_path.clone());
         let Stmt::Let { name, .. } = stmt else {
             continue;
         };
         let mut remaining = Vec::with_capacity(pending_methods.len());
-        for (table, method_stmt) in pending_methods.drain(..) {
+        for (table, method_stmt, method_file_path) in pending_methods.drain(..) {
             if table == *name {
                 rewritten.top_level.push(method_stmt);
+                rewritten.top_level_file_paths.push(method_file_path);
             } else {
-                remaining.push((table, method_stmt));
+                remaining.push((table, method_stmt, method_file_path));
             }
         }
         pending_methods = remaining;
     }
-    rewritten
-        .top_level
-        .extend(pending_methods.into_iter().map(|(_, stmt)| stmt));
+    for (_, stmt, file_path) in pending_methods {
+        rewritten.top_level.push(stmt);
+        rewritten.top_level_file_paths.push(file_path);
+    }
 
     Ok(rewritten)
 }
@@ -1962,9 +2440,13 @@ fn fresh_implicit_multi_temp(declared: &HashSet<String>, counter: &mut usize) ->
 fn desugar_implicit_top_level_declarations(program: &mut Program) {
     let mut declared = initial_top_level_names(program);
     let mut rewritten = Vec::with_capacity(program.top_level.len());
+    let mut rewritten_paths = Vec::with_capacity(program.top_level_file_paths.len());
     let mut temp_counter = 0;
 
-    for stmt in std::mem::take(&mut program.top_level) {
+    for (stmt, file_path) in std::mem::take(&mut program.top_level)
+        .into_iter()
+        .zip(std::mem::take(&mut program.top_level_file_paths))
+    {
         match stmt {
             Stmt::Let {
                 name,
@@ -1981,12 +2463,14 @@ fn desugar_implicit_top_level_declarations(program: &mut Program) {
                     ty,
                     value,
                 });
+                rewritten_paths.push(file_path);
             }
             Stmt::LetMulti { bindings, values } => {
                 for binding in &bindings {
                     declared.insert(binding.name.clone());
                 }
                 rewritten.push(Stmt::LetMulti { bindings, values });
+                rewritten_paths.push(file_path);
             }
             Stmt::Assign {
                 op: AssignOp::Set,
@@ -2002,6 +2486,7 @@ fn desugar_implicit_top_level_declarations(program: &mut Program) {
                     ty: None,
                     value,
                 });
+                rewritten_paths.push(file_path);
             }
             Stmt::AssignMulti {
                 targets,
@@ -2022,6 +2507,7 @@ fn desugar_implicit_top_level_declarations(program: &mut Program) {
                         })
                         .collect();
                     rewritten.push(Stmt::LetMulti { bindings, values });
+                    rewritten_paths.push(file_path);
                 } else {
                     let temps = (0..targets.len())
                         .map(|_| {
@@ -2043,6 +2529,7 @@ fn desugar_implicit_top_level_declarations(program: &mut Program) {
                         bindings: temp_bindings,
                         values,
                     });
+                    rewritten_paths.push(file_path.clone());
                     for (target, temp) in targets.into_iter().zip(temps) {
                         let value = Expr::Name(temp, None, None);
                         if declared.contains(&target) {
@@ -2052,6 +2539,7 @@ fn desugar_implicit_top_level_declarations(program: &mut Program) {
                                 symbol_id: None,
                                 value,
                             });
+                            rewritten_paths.push(file_path.clone());
                         } else {
                             declared.insert(target.clone());
                             rewritten.push(Stmt::Let {
@@ -2061,15 +2549,20 @@ fn desugar_implicit_top_level_declarations(program: &mut Program) {
                                 ty: None,
                                 value,
                             });
+                            rewritten_paths.push(file_path.clone());
                         }
                     }
                 }
             }
-            other => rewritten.push(other),
+            other => {
+                rewritten.push(other);
+                rewritten_paths.push(file_path);
+            }
         }
     }
 
     program.top_level = rewritten;
+    program.top_level_file_paths = rewritten_paths;
 }
 
 fn method_signature_name(table: &str, method: &str) -> String {
@@ -3340,6 +3833,7 @@ fn type_check_and_infer_collect_inner(
     desugar_implicit_top_level_declarations(&mut typed);
     let desugared_at = started.elapsed();
     resolve_program_types(&mut typed).map_err(|error| vec![error])?;
+    let module_opaque = module_opaque_types(&typed);
     let types_at = started.elapsed();
     let overload_sets =
         disambiguate_declared_import_overloads(&mut typed).map_err(|error| vec![error])?;
@@ -3508,6 +4002,14 @@ fn type_check_and_infer_collect_inner(
             .collect();
         for idx in unresolved {
             let function = &typed.functions[idx];
+            let visible_function = function_visible_from_file(function, &module_opaque);
+            let visible_signatures =
+                signatures_visible_from_file(&fn_signatures, &function.file_path, &module_opaque);
+            let visible_bindings = bindings_visible_from_file(
+                function_module_bindings(function, &module_bindings),
+                &function.file_path,
+                &module_opaque,
+            );
             let function_name = function.name.to_string();
             let function_vararg = function.vararg;
             let function_file_path = function.file_path.clone();
@@ -3517,12 +4019,13 @@ fn type_check_and_infer_collect_inner(
                 .map(|param| param.ty.clone())
                 .collect();
             match infer_top_level_function_return_type(
-                function,
-                &fn_signatures,
+                &visible_function,
+                &visible_signatures,
                 &unresolved_names,
-                function_module_bindings(function, &module_bindings),
+                &visible_bindings,
             ) {
                 Ok(Some(ret)) => {
+                    let ret = restore_module_opaque_type(&ret, &module_opaque);
                     typed.functions[idx].return_type = Some(ret.clone());
                     fn_signatures.insert(
                         function_name,
@@ -3582,20 +4085,97 @@ fn type_check_and_infer_collect_inner(
 
     let prepared_at = started.elapsed();
 
+    // Privacy views depend only on the source file, not on the individual
+    // function. Building them once per file avoids repeatedly cloning and
+    // rewriting the full signature/binding tables for every function in a
+    // large linked browser program.
+    let privacy_file_paths = typed
+        .functions
+        .iter()
+        .map(|function| function.file_path.clone())
+        .chain(typed.top_level_file_paths.iter().cloned())
+        .collect::<HashSet<_>>();
+    let privacy_signatures_by_file = if module_opaque.is_empty() {
+        HashMap::new()
+    } else {
+        privacy_file_paths
+            .iter()
+            .map(|file_path| {
+                (
+                    file_path.clone(),
+                    signatures_visible_from_file(&fn_signatures, file_path, &module_opaque),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    };
+    let privacy_bindings_by_file = if module_opaque.is_empty() {
+        HashMap::new()
+    } else {
+        privacy_file_paths
+            .into_iter()
+            .map(|file_path| {
+                (
+                    file_path.clone(),
+                    bindings_visible_from_file(&module_bindings, &file_path, &module_opaque),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    };
+
+    // Linked top-level statements execute in one runtime initializer, but
+    // privacy is checked per source module. This preserves initializer order
+    // and storage while preventing an importing module's top level from seeing
+    // another module's opaque representation.
+    let top_level_body = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .map(|function| function.body.as_slice())
+        .unwrap_or_default();
+    for function in top_level_functions_for_check(&typed, top_level_body) {
+        let visible_function = function_visible_from_file(&function, &module_opaque);
+        let visible_signatures = privacy_signatures_by_file
+            .get(&function.file_path)
+            .unwrap_or(&fn_signatures);
+        let visible_bindings = privacy_bindings_by_file
+            .get(&function.file_path)
+            .unwrap_or(&module_bindings);
+        errors.extend(
+            statements::check_function_collect(
+                &visible_function,
+                visible_signatures,
+                &HashSet::new(),
+                visible_bindings,
+            )
+            .into_iter()
+            .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
+        );
+    }
+
     #[cfg(target_family = "wasm")]
     let checked_errors = typed
         .functions
         .iter()
         .zip(&reusable)
         .flat_map(|(function, reusable)| {
-            if *reusable || errored_functions.contains(&function.name.to_string()) {
+            if *reusable
+                || function.name.to_string() == "__waluau_top_level_init"
+                || errored_functions.contains(&function.name.to_string())
+            {
                 Vec::new()
             } else {
+                let visible_function = function_visible_from_file(function, &module_opaque);
+                let visible_signatures = privacy_signatures_by_file
+                    .get(&function.file_path)
+                    .unwrap_or(&fn_signatures);
+                let visible_bindings = privacy_bindings_by_file
+                    .get(&function.file_path)
+                    .unwrap_or_else(|| function_module_bindings(function, &module_bindings));
                 statements::check_function_collect(
-                    function,
-                    &fn_signatures,
+                    &visible_function,
+                    visible_signatures,
                     &HashSet::new(),
-                    function_module_bindings(function, &module_bindings),
+                    visible_bindings,
                 )
                 .into_iter()
                 .map(|error| error.with_file_path_if_missing(function.file_path.clone()))
@@ -3618,21 +4198,37 @@ fn type_check_and_infer_collect_inner(
                     let errored_functions = &errored_functions;
                     let fn_signatures = &fn_signatures;
                     let module_bindings = &module_bindings;
+                    let module_opaque = &module_opaque;
+                    let privacy_signatures_by_file = &privacy_signatures_by_file;
+                    let privacy_bindings_by_file = &privacy_bindings_by_file;
                     scope.spawn(move || {
                         let mut diagnostics = Vec::new();
                         for (function, reusable) in chunk.iter().zip(reusable) {
                             if *reusable {
                                 continue;
                             }
+                            if function.name.to_string() == "__waluau_top_level_init" {
+                                continue;
+                            }
                             if errored_functions.contains(&function.name.to_string()) {
                                 continue;
                             }
+                            let visible_function =
+                                function_visible_from_file(function, module_opaque);
+                            let visible_signatures = privacy_signatures_by_file
+                                .get(&function.file_path)
+                                .unwrap_or(fn_signatures);
+                            let visible_bindings = privacy_bindings_by_file
+                                .get(&function.file_path)
+                                .unwrap_or_else(|| {
+                                    function_module_bindings(function, module_bindings)
+                                });
                             diagnostics.extend(
                                 statements::check_function_collect(
-                                    function,
-                                    fn_signatures,
+                                    &visible_function,
+                                    visible_signatures,
                                     &HashSet::new(),
-                                    function_module_bindings(function, module_bindings),
+                                    visible_bindings,
                                 )
                                 .into_iter()
                                 .map(|error| {

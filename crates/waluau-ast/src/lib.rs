@@ -51,6 +51,10 @@ pub struct Program {
     pub declared_constants: Vec<DeclaredConstant>,
     pub type_declarations: Vec<TypeDeclaration>,
     pub top_level: Vec<Stmt>,
+    /// Source owner for each top-level statement. Linkers preserve this
+    /// parallel list so module initializers can be checked with the same
+    /// private-type visibility as ordinary functions.
+    pub top_level_file_paths: Vec<String>,
     /// The value a module exports through a trailing top-level `return`.
     ///
     /// The value is a function name or a table of functions. Module linkers
@@ -68,6 +72,12 @@ pub struct TypeDeclaration {
     pub name: String,
     pub type_params: Vec<String>,
     pub ty: Type,
+    /// Whether importing modules see this alias as an opaque nominal handle.
+    /// The declaring file still type-checks against `ty`; lowering always uses
+    /// `ty`, so this changes no runtime representation.
+    pub module_opaque: bool,
+    /// Source file that owns the representation of a module-opaque alias.
+    pub file_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]

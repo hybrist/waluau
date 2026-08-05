@@ -1608,6 +1608,17 @@ fn check_stmt_inner(
                     .get(base_name)
                     .cloned()
                     .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
+                if let Type::Opaque {
+                    name: opaque_name,
+                    ty,
+                } = &binding.ty
+                    && ty.as_ref() == &Type::Unknown
+                {
+                    return Err(Diagnostic::new(format!(
+                        "cannot assign private field '{name}' of opaque type '{}'",
+                        super::module_type_display_name(opaque_name)
+                    )));
+                }
                 let Some(mut fields) = record_fields_from_type(binding.ty.clone()) else {
                     return Err(Diagnostic::new("field assignment requires a record base"));
                 };
@@ -1692,6 +1703,17 @@ fn check_stmt_inner(
                 Ok(false)
             } else {
                 let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
+                if let Type::Opaque {
+                    name: opaque_name,
+                    ty,
+                } = &base_ty
+                    && ty.as_ref() == &Type::Unknown
+                {
+                    return Err(Diagnostic::new(format!(
+                        "cannot assign private field '{name}' of opaque type '{}'",
+                        super::module_type_display_name(opaque_name)
+                    )));
+                }
                 let Some(fields) = record_fields_from_type(base_ty) else {
                     return Err(Diagnostic::new("field assignment requires a record base"));
                 };
