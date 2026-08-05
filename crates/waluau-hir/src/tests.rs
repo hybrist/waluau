@@ -1024,6 +1024,56 @@ fn mutually_recursive_type_aliases_are_supported() {
 }
 
 #[test]
+fn recursive_record_arrays_are_supported() {
+    let source = r#"
+        type Tree = {value: i32, children: {Tree}}
+
+        function leaf(value: i32): Tree
+            return {value = value, children = {}}
+        end
+
+        function sum(tree: Tree): i32
+            local total: i32 = tree.value
+            for child in tree.children do
+                total += sum(child)
+            end
+            return total
+        end
+
+        function entry(): i32
+            local tree: Tree = {
+                value = 1,
+                children = {leaf(2)},
+            }
+            return sum(tree)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("recursive tree should type check");
+}
+
+#[test]
+fn rejects_unguarded_mutually_recursive_aliases() {
+    let source = r#"
+        type Left = Right
+        type Right = Left
+
+        function entry(value: Left): unit
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    let message = error.to_string();
+    assert!(
+        message.contains("cyclic type declaration detected")
+            && message.contains("Left -> Right -> Left"),
+        "expected a stable alias-cycle diagnostic, got: {message}"
+    );
+}
+
+#[test]
 fn rejects_direct_self_referencing_type_aliases() {
     let source = r#"
         type A = A

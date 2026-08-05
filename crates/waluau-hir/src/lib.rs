@@ -639,6 +639,7 @@ fn resolve_decl_type_allowing_forward_refs(
         generic,
         opaque_cache,
         stack,
+        false,
     )?;
     stack.pop();
 
@@ -656,6 +657,7 @@ fn resolve_type_refs_allowing_forward_refs(
     generic: &HashMap<String, GenericTypeDecl>,
     opaque_cache: &mut HashMap<String, Type>,
     stack: &mut Vec<String>,
+    guarded: bool,
 ) -> Result<Type, Diagnostic> {
     match ty {
         Type::Named { name, type_args } => {
@@ -677,6 +679,7 @@ fn resolve_type_refs_allowing_forward_refs(
                         generic,
                         opaque_cache,
                         stack,
+                        guarded,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -712,6 +715,7 @@ fn resolve_type_refs_allowing_forward_refs(
                     generic,
                     opaque_cache,
                     stack,
+                    guarded,
                 );
                 stack.pop();
                 return resolved.map(|resolved| {
@@ -729,6 +733,17 @@ fn resolve_type_refs_allowing_forward_refs(
             // For forward references, return the current opaque type from cache
             // But first check if this is a direct self-reference in the resolution stack
             if stack.iter().any(|entry| entry == name) {
+                if guarded {
+                    // Rust's owned Type tree cannot contain a literal cycle.
+                    // Preserve the alias identity at the recursive edge and
+                    // use `unknown` as its finite runtime anchor. HIR coercion
+                    // treats same-named opaque aliases nominally, while IR
+                    // erasure turns this edge into an anyref plus checked casts.
+                    return Ok(Type::Opaque {
+                        name: name.to_string(),
+                        ty: Box::new(Type::Unknown),
+                    });
+                }
                 let cycle = stack
                     .iter()
                     .cloned()
@@ -757,6 +772,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 generic,
                 opaque_cache,
                 stack,
+                guarded,
             )?),
         }),
         Type::ExternSubtype(parent) => {
@@ -767,6 +783,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 generic,
                 opaque_cache,
                 stack,
+                guarded,
             )?;
             require_nullable_host_ref_type(&parent)?;
             Ok(Type::ExternSubtype(Box::new(parent)))
@@ -779,6 +796,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 generic,
                 opaque_cache,
                 stack,
+                guarded,
             )?;
             require_nullable_inner_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
@@ -791,6 +809,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 generic,
                 opaque_cache,
                 stack,
+                true,
             )?,
         ))),
         Type::Multi(types) => Ok(Type::Multi(
@@ -804,6 +823,7 @@ fn resolve_type_refs_allowing_forward_refs(
                         generic,
                         opaque_cache,
                         stack,
+                        guarded,
                     )
                 })
                 .collect::<Result<_, _>>()?,
@@ -822,6 +842,7 @@ fn resolve_type_refs_allowing_forward_refs(
                         generic,
                         opaque_cache,
                         stack,
+                        guarded,
                     )
                 })
                 .collect::<Result<_, _>>()?,
@@ -832,6 +853,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 generic,
                 opaque_cache,
                 stack,
+                guarded,
             )?),
         }),
         Type::Record(fields) => Ok(Type::Record(
@@ -847,6 +869,7 @@ fn resolve_type_refs_allowing_forward_refs(
                             generic,
                             opaque_cache,
                             stack,
+                            true,
                         )?,
                     ))
                 })
@@ -877,6 +900,16 @@ fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
                     ty: decl.ty.clone(),
                 },
             );
+        }
+    }
+
+    // Alias-only cycles have no runtime constructor to tie the knot and no
+    // finite structural shape to check. Reject them before forward-reference
+    // placeholders can hide the cycle. A record/array boundary is guarded and
+    // is resolved below using a finite opaque anchor.
+    for decl in &program.type_declarations {
+        if decl.type_params.is_empty() {
+            validate_unguarded_alias_cycle(&decl.name, &raw_opaque, &generic, &mut Vec::new())?;
         }
     }
 
@@ -964,6 +997,41 @@ fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
         )?;
     }
     Ok(())
+}
+
+fn validate_unguarded_alias_cycle(
+    name: &str,
+    raw_opaque: &HashMap<String, Type>,
+    generic: &HashMap<String, GenericTypeDecl>,
+    stack: &mut Vec<String>,
+) -> Result<(), Diagnostic> {
+    if let Some(start) = stack.iter().position(|entry| entry == name) {
+        let cycle = stack[start..]
+            .iter()
+            .cloned()
+            .chain(std::iter::once(name.to_string()))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        return Err(Diagnostic::new(format!(
+            "cyclic type declaration detected: {cycle}"
+        )));
+    }
+
+    let Some(Type::Named {
+        name: target,
+        type_args,
+    }) = raw_opaque.get(name)
+    else {
+        return Ok(());
+    };
+    if !type_args.is_empty() || generic.contains_key(target) || !raw_opaque.contains_key(target) {
+        return Ok(());
+    }
+
+    stack.push(name.to_string());
+    let result = validate_unguarded_alias_cycle(target, raw_opaque, generic, stack);
+    stack.pop();
+    result
 }
 
 fn resolve_type_refs(

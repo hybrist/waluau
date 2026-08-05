@@ -1463,27 +1463,67 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
 }
 
 fn erase_type_opaque_types(ty: &Type) -> Type {
+    erase_type_opaque_types_at(ty, false)
+}
+
+fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
     match ty {
-        Type::Opaque { ty, .. } => erase_type_opaque_types(ty),
+        Type::Opaque { name, ty } if nested && type_contains_opaque_name(ty, name) => Type::Unknown,
+        Type::Opaque { ty, .. } => erase_type_opaque_types_at(ty, nested),
         Type::ExternSubtype(_) => Type::Extern,
-        Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types(inner))),
-        Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types(inner))),
-        Type::Variadic(inner) => Type::Variadic(Box::new(erase_type_opaque_types(inner))),
-        Type::Multi(types) => Type::Multi(types.iter().map(erase_type_opaque_types).collect()),
+        Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types_at(inner, true))),
+        Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types_at(inner, true))),
+        Type::Variadic(inner) => Type::Variadic(Box::new(erase_type_opaque_types_at(inner, true))),
+        Type::Multi(types) => Type::Multi(
+            types
+                .iter()
+                .map(|ty| erase_type_opaque_types_at(ty, nested))
+                .collect(),
+        ),
         Type::Function {
             params,
             return_type,
         } => Type::Function {
-            params: params.iter().map(erase_type_opaque_types).collect(),
-            return_type: Box::new(erase_type_opaque_types(return_type)),
+            params: params
+                .iter()
+                .map(|ty| erase_type_opaque_types_at(ty, false))
+                .collect(),
+            return_type: Box::new(erase_type_opaque_types_at(return_type, false)),
         },
         Type::Record(fields) => Type::Record(
             fields
                 .iter()
-                .map(|(name, ty)| (name.clone(), erase_type_opaque_types(ty)))
+                .map(|(name, ty)| (name.clone(), erase_type_opaque_types_at(ty, true)))
                 .collect(),
         ),
         other => other.clone(),
+    }
+}
+
+fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
+    match ty {
+        Type::Opaque { name, .. } if name == target => true,
+        Type::Opaque { ty, .. }
+        | Type::ExternSubtype(ty)
+        | Type::Nullable(ty)
+        | Type::Array(ty)
+        | Type::Variadic(ty) => type_contains_opaque_name(ty, target),
+        Type::Multi(types) => types
+            .iter()
+            .any(|ty| type_contains_opaque_name(ty, target)),
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            params
+                .iter()
+                .any(|ty| type_contains_opaque_name(ty, target))
+                || type_contains_opaque_name(return_type, target)
+        }
+        Type::Record(fields) => fields
+            .values()
+            .any(|ty| type_contains_opaque_name(ty, target)),
+        _ => false,
     }
 }
 

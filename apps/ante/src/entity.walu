@@ -201,29 +201,21 @@ end
 function build(
     metrics: Metrics, children: {Node}, flow_style: box.Style
 ): box.Tree
-    local tree: box.Tree = box.new()
-    local handles: {i32} = {}
+    local leaves: {box.Tree} = {}
     for index = 0::i32, #children - 1 do
         local child: Node = children[index]
-        local handle: i32 = tree:leaf(index, child.measure(metrics))
-        tree:flex(handle, child.grow, child.shrink)
-        table.insert(handles, handle)
+        local leaf: box.Tree = box.leaf(index, child.measure(metrics))
+        box.flex(leaf, child.grow, child.shrink)
+        table.insert(leaves, leaf)
     end
-    tree:flow(ROOT_KEY, handles, flow_style)
-    return tree
-end
-
--- The wrapping flow is always the last node built, which is what makes the
--- root handle derivable rather than a second return value.
-function root_of(tree: box.Tree): i32
-    return #tree.nodes - 1
+    return box.flow(ROOT_KEY, leaves, flow_style)
 end
 
 function measure_flow(
     metrics: Metrics, children: {Node}, flow_style: box.Style
 ): box.Intrinsic
     local tree: box.Tree = build(metrics, children, flow_style)
-    return tree:measure(root_of(tree))
+    return box.measure(tree)
 end
 
 -- Where each child of a flow landed, in child order. Hit testing reads this
@@ -233,7 +225,7 @@ function place(
     metrics: Metrics, children: {Node}, flow_style: box.Style, bounds: box.Rect
 ): {box.Rect}
     local tree: box.Tree = build(metrics, children, flow_style)
-    local result: box.Result = tree:solve(root_of(tree), bounds)
+    local result: box.Result = box.solve(tree, bounds)
     local rects: {box.Rect} = {}
     for index = 0::i32, #children - 1 do
         local frame: box.Frame? = box.frame(result, index)

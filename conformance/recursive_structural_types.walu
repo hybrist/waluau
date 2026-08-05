@@ -1,0 +1,21 @@
+type Tree = { value: i32, children: {Tree} }
+
+function leaf(value: i32): Tree
+    return { value = value, children = {} }
+end
+
+function branch(value: i32, children: {Tree}): Tree
+    return { value = value, children = children }
+end
+
+function sum(tree: Tree): i32
+    local total: i32 = tree.value
+    for child in tree.children do
+        total += sum(child)
+    end
+    return total
+end
+
+local root: Tree = branch(1, {leaf(2), branch(3, {leaf(4), leaf(5)})})
+
+assert(sum(root) == 15)
