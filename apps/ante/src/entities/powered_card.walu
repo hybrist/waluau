@@ -1,0 +1,453 @@
+-- A ward standing under a spell. Four conditions can be on it, and each one
+-- replaces the ordinary card with its own rendering of the same relic:
+-- Firebolt burns it away, Freeze Ray seals it under ice, Raise Card brings it
+-- back out of a grave, and Growth divides it in two.
+--
+-- It is the same entity as an ordinary ward — same box, same rectangle — which
+-- is what lets the ward row hold a powered slot without knowing anything about
+-- spells. What a condition changes is what gets drawn in the box, never how
+-- much of the board it takes.
+
+local graphics_module = require("waluau:engine/graphics")
+local particles = require("waluau:engine/particles")
+local game = require("../game")
+local spell_cast = require("../spell_cast")
+local burn_particles = require("../burn_particles")
+local card_burn = require("../card_burn")
+local easing = require("../easing")
+local box = require("../box_layout")
+local entity = require("../entity")
+local ink = require("../ink")
+local card = require("./card")
+
+-- How long a condition takes to form once its carrier has landed, and the
+-- longer clocks Fireball's burn and its trailing ash need.
+const FORM_SECONDS: f64 = 0.78
+const FIREBALL_BURN_SECONDS: f64 = 1.55
+const FIREBALL_ASH_FADE_SECONDS: f64 = 1.10
+
+-- The freeze shell quad hangs past the card so icicles can grow outside it.
+const FREEZE_MARGIN_X: f64 = 10.0
+const FREEZE_MARGIN_TOP: f64 = 12.0
+const FREEZE_MARGIN_BOTTOM: f64 = 10.0
+
+-- Grave dust, in motes per second: thrown while the raised ward is still
+-- climbing out, then a trickle for as long as it stands. A raise is a
+-- persistent condition, so the aperture keeps breathing rather than leaving a
+-- ring of motes hanging in the air where the climb happened to stop.
+const GRAVE_DUST_RISING_RATE: f64 = 72.0
+const GRAVE_DUST_IDLE_RATE: f64 = 13.0
+-- A formation reading below zero means no ward is raised: the aperture is shut
+-- and whatever it last threw finishes settling.
+const NO_GRAVE: f64 = -1.0
+
+-- How far a condition has formed, and how far Fireball's slower burn has got.
+function formation(clock: f64): f64
+    return easing.clamp01((clock - spell_cast.travel_seconds) / FORM_SECONDS)
+end
+
+function fireball_formation(clock: f64): f64
+    return easing.clamp01(
+        (clock - spell_cast.travel_seconds) / FIREBALL_BURN_SECONDS)
+end
+
+-- The screen uses this boundary to commit the Firebolt result on the first
+-- frame where the old card is fully burned away.
+function firebolt_burn_finished(clock: f64): bool
+    return fireball_formation(clock) >= 1.0
+end
+
+-- The clock reading at which every spell has finished arriving: the carrier
+-- has landed, the impact rays are spent, the formation is full, and the last
+-- of Fireball's ash has fallen. Fireball is the slowest of the four, so its
+-- end is the settled reading for all of them. Past this point the clock only
+-- feeds the endless idle motions — breathing membranes, circling grave-flies —
+-- that have no finish to wait for.
+function settled_clock(): f64
+    return spell_cast.travel_seconds
+        + FIREBALL_BURN_SECONDS
+        + FIREBALL_ASH_FADE_SECONDS
+end
+
+function use_ice_freeze(surface: entity.Surface, freeze: f64): bool
+    local graphics = surface.graphics
+    local maybe_shader: graphics_module.Shader? = surface.effects.ice_freeze.shader
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not graphics:use_shader(shader) then return false end
+    local quad_w: f64 = card.width + FREEZE_MARGIN_X * 2.0
+    local quad_h: f64 = card.height + FREEZE_MARGIN_TOP + FREEZE_MARGIN_BOTTOM
+    local aspect_ok: bool = graphics:set_uniform_float(
+        "u_aspect", card.width / card.height)
+    local freeze_ok: bool = graphics:set_uniform_float("u_freeze", freeze)
+    local rect_ok: bool = graphics:set_uniform_vec4(
+        "u_rect",
+        FREEZE_MARGIN_X / quad_w,
+        FREEZE_MARGIN_TOP / quad_h,
+        (FREEZE_MARGIN_X + card.width) / quad_w,
+        (FREEZE_MARGIN_TOP + card.height) / quad_h)
+    return aspect_ok and freeze_ok and rect_ok
+end
+
+function draw_ring(surface: entity.Surface, x: f64, y: f64, radius: f64): unit
+    local graphics = surface.graphics
+    graphics:begin_path()
+    for step = 0::i32, 32::i32 do
+        local angle: f64 = (step::f64) * math.pi * 2.0 / 32.0
+        local px: f64 = x + math.cos(angle) * radius
+        local py: f64 = y + math.sin(angle) * radius
+        if step == 0 then graphics:move_to(px, py) else graphics:line_to(px, py) end
+    end
+    graphics:close_path()
+    graphics:stroke()
+end
+
+function draw_ellipse(
+    surface: entity.Surface, x: f64, y: f64,
+    radius_x: f64, radius_y: f64, color: string, width: f64
+): unit
+    local graphics = surface.graphics
+    graphics:push()
+    graphics:translate(x, y)
+    graphics:scale(radius_x / 32.0, radius_y / 32.0)
+    graphics:set_color(color)
+    graphics:set_line_width(width)
+    draw_ring(surface, 0.0, 0.0, 32.0)
+    graphics:pop()
+end
+
+function draw_scaled(
+    surface: entity.Surface, value: card.Look,
+    center_x: f64, center_y: f64, scale: f64
+): unit
+    local graphics = surface.graphics
+    graphics:push()
+    graphics:translate(center_x, center_y)
+    graphics:scale(scale, scale)
+    card.draw_at(surface, value, -card.width * 0.5, -card.height * 0.5)
+    graphics:pop()
+end
+
+-- Fireball burns the rendered card itself: a small centre ignition grows
+-- through a noisy ember/char boundary, holes open behind it, and the remaining
+-- black sheet sheds into ash that catches a draft, falls away, and disappears.
+-- Two falls overlap: the sheet ash every burning card sheds, and a coarser
+-- departing fall of larger pieces released later off the same front.
+function draw_fireball(
+    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    progress: f64, ash: card_burn.CardAsh
+): unit
+    local lift: f64 = 0.0
+    if value.selected then lift = -card.bind_lift end
+    local top: f64 = y + lift
+    local seed: i32 = card_burn.seed_of(value.card, 191)
+    local target: graphics_module.RenderTarget? = card.capture_face(surface, value)
+    if target == nil then
+        if progress < 0.86 then card.draw_at(surface, value, x, y) end
+        card_burn.draw_ash(surface, ash.ward_sheet, x, top, seed + 401)
+    else
+        local captured: graphics_module.RenderTarget =
+            target::graphics_module.RenderTarget
+        card_burn.draw_captured(
+            surface, captured, x, top, progress, seed, value.card.suit,
+            ash.ward_sheet)
+        surface.graphics:release_render_target(captured)
+    end
+    card_burn.draw_ash(surface, ash.ward_fall, x, top, seed + 607)
+end
+
+-- Freeze Ray leaves the card readable under a translucent shell. The ice
+-- shader grows noise-driven frost from the edges inward, holds as faceted
+-- chunks with bright cracks, and hangs icicles past the card border. The
+-- vector overlay below survives only as the fallback while the shader or its
+-- noise texture is unavailable.
+function draw_freeze(
+    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    progress: f64, clock: f64
+): unit
+    local graphics = surface.graphics
+    card.draw_at(surface, value, x, y)
+    local ice: f64 = easing.out_quint(progress)
+    -- Track the lift a bound card applies so the shell stays glued to the face
+    -- it freezes.
+    local top: f64 = y
+    if value.selected then top -= card.bind_lift end
+    local maybe_noise: graphics_module.Texture? = surface.effects.noise_texture
+    if maybe_noise ~= nil then
+        local noise: graphics_module.Texture = maybe_noise::graphics_module.Texture
+        if use_ice_freeze(surface, ice) then
+            graphics:set_color("#ffffffff")
+            graphics:draw_sprite(
+                noise,
+                x - FREEZE_MARGIN_X, top - FREEZE_MARGIN_TOP,
+                card.width + FREEZE_MARGIN_X * 2.0,
+                card.height + FREEZE_MARGIN_TOP + FREEZE_MARGIN_BOTTOM,
+                0.0, 0.0, noise.width::f64, noise.height::f64)
+            ink.stop_effect(graphics)
+            return
+        end
+    end
+    y = top
+    local corner_w: f64 = 6.0 + 47.0 * ice
+    local corner_h: f64 = 7.0 + 58.0 * ice
+    graphics:set_color("#7dd3fc55")
+    graphics:fill_rectangle(x, y, corner_w, corner_h)
+    graphics:fill_rectangle(x + card.width - corner_w, y, corner_w, corner_h)
+    graphics:fill_rectangle(x, y + card.height - corner_h, corner_w, corner_h)
+    graphics:fill_rectangle(
+        x + card.width - corner_w, y + card.height - corner_h,
+        corner_w, corner_h)
+    graphics:set_color("#dff8ff88")
+    graphics:fill_rectangle(x + 4.0, y + 4.0, card.width - 8.0, 4.0 + ice * 5.0)
+    graphics:fill_rectangle(
+        x + 4.0, y + card.height - 8.0 - ice * 4.0,
+        card.width - 8.0, 4.0 + ice * 4.0)
+
+    local ice_edge: string = "#7dd3fc"
+    if math.sin(clock * 2.3) > 0.25 then ice_edge = "#e0f2fe" end
+    graphics:set_color(ice_edge)
+    graphics:set_line_width(2.4)
+    graphics:stroke_rectangle(x - 1.0, y - 1.0, card.width + 2.0, card.height + 2.0)
+    local center_x: f64 = x + card.width * 0.5
+    local center_y: f64 = y + card.height * 0.5
+    local crack_reach: f64 = 0.18 + ice * 0.70
+    graphics:set_line_width(1.6)
+    graphics:line(x, y, x + card.width * crack_reach, y + card.height * crack_reach)
+    graphics:line(
+        x + card.width, y,
+        x + card.width * (1.0 - crack_reach), y + card.height * crack_reach)
+    graphics:line(
+        x, y + card.height,
+        center_x * crack_reach + x * (1.0 - crack_reach),
+        center_y * crack_reach + (y + card.height) * (1.0 - crack_reach))
+    graphics:line(
+        x + card.width, y + card.height,
+        center_x * crack_reach + (x + card.width) * (1.0 - crack_reach),
+        center_y * crack_reach + (y + card.height) * (1.0 - crack_reach))
+    for shard = 0::i32, 5::i32 do
+        local threshold: f64 = (shard::f64) / 7.0
+        if ice > threshold then
+            local shard_x: f64 = x + 9.0 + (shard::f64) * 17.0
+            local shard_length: f64 = 7.0
+                + burn_particles.hash(shard + 42, 1.0) * 16.0
+            graphics:line(
+                shard_x, y + card.height,
+                shard_x + 3.0, y + card.height + shard_length * ice)
+            graphics:line(
+                shard_x + 3.0, y + card.height + shard_length * ice,
+                shard_x + 7.0, y + card.height)
+            if shard % 2 == 0 then
+                local top_x: f64 = shard_x + 8.0
+                local top_length: f64 = shard_length * 0.72
+                graphics:line(top_x, y, top_x + 3.0, y - top_length * ice)
+                graphics:line(
+                    top_x + 3.0, y - top_length * ice, top_x + 7.0, y)
+            end
+        end
+    end
+end
+
+function draw_zombie_overlay(
+    surface: entity.Surface, x: f64, y: f64, progress: f64, clock: f64
+): unit
+    local graphics = surface.graphics
+    graphics:set_color("#26382b99")
+    graphics:fill_rectangle(x + 2.0, y + 2.0, card.width - 4.0, card.height - 4.0)
+    graphics:set_color("#080b09dd")
+    graphics:fill_circle(x + 78.0, y + 29.0, 10.0 * progress)
+    graphics:fill_circle(x + 27.0, y + 91.0, 7.0 * progress)
+    graphics:fill_rectangle(x + 74.0, y + 113.0, 18.0, 16.0)
+    graphics:set_color("#9cae80")
+    graphics:set_line_width(1.8)
+    graphics:line(x + 21.0, y + 48.0, x + 46.0, y + 58.0)
+    graphics:line(x + 46.0, y + 58.0, x + 37.0, y + 76.0)
+    graphics:line(x + 37.0, y + 76.0, x + 57.0, y + 87.0)
+    for stitch = 0::i32, 4::i32 do
+        local sx: f64 = x + 28.0 + (stitch::f64) * 5.2
+        local sy: f64 = y + 51.0 + (stitch::f64) * 2.0
+        graphics:line(sx - 1.5, sy + 3.0, sx + 1.5, sy - 3.0)
+    end
+    ink.text_centered(
+        graphics, "RAISED", x + card.width * 0.5, y + 119.0, 9, "#bef264")
+    for fly = 0::i32, 4::i32 do
+        local angle: f64 = clock * (0.8 + (fly::f64) * 0.09) + (fly::f64) * 1.4
+        local radius: f64 = 58.0 + burn_particles.hash(fly + 72, 2.0) * 18.0
+        graphics:set_color("#a3e635")
+        graphics:fill_circle(
+            x + card.width * 0.5 + math.cos(angle) * radius,
+            y + card.height * 0.5 + math.sin(angle * 1.7) * 44.0,
+            1.3)
+    end
+end
+
+-- Raise Card replaces the ward at impact with a second rendering that climbs
+-- out of a black ground aperture. Its healed pose keeps holes, torn stock,
+-- sutures, corpse tint, and circling grave-flies as the persistent condition.
+function draw_raise(
+    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    progress: f64, clock: f64, dust: particles.ParticleSystem
+): unit
+    local graphics = surface.graphics
+    local rise: f64 = easing.out_back(progress)
+    local center_x: f64 = x + card.width * 0.5
+    local center_y: f64 = y + card.height * 0.5
+    graphics:push()
+    graphics:translate(center_x, y + card.height + 5.0)
+    graphics:scale(1.30, 0.22)
+    graphics:set_color("#050306dd")
+    graphics:fill_circle(0.0, 0.0, 42.0)
+    graphics:pop()
+    graphics:push()
+    graphics:translate(center_x, center_y + (1.0 - rise) * 66.0)
+    graphics:rotate((1.0 - progress) * -0.10)
+    card.draw_at(surface, value, -card.width * 0.5, -card.height * 0.5)
+    draw_zombie_overlay(
+        surface, -card.width * 0.5, -card.height * 0.5, progress, clock)
+    graphics:pop()
+    -- The dust is drawn where the aperture is, but it is not a function of the
+    -- climb: the eight motes this replaced were a pure function of progress,
+    -- so they stopped dead the moment the ward finished rising and the ring
+    -- they froze in hung there for the rest of the heist.
+    dust:draw(graphics, center_x, y + card.height - 2.0)
+end
+
+-- Growth is literal cell division: the one full-size ward pinches into two
+-- smaller copies while a shared membrane swells around them. Individual
+-- daughter-cell rings and drifting organelles keep the settled pair alive.
+function draw_growth(
+    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    progress: f64, clock: f64
+): unit
+    local graphics = surface.graphics
+    local split: f64 = easing.out_back(progress)
+    local center_x: f64 = x + card.width * 0.5
+    local center_y: f64 = y + card.height * 0.5
+    local breathing: f64 = math.sin(clock * 2.1) * 1.6 * progress
+    graphics:push()
+    graphics:translate(center_x, center_y)
+    graphics:scale(
+        (82.0 + breathing) / 32.0, (70.0 + breathing * 0.45) / 32.0)
+    graphics:set_color("#4ade8020")
+    graphics:fill_circle(0.0, 0.0, 32.0)
+    graphics:pop()
+    draw_ellipse(
+        surface, center_x, center_y,
+        82.0 + breathing, 70.0 + breathing * 0.45, "#86efac", 1.5)
+    local clone_scale: f64 = 1.0 - 0.30 * split
+    local separation: f64 = 30.0 * split
+    draw_ellipse(
+        surface, center_x - separation, center_y,
+        43.0 + breathing * 0.35, 55.0 + breathing * 0.25, "#4ade80aa", 1.0)
+    draw_ellipse(
+        surface, center_x + separation, center_y,
+        43.0 + breathing * 0.35, 55.0 + breathing * 0.25, "#4ade80aa", 1.0)
+    draw_scaled(surface, value, center_x - separation, center_y, clone_scale)
+    draw_scaled(surface, value, center_x + separation, center_y, clone_scale)
+    for organelle = 0::i32, 5::i32 do
+        local angle: f64 = clock * 0.24 + (organelle::f64) * 1.05
+        graphics:set_color("#bbf7d088")
+        graphics:fill_circle(
+            center_x + math.cos(angle) * (69.0 + breathing),
+            center_y + math.sin(angle) * 55.0,
+            2.0 + burn_particles.hash(organelle + 83, 2.0) * 1.8)
+    end
+end
+
+-- Dry earth off the mouth the raised ward climbs out of. Motes are born across
+-- the aperture, lift on the draught coming up out of it, wander, and settle
+-- out. Emitter coordinates are local to the aperture, so the same emitter draws
+-- correctly at whichever slot is raised.
+function new_grave_dust(): particles.ParticleSystem
+    local system: particles.ParticleSystem = particles.new(150)
+    system:set_seed(541)
+    system:set_emission_rate(0.0)
+    system:set_particle_lifetime(0.90, 2.20)
+    system:set_speed(10.0, 44.0)
+    -- Thrown up and out of the hole rather than in every direction. The climb
+    -- has to carry a mote across the card's own lower third: the button row is
+    -- drawn over the slot's bottom edge, so dust that only hangs at the
+    -- aperture is dust nobody sees.
+    system:set_direction(-math.pi * 0.5)
+    system:set_spread(math.pi * 1.05)
+    system:set_emission_area("ellipse", 40.0, 4.0, 0.0, false)
+    system:set_linear_acceleration(-10.0, -52.0, 10.0, -14.0)
+    system:set_linear_damping(0.5, 1.4)
+    system:set_sway_amplitude(1.2, 4.0)
+    system:set_sway_frequency(0.25, 0.7)
+    system:set_sizes({ 0.65, 1.0, 0.0 })
+    system:set_size_variation(0.8)
+    system:set_colors_hex({ "#c2bf8ecc", "#71704b99", "#4b4a2f00" })
+    system:set_color_variation(0.8)
+    system:set_shape_size(3.8, 3.8)
+    system:set_draw_mode("circle")
+    return system
+end
+
+-- One tick of the grave. The climb throws dust; a standing ward only trickles.
+function step_grave_dust(
+    system: particles.ParticleSystem, progress: f64, dt: f64
+): unit
+    if progress < 0.0 then
+        system:set_emission_rate(0.0)
+    elseif progress < 1.0 then
+        system:set_emission_rate(GRAVE_DUST_RISING_RATE)
+    else
+        system:set_emission_rate(GRAVE_DUST_IDLE_RATE)
+    end
+    system:update(dt)
+end
+
+-- How far the grave a spell opened has got, or NO_GRAVE when the spell is not
+-- the one that opens graves.
+function grave_progress(kind: i32, clock: f64): f64
+    if kind == game.spell_raise_card then return formation(clock) end
+    return NO_GRAVE
+end
+
+function draw_at(
+    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    kind: i32, clock: f64, ash: card_burn.CardAsh, dust: particles.ParticleSystem
+): unit
+    local progress: f64 = formation(clock)
+    if kind == game.spell_firebolt then progress = fireball_formation(clock) end
+    if kind == 0 or value.hidden or progress <= 0.0 then
+        card.draw_at(surface, value, x, y)
+    elseif kind == game.spell_firebolt then
+        draw_fireball(surface, value, x, y, progress, ash)
+    elseif kind == game.spell_freeze_ray then
+        draw_freeze(surface, value, x, y, progress, clock)
+    elseif kind == game.spell_raise_card then
+        draw_raise(surface, value, x, y, progress, clock, dust)
+    elseif kind == game.spell_clone then
+        draw_growth(surface, value, x, y, progress, clock)
+    else
+        card.draw_at(surface, value, x, y)
+    end
+end
+
+-- The powered ward as an entity: a card's box, whatever is standing on it.
+function node(
+    value: card.Look, kind: i32, clock: f64,
+    ash: card_burn.CardAsh, dust: particles.ParticleSystem
+): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return card.intrinsic()
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            draw_at(surface, value, bounds.x, bounds.y, kind, clock, ash, dust)
+        end)
+end
+
+return {
+    node = node,
+    draw_at = draw_at,
+    formation = formation,
+    fireball_formation = fireball_formation,
+    firebolt_burn_finished = firebolt_burn_finished,
+    settled_clock = settled_clock,
+    new_grave_dust = new_grave_dust,
+    step_grave_dust = step_grave_dust,
+    grave_progress = grave_progress,
+    no_grave = NO_GRAVE,
+}

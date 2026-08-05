@@ -133,6 +133,13 @@ export async function registerWaluGlueTests({ run, api }) {
           bytesConstants: context.bytesConstants,
           hostImports: host.hostImports,
           getWasmExports: context.getWasmExports,
+          // These suites run in a real browser, so the test document is the
+          // DOM output root. A test module only has to reach a DOM extern
+          // transitively — requiring a module that itself requires
+          // `dom:window` at module scope — for its top level to need one, and
+          // failing to mount it turns that into an import error rather than a
+          // test result.
+          domOutputRoot: typeof document === 'undefined' ? undefined : document,
         });
       },
     });

@@ -1,0 +1,101 @@
+-- Cards laid flat in a centred row on one pitch: the Arch Mage's sealed hand,
+-- the vault's three wards, and the five-card formation a resolved breach
+-- leaves standing. All three are the same object at different widths, so they
+-- are the same entity.
+--
+-- The pitch is the row's one degree of freedom, and it is a box-layout gap: at
+-- the authored pitch neighbouring cards leave daylight, and a row too wide for
+-- the board tightens until the gap goes negative and the cards overlap. The
+-- row respects the rectangle it is given by tightening rather than by running
+-- off the edge of it.
+--
+-- Slot geometry is a pure function of count, pitch, and bounds — no surface,
+-- no frame. That matters because these slots are also where cards fly to:
+-- choreography builds a deal months of frames before it is drawn, and it asks
+-- this module the same question the paint does, so an animation can only land
+-- where a card is actually going to be.
+
+local box = require("../box_layout")
+local entity = require("../entity")
+local card = require("./card")
+
+-- The pitch the row would keep given room, per row. The sealed row and the
+-- wards share the flat 116; the fan has its own, tighter one.
+const FLAT_PITCH: f64 = 116.0
+
+-- Widest sideways spread a row may occupy before it starts tightening. A
+-- five-card row never reaches it; a boss battle's eleven-card row shrinks its
+-- pitch to fit.
+function pitch_for(span: f64, count: i32, preferred: f64): f64
+    if count <= 1 then return preferred end
+    return math.min(preferred, span / ((count - 1)::f64))
+end
+
+-- The pitch a row actually keeps inside a rectangle: `span` is centre-to-centre
+-- travel, so the card's own width comes off the rectangle first.
+function pitch_in(bounds: box.Rect, count: i32, preferred: f64): f64
+    return pitch_for(bounds.width - card.width, count, preferred)
+end
+
+function row_style(pitch: f64): box.Style
+    return entity.row(pitch - card.width, box.justify_center, box.align_start)
+end
+
+function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
+    local tree: box.Tree = box.new()
+    local handles: {i32} = {}
+    for index = 0::i32, count - 1 do
+        table.insert(handles, tree:leaf(index, card.intrinsic()))
+    end
+    local root: i32 = tree:flow(-1, handles, row_style(pitch))
+    local result: box.Result = tree:solve(root, bounds)
+    local rects: {box.Rect} = {}
+    for index = 0::i32, count - 1 do
+        local frame: box.Frame? = box.frame(result, index)
+        if frame == nil then
+            table.insert(rects, entity.rect(bounds.x, bounds.y, card.width, card.height))
+        else
+            table.insert(rects, (frame::box.Frame).rect)
+        end
+    end
+    return rects
+end
+
+function slot_rect(count: i32, pitch: f64, bounds: box.Rect, index: i32): box.Rect
+    return slot_rects(count, pitch, bounds)[index]
+end
+
+-- The row's own size at the given pitch, which is what a band asks for before
+-- it decides how much of the board to hand over.
+function intrinsic(count: i32, pitch: f64): box.Intrinsic
+    if count <= 0 then return box.fixed(0.0, 0.0) end
+    return box.fixed(((count - 1)::f64) * pitch + card.width, card.height)
+end
+
+-- Children rather than cards: a ward carrying a spell condition draws itself
+-- through its own entity, and the row does not need to know which slots those
+-- are. `preferred` is the pitch the row keeps when it has the room; a narrower
+-- rectangle tightens it.
+function node(children: {entity.Node}, preferred: f64): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return intrinsic(#children, preferred)
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local rects: {box.Rect} = slot_rects(
+                #children, pitch_in(bounds, #children, preferred), bounds)
+            for index = 0::i32, #children - 1 do
+                children[index].paint(surface, rects[index])
+            end
+        end)
+end
+
+return {
+    node = node,
+    slot_rects = slot_rects,
+    slot_rect = slot_rect,
+    intrinsic = intrinsic,
+    pitch_for = pitch_for,
+    pitch_in = pitch_in,
+    flat_pitch = FLAT_PITCH,
+}

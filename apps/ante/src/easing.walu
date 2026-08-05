@@ -1,0 +1,41 @@
+-- The four curves Ante Magic moves on. Shared because a card flying, a ward
+-- climbing out of a grave, and a halo brightening should not each own a
+-- private copy of the same cubic.
+
+function in_cubic(t: f64): f64
+    return t * t * t
+end
+
+function in_out_cubic(t: f64): f64
+    if t < 0.5 then return 4.0 * t * t * t end
+    local back: f64 = -2.0 * t + 2.0
+    return 1.0 - back * back * back * 0.5
+end
+
+function out_quint(t: f64): f64
+    local back: f64 = 1.0 - t
+    local squared: f64 = back * back
+    return 1.0 - squared * squared * back
+end
+
+-- Overshoots and settles, which is what gives a landing weight.
+function out_back(t: f64): f64
+    local c1: f64 = 1.70158
+    local c3: f64 = c1 + 1.0
+    local back: f64 = t - 1.0
+    return 1.0 + c3 * back * back * back + c1 * back * back
+end
+
+function clamp01(value: f64): f64
+    if value < 0.0 then return 0.0 end
+    if value > 1.0 then return 1.0 end
+    return value
+end
+
+return {
+    in_cubic = in_cubic,
+    in_out_cubic = in_out_cubic,
+    out_quint = out_quint,
+    out_back = out_back,
+    clamp01 = clamp01,
+}

@@ -71,6 +71,28 @@ function State:next_is_boss(): bool
     return boss_at(self.vault + 1, self.rush)
 end
 
+-- The run as the board reads it: which vault of the sequence this is, how many
+-- the robbers have already taken, whether this one and the next are boss
+-- battles, and the mana the run carried in. Read-only, the way game.View is —
+-- a screen showing the run must not be able to move it.
+type View = {
+    vault: i32,
+    cleared: i32,
+    boss: bool,
+    next_is_boss: bool,
+    carried_mana: i32
+}
+
+function view(state: State): View
+    return {
+        vault = state.vault,
+        cleared = state.cleared,
+        boss = state:boss(),
+        next_is_boss = state:next_is_boss(),
+        carried_mana = state.mana,
+    }
+end
+
 -- The live vault has been fought to a verdict. Taking it advances the run and
 -- carries the mana that survived into the next vault; losing it ends the run,
 -- and what follows is the first vault of a fresh one — a vault the run already
@@ -217,6 +239,7 @@ end
 
 return {
     new = new,
+    view = view,
     boss_at = boss_at,
     snapshot = snapshot,
     restore = restore,

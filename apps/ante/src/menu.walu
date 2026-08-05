@@ -19,6 +19,9 @@
 
 local engine = require("waluau:engine")
 local render = require("./render")
+local ink = require("./ink")
+local effect_shaders = require("./effect_shaders")
+local spell_launch = require("./spell_launch")
 local city_map = require("./city_map")
 local layout = require("./layout")
 
@@ -145,10 +148,10 @@ function draw_item(state: State, viewport: layout.State, graphics: engine.Graphi
     local top: f64 = item_top(viewport, index)
     local left: f64 = item_x(viewport)
     local edge: string = "#52525b"
-    local ink: string = idle_ink
+    local tone: string = idle_ink
     if index == state.cursor then
         edge = "#fbbf24"
-        ink = "#fbbf24"
+        tone = "#fbbf24"
         -- A halo breathing around the selected option: the one moving element
         -- on an otherwise still screen, pointing at what Enter will do.
         local grow: f64 = 4.0 + math.sin(state.clock * 2.4) * 2.5
@@ -157,8 +160,8 @@ function draw_item(state: State, viewport: layout.State, graphics: engine.Graphi
         graphics:stroke_rectangle(
             left - grow, top - grow, ITEM_W + grow * 2.0, ITEM_H + grow * 2.0)
     end
-    render.panel(graphics, left, top, ITEM_W, ITEM_H, "#17171c", edge)
-    render.text_centered(graphics, label, viewport.center_x, top + 33.0, 15, ink)
+    ink.panel(graphics, left, top, ITEM_W, ITEM_H, "#17171c", edge)
+    ink.text_centered(graphics, label, viewport.center_x, top + 33.0, 15, tone)
 end
 
 function draw_spell_stage(state: State, viewport: layout.State, graphics: engine.Graphics): unit
@@ -168,10 +171,10 @@ function draw_spell_stage(state: State, viewport: layout.State, graphics: engine
     -- every later upgrade, which is what the map behind this list is showing.
     local mode: string = "NEW RUN"
     if state.rush_choice then mode = "BOSS RUSH" end
-    render.text_centered(graphics, "THE FIRST FENCE", viewport.center_x, heading_y, 30, "#fbbf24")
-    render.text_centered(
+    ink.text_centered(graphics, "THE FIRST FENCE", viewport.center_x, heading_y, 30, "#fbbf24")
+    ink.text_centered(
         graphics, "CHOOSE A STARTING SPELL", viewport.center_x, heading_y + 34.0, 12, "#d4d4d8")
-    render.text_centered(
+    ink.text_centered(
         graphics, mode .. "   CARRIED ALL RUN, EVERY CAST COSTS 5 MANA",
         viewport.center_x, heading_y + 56.0, 11, "#a1a1aa")
     for spell = 0::i32, SPELL_COUNT - 1 do
@@ -180,9 +183,9 @@ function draw_spell_stage(state: State, viewport: layout.State, graphics: engine
         -- legend for the effect the pick will launch in the vault.
         draw_item(
             state, viewport, graphics, spell,
-            render.spell_name(kind), render.power_color(kind))
+            spell_launch.name(kind), spell_launch.color(kind))
     end
-    render.text_centered(
+    ink.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
         viewport.center_x, viewport.height - 34.0, 11, "#a1a1aa")
 end
@@ -194,24 +197,27 @@ end
 -- The city map is already on the screen by the time this runs: the entry module
 -- draws it under whichever screen is live, so what is drawn here is only the
 -- list standing over it.
-function draw(state: State, viewport: layout.State, graphics: engine.Graphics, effects: render.EffectShaders, ready: bool): unit
+function draw(state: State, viewport: layout.State, graphics: engine.Graphics, effects: effect_shaders.EffectShaders, ready: bool): unit
     local heading_y: f64 = title_y(viewport)
     if state.help_open then
-        render.draw_help(graphics, effects)
+        -- The same help card the vault shows, drawn on a surface with no card
+        -- back: nothing on it is a relic.
+        render.draw_help(
+            { graphics = graphics, effects = effects, card_back = nil }, viewport)
         return
     end
     if state.stage == STAGE_SPELL then
         draw_spell_stage(state, viewport, graphics)
         return
     end
-    render.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
-    render.text_centered(
+    ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
+    ink.text_centered(
         graphics, "VAULT AFTER VAULT ON ONE POOL OF MANA. FIVE BREACHES EACH",
         viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")
     -- The four schools of magic as small mana motes under the title, in the
     -- same colours the footer legend uses in the vault.
     for i = 0::i32, 3::i32 do
-        graphics:set_color(render.school_color(i))
+        graphics:set_color(ink.school_color(i))
         graphics:fill_circle(viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
     end
 
@@ -222,22 +228,22 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
     draw_item(state, viewport, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
     draw_item(state, viewport, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
     if state.cursor == ITEM_NEW_RUN then
-        render.text_centered(
+        ink.text_centered(
             graphics, "EVERY THIRD VAULT IS A BOSS BATTLE. MANA CARRIES OVER",
             viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
     elseif state.cursor == ITEM_BOSS_RUSH then
-        render.text_centered(
+        ink.text_centered(
             graphics, "EVERY VAULT A BOSS. ELEVEN RELICS, NO REPLACEMENTS",
             viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
     elseif not ready then
-        render.text_centered(
+        ink.text_centered(
             graphics, "PREPARING THE VAULT", viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#8a8a92")
     end
 
-    render.text_centered(
+    ink.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS",
         viewport.center_x, viewport.height - 76.0, 11, "#a1a1aa")
-    render.text_centered(
+    ink.text_centered(
         graphics, "IN THE VAULT: ? HELP   H LEDGER   R RESTART RUN   M MENU",
         viewport.center_x, viewport.height - 52.0, 10, "#8a8a92")
 end

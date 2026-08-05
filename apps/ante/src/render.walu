@@ -1,20 +1,46 @@
--- Engine-rendered presentation for Ante Magic. Everything visible to the
--- player lives on this one logical canvas, including secondary modal screens.
+-- The vault board, composed. Everything the player can see is an entity that
+-- knows its own size and draws itself into the rectangle it is handed
+-- (`entity.walu` and `entities/`); this module decides which entities are on
+-- the board this frame and which part of the live viewport each of them gets.
+--
+-- What stays here is what is not an entity: the cards in flight. An animation
+-- leg is a card between two places rather than a thing standing in one, so it
+-- is drawn against the board's slot anchors instead of being laid out — and
+-- those anchors are the same box-layout frames the rows paint into, so a card
+-- can only ever land where a card is actually going to be.
 
-local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
 local effect_shaders = require("./effect_shaders")
-local burn_particles = require("./burn_particles")
 local spell_cast = require("./spell_cast")
 local spell_launch = require("./spell_launch")
 local game = require("./game")
+local run_module = require("./run")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
+local box = require("./box_layout")
+local entity = require("./entity")
+local ink = require("./ink")
+local easing = require("./easing")
+local card_burn = require("./card_burn")
+local card = require("./entities/card")
+local card_row = require("./entities/card_row")
+local hand_fan = require("./entities/hand_fan")
+local ward_panel = require("./entities/ward_panel")
+local deck = require("./entities/deck")
+local pile = require("./entities/pile")
+local hud = require("./entities/hud")
+local footer = require("./entities/footer")
+local action_bar = require("./entities/action_bar")
+local capsule = require("./entities/capsule")
+local powered_card = require("./entities/powered_card")
+local backdrop = require("./entities/backdrop")
+local modal = require("./entities/modal")
+local help_card = require("./entities/help_card")
+local ledger = require("./entities/ledger")
+local verdict = require("./entities/verdict")
 
-type Graphics = engine.Graphics
-type EffectShaders = effect_shaders.EffectShaders
 -- A position on the logical canvas. Everything that travels — animation legs,
 -- slot anchors, gather points, pointer hits — moves through Points, so a
 -- location is one value rather than an x and a y drifting separately.
@@ -32,253 +58,30 @@ function lerp(a: Point, b: Point, t: f64): Point
     return { x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t }
 end
 
-const CARD_W: f64 = 104.0
-const CARD_H: f64 = 128.0
+function top_left(rect: box.Rect): Point
+    return point(rect.x, rect.y)
+end
+
 const MODAL_HISTORY: i32 = 1
 const MODAL_HELP: i32 = 2
 const MODAL_FINAL: i32 = 4
 const FLIP_SECONDS: f64 = 0.55
-const TOTAL_ROUNDS: i32 = 5
-const SELECTION_HIGHLIGHT: string = "#fbbf24"
-const POWER_FIREBALL: i32 = 1
-const POWER_FREEZE: i32 = 2
-const POWER_RAISE: i32 = 3
-const POWER_GROWTH: i32 = 4
-const POWER_FORM_SECONDS: f64 = 0.78
-const FIREBALL_BURN_SECONDS: f64 = 1.55
-const FIREBALL_ASH_FADE_SECONDS: f64 = 1.10
 
--- Menu labels, cast prompts, and launch dispatch all consume the same spell
--- catalog instead of maintaining parallel kind ladders.
-function spell_name(kind: i32): string
-    return spell_launch.name(kind)
-end
+-- Where the board's own bands sit inside the live viewport. Each band says
+-- where an entity starts and how wide it may be; how tall it turns out to be
+-- is the entity's answer, not this module's.
+const BOARD_EDGE: f64 = 32.0
+const HEADER_TOP: f64 = 25.0
+const FOOTER_EDGE: f64 = 17.0
+const FOOTER_BOTTOM: f64 = 11.0
+-- Clearance between the ward row and the line of type above it.
+const PROMPT_RISE: f64 = 40.0
+-- Where the continue prompt of a settled breach sits under the action band.
+const CONTINUE_DROP: f64 = 30.0
+const PROMPT_DROP: f64 = 18.0
+const HEADLINE_TOP: f64 = 90.0
 
-function power_color(kind: i32): string
-    return spell_launch.color(kind)
-end
-
-function use_gold_shimmer(graphics: Graphics, effects: EffectShaders, strength: f64, aspect: f64): bool
-    local maybe_shader: graphics_module.Shader? = effects.gold_shimmer.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local strength_ok: bool = graphics:set_uniform_float("u_strength", strength)
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
-    return strength_ok and aspect_ok
-end
-
-function use_defeat_shroud(graphics: Graphics, effects: EffectShaders, strength: f64, aspect: f64): bool
-    local maybe_shader: graphics_module.Shader? = effects.defeat_shroud.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local strength_ok: bool = graphics:set_uniform_float("u_strength", strength)
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
-    return strength_ok and aspect_ok
-end
-
-function use_card_burn(graphics: Graphics, effects: EffectShaders, progress: f64, seed: i32, suit: i32): bool
-    local maybe_shader: graphics_module.Shader? = effects.card_burn.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local progress_ok: bool = graphics:set_uniform_float("u_progress", progress)
-    local seed_ok: bool = graphics:set_uniform_float("u_seed", seed::f64)
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", CARD_W / CARD_H)
-    local mode_ok: bool = graphics:set_uniform_float("u_particle_mode", 0.0)
-    local accent_red: f64 = 0.29
-    local accent_green: f64 = 0.87
-    local accent_blue: f64 = 0.50
-    if suit == 0 then
-        accent_red = 0.94
-        accent_green = 0.27
-        accent_blue = 0.27
-    elseif suit == 1 then
-        accent_red = 0.22
-        accent_green = 0.74
-        accent_blue = 0.97
-    elseif suit == 2 then
-        accent_red = 0.66
-        accent_green = 0.33
-        accent_blue = 0.97
-    end
-    local accent_ok: bool = graphics:set_uniform_vec3(
-        "u_accent_color", accent_red, accent_green, accent_blue)
-    return progress_ok and seed_ok and aspect_ok and mode_ok and accent_ok
-end
-
-function use_red_fire(graphics: Graphics, effects: EffectShaders, selected: bool, colored: bool, aspect: f64): bool
-    -- TODO(waluau-engine): Typed shader parameter blocks would let all four
-    -- school effects share one checked binding path instead of repeating
-    -- use_shader plus individual string-keyed uniform writes.
-    local maybe_shader: graphics_module.Shader? = effects.red_fire.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local selected_value: f64 = 0.0
-    if selected then selected_value = 1.0 end
-    local colored_value: f64 = 0.0
-    if colored then colored_value = 1.0 end
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
-    local selected_ok: bool = graphics:set_uniform_float("u_selected", selected_value)
-    local colored_ok: bool = graphics:set_uniform_float("u_colored", colored_value)
-    return aspect_ok and selected_ok and colored_ok
-end
-
-function use_blue_caustics(graphics: Graphics, effects: EffectShaders, selected: bool, colored: bool, aspect: f64): bool
-    local maybe_shader: graphics_module.Shader? = effects.blue_caustics.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local selected_value: f64 = 0.0
-    if selected then selected_value = 1.0 end
-    local colored_value: f64 = 0.0
-    if colored then colored_value = 1.0 end
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
-    local selected_ok: bool = graphics:set_uniform_float("u_selected", selected_value)
-    local colored_ok: bool = graphics:set_uniform_float("u_colored", colored_value)
-    return aspect_ok and selected_ok and colored_ok
-end
-
-function use_green_growth(graphics: Graphics, effects: EffectShaders, selected: bool, colored: bool, aspect: f64): bool
-    local maybe_shader: graphics_module.Shader? = effects.green_growth.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local selected_value: f64 = 0.0
-    if selected then selected_value = 1.0 end
-    local colored_value: f64 = 0.0
-    if colored then colored_value = 1.0 end
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
-    local selected_ok: bool = graphics:set_uniform_float("u_selected", selected_value)
-    local colored_ok: bool = graphics:set_uniform_float("u_colored", colored_value)
-    return aspect_ok and selected_ok and colored_ok
-end
-
-function use_black_hole(graphics: Graphics, effects: EffectShaders, selected: bool, colored: bool, aspect: f64): bool
-    local maybe_shader: graphics_module.Shader? = effects.black_hole.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local selected_value: f64 = 0.0
-    if selected then selected_value = 1.0 end
-    local colored_value: f64 = 0.0
-    if colored then colored_value = 1.0 end
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
-    local selected_ok: bool = graphics:set_uniform_float("u_selected", selected_value)
-    local colored_ok: bool = graphics:set_uniform_float("u_colored", colored_value)
-    return aspect_ok and selected_ok and colored_ok
-end
-
--- The freeze shell quad hangs past the card so icicles can grow outside it.
-const FREEZE_MARGIN_X: f64 = 10.0
-const FREEZE_MARGIN_TOP: f64 = 12.0
-const FREEZE_MARGIN_BOTTOM: f64 = 10.0
-
-function use_ice_freeze(graphics: Graphics, effects: EffectShaders, freeze: f64): bool
-    local maybe_shader: graphics_module.Shader? = effects.ice_freeze.shader
-    if maybe_shader == nil then return false end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local quad_w: f64 = CARD_W + FREEZE_MARGIN_X * 2.0
-    local quad_h: f64 = CARD_H + FREEZE_MARGIN_TOP + FREEZE_MARGIN_BOTTOM
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", CARD_W / CARD_H)
-    local freeze_ok: bool = graphics:set_uniform_float("u_freeze", freeze)
-    local rect_ok: bool = graphics:set_uniform_vec4(
-        "u_rect",
-        FREEZE_MARGIN_X / quad_w,
-        FREEZE_MARGIN_TOP / quad_h,
-        (FREEZE_MARGIN_X + CARD_W) / quad_w,
-        (FREEZE_MARGIN_TOP + CARD_H) / quad_h)
-    return aspect_ok and freeze_ok and rect_ok
-end
-
-function stop_effect(graphics: Graphics): unit
-    graphics:use_default_shader()
-end
-
--- Once both flips have landed, the winner's pair flies out of its row and
--- joins the three wards, so the whole five-card formation stands together in
--- the middle of the board. FLY_START leaves a beat after the second flip
--- (which finishes at 0.2 + FLIP_SECONDS * 1.7), and the second card trails
--- the first by FLY_STAGGER so the pair arrives as two beats rather than a
--- block slide.
-const FLY_START: f64 = 1.3
-const FLY_SECONDS: f64 = 0.45
-const FLY_STAGGER: f64 = 0.12
--- Where the pair lands: one flank on each side of the wards, extending their
--- 116-pitch row to a five-card formation that stays centred on the board.
-const WIN_LIFT_SCALE: f64 = 1.14
-const WIN_LIFT_Y: f64 = 10.0
-
--- Once the second card has landed, a single animated gold halo ignites
--- beneath the completed row and brightens over WIN_GLOW_FADE. It extends a
--- little beyond the cards, while its uninterrupted centre remains visible in
--- the four gaps. The cards themselves are drawn later over the light field.
--- Kept equal to FLY_START + FLY_STAGGER + FLY_SECONDS; top-level constants
--- require literal initializers.
-const WIN_GLOW_START: f64 = 1.87
-const WIN_GLOW_FADE: f64 = 0.35
-const SHIMMER_MARGIN: f64 = 64.0
--- The losing pair breaks apart on the same beat as the halo ignition. Its
--- The burn is intentionally long enough to read as three distinct beats:
--- ignition, an advancing char front, then collapse into ash.
-const LOSS_DISINTEGRATE_SECONDS: f64 = 1.42
-const LOSS_ASH_FLECKS: i32 = 28
-
--- Half the card's diagonal, in card pixels; top-level constants require
--- literal initializers, so sqrt(52^2 + 64^2) is written out. The card-burn
--- shader normalises its radial field by exactly this distance, so a front
--- reading of 1.0 stands at the corners.
-const CARD_HALF_DIAGONAL: f64 = 82.4621
--- Progress readings between which the losing sheet sheds ash, and the flakes
--- per second released over that span. The window is the third of the burn's
--- three beats; the rate is the old fleck count spread across it.
-const LOSS_ASH_START: f64 = 0.56
-const LOSS_ASH_END: f64 = 0.95
-const LOSS_ASH_RATE: f64 = 50.0
--- The departing ward's own, larger flakes: released later, from a front that
--- is already past the card's edges, and falling further.
-const WARD_ASH_START: f64 = 0.64
-const WARD_ASH_END: f64 = 0.97
-const WARD_ASH_RATE: f64 = 44.0
-
--- Grave dust, in motes per second: thrown while the raised ward is still
--- climbing out, then a trickle for as long as it stands. A raise is a
--- persistent condition, so the aperture keeps breathing rather than leaving a
--- ring of motes hanging in the air where the climb happened to stop.
-const GRAVE_DUST_RISING_RATE: f64 = 72.0
-const GRAVE_DUST_IDLE_RATE: f64 = 13.0
--- A formation reading below zero means no ward is raised: the aperture is shut
--- and whatever it last threw finishes settling.
-const NO_GRAVE: f64 = -1.0
-
--- The three outcomes a resolved breach can have. The help legend draws the
--- same orbs from these, so a colour only ever means one thing on screen.
-const ORB_ROBBERS_EDGE: string = "#cffafe"
-const ORB_ROBBERS_FILL: string = "#22d3ee"
-const ORB_ARCH_MAGE_EDGE: string = "#fecaca"
-const ORB_ARCH_MAGE_FILL: string = "#f87171"
-const ORB_STALEMATE_EDGE: string = "#e4e4e7"
-const ORB_STALEMATE_FILL: string = "#a1a1aa"
-
--- The watched-relic mark, in parchment ink rather than either side's colour:
--- the same eye means the same thing on both rows, and it must not be mistaken
--- for a SELECTION_HIGHLIGHT focus edge or a school-coloured bind. The mark says
--- something about the card itself, not about what the cursor is doing.
-const EYE_INK: string = "#e8dfbd"
-const EYE_GROUND: string = "#0b0b10"
--- The eye rides the middle of a card's top edge, centred on the edge itself so
--- half of it stands clear of the card: it reads as a tag pinned to the relic
--- rather than part of the artwork, and it stays off the rank, the school and
--- the seal's ward. The card's middle rather than a corner: the fan tucks every
--- relic's right edge under its neighbour, so a mark out there is invisible on
--- four of the five, and the left corner already carries the rank. FAN_PITCH is
--- how much of a fanned relic stays uncovered, and the eye sits well inside it.
-const EYE_HALF_W: f64 = 7.0
-const EYE_LID: f64 = 4.6
--- Board anchors card animations travel between. main.walu mirrors these ids
+-- Board anchors card animations travel between. Choreography mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
 const SLOT_PLAYER: i32 = 0
 const SLOT_COMPUTER: i32 = 1
@@ -295,40 +98,8 @@ const SLOT_ASIDE: i32 = 4
 const SLOT_COMPUTER_WON: i32 = 5
 const SLOT_PLAYER_WON: i32 = 6
 
--- The player holds their five relics in a fan rather than a row: each step
--- outward from the middle relic slides FAN_PITCH sideways, tilts FAN_TILT
--- further from upright, and dips along a shallow arc. FAN_PITCH is well under
--- CARD_W, so relics overlap; because each one covers only its neighbour's
--- right edge, the rank and school in the top-left corner stay readable. The
--- Arch Mage's sealed row and the wards keep their flat layout.
-const FAN_MIDDLE: f64 = 2.0
-const FAN_PITCH: f64 = 74.0
-const FAN_TILT: f64 = 0.075
--- The arc's dip per squared step: the outermost relics sit 4 * FAN_DROP below
--- the middle one, which approximates a pivot far below the board.
-const FAN_DROP: f64 = 2.8
--- Widest sideways spread either hand row may occupy, first to last card
--- centre. Five cards never reach it; a boss battle's eleven-card rows shrink
--- their pitch to it so both rows clear the piles on the right edge.
--- The Arch Mage's flat row: pitch of the five-card layout and the fixed
--- centre both layouts share (190 + (4 * 116 + 104) / 2 in the original).
-const COMPUTER_PITCH: f64 = 116.0
--- How far the fan slides open around the focused relic, in the same steps as
--- everything else here — about a quarter of the gap to its neighbour. This is
--- deliberately short of the ~0.41 steps it would take for FAN_PITCH to clear
--- CARD_W: relics keep their dealt stacking order, so the focused one still
--- tucks under the relic to its right, and the parting reads as the fan
--- breathing rather than a card climbing out of it.
-const FAN_PART: f64 = 0.23
--- A focus of FAN_CLOSED — below the first of the five relics — closes the
--- fan, leaving every relic at its resting slot. Focus only exists while the
--- cursor can actually move, so cards in flight and a resolving breach both draw
--- the hand closed, which is what keeps animation endpoints honest: slot_pos
--- describes the closed fan.
-const FAN_CLOSED: i32 = -1
-
 -- Faces an animated card shows along its flight: stay sealed, stay revealed,
--- or flip between the two mid-flight. main.walu mirrors these values too.
+-- or flip between the two mid-flight. Choreography mirrors these values too.
 const FACES_DOWN: i32 = 0
 const FACES_UP: i32 = 1
 const FACES_FLIP_UP: i32 = 2
@@ -349,6 +120,36 @@ const ANIM_EFFECT_THROW: i32 = 2
 const THROW_STRETCH: f64 = 1.6
 const THROW_OVERSHOOT: f64 = 0.3
 const THROW_RISE: f64 = 270.0
+
+-- Once both flips have landed, the winner's pair flies out of its row and
+-- joins the three wards, so the whole five-card formation stands together in
+-- the middle of the board. FLY_START leaves a beat after the second flip
+-- (which finishes at 0.2 + FLIP_SECONDS * 1.7), and the second card trails
+-- the first by FLY_STAGGER so the pair arrives as two beats rather than a
+-- block slide.
+const FLY_START: f64 = 1.3
+const FLY_SECONDS: f64 = 0.45
+const FLY_STAGGER: f64 = 0.12
+-- The formation the pair lands in: the ward row extended to five slots on the
+-- same pitch, so the wards do not move and the flanks arrive on the rhythm the
+-- row already has.
+const FORMATION_SLOTS: i32 = 5
+const WIN_LIFT_SCALE: f64 = 1.14
+const WIN_LIFT_Y: f64 = 10.0
+
+-- Once the second card has landed, a single animated gold halo ignites
+-- beneath the completed row and brightens over WIN_GLOW_FADE. It extends a
+-- little beyond the cards, while its uninterrupted centre remains visible in
+-- the four gaps. The cards themselves are drawn later over the light field.
+-- Kept equal to FLY_START + FLY_STAGGER + FLY_SECONDS; top-level constants
+-- require literal initializers.
+const WIN_GLOW_START: f64 = 1.87
+const WIN_GLOW_FADE: f64 = 0.35
+const SHIMMER_MARGIN: f64 = 64.0
+
+const PROMPT_SIZE: f64 = 11.0
+const PROMPT_INK: string = "#d4d4d8"
+const HEADLINE_SIZE: f64 = 14.0
 
 -- One leg of a card's journey across the board. The card renders at `from`
 -- until start, travels to `to` over duration, and only exists on screen
@@ -397,17 +198,6 @@ type Interaction = {
     -- prompt names, and whose price it quotes.
     cast_slot: i32
 }
--- The run behind the live board, as the renderer needs it: which vault of the
--- sequence this is, how many the robbers have already taken, whether this one
--- and the next are boss battles, and the mana the run carried in. Read-only —
--- the run module owns every one of these.
-type RunView = {
-    vault: i32,
-    cleared: i32,
-    boss: bool,
-    next_is_boss: bool,
-    carried_mana: i32
-}
 type Motion = {
     fan_parts: {f64},
     reveal_clock: f64,
@@ -424,20 +214,6 @@ type SpellPresentation = {
     clock: f64,
     target: i32
 }
--- Ash is a simulation rather than a reconstruction: these emitters live in the
--- presentation state, are advanced once per tick beside the clock that drives
--- the burn, and are drawn wherever the card they came off is standing. Their
--- coordinates are card-local — the emitter sits at the card's centre — so a
--- relic burning inside the fan's rotation sheds along the card's own down,
--- exactly as the reconstruction did. A reveal burns a pair, which is why there
--- are two; the ward Fireball is eating sheds a sheet fall and a coarser
--- departing one on top of it.
-type CardAsh = {
-    reveal_first: particles.ParticleSystem,
-    reveal_second: particles.ParticleSystem,
-    ward_sheet: particles.ParticleSystem,
-    ward_fall: particles.ParticleSystem
-}
 -- Everything a spell has in the air. `sparks` is the cast's own — the carrier's
 -- trail and the burst its landing threw — and belongs to the spell modules
 -- behind the launch seam. The grave dust is not a cast at all: it is the ward
@@ -450,7 +226,7 @@ type SpellParticles = {
 type Frame = {
     viewport: layout.State,
     view: game.View,
-    run: RunView,
+    run: run_module.View,
     interaction: Interaction,
     motion: Motion,
     piles: Piles,
@@ -458,98 +234,102 @@ type Frame = {
     -- Live emitters, not a description of them: the ash a burning card has
     -- already shed is simulation state the frame reads, and the same state the
     -- update tick advanced.
-    ash: CardAsh,
+    ash: card_burn.CardAsh,
     spells: SpellParticles,
     -- Scratch geometry for thrown cards, owned by choreography like the ash:
     -- one deformable sheet, rebuilt each frame a throw is in the air. A card
     -- deformed sixty times a second should not be sixty allocations.
-    sheet: card_warp.Mesh,
-    card_back: graphics_module.Texture?
+    sheet: card_warp.Mesh
 }
 
-function ease_in_out_cubic(t: f64): f64
-    if t < 0.5 then return 4.0 * t * t * t end
-    local back: f64 = -2.0 * t + 2.0
-    return 1.0 - back * back * back * 0.5
+function ease_progress(t: f64, kind: i32): f64
+    if kind == EASE_IN_CUBIC then return easing.in_cubic(t) end
+    if kind == EASE_IN_OUT_CUBIC then return easing.in_out_cubic(t) end
+    if kind == EASE_OUT_BACK then return easing.out_back(t) end
+    return easing.out_quint(t)
 end
 
-function ease_out_quint(t: f64): f64
-    local back: f64 = 1.0 - t
-    local squared: f64 = back * back
-    return 1.0 - squared * squared * back
+-- ---------------------------------------------------------------------------
+-- The bands. Where each entity of the board stands inside the live viewport.
+-- ---------------------------------------------------------------------------
+
+-- Both hand rows are laid out for however many cards they currently hold, and
+-- both may spread at most as far as the viewport's hand span before their
+-- pitch tightens.
+function hand_width(viewport: layout.State): f64
+    return viewport.hand_span + card.width
 end
 
-function ease_out_back(t: f64): f64
-    local c1: f64 = 1.70158
-    local c3: f64 = c1 + 1.0
-    local back: f64 = t - 1.0
-    return 1.0 + c3 * back * back * back + c1 * back * back
+function computer_band(viewport: layout.State): box.Rect
+    local width: f64 = hand_width(viewport)
+    return entity.rect(
+        viewport.center_x - width * 0.5, viewport.computer_y, width, card.height)
 end
 
-function ease_progress(t: f64, easing: i32): f64
-    if easing == EASE_IN_CUBIC then return t * t * t end
-    if easing == EASE_IN_OUT_CUBIC then return ease_in_out_cubic(t) end
-    if easing == EASE_OUT_BACK then return ease_out_back(t) end
-    return ease_out_quint(t)
+function fan_band(viewport: layout.State, count: i32): box.Rect
+    local width: f64 = hand_width(viewport)
+    local height: f64 = hand_fan.intrinsic(count).preferred_height
+    return entity.rect(
+        viewport.center_x - width * 0.5, viewport.player_y - height * 0.5,
+        width, height)
 end
 
--- Both hand rows are laid out for however many cards they currently hold.
--- The five-card layout is the reference; boss battles start at eleven and
--- shrink after every breach, so the geometry below is parametric on that
--- count. Every caller knows its row's size — the live view, the last trick's
--- recorded hands, or the fan_parts list all carry it — so the count is an
--- argument rather than hidden layout state.
-function fan_middle_of(count: i32): f64
-    return ((count - 1)::f64) * 0.5
+-- The middle of the board, sized for however many slots stand in it: three
+-- while the vault is being fought, five once a breach has been settled and the
+-- winner's pair has joined the wards.
+function ward_band(viewport: layout.State, slots: i32): box.Rect
+    local size: box.Intrinsic = card_row.intrinsic(slots, card_row.flat_pitch)
+    return entity.rect(
+        viewport.center_x - size.preferred_width * 0.5, viewport.ward_y,
+        size.preferred_width, size.preferred_height)
 end
 
--- How much a larger fan flattens its tilt and dip so its outermost relics
--- keep the reference five-card silhouette instead of curling off the board.
-function fan_scale_of(count: i32): f64
-    local middle: f64 = fan_middle_of(count)
-    if middle <= FAN_MIDDLE then return 1.0 end
-    return FAN_MIDDLE / middle
+function action_band(viewport: layout.State): box.Rect
+    return entity.rect(0.0, viewport.action_y, viewport.width, capsule.height)
 end
 
-function row_pitch_of(viewport: layout.State, pitch: f64, count: i32): f64
-    if count <= 1 then return pitch end
-    return math.min(pitch, viewport.hand_span / ((count - 1)::f64))
+function deck_band(viewport: layout.State): box.Rect
+    return entity.rect(
+        viewport.side_left, viewport.ward_y,
+        card.width, card.height + deck.caption_drop)
 end
 
--- Where a relic sits along the fan: steps from the middle relic, negative to
--- its left, plus however far the parting has pushed it. This one number is the
--- fan's only degree of freedom — slide, dip, and tilt all read off it — so a
--- parting relic travels along the arc the fan already describes instead of
--- skidding sideways out of the curve.
-function hand_step_at(index: i32, part: f64, count: i32): f64
-    return (index::f64) - fan_middle_of(count) + part
+function board_rect(viewport: layout.State): box.Rect
+    return entity.rect(0.0, 0.0, viewport.width, viewport.height)
 end
 
-function hand_angle_at(index: i32, part: f64, count: i32): f64
-    return hand_step_at(index, part, count) * FAN_TILT * fan_scale_of(count)
+function header_band(metrics: entity.Metrics, node: entity.Node, viewport: layout.State): box.Rect
+    return entity.band(
+        metrics, node, BOARD_EDGE, HEADER_TOP, viewport.width - BOARD_EDGE * 2.0)
 end
 
--- Top-left of a relic's card box, in its own tilted frame.
-function hand_pos_at(viewport: layout.State, index: i32, part: f64, count: i32): Point
-    local step: f64 = hand_step_at(index, part, count)
-    local scale: f64 = fan_scale_of(count)
-    return {
-        x = viewport.center_x + step * row_pitch_of(viewport, FAN_PITCH, count) - CARD_W * 0.5,
-        y = viewport.player_y + step * step * FAN_DROP * scale * scale - CARD_H * 0.5,
-    }
+function footer_band(metrics: entity.Metrics, node: entity.Node, viewport: layout.State): box.Rect
+    return entity.band_above(
+        metrics, node, FOOTER_EDGE, viewport.height - FOOTER_BOTTOM,
+        viewport.width - FOOTER_EDGE * 2.0)
 end
 
+-- A line of type centred across the board, hung off a baseline the way the
+-- board's prompts always have been.
+function centered_line(
+    surface: entity.Surface, viewport: layout.State,
+    text: string, baseline: f64, size: f64, color: string
+): unit
+    ink.text_centered(surface.graphics, text, viewport.center_x, baseline, size, color)
+end
 
--- Where a relic's parting offset is headed: the fan opens around the focused
--- relic, everything left of it sliding left and everything right sliding right,
--- while the focused relic itself holds still. main.walu eases each relic toward
--- its target rather than reading this straight, so the fan parts over a few
--- frames instead of snapping as the cursor steps along the hand.
-function hand_part_target(index: i32, focus: i32): f64
-    if focus == FAN_CLOSED then return 0.0 end
-    if index < focus then return -FAN_PART end
-    if index > focus then return FAN_PART end
-    return 0.0
+-- ---------------------------------------------------------------------------
+-- Slot anchors. The same box-layout frames the rows paint into, answered
+-- without a frame so choreography can aim an animation at them.
+-- ---------------------------------------------------------------------------
+
+function hand_slot(viewport: layout.State, index: i32, part: f64, count: i32): box.Rect
+    return hand_fan.slot_rect(fan_band(viewport, count), index, part, count)
+end
+
+function row_slot(viewport: layout.State, slots: i32, index: i32): box.Rect
+    return card_row.slot_rect(
+        slots, card_row.flat_pitch, ward_band(viewport, slots), index)
 end
 
 -- Top-left of a board slot's card box. The player's row reads off the closed
@@ -558,19 +338,22 @@ end
 -- sealed row, the player's down beside the fan, the burn pile centred between.
 -- The count parameter sizes the two hand rows; every other slot ignores it.
 function slot_pos_at(viewport: layout.State, kind: i32, index: i32, count: i32): Point
-    if kind == SLOT_PLAYER then return hand_pos_at(viewport, index, 0.0, count) end
+    if kind == SLOT_PLAYER then
+        return top_left(hand_slot(viewport, index, 0.0, count))
+    end
     if kind == SLOT_COMPUTER then
-        local pitch: f64 = row_pitch_of(viewport, COMPUTER_PITCH, count)
-        local left: f64 = viewport.center_x - (((count - 1)::f64) * pitch + CARD_W) * 0.5
-        return point(left + (index::f64) * pitch, viewport.computer_y)
+        local band: box.Rect = computer_band(viewport)
+        return top_left(card_row.slot_rect(
+            count, card_row.pitch_in(band, count, card_row.flat_pitch),
+            band, index))
     end
-    if kind == SLOT_MIDDLE then
-        return point(viewport.center_x - 168.0 + (index::f64) * 116.0, viewport.ward_y)
-    end
+    if kind == SLOT_MIDDLE then return top_left(row_slot(viewport, 3, index)) end
     if kind == SLOT_DECK then return point(viewport.side_left, viewport.ward_y) end
-    if kind == SLOT_COMPUTER_WON then return point(viewport.side_right, viewport.computer_y) end
+    if kind == SLOT_COMPUTER_WON then
+        return point(viewport.side_right, viewport.computer_y)
+    end
     if kind == SLOT_PLAYER_WON then
-        return point(viewport.side_right, viewport.player_y - CARD_H * 0.5 + 7.0)
+        return point(viewport.side_right, viewport.player_y - card.height * 0.5 + 7.0)
     end
     return point(
         viewport.side_right + (index::f64) * 4.0,
@@ -584,6 +367,46 @@ function slot_pos(viewport: layout.State, kind: i32, index: i32): Point
     return slot_pos_at(viewport, kind, index, 5)
 end
 
+-- Centre of a board slot's card box, in a hand row laid out for `count`.
+function slot_center(viewport: layout.State, kind: i32, index: i32, count: i32): Point
+    local slot: Point = slot_pos_at(viewport, kind, index, count)
+    return point(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
+end
+
+-- The two flanks of the resolved five-card formation, where the winner's pair
+-- lands. They are the outer slots of the same row the wards are the middle
+-- three of, so nothing has to move to make room for them.
+function row_left(viewport: layout.State): Point
+    return top_left(row_slot(viewport, FORMATION_SLOTS, 0))
+end
+
+function row_right(viewport: layout.State): Point
+    return top_left(row_slot(viewport, FORMATION_SLOTS, FORMATION_SLOTS - 1))
+end
+
+function hand_angle_at(index: i32, part: f64, count: i32): f64
+    return hand_fan.angle_at(index, part, count)
+end
+
+function hand_pos_at(viewport: layout.State, index: i32, part: f64, count: i32): Point
+    return top_left(hand_slot(viewport, index, part, count))
+end
+
+function hand_part_target(index: i32, focus: i32): f64
+    return hand_fan.part_target(index, focus)
+end
+
+-- Centre of a bound relic in the fan: the bind lift rises along the card's
+-- tilted axis, so the launch point folds that lift through the relic's angle
+-- instead of lifting straight up the screen.
+function bound_hand_center(viewport: layout.State, index: i32, part: f64, count: i32): Point
+    local angle: f64 = hand_fan.angle_at(index, part, count)
+    local slot: box.Rect = hand_slot(viewport, index, part, count)
+    return point(
+        slot.x + card.width * 0.5 + math.sin(angle) * card.bind_lift,
+        slot.y + card.height * 0.5 - math.cos(angle) * card.bind_lift)
+end
+
 function slot_hidden(anims: {Anim}, clock: f64, kind: i32, index: i32): bool
     for anim in anims do
         if anim.dest_kind == kind and anim.dest_index == index and clock < anim.vanish then
@@ -593,142 +416,12 @@ function slot_hidden(anims: {Anim}, clock: f64, kind: i32, index: i32): bool
     return false
 end
 
-function text(graphics: Graphics, value: string, x: f64, y: f64, size: f64, color: string): unit
-    graphics:set_color(color)
-    graphics:set_font(tostring(size) .. "px monospace")
-    graphics:print(value, x, y)
-end
-
-function text_centered(graphics: Graphics, value: string, center_x: f64, y: f64, size: f64, color: string): unit
-    graphics:set_color(color)
-    graphics:set_font(tostring(size) .. "px monospace")
-    graphics:print_aligned(value, center_x, y, "center")
-end
-
--- Clickable commit/pass capsules sit on the old prompt line, between the ward
--- panel's bottom edge and the top of the fan.
-const BUTTON_H: f64 = 26.0
-const COMMIT_W: f64 = 190.0
-const PASS_W: f64 = 96.0
-const BUTTON_GAP: f64 = 14.0
--- The footer's "? HELP" caption, grown to a comfortable click target.
-
--- The feint phase shows COMMIT and PASS side by side; the breach phase
--- centres its lone COMMIT, so the button's left edge depends on the phase.
-function commit_left(viewport: layout.State, swap_open: bool): f64
-    local center: f64 = viewport.center_x
-    if swap_open then return center - (COMMIT_W + BUTTON_GAP + PASS_W) * 0.5 end
-    return center - COMMIT_W * 0.5
-end
-
-function pass_left(viewport: layout.State): f64
-    return commit_left(viewport, true) + COMMIT_W + BUTTON_GAP
-end
-
-function point_in_rect(at: Point, left: f64, top: f64, width: f64, height: f64): bool
-    return at.x >= left and at.x <= left + width and at.y >= top and at.y <= top + height
-end
-
--- The topmost relic of the fan under a point, or -1. Later slots draw over
--- earlier ones, so the scan runs highest slot first, and each relic's card box
--- is checked in its own tilted frame: the point moves into the card's local
--- space by undoing the same centre/rotation transform the card was drawn with.
-function hit_hand(viewport: layout.State, at: Point, parts: {f64}): i32
-    for i = #parts - 1, 0::i32, -1::i32 do
-        local part: f64 = parts[i]
-        local angle: f64 = hand_angle_at(i, part, #parts)
-        local slot: Point = hand_pos_at(viewport, i, part, #parts)
-        local dx: f64 = at.x - (slot.x + CARD_W * 0.5)
-        local dy: f64 = at.y - (slot.y + CARD_H * 0.5)
-        local local_x: f64 = dx * math.cos(angle) + dy * math.sin(angle)
-        local local_y: f64 = dy * math.cos(angle) - dx * math.sin(angle)
-        if math.abs(local_x) <= CARD_W * 0.5 and math.abs(local_y) <= CARD_H * 0.5 then
-            return i
-        end
+function hidden_slots(anims: {Anim}, clock: f64, kind: i32, count: i32): {bool}
+    local flags: {bool} = {}
+    for index = 0::i32, count - 1 do
+        table.insert(flags, slot_hidden(anims, clock, kind, index))
     end
-    return -1
-end
-
--- The ward under a point, or -1. Wards lie square to the board.
-function hit_ward(viewport: layout.State, at: Point): i32
-    for i = 0::i32, 2::i32 do
-        local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
-        if point_in_rect(at, slot.x, slot.y, CARD_W, CARD_H) then
-            return i
-        end
-    end
-    return -1
-end
-
-function hit_commit(viewport: layout.State, at: Point, swap_open: bool): bool
-    return point_in_rect(
-        at, commit_left(viewport, swap_open), viewport.action_y, COMMIT_W, BUTTON_H)
-end
-
-function hit_pass(viewport: layout.State, at: Point): bool
-    return point_in_rect(at, pass_left(viewport), viewport.action_y, PASS_W, BUTTON_H)
-end
-
-function hit_help(viewport: layout.State, at: Point): bool
-    return point_in_rect(at, viewport.width - 70.0, viewport.height - 32.0, 62.0, 24.0)
-end
-
--- Inactive buttons stay visible but grey: a click still lands (main.walu owns
--- the rules), it simply will not satisfy them yet.
-function draw_button(graphics: Graphics, viewport: layout.State, label: string, x: f64, width: f64, active: bool): unit
-    local border: string = "#52525b"
-    local ink: string = "#8a8a92"
-    if active then
-        border = "#fbbf24"
-        ink = "#fbbf24"
-    end
-    graphics:set_color("#17171c")
-    local y: f64 = viewport.action_y
-    graphics:fill_rectangle(x, y, width, BUTTON_H)
-    graphics:set_color(border)
-    graphics:set_line_width(1.5)
-    graphics:stroke_rectangle(x, y, width, BUTTON_H)
-    text_centered(graphics, label, x + width * 0.5, y + 18.0, 11, ink)
-end
-
-function text_right(graphics: Graphics, value: string, right_x: f64, y: f64, size: f64, color: string): unit
-    graphics:set_color(color)
-    graphics:set_font(tostring(size) .. "px monospace")
-    graphics:print_aligned(value, right_x, y, "right")
-end
-
--- One colour of a palette written as "#rrggbb", at a fraction of its opacity.
--- A screen that dissolves into another needs every one of its colours at the
--- same fraction, and the renderer's colours are literals rather than channels,
--- so the fade is spelled as the alpha pair the engine already accepts on the
--- end of a hex colour. Colours that already carry an alpha pair are not
--- fadeable this way and none are passed here.
-const FADE_DIGITS: string = "0123456789abcdef"
-
-function fade(color: string, alpha: f64): string
-    if alpha >= 1.0 then return color end
-    if alpha <= 0.0 then return color .. "00" end
-    local level: i32 = math.floor(alpha * 255.0 + 0.5)::i32
-    local high: i32 = math.floor((level::f64) / 16.0)::i32
-    local low: i32 = level - high * 16
-    return color
-        .. string.sub(FADE_DIGITS, high + 1, high + 1)
-        .. string.sub(FADE_DIGITS, low + 1, low + 1)
-end
-
-function panel(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string, edge: string): unit
-    graphics:set_color(fill)
-    graphics:fill_rectangle(x, y, width, height)
-    graphics:set_color(edge)
-    graphics:set_line_width(2.0)
-    graphics:stroke_rectangle(x, y, width, height)
-end
-
-function school_color(suit: i32): string
-    if suit == 0 then return "#ef4444" end
-    if suit == 1 then return "#38bdf8" end
-    if suit == 2 then return "#a855f7" end
-    return "#4ade80"
+    return flags
 end
 
 function is_picked(picks: {i32}, value: i32): bool
@@ -736,155 +429,105 @@ function is_picked(picks: {i32}, value: i32): bool
     return false
 end
 
-function draw_sigil(graphics: Graphics, suit: i32, x: f64, y: f64): unit
-    -- Every school mark sits on the same compact ink seal. Active shaders can
-    -- become bright directly beneath a line, so relying on contrast from the
-    -- card field alone would let the colored symbol disappear frame-to-frame.
-    graphics:set_color("#09090b")
-    graphics:fill_circle(x + 11.0, y + 3.0, 18.0)
-    graphics:set_color(school_color(suit))
-    graphics:set_line_width(3.0)
-    if suit == 0 then
-        -- Red school: a cut gem — flat crown, girdle line, pointed pavilion.
-        graphics:line(x + 5.0, y - 9.0, x + 17.0, y - 9.0)
-        graphics:line(x + 17.0, y - 9.0, x + 22.0, y - 1.0)
-        graphics:line(x + 22.0, y - 1.0, x + 11.0, y + 17.0)
-        graphics:line(x + 11.0, y + 17.0, x, y - 1.0)
-        graphics:line(x, y - 1.0, x + 5.0, y - 9.0)
-        graphics:line(x, y - 1.0, x + 22.0, y - 1.0)
-    elseif suit == 1 then
-        graphics:fill_circle(x + 11.0, y + 3.0, 12.0)
-        graphics:set_color("#111827")
-        graphics:fill_circle(x + 11.0, y - 1.0, 6.0)
-    elseif suit == 2 then
-        graphics:fill_rectangle(x, y - 9.0, 22.0, 22.0)
-        graphics:set_color("#09090b")
-        graphics:fill_rectangle(x + 6.0, y - 3.0, 10.0, 10.0)
-    else
-        -- Green school: a leaf blade with a midrib and two side veins.
-        graphics:line(x, y + 16.0, x + 22.0, y - 9.0)
-        graphics:line(x + 7.0, y + 8.0, x + 12.0, y + 13.0)
-        graphics:line(x + 14.0, y, x + 19.0, y + 5.0)
-    end
+-- ---------------------------------------------------------------------------
+-- Pointer hits. Every one of these answers from the same rectangle the entity
+-- was painted into.
+-- ---------------------------------------------------------------------------
+
+function hit_hand(viewport: layout.State, at: Point, parts: {f64}): i32
+    return hand_fan.hit(fan_band(viewport, #parts), parts, at.x, at.y)
 end
 
--- The mark a relic carries once the other side has watched it come off the
--- wards: an open eye, drawn about its own centre on its own dark ground so it
--- reads over both a card's face and its seal. Both quadratic lids share one
--- path and use control points twice their centre offset so the curve peaks at
--- EYE_LID halfway across.
-function draw_eye(graphics: Graphics, x: f64, y: f64): unit
-    graphics:set_color(EYE_GROUND)
-    graphics:fill_circle(x, y, 9.0)
-    graphics:set_color(EYE_INK)
-    graphics:set_line_width(1.3)
-    graphics:begin_path()
-    graphics:move_to(x - EYE_HALF_W, y)
-    graphics:quadratic_curve_to(x, y - EYE_LID * 2.0, x + EYE_HALF_W, y)
-    graphics:move_to(x - EYE_HALF_W, y)
-    graphics:quadratic_curve_to(x, y + EYE_LID * 2.0, x + EYE_HALF_W, y)
-    graphics:stroke()
-    graphics:fill_circle(x, y, 2.4)
+-- The ward under a point, or -1. Wards lie square to the board.
+function hit_ward(viewport: layout.State, at: Point): i32
+    for index = 0::i32, 2::i32 do
+        if entity.contains(row_slot(viewport, 3, index), at.x, at.y) then
+            return index
+        end
+    end
+    return -1
 end
+
+-- The rectangles the last painted frame put its type-sized controls in. Where
+-- a capsule or the help caption ends up is a measurement — of a string,
+-- against whichever font has actually loaded — so the pointer answers from
+-- what was drawn rather than from a second description of it. A control the
+-- frame did not draw keeps the empty rectangle, which no point is inside, so
+-- it is not there to click either.
+type Targets = { help: box.Rect, commit: box.Rect, pass: box.Rect }
+
+function nowhere(): box.Rect
+    return entity.rect(0.0, 0.0, -1.0, -1.0)
+end
+
+function no_targets(): Targets
+    return { help = nowhere(), commit = nowhere(), pass = nowhere() }
+end
+
+local targets: Targets = no_targets()
+
+function clear_targets(): unit
+    targets = no_targets()
+end
+
+function hit_commit(at: Point): bool
+    return entity.contains(targets.commit, at.x, at.y)
+end
+
+function hit_pass(at: Point): bool
+    return entity.contains(targets.pass, at.x, at.y)
+end
+
+function hit_help(at: Point): bool
+    return entity.contains(targets.help, at.x, at.y)
+end
+
+-- ---------------------------------------------------------------------------
+-- Cards in flight, and the reveal's own effects.
+-- ---------------------------------------------------------------------------
 
 -- One quad backs the entire winning formation. A player win gets the radiant
 -- gold shimmer; an Arch Mage win gets the contracting defeat shroud. Because
 -- it is drawn before all five cards, the cards mask its centre while the
 -- continuous field remains visible around them and through every gap.
-function draw_result_field(graphics: Graphics, effects: EffectShaders, x: f64, y: f64, width: f64, height: f64, strength: f64, player_won: bool): unit
+function use_result_field(
+    surface: entity.Surface, strength: f64, aspect: f64, player_won: bool
+): bool
+    local effects: effect_shaders.EffectShaders = surface.effects
+    local maybe_shader: graphics_module.Shader? = effects.defeat_shroud.shader
+    if player_won then maybe_shader = effects.gold_shimmer.shader end
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not surface.graphics:use_shader(shader) then return false end
+    local strength_ok: bool = surface.graphics:set_uniform_float("u_strength", strength)
+    local aspect_ok: bool = surface.graphics:set_uniform_float("u_aspect", aspect)
+    return strength_ok and aspect_ok
+end
+
+function draw_result_field(
+    surface: entity.Surface, bounds: box.Rect, strength: f64, player_won: bool
+): unit
     if strength <= 0.0 then return end
-    local quad_width: f64 = width + SHIMMER_MARGIN * 2.0
-    local quad_height: f64 = height + SHIMMER_MARGIN * 2.0
-    local effect_ok: bool = false
-    if player_won then
-        effect_ok = use_gold_shimmer(graphics, effects, strength, quad_width / quad_height)
-    else
-        effect_ok = use_defeat_shroud(graphics, effects, strength, quad_width / quad_height)
-    end
-    if not effect_ok then
-        stop_effect(graphics)
-        panel(graphics, x - 10.0, y + 34.0, width + 20.0, 60.0, "#2a001d", "#ff00ff")
-        text_centered(graphics, "RESULT SHADER ERROR", x + width * 0.5, y + 71.0, 14, "#ff66ff")
+    local graphics = surface.graphics
+    local quad_width: f64 = bounds.width + SHIMMER_MARGIN * 2.0
+    local quad_height: f64 = bounds.height + SHIMMER_MARGIN * 2.0
+    if not use_result_field(
+        surface, strength, quad_width / quad_height, player_won)
+    then
+        ink.stop_effect(graphics)
+        ink.panel(
+            graphics, bounds.x - 10.0, bounds.y + 34.0, bounds.width + 20.0, 60.0,
+            "#2a001d", "#ff00ff")
+        ink.text_centered(
+            graphics, "RESULT SHADER ERROR",
+            bounds.x + bounds.width * 0.5, bounds.y + 71.0, 14, "#ff66ff")
         return
     end
     graphics:set_color("#ffffffff")
-    graphics:fill_rectangle(x - SHIMMER_MARGIN, y - SHIMMER_MARGIN, quad_width, quad_height)
-    stop_effect(graphics)
-end
-
--- The packaged image is the card back. While it is unavailable, retain only a
--- sealed dark silhouette rather than maintaining a second procedural design.
-function draw_card_back(graphics: Graphics, card_back: graphics_module.Texture?, x: f64, y: f64, veiled: bool): unit
-    local maybe_texture: graphics_module.Texture? = card_back
-    if maybe_texture ~= nil then
-        local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
-        if veiled then graphics:set_color("#ffffff80") else graphics:set_color("#ffffffff") end
-        if graphics:draw_sprite(texture, x, y, CARD_W, CARD_H, 0.0, 0.0, texture.width::f64, texture.height::f64) then
-            return
-        end
-    end
-    local fill: string = "#111118"
-    if veiled then fill = "#11111880" end
-    panel(graphics, x, y, CARD_W, CARD_H, fill, "#3f3f46")
-end
-
-function draw_card_face(graphics: Graphics, effects: EffectShaders, card: game.Card, x: f64, y: f64, selected: bool, colored: bool): unit
-    -- Suit marks always keep their school color. Selection activates the
-    -- school's grayscale pattern; contributing cards use its colored variant.
-    if card.suit == 0 and (colored or selected) then
-        use_red_fire(graphics, effects, selected, colored, (CARD_W - 4.0) / (CARD_H - 4.0))
-    elseif card.suit == 1 and (colored or selected) then
-        use_blue_caustics(graphics, effects, selected, colored, (CARD_W - 4.0) / (CARD_H - 4.0))
-    elseif card.suit == 2 and (colored or selected) then
-        use_black_hole(graphics, effects, selected, colored, (CARD_W - 4.0) / (CARD_H - 4.0))
-    elseif card.suit == 3 and (colored or selected) then
-        use_green_growth(graphics, effects, selected, colored, (CARD_W - 4.0) / (CARD_H - 4.0))
-    end
-    graphics:set_color("#17171c")
-    graphics:fill_rectangle(x + 2.0, y + 2.0, CARD_W - 4.0, CARD_H - 4.0)
-    if colored or selected then stop_effect(graphics) end
-    local accent: string = school_color(card.suit)
-    graphics:set_color(accent)
-    graphics:fill_rectangle(x + 7.0, y + 7.0, 5.0, CARD_H - 14.0)
-    text(graphics, game.rank_name(card.rank), x + 20.0, y + 31.0, 24, "#f8fafc")
-    -- The school never appears in words on a card: the accent stripe and the
-    -- sigil carry it, the same pairing the help legend teaches.
-    draw_sigil(graphics, card.suit, x + 42.0, y + 82.0)
-    if selected then text_centered(graphics, "BOUND", x + CARD_W * 0.5, y + 119.0, 9, SELECTION_HIGHLIGHT) end
-end
-
--- `known` says the opponent has seen this card, which the eye announces on
--- either face. A sealed card that is also known is drawn face first and then
--- veiled by its own seal, so the player reads the Arch Mage's relic through the
--- back instead of having to remember it.
-function draw_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, x: f64, y: f64, selected: bool, focused: bool, hidden: bool, colored: bool, known: bool): unit
-    local offset: f64 = 0.0
-    if selected then offset = -10.0 end
-    y += offset
-    local edge: string = "#52525b"
-    if focused then edge = SELECTION_HIGHLIGHT elseif selected then edge = school_color(card.suit) end
-    panel(graphics, x, y, CARD_W, CARD_H, "#17171c", edge)
-    if hidden then
-        if known then draw_card_face(graphics, effects, card, x, y, false, false) end
-        draw_card_back(graphics, card_back, x, y, known)
-    else
-        draw_card_face(graphics, effects, card, x, y, selected, colored)
-    end
-    if known then draw_eye(graphics, x + CARD_W * 0.5, y) end
-end
-
--- A relic sitting in the player's fan. Drawing it about its own centre lets
--- the tilt carry everything with it — the bind lift rises along the card's own
--- axis rather than straight up the screen, and the focus edge stays square to
--- the card.
-function draw_hand_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, selected: bool, focused: bool, colored: bool, known: bool): unit
-    local viewport: layout.State = layout.current()
-    local slot: Point = hand_pos_at(viewport, index, part, count)
-    graphics:push()
-    graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
-    graphics:rotate(hand_angle_at(index, part, count))
-    draw_card(graphics, effects, card_back, card, -(CARD_W * 0.5), -(CARD_H * 0.5), selected, focused, false, colored, known)
-    graphics:pop()
+    graphics:fill_rectangle(
+        bounds.x - SHIMMER_MARGIN, bounds.y - SHIMMER_MARGIN,
+        quad_width, quad_height)
+    ink.stop_effect(graphics)
 end
 
 -- Fakes a card picked up off the table and turned over midair: cos
@@ -894,11 +537,13 @@ end
 -- slight sin-driven skew tilts the silhouette for perspective. Everything
 -- inherits the transform stack, so the regular card renderer draws both
 -- halves of the flip.
-function draw_flipping_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, x: f64, y: f64, clock: f64, delay: f64, colored: bool): unit
-    local progress: f64 = (clock - delay) / FLIP_SECONDS
-    if progress < 0.0 then progress = 0.0 end
-    if progress > 1.0 then progress = 1.0 end
-    local turn: f64 = ease_in_out_cubic(progress)
+function draw_flipping_card(
+    surface: entity.Surface, value: game.Card, x: f64, y: f64,
+    clock: f64, delay: f64, colored: bool
+): unit
+    local graphics = surface.graphics
+    local progress: f64 = easing.clamp01((clock - delay) / FLIP_SECONDS)
+    local turn: f64 = easing.in_out_cubic(progress)
     local angle: f64 = turn * math.pi
     local flat: f64 = math.cos(angle)
     local depth: f64 = math.sin(angle)
@@ -907,57 +552,263 @@ function draw_flipping_card(graphics: Graphics, effects: EffectShaders, card_bac
     if not hidden then width_scale = -flat end
     local lift: f64 = 1.0 + 0.14 * depth
     graphics:push()
-    graphics:translate(x + CARD_W * 0.5, y + CARD_H * 0.5 - 10.0 * depth)
+    graphics:translate(x + card.width * 0.5, y + card.height * 0.5 - 10.0 * depth)
     graphics:apply_transform(width_scale * lift, 0.18 * depth, 0.0, lift, 0.0, 0.0)
     -- A card being turned over is on its way to public: whether the other side
     -- knew it a moment ago stops mattering the instant it lands face up, so no
     -- eye rides the flip.
-    draw_card(graphics, effects, card_back, card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, colored, false)
+    card.draw_at(
+        surface, card.look(value, false, false, hidden, colored, false),
+        -(card.width * 0.5), -(card.height * 0.5))
     graphics:pop()
 end
 
--- The sealed draw pile every dealt relic and ward flies out of. The stack
--- silhouette thins as the run burns down; the label tracks the exact count.
-function draw_deck(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, count: i32): unit
-    if count <= 0 then return end
-    local viewport: layout.State = layout.current()
-    local slot: Point = slot_pos(viewport, SLOT_DECK, 0)
-    local x: f64 = slot.x
-    local y: f64 = slot.y
-    if count > 18 then panel(graphics, x + 6.0, y + 6.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
-    if count > 6 then panel(graphics, x + 3.0, y + 3.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
-    panel(graphics, x, y, CARD_W, CARD_H, "#17171c", "#52525b")
-    draw_card_back(graphics, card_back, x, y, false)
-    text_centered(graphics, tostring(count) .. " SEALED", x + CARD_W * 0.5, y + CARD_H + 26.0, 10, "#8a8a92")
+-- A card thrown to a ward slot: the deck draw the card stories rehearse,
+-- played on the live board. The card is card_warp's sheet rather than a
+-- rectangle — it rises toward the viewer, stretches with its own momentum,
+-- turns over past its leading edge, overshoots and drops onto the slot — so
+-- this leg projects the sheet itself instead of using the transform stack.
+-- The face is captured fresh each frame, the same bargain ash reappearance
+-- strikes: a throw is short and rare, and a captured card is exact.
+function draw_throw_card(
+    surface: entity.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh
+): unit
+    local graphics = surface.graphics
+    local clock: f64 = part * card_draw.land_end
+    local throw: card_draw.Draw = {
+        from_x = anim.from.x + card.width * 0.5,
+        from_y = anim.from.y + card.height * 0.5,
+        to_x = anim.to.x + card.width * 0.5,
+        to_y = anim.to.y + card.height * 0.5,
+        width = card.width,
+        height = card.height,
+        stretch_limit = THROW_STRETCH,
+        overshoot = THROW_OVERSHOOT,
+        rise = THROW_RISE,
+        arc = card_draw.arc_very_late
+    }
+    local pose: card_warp.Pose = card_draw.pose_at(throw, clock)
+    local face_up: bool = card_draw.shows_face(throw, clock)
+    local target: graphics_module.RenderTarget? = card.capture(
+        surface, card.look(anim.card, false, false, not face_up, false, anim.known))
+    if target == nil then
+        -- Without a capture there is no texture for the sheet; the plain
+        -- card at the pose's centre keeps the deal legible until assets are
+        -- ready to be captured.
+        card.draw_at(
+            surface,
+            card.look(anim.card, false, false, not face_up, false, anim.known),
+            pose.center_x - card.width * 0.5, pose.center_y - card.height * 0.5)
+        return
+    end
+    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+    card_warp.build(sheet, pose)
+    -- Seen from behind, a card's face reads the wrong way round unless its
+    -- source region is taken right to left.
+    local source_x: f64 = 0.0
+    local source_width: f64 = card.width
+    if face_up then
+        source_x = card.width
+        source_width = -card.width
+    end
+    local texture: graphics_module.Texture = graphics:texture_from_render_target(
+        captured)
+    graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
+    graphics:draw_sprite_mesh(
+        texture, sheet.columns, sheet.rows, sheet.xs, sheet.ys, sheet.shades,
+        source_x, 0.0, source_width, card.height)
+    graphics:release_render_target(captured)
 end
 
--- One of the three right-edge piles, drawn face up so it always shows the last
--- card that landed — every card in them is public history, unlike the sealed
--- draw pile. count is how many cards have visibly arrived; the top card is read
--- from the same ledger, so a scoop still in the air leaves both the thickness
--- and the face showing exactly what the table last saw. The stack's shadow
--- steps left, away from the board edge. The piles carry no count label: which
--- side each belongs to is clear from its place on the board, and the round orbs
--- already tally the run.
-function draw_pile(graphics: Graphics, effects: EffectShaders, cards: {game.Card}, count: i32, kind: i32): unit
-    if count <= 0 then return end
-    local viewport: layout.State = layout.current()
-    local slot: Point = slot_pos(viewport, kind, 0)
-    local x: f64 = slot.x
-    local y: f64 = slot.y
-    if count > 18 then panel(graphics, x - 6.0, y + 6.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
-    if count > 6 then panel(graphics, x - 3.0, y + 3.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
-    panel(graphics, x, y, CARD_W, CARD_H, "#17171c", "#52525b")
-    draw_card_face(graphics, effects, cards[count - 1], x, y, false, false)
+-- A card mid-deal or mid-swap: eased travel between two board anchors with
+-- an optional mid-flight flip, turning to meet the tilt of wherever it lands
+-- and lifted slightly toward the viewer while it moves (matching the reveal
+-- flip's midair feel).
+function draw_anim_card(
+    surface: entity.Surface, anim: Anim, clock: f64, sheet: card_warp.Mesh
+): unit
+    if clock < anim.appear or clock >= anim.vanish then return end
+    local graphics = surface.graphics
+    local t: f64 = 1.0
+    if anim.duration > 0.0 then t = (clock - anim.start) / anim.duration end
+    t = easing.clamp01(t)
+    if anim.effect == ANIM_EFFECT_THROW then
+        draw_throw_card(surface, anim, t, sheet)
+        return
+    end
+    local ease: f64 = ease_progress(t, anim.easing)
+    local at: Point = lerp(anim.from, anim.to, ease)
+    if anim.effect == ANIM_EFFECT_ASH_REAPPEAR then
+        card_burn.draw_reappearance(surface, anim.card, at.x, at.y, ease)
+        return
+    end
+    local hidden: bool = anim.faces == FACES_DOWN
+    local width_scale: f64 = 1.0
+    local turn: f64 = easing.in_out_cubic(t)
+    if anim.faces == FACES_FLIP_UP or anim.faces == FACES_FLIP_DOWN then
+        local flat: f64 = math.cos(turn * math.pi)
+        if anim.faces == FACES_FLIP_UP then hidden = flat >= 0.0 else hidden = flat < 0.0 end
+        width_scale = flat
+        if width_scale < 0.0 then width_scale = -width_scale end
+    end
+    local depth: f64 = math.sin(turn * math.pi)
+    local lift: f64 = 1.0 + 0.08 * depth
+    graphics:push()
+    graphics:translate(
+        at.x + card.width * 0.5, at.y + card.height * 0.5 - 8.0 * depth)
+    graphics:rotate(anim.angle0 + (anim.angle1 - anim.angle0) * ease)
+    graphics:apply_transform(width_scale * lift, 0.0, 0.0, lift, 0.0, 0.0)
+    card.draw_at(
+        surface, card.look(anim.card, false, false, hidden, false, anim.known),
+        -(card.width * 0.5), -(card.height * 0.5))
+    graphics:pop()
 end
 
--- Draws whichever of the three right-edge piles hold cards. Each pile's count is
--- how many of its cards have visibly landed — the ledger total minus the scoop
--- legs still in the air (see pile_landed).
-function draw_piles(graphics: Graphics, effects: EffectShaders, discards: {game.Card}, discard_count: i32, computer_won: {game.Card}, computer_won_count: i32, player_won: {game.Card}, player_won_count: i32): unit
-    draw_pile(graphics, effects, computer_won, computer_won_count, SLOT_COMPUTER_WON)
-    draw_pile(graphics, effects, discards, discard_count, SLOT_ASIDE)
-    draw_pile(graphics, effects, player_won, player_won_count, SLOT_PLAYER_WON)
+function draw_anims(
+    surface: entity.Surface, anims: {Anim}, clock: f64, sheet: card_warp.Mesh
+): unit
+    for anim in anims do draw_anim_card(surface, anim, clock, sheet) end
+end
+
+-- A stronger cubic acceleration/deceleration gives the winner's flight a
+-- deliberate launch and a decisive landing, while remaining exactly bounded.
+function fly_ease(clock: f64, delay: f64): f64
+    local t: f64 = (clock - delay) / FLY_SECONDS
+    if t < 0.0 then return 0.0 end
+    if t > 1.0 then t = 1.0 end
+    return easing.in_out_cubic(t)
+end
+
+-- One winner card travelling from its revealed pose (`start`, a card centre)
+-- to a flank of the formation (`dest`, a card top-left): the centre lerps, the
+-- source tilt unwinds to flat, and the same sin-driven lift the other flights
+-- use keeps it airborne in between. ease 0 means the flight has not begun and
+-- the card still sits in its row, so nothing is drawn.
+function draw_winner_flight(
+    surface: entity.Surface, value: game.Card, start: Point, sangle: f64,
+    dest: Point, ease: f64, colored: bool
+): unit
+    if ease <= 0.0 then return end
+    local graphics = surface.graphics
+    local dest_center: Point = point(
+        dest.x + card.width * 0.5, dest.y + card.height * 0.5)
+    local at: Point = lerp(start, dest_center, ease)
+    local depth: f64 = math.sin(ease * math.pi)
+    local lift: f64 = 1.0 + 0.08 * depth
+    graphics:push()
+    graphics:translate(at.x, at.y - 8.0 * depth)
+    graphics:rotate(sangle * (1.0 - ease))
+    graphics:apply_transform(lift, 0.0, 0.0, lift, 0.0, 0.0)
+    card.draw_at(
+        surface, card.look(value, false, false, false, colored, false),
+        -(card.width * 0.5), -(card.height * 0.5))
+    graphics:pop()
+end
+
+-- How far the losing pair has burned, read off the reveal clock alone. The
+-- update tick steers the ash emitters from this and the resolution board draws
+-- the sheet from it, so the flakes and the front they leave never disagree.
+function loss_burn_progress(reveal_clock: f64): f64
+    return card_burn.progress_over(
+        reveal_clock, WIN_GLOW_START, card_burn.disintegrate_seconds)
+end
+
+-- A relic coming apart inside the fan. Past full burn there is no sheet left
+-- to capture, only the last flakes falling — and they fall inside the relic's
+-- own tilt, the way they did while it was still there.
+function draw_hand_disintegration(
+    surface: entity.Surface, viewport: layout.State, value: game.Card,
+    index: i32, part: f64, count: i32, progress: f64, seed: i32,
+    ash: particles.ParticleSystem
+): unit
+    local graphics = surface.graphics
+    local slot: box.Rect = hand_slot(viewport, index, part, count)
+    local target: graphics_module.RenderTarget? = nil
+    if progress < 1.0 then
+        target = card.capture_face(surface, card.plain(value))
+    end
+    graphics:push()
+    graphics:translate(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
+    graphics:rotate(hand_fan.angle_at(index, part, count))
+    if target == nil then
+        card_burn.draw_ash(
+            surface, ash,
+            -(card.width * 0.5), -(card.height * 0.5) - card.bind_lift, seed + 401)
+    else
+        local captured: graphics_module.RenderTarget =
+            target::graphics_module.RenderTarget
+        card_burn.draw_captured(
+            surface, captured,
+            -(card.width * 0.5), -(card.height * 0.5) - card.bind_lift,
+            progress, seed, value.suit, ash)
+        graphics:release_render_target(captured)
+    end
+    graphics:pop()
+end
+
+-- ---------------------------------------------------------------------------
+-- Spell particles, which the update tick owns and this module tunes.
+-- ---------------------------------------------------------------------------
+
+function new_spell_particles(): SpellParticles
+    return {
+        sparks = spell_launch.new_sparks(),
+        grave_dust = powered_card.new_grave_dust(),
+    }
+end
+
+-- One tick of everything a spell has in the air. The launch seam is given the
+-- target in board coordinates, which is the only thing the spell modules cannot
+-- work out for themselves; the grave reads the same formation the raised ward
+-- is drawn from.
+function step_spell_particles(
+    spells: SpellParticles, viewport: layout.State,
+    kind: i32, clock: f64, target: i32, dt: f64
+): unit
+    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
+    spell_launch.step(
+        spells.sparks, kind, clock, dt,
+        slot.x + card.width * 0.5, slot.y + card.height * 0.5)
+    powered_card.step_grave_dust(
+        spells.grave_dust, powered_card.grave_progress(kind, clock), dt)
+end
+
+function draw_spell_launch(
+    surface: entity.Surface, viewport: layout.State,
+    kind: i32, clock: f64, target: i32, sparks: spell_cast.Sparks
+): unit
+    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
+    spell_launch.draw(
+        surface.graphics, surface.effects, kind, clock,
+        slot.x + card.width * 0.5, slot.y + card.height * 0.5, sparks)
+end
+
+-- ---------------------------------------------------------------------------
+-- The board, composed.
+-- ---------------------------------------------------------------------------
+
+function draw_backdrop(surface: entity.Surface, viewport: layout.State): unit
+    backdrop.draw_at(surface, board_rect(viewport))
+end
+
+function draw_hud(
+    surface: entity.Surface, viewport: layout.State,
+    state: game.View, run: run_module.View
+): unit
+    local band: entity.Node = hud.node(state, run)
+    band.paint(surface, header_band(entity.metrics_of(surface), band, viewport))
+end
+
+function draw_footer(surface: entity.Surface, viewport: layout.State, state: game.View): unit
+    local metrics: entity.Metrics = entity.metrics_of(surface)
+    local strip: entity.Node = footer.node(state)
+    local bounds: box.Rect = footer_band(metrics, strip, viewport)
+    strip.paint(surface, bounds)
+    targets.help = footer.help_rect(metrics, state, bounds)
+end
+
+function draw_deck(surface: entity.Surface, viewport: layout.State, count: i32): unit
+    deck.node(count).paint(surface, deck_band(viewport))
 end
 
 -- How many of a pile's cards have actually arrived: the ledger's total minus
@@ -972,1176 +823,38 @@ function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: i
     return #cards - pending
 end
 
--- Ash which has already fallen is drawn back into the card's footprint before
--- the reverse burn front seals it. This is deliberately clock-derived rather
--- than a live particle system: a discard reappearance may be skipped, restored,
--- or shared by Firebolt without adding another piece of snapshot state.
-function draw_reappearing_ash(
-    graphics: Graphics,
-    effects: EffectShaders,
-    x: f64,
-    y: f64,
-    progress: f64,
-    seed: i32
+function draw_pile(
+    surface: entity.Surface, viewport: layout.State,
+    cards: {game.Card}, count: i32, kind: i32
 ): unit
-    if progress >= 1.0 then return end
-    local particles_ok: bool = burn_particles.use(
-        graphics, effects, seed + 809, false)
-    if not particles_ok then stop_effect(graphics) end
-    for fleck = 0::i32, LOSS_ASH_FLECKS - 1 do
-        local id: i32 = seed * 71 + fleck
-        local local_x: f64 = (burn_particles.hash(id, 1.0) - 0.5) * (CARD_W - 12.0)
-        local local_y: f64 = (burn_particles.hash(id, 2.0) - 0.5) * (CARD_H - 14.0)
-        local delay: f64 = burn_particles.hash(id, 3.0) * 0.16
-        local gather: f64 = (progress - delay) / (0.82 - delay)
-        if gather < 0.0 then gather = 0.0 elseif gather > 1.0 then gather = 1.0 end
-        gather = ease_in_out_cubic(gather)
-        local radial_x: f64 = local_x / (CARD_W * 0.5)
-        local radial_y: f64 = local_y / (CARD_H * 0.5)
-        local spread: f64 = 24.0 + burn_particles.hash(id, 4.0) * 48.0
-        local source_x: f64 = local_x
-            + radial_x * spread
-            + (burn_particles.hash(id, 5.0) - 0.5) * 36.0
-        local source_y: f64 = local_y
-            + 26.0 + burn_particles.hash(id, 6.0) * 74.0
-        local fleck_x: f64 = x + CARD_W * 0.5
-            + source_x + (local_x - source_x) * gather
-        local fleck_y: f64 = y + CARD_H * 0.5
-            + source_y + (local_y - source_y) * gather
-        local width: f64 = 1.5 + burn_particles.hash(id, 7.0) * 3.6
-        local height: f64 = 2.8 + burn_particles.hash(id, 8.0) * 6.8
-        local color: string = "#292524"
-        if fleck % 7 == 0 then color = "#9a3412"
-        elseif fleck % 3 == 0 then color = "#78716c" end
-        burn_particles.draw(
-            graphics, fleck_x, fleck_y,
-            width, height,
-            (burn_particles.hash(id, 9.0) - 0.5) * 8.0 * (1.0 - gather),
-            color .. burn_particles.alpha(progress), particles_ok)
-    end
-    if particles_ok then stop_effect(graphics) end
+    local slot: Point = slot_pos(viewport, kind, 0)
+    pile.node(cards, count).paint(
+        surface, entity.rect(slot.x, slot.y, card.width, card.height))
 end
 
--- Rebuild one face-up public card at the discard anchor. Running the burn
--- shader backwards preserves the exact ragged char/ember boundary of the
--- destruction, while the converging flecks make the reversal read as ash
--- becoming paper rather than an ordinary fade-in.
-function draw_ash_reappearance(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    card: game.Card,
-    x: f64,
-    y: f64,
-    progress: f64
+-- Draws whichever of the three right-edge piles hold cards.
+function draw_piles(
+    surface: entity.Surface, viewport: layout.State,
+    discards: {game.Card}, discard_count: i32,
+    computer_won: {game.Card}, computer_won_count: i32,
+    player_won: {game.Card}, player_won_count: i32
 ): unit
-    local seed: i32 = card.rank * 17 + card.suit * 97 + 317
-    draw_reappearing_ash(graphics, effects, x, y, progress, seed)
-    local sheet: f64 = smooth_step(0.08, 0.96, progress)
-    local burn_progress: f64 = 1.0 - sheet
-    local target: graphics_module.RenderTarget? = capture_card_face(
-        graphics, effects, card_back, card, false, false)
-    if target == nil then
-        if burn_progress < 0.68 then
-            draw_card(
-                graphics, effects, card_back, card,
-                x, y, false, false, false, false, false)
-        end
-        return
+    draw_pile(surface, viewport, computer_won, computer_won_count, SLOT_COMPUTER_WON)
+    draw_pile(surface, viewport, discards, discard_count, SLOT_ASIDE)
+    draw_pile(surface, viewport, player_won, player_won_count, SLOT_PLAYER_WON)
+end
+
+-- One slot of the middle row, powered or plain. A ward at rest is face up for
+-- both sides to read, so it never carries an eye: the mark only says something
+-- about a hand.
+function ward_node(frame: Frame, value: game.Card, index: i32, selected: bool, focused: bool, colored: bool): entity.Node
+    local look: card.Look = card.look(value, selected, focused, false, colored, false)
+    if index == frame.spell.target then
+        return powered_card.node(
+            look, frame.spell.kind, frame.spell.clock, frame.ash,
+            frame.spells.grave_dust)
     end
-    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    local shader_ok: bool = use_card_burn(
-        graphics, effects, burn_progress, seed, card.suit)
-    if shader_ok then
-        graphics:set_color("#ffffffff")
-        graphics:draw_render_target(captured, x, y, CARD_W, CARD_H)
-        stop_effect(graphics)
-    else
-        stop_effect(graphics)
-        if burn_progress < 0.68 then
-            graphics:set_color("#ffffffff")
-            graphics:draw_render_target(captured, x, y, CARD_W, CARD_H)
-        end
-    end
-    graphics:release_render_target(captured)
-end
-
--- A card thrown to a ward slot: the deck draw the card stories rehearse,
--- played on the live board. The card is card_warp's sheet rather than a
--- rectangle — it rises toward the viewer, stretches with its own momentum,
--- turns over past its leading edge, overshoots and drops onto the slot — so
--- this leg projects the sheet itself instead of using the transform stack.
--- The face is captured fresh each frame, the same bargain ash reappearance
--- strikes: a throw is short and rare, and a captured card is exact.
-function draw_throw_card(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    anim: Anim,
-    part: f64,
-    sheet: card_warp.Mesh
-): unit
-    local clock: f64 = part * card_draw.land_end
-    local throw: card_draw.Draw = {
-        from_x = anim.from.x + CARD_W * 0.5,
-        from_y = anim.from.y + CARD_H * 0.5,
-        to_x = anim.to.x + CARD_W * 0.5,
-        to_y = anim.to.y + CARD_H * 0.5,
-        width = CARD_W,
-        height = CARD_H,
-        stretch_limit = THROW_STRETCH,
-        overshoot = THROW_OVERSHOOT,
-        rise = THROW_RISE,
-        arc = card_draw.arc_very_late
-    }
-    local pose: card_warp.Pose = card_draw.pose_at(throw, clock)
-    local face_up: bool = card_draw.shows_face(throw, clock)
-    local target: graphics_module.RenderTarget? = capture_card(
-        graphics, effects, card_back, anim.card, false, anim.known, not face_up)
-    if target == nil then
-        -- Without a capture there is no texture for the sheet; the plain
-        -- card at the pose's centre keeps the deal legible until assets are
-        -- ready to be captured.
-        draw_card(
-            graphics, effects, card_back, anim.card,
-            pose.center_x - CARD_W * 0.5, pose.center_y - CARD_H * 0.5,
-            false, false, not face_up, false, anim.known)
-        return
-    end
-    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    card_warp.build(sheet, pose)
-    -- Seen from behind, a card's face reads the wrong way round unless its
-    -- source region is taken right to left.
-    local source_x: f64 = 0.0
-    local source_width: f64 = CARD_W
-    if face_up then
-        source_x = CARD_W
-        source_width = -CARD_W
-    end
-    local texture: graphics_module.Texture = graphics:texture_from_render_target(
-        captured)
-    graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
-    graphics:draw_sprite_mesh(
-        texture,
-        sheet.columns,
-        sheet.rows,
-        sheet.xs,
-        sheet.ys,
-        sheet.shades,
-        source_x,
-        0.0,
-        source_width,
-        CARD_H)
-    graphics:release_render_target(captured)
-end
-
--- A card mid-deal or mid-swap: eased travel between two board anchors with
--- an optional mid-flight flip, turning to meet the tilt of wherever it lands
--- and lifted slightly toward the viewer while it moves (matching the reveal
--- flip's midair feel).
-function draw_anim_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, anim: Anim, clock: f64, sheet: card_warp.Mesh): unit
-    if clock < anim.appear or clock >= anim.vanish then return end
-    local t: f64 = 1.0
-    if anim.duration > 0.0 then t = (clock - anim.start) / anim.duration end
-    if t < 0.0 then t = 0.0 end
-    if t > 1.0 then t = 1.0 end
-    if anim.effect == ANIM_EFFECT_THROW then
-        draw_throw_card(graphics, effects, card_back, anim, t, sheet)
-        return
-    end
-    local ease: f64 = ease_progress(t, anim.easing)
-    local at: Point = lerp(anim.from, anim.to, ease)
-    if anim.effect == ANIM_EFFECT_ASH_REAPPEAR then
-        draw_ash_reappearance(
-            graphics, effects, card_back, anim.card, at.x, at.y, ease)
-        return
-    end
-    local hidden: bool = anim.faces == FACES_DOWN
-    local width_scale: f64 = 1.0
-    local turn: f64 = ease_in_out_cubic(t)
-    if anim.faces == FACES_FLIP_UP or anim.faces == FACES_FLIP_DOWN then
-        local flat: f64 = math.cos(turn * math.pi)
-        if anim.faces == FACES_FLIP_UP then hidden = flat >= 0.0 else hidden = flat < 0.0 end
-        width_scale = flat
-        if width_scale < 0.0 then width_scale = -width_scale end
-    end
-    local depth: f64 = math.sin(turn * math.pi)
-    local lift: f64 = 1.0 + 0.08 * depth
-    graphics:push()
-    graphics:translate(at.x + CARD_W * 0.5, at.y + CARD_H * 0.5 - 8.0 * depth)
-    graphics:rotate(anim.angle0 + (anim.angle1 - anim.angle0) * ease)
-    graphics:apply_transform(width_scale * lift, 0.0, 0.0, lift, 0.0, 0.0)
-    draw_card(graphics, effects, card_back, anim.card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, false, anim.known)
-    graphics:pop()
-end
-
-function draw_anims(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, anims: {Anim}, clock: f64, sheet: card_warp.Mesh): unit
-    for anim in anims do
-        draw_anim_card(graphics, effects, card_back, anim, clock, sheet)
-    end
-end
-
-function draw_backdrop(graphics: Graphics): unit
-    local viewport: layout.State = layout.current()
-    graphics:clear("#09090b")
-    graphics:set_color("#111114")
-    graphics:fill_rectangle(0.0, 0.0, viewport.width, viewport.height)
-    graphics:set_color("#1e1e24")
-    graphics:set_line_width(1.0)
-    local columns: i32 = math.ceil(viewport.width / 48.0)::i32
-    for column = 0::i32, columns do
-        local x: f64 = (column::f64) * 48.0
-        graphics:line(x, 0.0, viewport.width - x, viewport.height)
-    end
-end
-
-function draw_orb(graphics: Graphics, x: f64, y: f64, edge: string, fill: string, played: bool): unit
-    graphics:set_color(edge)
-    graphics:fill_circle(x, y, 10.0)
-    graphics:set_color(fill)
-    graphics:fill_circle(x, y, 7.0)
-    if played then
-        graphics:set_color("#ffffff")
-        graphics:fill_circle(x - 2.5, y - 2.5, 1.5)
-    end
-end
-
-function draw_round_orbs(graphics: Graphics, state: game.View): unit
-    local center: f64 = layout.current().center_x
-    for round = 0::i32, TOTAL_ROUNDS - 1 do
-        local x: f64 = center - 68.0 + (round::f64) * 34.0
-        local edge: string = "#52525b"
-        local fill: string = "#17171c"
-        local played: bool = round < #state.history
-        if played then
-            local winner: i32 = state.history[round].winner
-            if winner > 0 then
-                edge = ORB_ROBBERS_EDGE
-                fill = ORB_ROBBERS_FILL
-            elseif winner < 0 then
-                edge = ORB_ARCH_MAGE_EDGE
-                fill = ORB_ARCH_MAGE_FILL
-            else
-                -- A stalemate is not a ward hold: it does not count toward the
-                -- Arch Mage's three wins, so it must not wear the lost colour
-                -- or the run looks like it should have ended early.
-                edge = ORB_STALEMATE_EDGE
-                fill = ORB_STALEMATE_FILL
-            end
-        end
-        if round == state.round - 1 then
-            graphics:set_color(SELECTION_HIGHLIGHT)
-            graphics:fill_circle(x, 52.0, 12.0)
-        end
-        draw_orb(graphics, x, 52.0, edge, fill, played)
-    end
-end
-
--- The run marker under the title: which vault of the sequence the robbers are
--- standing in, how many they have already taken, and whether this is one of
--- the boss battles the run lands on every third vault. Boss vaults wear the
--- warning ink so the shrinking fan is never a surprise.
-function draw_run_marker(graphics: Graphics, run: RunView): unit
-    -- Spaces rather than a dash: the vault font has no em dash glyph, so a
-    -- separator written as one renders as a gap anyway.
-    local label: string = "VAULT " .. tostring(run.vault)
-    local ink: string = "#155e75"
-    if run.boss then
-        label = label .. "   BOSS"
-        ink = "#b45309"
-    end
-    text(graphics, label .. "   CLEARED " .. tostring(run.cleared),
-        32.0, 64.0, 9, ink)
-end
-
-function draw_hud(graphics: Graphics, state: game.View, run: RunView): unit
-    local right: f64 = layout.current().width - 32.0
-    text(graphics, "ANTE MAGIC", 32.0, 47.0, 22, "#fbbf24")
-    draw_run_marker(graphics, run)
-    draw_round_orbs(graphics, state)
-    local score: string = tostring(state.player_points)
-    graphics:set_font("22px monospace")
-    graphics:set_color("#67e8f9")
-    graphics:print_aligned(score, right, 47.0, "right")
-    text_right(graphics, "MANA", right, 64.0, 9, "#155e75")
-end
-
--- One cast hint per spell the robbers carry, each on the key that casts it and
--- in its own ink, greying out on its own as the mana on hand stops covering its
--- price. A run that never buys a second spell keeps the single hint it started
--- with.
-const CAST_HINT_PITCH: f64 = 150.0
-
-function draw_footer(graphics: Graphics, state: game.View): unit
-    local viewport: layout.State = layout.current()
-    for slot = 0::i32, #state.spells - 1 do
-        local spell: game.Spell = state.spells[slot]
-        local ink: string = power_color(spell.kind)
-        if state.player_points < spell.cost then ink = "#52525b" end
-        text(
-            graphics,
-            tostring(slot + 1) .. " " .. spell_name(spell.kind)
-                .. " " .. tostring(spell.cost) .. " MANA",
-            17.0 + (slot::f64) * CAST_HINT_PITCH, viewport.footer_y, 9, ink)
-    end
-    text_centered(graphics, "M MENU", viewport.center_x, viewport.footer_y, 9, "#8a8a92")
-    text_right(graphics, "? HELP", viewport.width - 17.0, viewport.footer_y, 10, "#8a8a92")
-end
-
--- Anchors of the resolved five-card row: the card top-left on each flank,
--- where the winner's pair lands to complete the formation. Exported so
--- choreography can start the scoop legs exactly where the reveal left the
--- cards.
-function row_left(viewport: layout.State): Point
-    return point(viewport.center_x - 294.0, viewport.ward_y)
-end
-
-function row_right(viewport: layout.State): Point
-    return point(viewport.center_x + 170.0, viewport.ward_y)
-end
-
--- Centre of a board slot's card box, in a hand row laid out for `count`.
-function slot_center(viewport: layout.State, kind: i32, index: i32, count: i32): Point
-    local slot: Point = slot_pos_at(viewport, kind, index, count)
-    return point(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
-end
-
--- Centre of a bound relic in the fan: the bind lift rises along the card's
--- tilted axis, so the launch point folds that (0, -10) offset through the
--- relic's angle instead of lifting straight up the screen.
-function bound_hand_center(viewport: layout.State, index: i32, part: f64, count: i32): Point
-    local angle: f64 = hand_angle_at(index, part, count)
-    local slot: Point = hand_pos_at(viewport, index, part, count)
-    return {
-        x = slot.x + CARD_W * 0.5 + math.sin(angle) * 10.0,
-        y = slot.y + CARD_H * 0.5 - math.cos(angle) * 10.0,
-    }
-end
-
--- A stronger cubic acceleration/deceleration gives the winner's flight a
--- deliberate launch and a decisive landing, while remaining exactly bounded.
-function fly_ease(clock: f64, delay: f64): f64
-    local t: f64 = (clock - delay) / FLY_SECONDS
-    if t < 0.0 then return 0.0 end
-    if t > 1.0 then t = 1.0 end
-    return ease_in_out_cubic(t)
-end
-
--- One winner card travelling from its revealed pose (`start`, a card centre)
--- to a flank of the ward row (`dest`, a card top-left): the centre lerps, the
--- source tilt unwinds to flat, and the same sin-driven lift the other flights
--- use keeps it airborne in between. ease 0 means the flight has not begun and
--- the card still sits in its row, so nothing is drawn.
-function draw_winner_flight(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, start: Point, sangle: f64, dest: Point, ease: f64, colored: bool): unit
-    if ease <= 0.0 then return end
-    local dest_center: Point = point(dest.x + CARD_W * 0.5, dest.y + CARD_H * 0.5)
-    local at: Point = lerp(start, dest_center, ease)
-    local depth: f64 = math.sin(ease * math.pi)
-    local lift: f64 = 1.0 + 0.08 * depth
-    graphics:push()
-    graphics:translate(at.x, at.y - 8.0 * depth)
-    graphics:rotate(sangle * (1.0 - ease))
-    graphics:apply_transform(lift, 0.0, 0.0, lift, 0.0, 0.0)
-    draw_card(graphics, effects, card_back, card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, false, colored, false)
-    graphics:pop()
-end
-
-function draw_disintegration_ring(graphics: Graphics, x: f64, y: f64, radius: f64): unit
-    graphics:begin_path()
-    for step = 0::i32, 32::i32 do
-        local angle: f64 = (step::f64) * math.pi * 2.0 / 32.0
-        local px: f64 = x + math.cos(angle) * radius
-        local py: f64 = y + math.sin(angle) * radius
-        if step == 0 then graphics:move_to(px, py) else graphics:line_to(px, py) end
-    end
-    graphics:close_path()
-    graphics:stroke()
-end
-
--- Capture the complete live card into one texture. The rank, school shader,
--- sigil, and border then share a single UV space, letting one noisy front eat
--- the object instead of dissolving each drawing primitive — and letting a
--- card be handed whole to an effect that has to treat it as a surface rather
--- than as the dozen primitives it is drawn from.
-function capture_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, colored: bool, known: bool, hidden: bool): graphics_module.RenderTarget?
-    stop_effect(graphics)
-    local result: graphics_module.RenderTargetResult = graphics:create_render_target(
-        CARD_W::i32, CARD_H::i32)
-    if not result.ok then return nil end
-    local target: graphics_module.RenderTarget = result.target
-    if not graphics:set_render_target(target) then
-        graphics:release_render_target(target)
-        return nil
-    end
-    -- A capture draws in the target's own pixels, whatever transform the
-    -- screen was under. Without this, a board drawn at a viewport scale
-    -- captures a card too large for its target and every consumer of the
-    -- capture shows a zoomed crop of a face.
-    graphics:push_identity()
-    graphics:clear("#00000000")
-    draw_card(
-        graphics, effects, card_back, card, 0.0, 0.0,
-        false, false, hidden, colored, known)
-    -- The target owns a texture exactly the size of the card. Reassert the two
-    -- thin identity layers last: the ordinary renderer can safely batch them
-    -- among the face primitives, but on a target boundary the frame stroke is
-    -- partially clipped and the five-pixel school stripe can otherwise
-    -- disappear at the handoff. They remain part of this texture, so the burn
-    -- shader chars and removes them only when its front reaches them. A sealed
-    -- card shows neither: its back is the packaged image, edge to edge.
-    if not hidden then
-        graphics:set_color("#52525b")
-        graphics:set_line_width(2.0)
-        graphics:stroke_rectangle(1.0, 1.0, CARD_W - 2.0, CARD_H - 2.0)
-        graphics:set_color(school_color(card.suit))
-        graphics:fill_rectangle(7.0, 7.0, 5.0, CARD_H - 14.0)
-    end
-    graphics:pop()
-    graphics:set_screen_target()
-    return target
-end
-
--- The face alone, which is what every burn in the game captures.
-function capture_card_face(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, colored: bool, known: bool): graphics_module.RenderTarget?
-    return capture_card(graphics, effects, card_back, card, colored, known, false)
-end
-
--- How far the losing pair has burned, read off the reveal clock alone. The
--- update tick steers the ash emitters from this and the resolution board draws
--- the sheet from it, so the flakes and the front they leave never disagree.
-function loss_burn_progress(reveal_clock: f64): f64
-    local progress: f64 = (reveal_clock - WIN_GLOW_START) / LOSS_DISINTEGRATE_SECONDS
-    if progress < 0.0 then return 0.0 end
-    if progress > 1.0 then return 1.0 end
-    return progress
-end
-
-function smooth_step(edge0: f64, edge1: f64, value: f64): f64
-    local t: f64 = (value - edge0) / (edge1 - edge0)
-    if t < 0.0 then t = 0.0 elseif t > 1.0 then t = 1.0 end
-    return t * t * (3.0 - 2.0 * t)
-end
-
--- Where the shader's hole front stands, in card pixels from the centre. This
--- mirrors card-burn.frag's hole_front exactly, because the ash has to leave
--- from the boundary the card is actually being eaten along. A reading past the
--- card's own half-extents means the front has cleared that edge.
-function burn_front_radius(progress: f64): f64
-    return (-0.24 + smooth_step(0.11, 0.97, progress) * 1.54) * CARD_HALF_DIAGONAL
-end
-
--- The ash source tracks the burn front. Flakes are born on the ring the shader
--- is cutting along and aimed outward from it, so they peel off the advancing
--- char boundary instead of leaving from anywhere on a sheet that is still
--- intact. Once the front has passed an edge there is no paper out there to
--- shed, so the ring flattens against the card's own bounds.
-function aim_ash_at_front(system: particles.ParticleSystem, progress: f64): unit
-    local radius: f64 = burn_front_radius(progress)
-    local ring_x: f64 = radius
-    local ring_y: f64 = radius
-    local limit_x: f64 = CARD_W * 0.5 - 4.0
-    local limit_y: f64 = CARD_H * 0.5 - 4.0
-    if ring_x > limit_x then ring_x = limit_x end
-    if ring_y > limit_y then ring_y = limit_y end
-    system:set_emission_area("borderellipse", ring_x, ring_y, 0.0, true)
-end
-
--- Porous soft-edged flakes off the losing sheet. Each takes its own tint off
--- the soot-to-ash band, its own sideways rock, its own tumble, and its own
--- fall, so there is no residual tile grid or moment where the ash hovers.
-function new_reveal_ash(seed: i32): particles.ParticleSystem
-    local system: particles.ParticleSystem = particles.new(LOSS_ASH_FLECKS + 14)
-    system:set_seed(seed)
-    system:set_particle_lifetime(0.34, 0.60)
-    -- Speed is the crumble away from the front; gravity is what actually
-    -- carries a flake down, and light damping keeps the burst from reading as
-    -- an explosion.
-    system:set_speed(12.0, 38.0)
-    system:set_spread(1.15)
-    system:set_linear_acceleration(-38.0, 380.0, 38.0, 920.0)
-    system:set_linear_damping(0.15, 0.6)
-    system:set_sway_amplitude(1.5, 4.5)
-    system:set_sway_frequency(1.1, 2.2)
-    system:set_sizes({ 1.0, 0.86, 0.5, 0.0 })
-    system:set_size_variation(0.75)
-    system:set_rotation(0.0, math.pi * 2.0)
-    system:set_spin(-5.4, 5.4)
-    system:set_spin_variation(1.0)
-    -- The same three inks the reconstruction picked between, now a band each
-    -- flake takes its own place on.
-    system:set_colors_hex({ "#292524", "#9a3412", "#78716c" })
-    system:set_color_variation(0.9)
-    system:set_shape_size(7.0, 12.0)
-    return system
-end
-
--- The ward Fireball is eating sheds a second, coarser fall on top of the
--- sheet ash: bigger pieces, released later, drifting wider and further.
-function new_ward_ash(seed: i32): particles.ParticleSystem
-    local system: particles.ParticleSystem = particles.new(38)
-    system:set_seed(seed)
-    system:set_particle_lifetime(0.40, 0.78)
-    system:set_speed(16.0, 48.0)
-    system:set_spread(1.3)
-    system:set_linear_acceleration(-54.0, 420.0, 54.0, 1040.0)
-    system:set_linear_damping(0.15, 0.55)
-    system:set_sway_amplitude(2.0, 6.0)
-    system:set_sway_frequency(1.2, 2.4)
-    system:set_sizes({ 1.0, 0.82, 0.46, 0.0 })
-    system:set_size_variation(0.8)
-    system:set_rotation(0.0, math.pi * 2.0)
-    system:set_spin(-4.2, 4.2)
-    system:set_spin_variation(1.0)
-    system:set_colors_hex({ "#44403c", "#9a3412", "#78716c" })
-    system:set_color_variation(0.9)
-    system:set_shape_size(11.0, 15.0)
-    return system
-end
-
-function new_card_ash(): CardAsh
-    return {
-        reveal_first = new_reveal_ash(401),
-        reveal_second = new_reveal_ash(929),
-        ward_sheet = new_reveal_ash(613),
-        ward_fall = new_ward_ash(607),
-    }
-end
-
--- One tick of a sheet emitter. A progress outside the release window — which
--- includes the negative reading that means nothing is burning at all — leaves
--- the emitter quiet while whatever it already shed finishes falling.
-function step_ash(
-    system: particles.ParticleSystem,
-    progress: f64,
-    start: f64,
-    finish: f64,
-    rate: f64,
-    dt: f64
-): unit
-    if progress >= start and progress < finish then
-        aim_ash_at_front(system, progress)
-        system:set_emission_rate(rate)
-    else
-        system:set_emission_rate(0.0)
-    end
-    system:update(dt)
-end
-
-function step_reveal_ash(system: particles.ParticleSystem, progress: f64, dt: f64): unit
-    step_ash(system, progress, LOSS_ASH_START, LOSS_ASH_END, LOSS_ASH_RATE, dt)
-end
-
-function step_ward_ash(system: particles.ParticleSystem, progress: f64, dt: f64): unit
-    step_ash(system, progress, WARD_ASH_START, WARD_ASH_END, WARD_ASH_RATE, dt)
-end
-
--- Particle quads are only carriers for the burn shader: its noisy alpha mask
--- cuts every side away before a flake reaches the screen, and each quad rides
--- its own rotation, so a square draw mode never shows a square. The ellipse
--- fallback is what an optional-program failure falls back to, so a missing
--- shader never exposes a rectangle in the fire.
-function draw_card_ash(
-    graphics: Graphics,
-    effects: EffectShaders,
-    system: particles.ParticleSystem,
-    x: f64,
-    y: f64,
-    seed: i32
-): unit
-    if system:count() == 0 then return end
-    local particles_ok: bool = burn_particles.use(graphics, effects, seed, false)
-    if particles_ok then
-        system:set_draw_mode("square")
-    else
-        stop_effect(graphics)
-        system:set_draw_mode("circle")
-    end
-    system:draw(graphics, x + CARD_W * 0.5, y + CARD_H * 0.5)
-    if particles_ok then stop_effect(graphics) end
-end
-
-function draw_captured_burn(graphics: Graphics, effects: EffectShaders, target: graphics_module.RenderTarget, x: f64, y: f64, progress: f64, seed: i32, suit: i32, ash: particles.ParticleSystem): unit
-    local shader_ok: bool = use_card_burn(
-        graphics, effects, progress, seed, suit)
-    if shader_ok then
-        graphics:set_color("#ffffffff")
-        graphics:draw_render_target(target, x, y, CARD_W, CARD_H)
-        stop_effect(graphics)
-    else
-        stop_effect(graphics)
-        -- A missing optional program keeps the reveal playable and legible.
-        -- The late cutoff still hands the silhouette to the ash particles.
-        if progress < 0.68 then
-            graphics:set_color("#ffffffff")
-            graphics:draw_render_target(target, x, y, CARD_W, CARD_H)
-        end
-    end
-    draw_card_ash(graphics, effects, ash, x, y, seed + 401)
-end
-
-function draw_disintegrating_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, x: f64, y: f64, selected: bool, progress: f64, seed: i32, ash: particles.ParticleSystem): unit
-    if progress <= 0.0 then
-        draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
-        return
-    end
-    local selected_offset: f64 = 0.0
-    if selected then selected_offset = -10.0 end
-    -- The sheet is gone well before its last flakes have landed, so the ash
-    -- outlives the card it came off instead of being cut with it.
-    if progress >= 1.0 then
-        draw_card_ash(
-            graphics, effects, ash, x, y + selected_offset, seed + 401)
-        return
-    end
-    local target: graphics_module.RenderTarget? = capture_card_face(
-        graphics, effects, card_back, card, false, false)
-    if target == nil then
-        if progress < 0.68 then
-            draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
-        end
-        draw_card_ash(
-            graphics, effects, ash, x, y + selected_offset, seed + 401)
-        return
-    end
-    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    draw_captured_burn(
-        graphics, effects, captured,
-        x, y + selected_offset, progress, seed, card.suit, ash)
-    graphics:release_render_target(captured)
-end
-
-function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, progress: f64, seed: i32, ash: particles.ParticleSystem): unit
-    local viewport: layout.State = layout.current()
-    local slot: Point = hand_pos_at(viewport, index, part, count)
-    -- Past full burn there is no sheet left to capture, only the last flakes
-    -- falling — and they fall inside the relic's own tilt, the way they did
-    -- while it was still there.
-    local target: graphics_module.RenderTarget? = nil
-    if progress < 1.0 then
-        target = capture_card_face(
-            graphics, effects, card_back, card, false, false)
-    end
-    graphics:push()
-    graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
-    graphics:rotate(hand_angle_at(index, part, count))
-    if target == nil then
-        draw_card_ash(
-            graphics, effects, ash,
-            -(CARD_W * 0.5), -(CARD_H * 0.5) - 10.0, seed + 401)
-    else
-        local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-        draw_captured_burn(
-            graphics, effects, captured,
-            -(CARD_W * 0.5), -(CARD_H * 0.5) - 10.0,
-            progress, seed, card.suit, ash)
-        graphics:release_render_target(captured)
-    end
-    graphics:pop()
-end
-
-function clamp_power_progress(value: f64): f64
-    if value < 0.0 then return 0.0 end
-    if value > 1.0 then return 1.0 end
-    return value
-end
-
-function power_formation(clock: f64): f64
-    return clamp_power_progress(
-        (clock - spell_cast.travel_seconds) / POWER_FORM_SECONDS)
-end
-
-function fireball_formation(clock: f64): f64
-    return clamp_power_progress(
-        (clock - spell_cast.travel_seconds) / FIREBALL_BURN_SECONDS)
-end
-
--- Choreography uses the renderer's own completion boundary to commit the
--- Firebolt result on the first frame where the old card is fully burned away.
-function firebolt_burn_finished(clock: f64): bool
-    return fireball_formation(clock) >= 1.0
-end
-
--- The clock reading at which every spell has finished arriving: the carrier
--- has landed, the impact rays are spent, the formation is full, and the last
--- of Fireball's ash has fallen. Fireball is the slowest of the four, so its
--- end is the settled reading for all of them. Past this point the clock only
--- feeds the endless idle motions — breathing membranes, circling grave-flies —
--- that have no finish to wait for.
-function power_settled_clock(): f64
-    return spell_cast.travel_seconds
-        + FIREBALL_BURN_SECONDS
-        + FIREBALL_ASH_FADE_SECONDS
-end
-
--- Dry earth off the mouth the raised ward climbs out of. Motes are born across
--- the aperture, lift on the draught coming up out of it, wander, and settle
--- out. Emitter coordinates are local to the aperture, so the same emitter draws
--- correctly at whichever slot is raised.
-function new_grave_dust(): particles.ParticleSystem
-    local system: particles.ParticleSystem = particles.new(150)
-    system:set_seed(541)
-    system:set_emission_rate(0.0)
-    system:set_particle_lifetime(0.90, 2.20)
-    system:set_speed(10.0, 44.0)
-    -- Thrown up and out of the hole rather than in every direction. The climb
-    -- has to carry a mote across the card's own lower third: the button row is
-    -- drawn over the slot's bottom edge, so dust that only hangs at the
-    -- aperture is dust nobody sees.
-    system:set_direction(-math.pi * 0.5)
-    system:set_spread(math.pi * 1.05)
-    system:set_emission_area("ellipse", 40.0, 4.0, 0.0, false)
-    system:set_linear_acceleration(-10.0, -52.0, 10.0, -14.0)
-    system:set_linear_damping(0.5, 1.4)
-    system:set_sway_amplitude(1.2, 4.0)
-    system:set_sway_frequency(0.25, 0.7)
-    system:set_sizes({ 0.65, 1.0, 0.0 })
-    system:set_size_variation(0.8)
-    system:set_colors_hex({ "#c2bf8ecc", "#71704b99", "#4b4a2f00" })
-    system:set_color_variation(0.8)
-    system:set_shape_size(3.8, 3.8)
-    system:set_draw_mode("circle")
-    return system
-end
-
--- One tick of the grave. The climb throws dust; a standing ward only trickles.
-function step_grave_dust(
-    system: particles.ParticleSystem,
-    formation: f64,
-    dt: f64
-): unit
-    if formation < 0.0 then
-        system:set_emission_rate(0.0)
-    elseif formation < 1.0 then
-        system:set_emission_rate(GRAVE_DUST_RISING_RATE)
-    else
-        system:set_emission_rate(GRAVE_DUST_IDLE_RATE)
-    end
-    system:update(dt)
-end
-
-function new_spell_particles(): SpellParticles
-    return {
-        sparks = spell_launch.new_sparks(),
-        grave_dust = new_grave_dust(),
-    }
-end
-
--- One tick of everything a spell has in the air. The launch seam is given the
--- target in board coordinates, which is the only thing the spell modules cannot
--- work out for themselves; the grave reads the same formation the raised ward
--- is drawn from.
-function step_spell_particles(
-    spells: SpellParticles,
-    viewport: layout.State,
-    kind: i32,
-    clock: f64,
-    target: i32,
-    dt: f64
-): unit
-    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
-    spell_launch.step(
-        spells.sparks, kind, clock, dt,
-        slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
-    local grave: f64 = NO_GRAVE
-    if kind == POWER_RAISE then
-        grave = power_formation(clock)
-    end
-    step_grave_dust(spells.grave_dust, grave, dt)
-end
-
-function draw_power_ellipse(
-    graphics: Graphics,
-    x: f64,
-    y: f64,
-    radius_x: f64,
-    radius_y: f64,
-    color: string,
-    width: f64
-): unit
-    graphics:push()
-    graphics:translate(x, y)
-    graphics:scale(radius_x / 32.0, radius_y / 32.0)
-    graphics:set_color(color)
-    graphics:set_line_width(width)
-    draw_disintegration_ring(graphics, 0.0, 0.0, 32.0)
-    graphics:pop()
-end
-
-function draw_scaled_power_card(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    card: game.Card,
-    center_x: f64,
-    center_y: f64,
-    scale: f64,
-    selected: bool,
-    focused: bool,
-    colored: bool,
-    known: bool
-): unit
-    graphics:push()
-    graphics:translate(center_x, center_y)
-    graphics:scale(scale, scale)
-    draw_card(
-        graphics, effects, card_back, card,
-        -CARD_W * 0.5, -CARD_H * 0.5,
-        selected, focused, false, colored, known)
-    graphics:pop()
-end
-
--- Fireball now burns the rendered card itself: a small centre ignition grows
--- through a noisy ember/char boundary, holes open behind it, and the remaining
--- black sheet sheds into ash that catches a draft, falls away, and disappears.
--- Two falls overlap: the sheet ash every burning card sheds, and a coarser
--- departing fall of larger pieces released later off the same front.
-function draw_fireball_card(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    card: game.Card,
-    x: f64,
-    y: f64,
-    selected: bool,
-    focused: bool,
-    colored: bool,
-    known: bool,
-    formation: f64,
-    ash: CardAsh
-): unit
-    local selected_offset: f64 = 0.0
-    if selected then selected_offset = -10.0 end
-    local top: f64 = y + selected_offset
-    local seed: i32 = card.rank * 17 + card.suit * 97 + 191
-    local target: graphics_module.RenderTarget? = capture_card_face(
-        graphics, effects, card_back, card, colored, known)
-    if target == nil then
-        if formation < 0.86 then
-            draw_card(
-                graphics, effects, card_back, card, x, y,
-                selected, focused, false, colored, known)
-        end
-        draw_card_ash(
-            graphics, effects, ash.ward_sheet, x, top, seed + 401)
-    else
-        local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-        draw_captured_burn(
-            graphics, effects, captured,
-            x, top, formation, seed, card.suit, ash.ward_sheet)
-        graphics:release_render_target(captured)
-    end
-    draw_card_ash(graphics, effects, ash.ward_fall, x, top, seed + 607)
-end
-
--- Freeze Ray leaves the card readable under a translucent shell. The ice
--- shader grows noise-driven frost from the edges inward, holds as faceted
--- chunks with bright cracks, and hangs icicles past the card border. The
--- vector overlay below survives only as the fallback while the shader or its
--- noise texture is unavailable.
-function draw_freeze_card(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    card: game.Card,
-    x: f64,
-    y: f64,
-    selected: bool,
-    focused: bool,
-    colored: bool,
-    known: bool,
-    formation: f64,
-    clock: f64
-): unit
-    draw_card(
-        graphics, effects, card_back, card, x, y,
-        selected, focused, false, colored, known)
-    local ice: f64 = ease_out_quint(formation)
-    -- Track the lift draw_card applies to a selected card so the shell stays
-    -- glued to the face it freezes.
-    local top: f64 = y
-    if selected then top -= 10.0 end
-    local maybe_noise: graphics_module.Texture? = effects.noise_texture
-    if maybe_noise ~= nil then
-        local noise: graphics_module.Texture = maybe_noise::graphics_module.Texture
-        if use_ice_freeze(graphics, effects, ice) then
-            graphics:set_color("#ffffffff")
-            graphics:draw_sprite(
-                noise,
-                x - FREEZE_MARGIN_X, top - FREEZE_MARGIN_TOP,
-                CARD_W + FREEZE_MARGIN_X * 2.0,
-                CARD_H + FREEZE_MARGIN_TOP + FREEZE_MARGIN_BOTTOM,
-                0.0, 0.0, noise.width::f64, noise.height::f64)
-            stop_effect(graphics)
-            return
-        end
-    end
-    y = top
-    local corner_w: f64 = 6.0 + 47.0 * ice
-    local corner_h: f64 = 7.0 + 58.0 * ice
-    graphics:set_color("#7dd3fc55")
-    graphics:fill_rectangle(x, y, corner_w, corner_h)
-    graphics:fill_rectangle(x + CARD_W - corner_w, y, corner_w, corner_h)
-    graphics:fill_rectangle(x, y + CARD_H - corner_h, corner_w, corner_h)
-    graphics:fill_rectangle(
-        x + CARD_W - corner_w, y + CARD_H - corner_h,
-        corner_w, corner_h)
-    graphics:set_color("#dff8ff88")
-    graphics:fill_rectangle(x + 4.0, y + 4.0, CARD_W - 8.0, 4.0 + ice * 5.0)
-    graphics:fill_rectangle(
-        x + 4.0, y + CARD_H - 8.0 - ice * 4.0,
-        CARD_W - 8.0, 4.0 + ice * 4.0)
-
-    local ice_edge: string = "#7dd3fc"
-    if math.sin(clock * 2.3) > 0.25 then ice_edge = "#e0f2fe" end
-    graphics:set_color(ice_edge)
-    graphics:set_line_width(2.4)
-    graphics:stroke_rectangle(x - 1.0, y - 1.0, CARD_W + 2.0, CARD_H + 2.0)
-    local center_x: f64 = x + CARD_W * 0.5
-    local center_y: f64 = y + CARD_H * 0.5
-    local crack_reach: f64 = 0.18 + ice * 0.70
-    graphics:set_line_width(1.6)
-    graphics:line(x, y, x + CARD_W * crack_reach, y + CARD_H * crack_reach)
-    graphics:line(
-        x + CARD_W, y,
-        x + CARD_W * (1.0 - crack_reach), y + CARD_H * crack_reach)
-    graphics:line(
-        x, y + CARD_H,
-        center_x * crack_reach + x * (1.0 - crack_reach),
-        center_y * crack_reach + (y + CARD_H) * (1.0 - crack_reach))
-    graphics:line(
-        x + CARD_W, y + CARD_H,
-        center_x * crack_reach + (x + CARD_W) * (1.0 - crack_reach),
-        center_y * crack_reach + (y + CARD_H) * (1.0 - crack_reach))
-    for shard = 0::i32, 5::i32 do
-        local threshold: f64 = (shard::f64) / 7.0
-        if ice > threshold then
-            local shard_x: f64 = x + 9.0 + (shard::f64) * 17.0
-            local shard_length: f64 = 7.0
-                + burn_particles.hash(shard + 42, 1.0) * 16.0
-            graphics:line(
-                shard_x, y + CARD_H,
-                shard_x + 3.0, y + CARD_H + shard_length * ice)
-            graphics:line(
-                shard_x + 3.0, y + CARD_H + shard_length * ice,
-                shard_x + 7.0, y + CARD_H)
-            if shard % 2 == 0 then
-                local top_x: f64 = shard_x + 8.0
-                local top_length: f64 = shard_length * 0.72
-                graphics:line(
-                    top_x, y,
-                    top_x + 3.0, y - top_length * ice)
-                graphics:line(
-                    top_x + 3.0, y - top_length * ice,
-                    top_x + 7.0, y)
-            end
-        end
-    end
-end
-
-function draw_zombie_overlay(
-    graphics: Graphics,
-    x: f64,
-    y: f64,
-    formation: f64,
-    clock: f64
-): unit
-    graphics:set_color("#26382b99")
-    graphics:fill_rectangle(x + 2.0, y + 2.0, CARD_W - 4.0, CARD_H - 4.0)
-    graphics:set_color("#080b09dd")
-    graphics:fill_circle(x + 78.0, y + 29.0, 10.0 * formation)
-    graphics:fill_circle(x + 27.0, y + 91.0, 7.0 * formation)
-    graphics:fill_rectangle(x + 74.0, y + 113.0, 18.0, 16.0)
-    graphics:set_color("#9cae80")
-    graphics:set_line_width(1.8)
-    graphics:line(x + 21.0, y + 48.0, x + 46.0, y + 58.0)
-    graphics:line(x + 46.0, y + 58.0, x + 37.0, y + 76.0)
-    graphics:line(x + 37.0, y + 76.0, x + 57.0, y + 87.0)
-    for stitch = 0::i32, 4::i32 do
-        local sx: f64 = x + 28.0 + (stitch::f64) * 5.2
-        local sy: f64 = y + 51.0 + (stitch::f64) * 2.0
-        graphics:line(sx - 1.5, sy + 3.0, sx + 1.5, sy - 3.0)
-    end
-    text_centered(
-        graphics, "RAISED", x + CARD_W * 0.5, y + 119.0, 9, "#bef264")
-    for fly = 0::i32, 4::i32 do
-        local angle: f64 = clock * (0.8 + (fly::f64) * 0.09)
-            + (fly::f64) * 1.4
-        local radius: f64 = 58.0 + burn_particles.hash(fly + 72, 2.0) * 18.0
-        graphics:set_color("#a3e635")
-        graphics:fill_circle(
-            x + CARD_W * 0.5 + math.cos(angle) * radius,
-            y + CARD_H * 0.5 + math.sin(angle * 1.7) * 44.0,
-            1.3)
-    end
-end
-
--- Raise Dead replaces the ward at impact with a second rendering that climbs
--- out of a black ground aperture. Its healed pose keeps holes, torn stock,
--- sutures, corpse tint, and circling grave-flies as the persistent condition.
-function draw_raise_card(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    card: game.Card,
-    x: f64,
-    y: f64,
-    selected: bool,
-    focused: bool,
-    colored: bool,
-    known: bool,
-    formation: f64,
-    clock: f64,
-    dust: particles.ParticleSystem
-): unit
-    local rise: f64 = ease_out_back(formation)
-    local center_x: f64 = x + CARD_W * 0.5
-    local center_y: f64 = y + CARD_H * 0.5
-    graphics:push()
-    graphics:translate(center_x, y + CARD_H + 5.0)
-    graphics:scale(1.30, 0.22)
-    graphics:set_color("#050306dd")
-    graphics:fill_circle(0.0, 0.0, 42.0)
-    graphics:pop()
-    graphics:push()
-    graphics:translate(center_x, center_y + (1.0 - rise) * 66.0)
-    graphics:rotate((1.0 - formation) * -0.10)
-    draw_card(
-        graphics, effects, card_back, card,
-        -CARD_W * 0.5, -CARD_H * 0.5,
-        selected, focused, false, colored, known)
-    draw_zombie_overlay(
-        graphics, -CARD_W * 0.5, -CARD_H * 0.5,
-        formation, clock)
-    graphics:pop()
-    -- The dust is drawn where the aperture is, but it is not a function of the
-    -- climb: the eight motes this replaced were a pure function of formation,
-    -- so they stopped dead the moment the ward finished rising and the ring
-    -- they froze in hung there for the rest of the heist.
-    dust:draw(graphics, center_x, y + CARD_H - 2.0)
-end
-
--- Growth is literal cell division: the one full-size ward pinches into two
--- smaller copies while a shared membrane swells around them. Individual
--- daughter-cell rings and drifting organelles keep the settled pair alive.
-function draw_growth_card(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    card: game.Card,
-    x: f64,
-    y: f64,
-    selected: bool,
-    focused: bool,
-    colored: bool,
-    known: bool,
-    formation: f64,
-    clock: f64
-): unit
-    local split: f64 = ease_out_back(formation)
-    local center_x: f64 = x + CARD_W * 0.5
-    local center_y: f64 = y + CARD_H * 0.5
-    local breathing: f64 = math.sin(clock * 2.1) * 1.6 * formation
-    graphics:push()
-    graphics:translate(center_x, center_y)
-    graphics:scale(
-        (82.0 + breathing) / 32.0,
-        (70.0 + breathing * 0.45) / 32.0)
-    graphics:set_color("#4ade8020")
-    graphics:fill_circle(0.0, 0.0, 32.0)
-    graphics:pop()
-    draw_power_ellipse(
-        graphics, center_x, center_y,
-        82.0 + breathing, 70.0 + breathing * 0.45,
-        "#86efac", 1.5)
-    local clone_scale: f64 = 1.0 - 0.30 * split
-    local separation: f64 = 30.0 * split
-    draw_power_ellipse(
-        graphics, center_x - separation, center_y,
-        43.0 + breathing * 0.35, 55.0 + breathing * 0.25,
-        "#4ade80aa", 1.0)
-    draw_power_ellipse(
-        graphics, center_x + separation, center_y,
-        43.0 + breathing * 0.35, 55.0 + breathing * 0.25,
-        "#4ade80aa", 1.0)
-    draw_scaled_power_card(
-        graphics, effects, card_back, card,
-        center_x - separation, center_y, clone_scale,
-        selected, focused, colored, known)
-    draw_scaled_power_card(
-        graphics, effects, card_back, card,
-        center_x + separation, center_y, clone_scale,
-        selected, focused, colored, known)
-    for organelle = 0::i32, 5::i32 do
-        local angle: f64 = clock * 0.24 + (organelle::f64) * 1.05
-        graphics:set_color("#bbf7d088")
-        graphics:fill_circle(
-            center_x + math.cos(angle) * (69.0 + breathing),
-            center_y + math.sin(angle) * 55.0,
-            2.0 + burn_particles.hash(organelle + 83, 2.0) * 1.8)
-    end
-end
-
-function draw_powered_card(
-    graphics: Graphics,
-    effects: EffectShaders,
-    card_back: graphics_module.Texture?,
-    card: game.Card,
-    x: f64,
-    y: f64,
-    selected: bool,
-    focused: bool,
-    hidden: bool,
-    colored: bool,
-    known: bool,
-    power_kind: i32,
-    power_clock: f64,
-    ash: CardAsh,
-    dust: particles.ParticleSystem
-): unit
-    local formation: f64 = power_formation(power_clock)
-    if power_kind == POWER_FIREBALL then
-        formation = fireball_formation(power_clock)
-    end
-    if power_kind == 0 or hidden or formation <= 0.0 then
-        draw_card(
-            graphics, effects, card_back, card, x, y,
-            selected, focused, hidden, colored, known)
-    elseif power_kind == POWER_FIREBALL then
-        draw_fireball_card(
-            graphics, effects, card_back, card, x, y,
-            selected, focused, colored, known, formation, ash)
-    elseif power_kind == POWER_FREEZE then
-        draw_freeze_card(
-            graphics, effects, card_back, card, x, y,
-            selected, focused, colored, known, formation, power_clock)
-    elseif power_kind == POWER_RAISE then
-        draw_raise_card(
-            graphics, effects, card_back, card, x, y,
-            selected, focused, colored, known, formation, power_clock, dust)
-    elseif power_kind == POWER_GROWTH then
-        draw_growth_card(
-            graphics, effects, card_back, card, x, y,
-            selected, focused, colored, known, formation, power_clock)
-    else
-        draw_card(
-            graphics, effects, card_back, card, x, y,
-            selected, focused, hidden, colored, known)
-    end
-end
-
-function draw_spell_launch(
-    graphics: Graphics,
-    effects: EffectShaders,
-    kind: i32,
-    clock: f64,
-    target: i32,
-    sparks: spell_cast.Sparks
-): unit
-    local viewport: layout.State = layout.current()
-    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
-    spell_launch.draw(
-        graphics, effects, kind, clock,
-        slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5, sparks)
+    return card.node(look)
 end
 
 function trick_scoring(trick: game.Trick): {bool}
@@ -2153,28 +866,29 @@ function trick_scoring(trick: game.Trick): {bool}
         winner.value, loser.value)
 end
 
-function draw_resolution_board(
-    graphics: Graphics,
-    effects: EffectShaders,
-    frame: Frame
-): unit
+-- The three wards on their field: a panel, and the row of slots standing on
+-- it. Both take the same band, so the field is always exactly as wide as the
+-- row it backs.
+function draw_ward_band(surface: entity.Surface, viewport: layout.State, slots: {entity.Node}): unit
+    local band: box.Rect = ward_band(viewport, #slots)
+    ward_panel.node().paint(surface, band)
+    card_row.node(slots, card_row.flat_pitch).paint(surface, band)
+end
+
+function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
+    local graphics = surface.graphics
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
-    local card_back: graphics_module.Texture? = frame.card_back
     local fan_parts: {f64} = frame.motion.fan_parts
     local reveal_clock: f64 = frame.motion.reveal_clock
     local discards: {game.Card} = frame.piles.discards
-    local computer_won: {game.Card} = frame.piles.computer_won
-    local player_won: {game.Card} = frame.piles.player_won
-    local power_kind: i32 = frame.spell.kind
-    local power_clock: f64 = frame.spell.clock
     local trick: game.Trick = state.history[#state.history - 1]
     -- The reveal shows the hands as they were played, so the rows keep the
     -- trick's layout even though a boss battle's live hands have already
     -- shrunk underneath it.
     local hand_count: i32 = #trick.player_hand
-    draw_hud(graphics, state, frame.run)
-    draw_deck(graphics, effects, card_back, state.deck_count)
+    draw_hud(surface, viewport, state, frame.run)
+    draw_deck(surface, viewport, state.deck_count)
     local scoring: {bool} = trick_scoring(trick)
     -- Flight progress for the winner's two cards; a stalemate has no winner,
     -- so nothing takes off and both played pairs stay where they revealed.
@@ -2192,11 +906,10 @@ function draw_resolution_board(
     local lift_progress: f64 = 0.0
     local loss_progress: f64 = 0.0
     if trick.winner ~= 0 then
-        local glow_time: f64 = (reveal_clock - WIN_GLOW_START) / WIN_GLOW_FADE
-        if glow_time < 0.0 then glow_time = 0.0 end
-        if glow_time > 1.0 then glow_time = 1.0 end
-        glow = ease_out_quint(glow_time)
-        lift_progress = ease_out_back(glow_time)
+        local glow_time: f64 = easing.clamp01(
+            (reveal_clock - WIN_GLOW_START) / WIN_GLOW_FADE)
+        glow = easing.out_quint(glow_time)
+        lift_progress = easing.out_back(glow_time)
         loss_progress = loss_burn_progress(reveal_clock)
     end
     -- The won piles are settled here — this trick joins its winner's pile only
@@ -2205,14 +918,32 @@ function draw_resolution_board(
     -- the result rebuilds both cards from ash directly on the neutral pile.
     local burn_landed: i32 = #discards
     if trick.winner ~= 0 then burn_landed -= 2 end
-    draw_piles(graphics, effects, discards, burn_landed, computer_won, #computer_won, player_won, #player_won)
-    if trick.winner > 0 then text_centered(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), viewport.center_x, 103.0, 14, "#67e8f9")
-    elseif trick.winner < 0 then text_centered(graphics, "THE WARDS HOLD", viewport.center_x, 103.0, 14, "#fca5a5")
-    else text_centered(graphics, "MAGICS CANCEL", viewport.center_x, 103.0, 14, "#fbbf24") end
-    text_centered(graphics, game.category_name(trick.player_value) .. "  VS  " .. game.category_name(trick.computer_value), viewport.center_x, viewport.ward_y - 40.0, 11, "#d4d4d8")
+    draw_piles(
+        surface, viewport, discards, burn_landed,
+        frame.piles.computer_won, #frame.piles.computer_won,
+        frame.piles.player_won, #frame.piles.player_won)
+    if trick.winner > 0 then
+        centered_line(
+            surface, viewport,
+            "DEFENSE BREACHED +" .. tostring(trick.points),
+            HEADLINE_TOP + HEADLINE_SIZE, HEADLINE_SIZE, "#67e8f9")
+    elseif trick.winner < 0 then
+        centered_line(
+            surface, viewport, "THE WARDS HOLD",
+            HEADLINE_TOP + HEADLINE_SIZE, HEADLINE_SIZE, "#fca5a5")
+    else
+        centered_line(
+            surface, viewport, "MAGICS CANCEL",
+            HEADLINE_TOP + HEADLINE_SIZE, HEADLINE_SIZE, "#fbbf24")
+    end
+    centered_line(
+        surface, viewport,
+        game.category_name(trick.player_value) .. "  VS  "
+            .. game.category_name(trick.computer_value),
+        viewport.ward_y - PROMPT_RISE, PROMPT_SIZE, PROMPT_INK)
 
     -- The played Arch Mage cards flip in their original slots, then fly to
-    -- the ward row if the wards held; a slot goes empty the moment its card
+    -- the formation if the wards held; a slot goes empty the moment its card
     -- takes off. Everything else stays sealed, so only the winning formation
     -- gains suit color.
     for i = 0::i32, #trick.computer_hand - 1 do
@@ -2220,75 +951,99 @@ function draw_resolution_board(
         if i == trick.computer_first then
             if trick.winner >= 0 or fly0 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
-                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[0], slot.x, slot.y, false, loss_progress, 11, frame.ash.reveal_first)
+                    card_burn.draw_disintegrating(
+                        surface, card.plain(trick.computer_cards[0]),
+                        slot.x, slot.y, loss_progress, 11, frame.ash.reveal_first)
                 else
-                    draw_flipping_card(graphics, effects, card_back, trick.computer_cards[0], slot.x, slot.y, reveal_clock, 0.2, trick.winner < 0 and scoring[3])
+                    draw_flipping_card(
+                        surface, trick.computer_cards[0], slot.x, slot.y,
+                        reveal_clock, 0.2, trick.winner < 0 and scoring[3])
                 end
             end
         elseif i == trick.computer_second then
             if trick.winner >= 0 or fly1 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
-                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[1], slot.x, slot.y, false, loss_progress, 29, frame.ash.reveal_second)
+                    card_burn.draw_disintegrating(
+                        surface, card.plain(trick.computer_cards[1]),
+                        slot.x, slot.y, loss_progress, 29, frame.ash.reveal_second)
                 else
-                    draw_flipping_card(graphics, effects, card_back, trick.computer_cards[1], slot.x, slot.y, reveal_clock, 0.2 + FLIP_SECONDS * 0.7, trick.winner < 0 and scoring[4])
+                    draw_flipping_card(
+                        surface, trick.computer_cards[1], slot.x, slot.y,
+                        reveal_clock, 0.2 + FLIP_SECONDS * 0.7,
+                        trick.winner < 0 and scoring[4])
                 end
             end
         else
-            draw_card(graphics, effects, card_back, trick.computer_hand[i].card, slot.x, slot.y, false, false, true, false, trick.computer_hand[i].known)
+            card.draw_at(
+                surface,
+                card.sealed(trick.computer_hand[i].card, trick.computer_hand[i].known),
+                slot.x, slot.y)
         end
     end
 
-    -- The panel marks the landing zone. Before the halo ignites, the three
-    -- wards remain part of this ordinary table layer; once the formation is
-    -- complete, they move into the foreground layer with the winning pair.
-    panel(
-        graphics, viewport.center_x - 320.0, viewport.ward_y - 34.0,
-        640.0, 148.0, "#101013", "#3f3f46")
+    -- The panel marks the landing zone, sized for the whole formation. Before
+    -- the halo ignites, the three wards remain part of this ordinary table
+    -- layer; once the formation is complete, they move into the foreground
+    -- layer with the winning pair.
+    local formation: box.Rect = ward_band(viewport, FORMATION_SLOTS)
+    ward_panel.node().paint(surface, formation)
     if glow <= 0.0 then
         for i = 0::i32, 2::i32 do
-            local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
-            if i == frame.spell.target then
-                draw_powered_card(
-                    graphics, effects, card_back, trick.middle[i],
-                    slot.x, slot.y, false, false, false,
-                    trick.winner ~= 0 and scoring[i], false,
-                    power_kind, power_clock, frame.ash, frame.spells.grave_dust)
-            else
-                draw_card(graphics, effects, card_back, trick.middle[i], slot.x, slot.y, false, false, false, trick.winner ~= 0 and scoring[i], false)
-            end
+            ward_node(
+                frame, trick.middle[i], i, false, false,
+                trick.winner ~= 0 and scoring[i]
+            ).paint(surface, row_slot(viewport, 3, i))
         end
     end
 
-    text_centered(
-        graphics, "CLICK OR ENTER CONTINUES",
-        viewport.center_x, viewport.action_y + 30.0, 12, "#fbbf24")
+    centered_line(
+        surface, viewport, "CLICK OR ENTER CONTINUES",
+        viewport.action_y + CONTINUE_DROP, 12, "#fbbf24")
     -- The cursor is not live while a breach resolves, so the fan is already
     -- easing shut; it settles closed behind the flips. The committed relics
     -- stay bound and lifted until their flight begins, so it stays clear
     -- which cards faced the Arch Mage; after takeoff their fan slots simply
     -- stand empty, the way a spent relic's would.
+    local fan: box.Rect = fan_band(viewport, hand_count)
     for i = 0::i32, #trick.player_hand - 1 do
         if i == trick.player_first then
             if trick.winner <= 0 or fly0 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
-                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], hand_count, loss_progress, 47, frame.ash.reveal_first)
+                    draw_hand_disintegration(
+                        surface, viewport, trick.player_cards[0], i, fan_parts[i],
+                        hand_count, loss_progress, 47, frame.ash.reveal_first)
                 else
-                    draw_hand_card(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], hand_count, true, false, trick.winner > 0 and scoring[3], false)
+                    hand_fan.draw_slot(
+                        surface,
+                        card.look(
+                            trick.player_cards[0], true, false, false,
+                            trick.winner > 0 and scoring[3], false),
+                        fan, i, fan_parts[i], hand_count)
                 end
             end
         elseif i == trick.player_second then
             if trick.winner <= 0 or fly1 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
-                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], hand_count, loss_progress, 71, frame.ash.reveal_second)
+                    draw_hand_disintegration(
+                        surface, viewport, trick.player_cards[1], i, fan_parts[i],
+                        hand_count, loss_progress, 71, frame.ash.reveal_second)
                 else
-                    draw_hand_card(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], hand_count, true, false, trick.winner > 0 and scoring[4], false)
+                    hand_fan.draw_slot(
+                        surface,
+                        card.look(
+                            trick.player_cards[1], true, false, false,
+                            trick.winner > 0 and scoring[4], false),
+                        fan, i, fan_parts[i], hand_count)
                 end
             end
         else
-            draw_hand_card(graphics, effects, card_back, trick.player_hand[i].card, i, fan_parts[i], hand_count, false, false, false, trick.player_hand[i].known)
+            hand_fan.draw_slot(
+                surface,
+                card.sealed(trick.player_hand[i].card, trick.player_hand[i].known),
+                fan, i, fan_parts[i], hand_count)
         end
     end
-    draw_footer(graphics, state)
+    draw_footer(surface, viewport, state)
 
     -- Once complete, the entire winning formation becomes a foreground layer:
     -- it eases toward the viewer around its shared centre, rises slightly, and
@@ -2298,403 +1053,300 @@ function draw_resolution_board(
     local foreground: bool = glow > 0.0
     if foreground then
         local scale: f64 = 1.0 + (WIN_LIFT_SCALE - 1.0) * lift_progress
+        local center_x: f64 = formation.x + formation.width * 0.5
+        local center_y: f64 = formation.y + card.height * 0.5
         graphics:push()
-        local result_left: Point = row_left(viewport)
-        local result_right: Point = row_right(viewport)
-        local result_center_x: f64 = viewport.center_x
-        local result_center_y: f64 = viewport.ward_y + CARD_H * 0.5
-        graphics:translate(result_center_x, result_center_y - WIN_LIFT_Y * lift_progress)
+        graphics:translate(center_x, center_y - WIN_LIFT_Y * lift_progress)
         graphics:apply_transform(scale, 0.0, 0.0, scale, 0.0, 0.0)
-        graphics:translate(-result_center_x, -result_center_y)
-        draw_result_field(
-            graphics, effects, result_left.x, result_left.y,
-            result_right.x + CARD_W - result_left.x, CARD_H, glow, trick.winner > 0)
+        graphics:translate(-center_x, -center_y)
+        draw_result_field(surface, formation, glow, trick.winner > 0)
         for i = 0::i32, 2::i32 do
-            local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
-            if i == frame.spell.target then
-                draw_powered_card(
-                    graphics, effects, card_back, trick.middle[i],
-                    slot.x, slot.y, false, false, false,
-                    scoring[i], false, power_kind, power_clock,
-                    frame.ash, frame.spells.grave_dust)
-            else
-                draw_card(graphics, effects, card_back, trick.middle[i], slot.x, slot.y, false, false, false, scoring[i], false)
-            end
+            ward_node(frame, trick.middle[i], i, false, false, scoring[i])
+                .paint(surface, row_slot(viewport, 3, i))
         end
     end
 
     -- The winner's pair sails over whatever it passes, then joins the same
     -- transformed foreground layer as the wards. The fan pose folds the bind
-    -- lift into the start centre — rotate (0, -10) by the relic's tilt — so
+    -- lift into the start centre — rotate the lift by the relic's tilt — so
     -- takeoff continues the lift instead of snapping back down to the slot.
     if trick.winner < 0 then
-        draw_winner_flight(graphics, effects, card_back, trick.computer_cards[0],
-            slot_center(viewport, SLOT_COMPUTER, trick.computer_first, hand_count), 0.0,
-            row_left(viewport), fly0, scoring[3])
-        draw_winner_flight(graphics, effects, card_back, trick.computer_cards[1],
-            slot_center(viewport, SLOT_COMPUTER, trick.computer_second, hand_count), 0.0,
-            row_right(viewport), fly1, scoring[4])
+        draw_winner_flight(
+            surface, trick.computer_cards[0],
+            slot_center(viewport, SLOT_COMPUTER, trick.computer_first, hand_count),
+            0.0, row_left(viewport), fly0, scoring[3])
+        draw_winner_flight(
+            surface, trick.computer_cards[1],
+            slot_center(viewport, SLOT_COMPUTER, trick.computer_second, hand_count),
+            0.0, row_right(viewport), fly1, scoring[4])
     elseif trick.winner > 0 then
-        local angle0: f64 = hand_angle_at(trick.player_first, fan_parts[trick.player_first], hand_count)
-        local angle1: f64 = hand_angle_at(trick.player_second, fan_parts[trick.player_second], hand_count)
-        draw_winner_flight(graphics, effects, card_back, trick.player_cards[0],
-            bound_hand_center(viewport, trick.player_first, fan_parts[trick.player_first], hand_count),
+        local angle0: f64 = hand_fan.angle_at(
+            trick.player_first, fan_parts[trick.player_first], hand_count)
+        local angle1: f64 = hand_fan.angle_at(
+            trick.player_second, fan_parts[trick.player_second], hand_count)
+        draw_winner_flight(
+            surface, trick.player_cards[0],
+            bound_hand_center(
+                viewport, trick.player_first, fan_parts[trick.player_first], hand_count),
             angle0, row_left(viewport), fly0, scoring[3])
-        draw_winner_flight(graphics, effects, card_back, trick.player_cards[1],
-            bound_hand_center(viewport, trick.player_second, fan_parts[trick.player_second], hand_count),
+        draw_winner_flight(
+            surface, trick.player_cards[1],
+            bound_hand_center(
+                viewport, trick.player_second, fan_parts[trick.player_second], hand_count),
             angle1, row_right(viewport), fly1, scoring[4])
     end
     if foreground then graphics:pop() end
     draw_spell_launch(
-        graphics, effects, power_kind, power_clock, frame.spell.target,
-        frame.spells.sparks)
+        surface, viewport, frame.spell.kind, frame.spell.clock,
+        frame.spell.target, frame.spells.sparks)
 end
 
--- One relic of the fan, unless a card bound for that slot is still in flight.
-function draw_hand_slot(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.View, index: i32, focus: i32, parts: {f64}, play_picks: {i32}, swap_hand: {i32}, anims: {Anim}, anim_clock: f64): unit
-    if slot_hidden(anims, anim_clock, SLOT_PLAYER, index) then return end
-    local selected: bool = is_picked(play_picks, index)
-    if state.swap_open then selected = is_picked(swap_hand, index) end
-    draw_hand_card(graphics, effects, card_back, state.player_hand[index].card, index, parts[index], #state.player_hand, selected, index == focus,
-        false, state.player_hand[index].known)
+-- The Arch Mage's sealed row. Slots claimed by an in-flight card stay empty
+-- until it lands, so the already-updated game state cannot leak ahead of the
+-- animation.
+function draw_computer_row(surface: entity.Surface, frame: Frame): unit
+    local state: game.View = frame.view
+    local hidden: {bool} = hidden_slots(
+        frame.motion.anims, frame.motion.anim_clock, SLOT_COMPUTER,
+        #state.computer_hand)
+    local slots: {entity.Node} = {}
+    for i = 0::i32, #state.computer_hand - 1 do
+        if hidden[i] then
+            table.insert(slots, entity.sized(
+                card.width, card.height,
+                function(surface: entity.Surface, bounds: box.Rect): unit end))
+        else
+            table.insert(slots, card.node(card.sealed(
+                state.computer_hand[i].card, state.computer_hand[i].known)))
+        end
+    end
+    card_row.node(slots, card_row.flat_pitch).paint(
+        surface, computer_band(frame.viewport))
 end
 
--- hand_focus is the relic the cursor holds, or FAN_CLOSED when nothing does;
--- fan_parts carries each relic's eased parting offset. main.walu owns both, so
--- the fan's motion survives a frame and the focus edge and the parting can
--- never disagree about which relic is active.
-function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame): unit
+-- The player's fan, with the binds and the cursor the screen is holding.
+function draw_player_fan(surface: entity.Surface, frame: Frame): unit
+    local state: game.View = frame.view
+    local interaction: Interaction = frame.interaction
+    local looks: {card.Look} = {}
+    for i = 0::i32, #state.player_hand - 1 do
+        local selected: bool = is_picked(interaction.play_picks, i)
+        if state.swap_open then selected = is_picked(interaction.swap_hand, i) end
+        table.insert(looks, card.look(
+            state.player_hand[i].card, selected, i == interaction.hand_focus,
+            false, false, state.player_hand[i].known))
+    end
+    hand_fan.node(
+        looks, frame.motion.fan_parts,
+        hidden_slots(
+            frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, #looks)
+    ).paint(surface, fan_band(frame.viewport, #looks))
+end
+
+-- Draw the controls of the band and remember where they landed, in the order
+-- the band offers them: commit first, then pass.
+function draw_actions(
+    surface: entity.Surface, actions: {action_bar.Action}, band: box.Rect
+): unit
+    action_bar.node(actions).paint(surface, band)
+    local rects: {box.Rect} = entity.place(
+        entity.metrics_of(surface), action_bar.capsules(actions),
+        action_bar.bar_style(), band)
+    targets.commit = rects[0]
+    if #rects > 1 then targets.pass = rects[1] end
+end
+
+-- What the board is asking for, and the controls it is asking with.
+function draw_action_band(surface: entity.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
-    local card_back: graphics_module.Texture? = frame.card_back
-    local hand_focus: i32 = frame.interaction.hand_focus
-    local ward_cursor: i32 = frame.interaction.ward_cursor
-    local cursor_area: i32 = frame.interaction.cursor_area
-    local play_picks: {i32} = frame.interaction.play_picks
-    local swap_hand: {i32} = frame.interaction.swap_hand
-    local swap_wards: {i32} = frame.interaction.swap_wards
-    local revealing: bool = frame.interaction.revealing
-    local casting: bool = frame.interaction.casting
-    local fan_parts: {f64} = frame.motion.fan_parts
-    local anims: {Anim} = frame.motion.anims
-    local anim_clock: f64 = frame.motion.anim_clock
-    local discards: {game.Card} = frame.piles.discards
-    local computer_won: {game.Card} = frame.piles.computer_won
-    local player_won: {game.Card} = frame.piles.player_won
-    local power_kind: i32 = frame.spell.kind
-    local power_clock: f64 = frame.spell.clock
-    if revealing and #state.history > 0 then
-        draw_resolution_board(graphics, effects, frame)
-        return
-    end
-    draw_hud(graphics, state, frame.run)
-    draw_deck(graphics, effects, card_back, state.deck_count)
-    draw_piles(graphics, effects,
-        discards, pile_landed(discards, anims, anim_clock, SLOT_ASIDE),
-        computer_won, pile_landed(computer_won, anims, anim_clock, SLOT_COMPUTER_WON),
-        player_won, pile_landed(player_won, anims, anim_clock, SLOT_PLAYER_WON))
-    -- Slots claimed by an in-flight card stay empty until it lands, so the
-    -- already-updated game state cannot leak ahead of the animation.
-    for i = 0::i32, #state.computer_hand - 1 do
-        if not slot_hidden(anims, anim_clock, SLOT_COMPUTER, i) then
-            local slot: Point = slot_pos_at(viewport, SLOT_COMPUTER, i, #state.computer_hand)
-            draw_card(graphics, effects, card_back, state.computer_hand[i].card, slot.x, slot.y, false, false, true, false, state.computer_hand[i].known)
-        end
-    end
-    if not state.swap_open and not casting and #play_picks == 2 then
-        local preview_value: i32 = game.value_for_pair(game.hand_cards(state.player_hand), state.middle, play_picks[0], play_picks[1])
-        text_centered(graphics, "OFFER: " .. game.category_name(preview_value), viewport.center_x, viewport.ward_y - 40.0, 11, "#d4d4d8")
-    end
-    panel(
-        graphics, viewport.center_x - 202.0, viewport.ward_y - 34.0,
-        404.0, 148.0, "#101013", "#3f3f46")
-    for i = 0::i32, #state.middle - 1 do
-        local selected: bool = state.swap_open and is_picked(swap_wards, i)
-        -- Targeting a cast borrows the ward focus ring for its aim cursor,
-        -- whichever phase the board is in.
-        local focused: bool = (state.swap_open and cursor_area == 1 and ward_cursor == i)
-            or (casting and ward_cursor == i)
-        if not slot_hidden(anims, anim_clock, SLOT_MIDDLE, i) then
-            -- A ward at rest is face up for both sides to read, so it never
-            -- carries an eye: the mark only says something about a hand. One
-            -- crossing into a hand does wear it, but that card is an
-            -- animation leg rather than this slot.
-            local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
-            if i == frame.spell.target then
-                draw_powered_card(
-                    graphics, effects, card_back, state.middle[i],
-                    slot.x, slot.y,
-                    selected, focused, false, false, false,
-                    power_kind, power_clock, frame.ash, frame.spells.grave_dust)
-            else
-                draw_card(graphics, effects, card_back, state.middle[i], slot.x, slot.y, selected, focused, false, false, false)
-            end
-        end
-    end
-    if casting then
+    local interaction: Interaction = frame.interaction
+    local band: box.Rect = action_band(viewport)
+    if interaction.casting then
         -- Target selection replaces the phase prompts and commit capsules:
         -- nothing else accepts input until the cast lands or is called off. The
         -- prompt names the spell whose key opened targeting, at its own price.
-        local aimed: game.Spell = state.spells[frame.interaction.cast_slot]
-        text_centered(
-            graphics,
-            "AIM " .. spell_name(aimed.kind) .. " AT A WARD",
-            viewport.center_x, viewport.ward_y - 40.0, 11, power_color(aimed.kind))
-        text_centered(
-            graphics,
-            "ARROWS MOVE   ENTER CASTS "
-                .. tostring(aimed.cost) .. " MANA   ESC CANCELS",
-            viewport.center_x, viewport.action_y + 18.0, 12, "#fbbf24")
-    elseif state.swap_open then
-        text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS", viewport.center_x, viewport.ward_y - 40.0, 11, "#fbbf24")
-        -- Mirrors main.walu's submit rule so the capsule only lights up when
+        local aimed: game.Spell = state.spells[interaction.cast_slot]
+        centered_line(
+            surface, viewport,
+            "AIM " .. spell_launch.name(aimed.kind) .. " AT A WARD",
+            viewport.ward_y - PROMPT_RISE, PROMPT_SIZE,
+            spell_launch.color(aimed.kind))
+        action_bar.prompt(
+            "ARROWS MOVE   ENTER CASTS " .. tostring(aimed.cost)
+                .. " MANA   ESC CANCELS"
+        ).paint(surface, entity.rect(
+            band.x, viewport.action_y + PROMPT_DROP - action_bar.prompt_size,
+            band.width, action_bar.prompt_size))
+        return
+    end
+    if state.swap_open then
+        centered_line(
+            surface, viewport, "FEINT: BIND MATCHING RELICS + WARDS",
+            viewport.ward_y - PROMPT_RISE, PROMPT_SIZE, "#fbbf24")
+        -- Mirrors the screen's submit rule so the capsule only lights up when
         -- a commit would actually be accepted.
         local available: bool = true
-        for ward in swap_wards do
+        for ward in interaction.swap_wards do
             if state.frozen_middle[ward] then available = false end
         end
         local balanced: bool = available
-            and #swap_hand == #swap_wards and #swap_hand <= state.player_points
-        draw_button(graphics, viewport, "COMMIT FEINT", commit_left(viewport, true), COMMIT_W, balanced)
-        draw_button(graphics, viewport, "PASS", pass_left(viewport), PASS_W, true)
-    elseif #play_picks == 2 then
-        draw_button(graphics, viewport, "COMMIT BREACH", commit_left(viewport, false), COMMIT_W, true)
-    else
-        text_centered(graphics, "BREACH: BIND TWO RELICS", viewport.center_x, viewport.action_y + 18.0, 12, "#fbbf24")
-    end
-    -- Relics keep the order they were dealt in, focused or not: pulling the
-    -- focused one to the front would slide it through its neighbours instead of
-    -- opening a gap for it. The parting alone gives it room.
-    for i = 0::i32, #state.player_hand - 1 do
-        draw_hand_slot(graphics, effects, card_back, state, i, hand_focus, fan_parts, play_picks, swap_hand, anims, anim_clock)
-    end
-    draw_footer(graphics, state)
-    draw_anims(graphics, effects, card_back, anims, anim_clock, frame.sheet)
-    draw_spell_launch(
-        graphics, effects, power_kind, power_clock, frame.spell.target,
-        frame.spells.sparks)
-end
-
-function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
-    graphics:set_color("#09090b")
-    graphics:fill_rectangle(92.0, 68.0, 776.0, 476.0)
-    graphics:set_color("#a1a1aa")
-    graphics:set_line_width(3.0)
-    graphics:stroke_rectangle(92.0, 68.0, 776.0, 476.0)
-    text(graphics, title, 126.0, 117.0, 24, "#fbbf24")
-    text(graphics, subtitle, 126.0, 145.0, 11, "#a1a1aa")
-end
-
--- Secondary screens draw in one fixed design space — the shell at 92,68,
--- 776x476 and every line laid out inside it — parked with its own anchor on
--- the canvas centre. On a canvas too narrow or short for the shell plus a
--- small margin, the whole composition scales down as one: a modal is a
--- page, and a page shrinks rather than reflowing its lines.
-const MODAL_ANCHOR_X: f64 = 480.0
-const MODAL_ANCHOR_Y: f64 = 300.0
-const MODAL_FIT_W: f64 = 824.0
-const MODAL_FIT_H: f64 = 524.0
-
-function begin_modal(graphics: Graphics): unit
-    local viewport: layout.State = layout.current()
-    local fit: f64 = 1.0
-    local fit_w: f64 = viewport.width / MODAL_FIT_W
-    local fit_h: f64 = viewport.height / MODAL_FIT_H
-    if fit_w < fit then fit = fit_w end
-    if fit_h < fit then fit = fit_h end
-    graphics:push()
-    graphics:translate(viewport.center_x, viewport.center_y)
-    graphics:scale(fit, fit)
-    graphics:translate(-MODAL_ANCHOR_X, -MODAL_ANCHOR_Y)
-end
-
-function draw_help(graphics: Graphics, effects: EffectShaders): unit
-    begin_modal(graphics)
-    -- "Three ward holds" read as though a stalemate counted; only breaches the
-    -- Arch Mage actually wins end the vault early.
-    modal_shell(
-        graphics, "THE JOB",
-        "SURVIVE FIVE BREACHES PER VAULT. THREE ARCH MAGE WINS END THE RUN")
-    -- Four equal school tiles form one row centred on the modal. Each dark
-    -- field uses that school's live shader before its ordinary sigil and name
-    -- are drawn on top, so the help legend demonstrates both halves of the
-    -- visual language used by contributing and selected cards.
-    local school_names: {string} = { "RED", "BLUE", "BLACK", "GREEN" }
-    local tile_width: f64 = 136.0
-    local tile_gap: f64 = 16.0
-    local row_width: f64 = tile_width * 4.0 + tile_gap * 3.0
-    local row_left: f64 = 480.0 - row_width * 0.5
-    for suit = 0::i32, 3::i32 do
-        local tile_x: f64 = row_left + (suit::f64) * (tile_width + tile_gap)
-        local center: f64 = tile_x + tile_width * 0.5
-        if suit == 0 then
-            use_red_fire(graphics, effects, false, true, tile_width / 76.0)
-        elseif suit == 1 then
-            use_blue_caustics(graphics, effects, false, true, tile_width / 76.0)
-        elseif suit == 2 then
-            use_black_hole(graphics, effects, false, true, tile_width / 76.0)
-        elseif suit == 3 then
-            use_green_growth(graphics, effects, false, true, tile_width / 76.0)
-        end
-        graphics:set_color("#17171c")
-        graphics:fill_rectangle(tile_x, 164.0, tile_width, 76.0)
-        stop_effect(graphics)
-        graphics:set_color(school_color(suit))
-        graphics:set_line_width(1.5)
-        graphics:stroke_rectangle(tile_x, 164.0, tile_width, 76.0)
-        draw_sigil(graphics, suit, center - 11.0, 188.0)
-        graphics:set_font("12px monospace")
-        graphics:set_color("#b5b5bd")
-        graphics:print_aligned(school_names[suit], center, 220.0, "center")
-    end
-    text(graphics, "1. FEINT", 126.0, 270.0, 16, "#67e8f9")
-    text(graphics, "BIND UP TO 3 RELICS AND THE SAME NUMBER OF WARDS.", 126.0, 296.0, 11, "#d4d4d8")
-    text(graphics, "EACH CARD RISKS 1 MANA. PRESS P TO PASS.", 126.0, 318.0, 11, "#d4d4d8")
-    text(graphics, "2. BREACH", 126.0, 356.0, 16, "#67e8f9")
-    text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 382.0, 11, "#d4d4d8")
-    text(graphics, "LATER BREACHES ARE WORTH MORE MANA. IT CARRIES TO THE NEXT VAULT.", 126.0, 404.0, 11, "#d4d4d8")
-    draw_orb(graphics, 133.0, 436.0, ORB_ROBBERS_EDGE, ORB_ROBBERS_FILL, true)
-    text(graphics, "WIN", 148.0, 440.0, 11, "#d4d4d8")
-    draw_orb(graphics, 225.0, 436.0, ORB_ARCH_MAGE_EDGE, ORB_ARCH_MAGE_FILL, true)
-    text(graphics, "LOSS", 240.0, 440.0, 11, "#d4d4d8")
-    draw_orb(graphics, 330.0, 436.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
-    text(graphics, "TIE", 345.0, 440.0, 11, "#d4d4d8")
-    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 474.0, 11, "#fbbf24")
-    text(graphics, "C SORT BY COLOR   V SORT BY RANK   1 AND 2 CAST SPELLS", 126.0, 498.0, 11, "#fbbf24")
-    text(graphics, "MOUSE: HOVER FOCUSES   CLICK BINDS   BUTTONS COMMIT OR PASS", 126.0, 522.0, 11, "#fbbf24")
-    graphics:pop()
-end
-
-function draw_history(graphics: Graphics, state: game.View): unit
-    begin_modal(graphics)
-    modal_shell(graphics, "BREACH LEDGER", "H, ESC, OR A CLICK CLOSES THE LEDGER")
-    if #state.history == 0 then
-        text(graphics, "NO DEFENSES BREACHED YET.", 126.0, 220.0, 16, "#8a8a92")
-        graphics:pop()
+            and #interaction.swap_hand == #interaction.swap_wards
+            and #interaction.swap_hand <= state.player_points
+        draw_actions(surface, {
+            action_bar.action("COMMIT FEINT", balanced),
+            action_bar.action("PASS", true),
+        }, band)
         return
     end
-    local y: f64 = 188.0
-    for trick in state.history do
-        local winner: string = "STALEMATE"
-        if trick.winner > 0 then winner = "ROBBERS +" .. tostring(trick.points)
-        elseif trick.winner < 0 then winner = "ARCH MAGE" end
-        text(graphics, "BREACH " .. tostring(trick.round), 126.0, y, 13, "#fbbf24")
-        text(graphics, winner, 250.0, y, 13, "#f8fafc")
-        text(graphics, game.category_name(trick.player_value) .. " VS " .. game.category_name(trick.computer_value), 430.0, y, 10, "#b5b5bd")
-        y += 54.0
+    if #interaction.play_picks == 2 then
+        local preview: i32 = game.value_for_pair(
+            game.hand_cards(state.player_hand), state.middle,
+            interaction.play_picks[0], interaction.play_picks[1])
+        centered_line(
+            surface, viewport, "OFFER: " .. game.category_name(preview),
+            viewport.ward_y - PROMPT_RISE, PROMPT_SIZE, PROMPT_INK)
+        draw_actions(
+            surface, { action_bar.action("COMMIT BREACH", true) }, band)
+        return
     end
-    graphics:pop()
+    action_bar.prompt("BREACH: BIND TWO RELICS").paint(surface, entity.rect(
+        band.x, viewport.action_y + PROMPT_DROP - action_bar.prompt_size,
+        band.width, action_bar.prompt_size))
 end
 
--- The verdict of the vault just fought, read as a moment in the run. Taking it
--- is an intermission — the mana on the table is the stake the next vault opens
--- with — while losing it is where the whole run stops.
-function draw_final(graphics: Graphics, state: game.View, run: RunView): unit
-    begin_modal(graphics)
-    local cleared: bool = game.view_cleared(state)
-    if not cleared then
-        modal_shell(
-            graphics, "THE RUN ENDS",
-            "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
-                .. ". THE CARRIED MANA GOES WITH IT")
-        text_centered(graphics, "VAULTS TAKEN", 480.0, 250.0, 18, "#67e8f9")
-        text_centered(graphics, tostring(run.cleared), 480.0, 325.0, 44, "#f8fafc")
-    else
-        modal_shell(
-            graphics, "VAULT " .. tostring(run.vault) .. " IS YOURS",
-            "FIVE BREACHES COMPLETE. THE RUN GOES ON")
-        text_centered(graphics, "MANA CARRIED ON", 480.0, 250.0, 18, "#67e8f9")
-        text_centered(graphics, tostring(state.player_points), 480.0, 325.0, 44, "#f8fafc")
-    end
-    text_centered(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", 480.0, 376.0, 13, "#d4d4d8")
-    if cleared then
-        local ahead: string = "NEXT: VAULT " .. tostring(run.vault + 1)
-        if run.next_is_boss then ahead = ahead .. "   BOSS BATTLE" end
-        text_centered(graphics, ahead, 480.0, 424.0, 13, "#fbbf24")
-        -- The next vault is not dealt straight off the verdict any more: the
-        -- fence stands between them, spending this pile of mana.
-        text_centered(graphics, "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER", 480.0, 482.0, 12, "#fbbf24")
-    else
-        text_centered(graphics, "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER", 480.0, 482.0, 12, "#fbbf24")
-    end
-    text_centered(graphics, "R RESTARTS THE RUN   M RETURNS TO MENU", 480.0, 508.0, 12, "#8a8a92")
-    graphics:pop()
-end
-
-function draw(graphics: Graphics, effects: EffectShaders, frame: Frame): unit
+function draw_playfield(surface: entity.Surface, frame: Frame): unit
+    local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
-    local revealing: bool = frame.interaction.revealing
-    local modal: i32 = frame.interaction.modal
-    draw_backdrop(graphics)
+    local anims: {Anim} = frame.motion.anims
+    local anim_clock: f64 = frame.motion.anim_clock
+    if frame.interaction.revealing and #state.history > 0 then
+        draw_resolution_board(surface, frame)
+        return
+    end
+    draw_hud(surface, viewport, state, frame.run)
+    draw_deck(surface, viewport, state.deck_count)
+    draw_piles(
+        surface, viewport,
+        frame.piles.discards,
+        pile_landed(frame.piles.discards, anims, anim_clock, SLOT_ASIDE),
+        frame.piles.computer_won,
+        pile_landed(frame.piles.computer_won, anims, anim_clock, SLOT_COMPUTER_WON),
+        frame.piles.player_won,
+        pile_landed(frame.piles.player_won, anims, anim_clock, SLOT_PLAYER_WON))
+    draw_computer_row(surface, frame)
+
+    local ward_hidden: {bool} = hidden_slots(
+        anims, anim_clock, SLOT_MIDDLE, #state.middle)
+    local slots: {entity.Node} = {}
+    for i = 0::i32, #state.middle - 1 do
+        if ward_hidden[i] then
+            table.insert(slots, entity.sized(
+                card.width, card.height,
+                function(surface: entity.Surface, bounds: box.Rect): unit end))
+        else
+            local selected: bool = state.swap_open
+                and is_picked(frame.interaction.swap_wards, i)
+            -- Targeting a cast borrows the ward focus ring for its aim cursor,
+            -- whichever phase the board is in.
+            local focused: bool = (state.swap_open
+                and frame.interaction.cursor_area == 1
+                and frame.interaction.ward_cursor == i)
+                or (frame.interaction.casting and frame.interaction.ward_cursor == i)
+            table.insert(
+                slots, ward_node(frame, state.middle[i], i, selected, focused, false))
+        end
+    end
+    draw_ward_band(surface, viewport, slots)
+
+    draw_action_band(surface, frame)
+    draw_player_fan(surface, frame)
+    draw_footer(surface, viewport, state)
+    draw_anims(surface, anims, anim_clock, frame.sheet)
+    draw_spell_launch(
+        surface, viewport, frame.spell.kind, frame.spell.clock,
+        frame.spell.target, frame.spells.sparks)
+end
+
+function draw_help(surface: entity.Surface, viewport: layout.State): unit
+    modal.show(surface, board_rect(viewport), help_card.node())
+end
+
+function draw_history(surface: entity.Surface, viewport: layout.State, state: game.View): unit
+    modal.show(surface, board_rect(viewport), ledger.node(state))
+end
+
+function draw_final(
+    surface: entity.Surface, viewport: layout.State,
+    state: game.View, run: run_module.View
+): unit
+    modal.show(surface, board_rect(viewport), verdict.node(state, run))
+end
+
+function draw(surface: entity.Surface, frame: Frame): unit
+    local viewport: layout.State = frame.viewport
+    local state: game.View = frame.view
+    local modal_kind: i32 = frame.interaction.modal
+    -- Every control the pointer can reach is recorded by the paint that draws
+    -- it, so a frame starts with nothing clickable on it.
+    clear_targets()
+    draw_backdrop(surface, viewport)
     -- The terminal breach still flips on the board, so keep the playfield up
     -- while a reveal is running even after the game finishes.
-    if not state.finished or revealing then
-        draw_playfield(graphics, effects, frame)
+    if not state.finished or frame.interaction.revealing then
+        draw_playfield(surface, frame)
     else
-        draw_hud(graphics, state, frame.run)
+        draw_hud(surface, viewport, state, frame.run)
     end
-    if modal == MODAL_HISTORY then draw_history(graphics, state)
-    elseif modal == MODAL_HELP then draw_help(graphics, effects)
-    elseif modal == MODAL_FINAL then draw_final(graphics, state, frame.run) end
+    if modal_kind == MODAL_HISTORY then draw_history(surface, viewport, state)
+    elseif modal_kind == MODAL_HELP then draw_help(surface, viewport)
+    elseif modal_kind == MODAL_FINAL then draw_final(surface, viewport, state, frame.run) end
 end
 
-function draw_shader_error(graphics: Graphics, detail: string): unit
-    draw_backdrop(graphics)
-    local viewport: layout.State = layout.current()
+function draw_shader_error(surface: entity.Surface, viewport: layout.State, detail: string): unit
+    draw_backdrop(surface, viewport)
+    local graphics = surface.graphics
     local top: f64 = viewport.center_y - 130.0
-    panel(graphics, 90.0, top, viewport.width - 180.0, 260.0, "#220016", "#ff00ff")
-    text_centered(graphics, "SHADER COMPILATION FAILED", viewport.center_x, top + 65.0, 21, "#ff66ff")
-    text_centered(graphics, "THE RESULT EFFECT IS REQUIRED", viewport.center_x, top + 112.0, 13, "#f8fafc")
-    text(graphics, detail, 125.0, top + 170.0, 11, "#fecdd3")
+    ink.panel(graphics, 90.0, top, viewport.width - 180.0, 260.0, "#220016", "#ff00ff")
+    centered_line(
+        surface, viewport, "SHADER COMPILATION FAILED", top + 65.0, 21, "#ff66ff")
+    centered_line(
+        surface, viewport, "THE RESULT EFFECT IS REQUIRED", top + 112.0, 13, "#f8fafc")
+    ink.text(graphics, detail, 125.0, top + 170.0, 11, "#fecdd3")
 end
 
-function draw_audio_error(graphics: Graphics, path: string, code: string, detail: string): unit
-    draw_backdrop(graphics)
-    local viewport: layout.State = layout.current()
+function draw_audio_error(
+    surface: entity.Surface, viewport: layout.State,
+    path: string, code: string, detail: string
+): unit
+    draw_backdrop(surface, viewport)
+    local graphics = surface.graphics
     local top: f64 = viewport.center_y - 165.0
-    panel(graphics, 70.0, top, viewport.width - 140.0, 330.0, "#260b08", "#fb7185")
-    text_centered(graphics, "REQUIRED SOUND EFFECT FAILED", viewport.center_x, top + 70.0, 21, "#fb7185")
-    text_centered(graphics, "ANTE MAGIC HAS STOPPED", viewport.center_x, top + 113.0, 13, "#f8fafc")
-    text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
-    text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
-    text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")
-    text(graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.", 105.0, top + 286.0, 10, "#fda4af")
+    ink.panel(graphics, 70.0, top, viewport.width - 140.0, 330.0, "#260b08", "#fb7185")
+    centered_line(
+        surface, viewport, "REQUIRED SOUND EFFECT FAILED", top + 70.0, 21, "#fb7185")
+    centered_line(
+        surface, viewport, "ANTE MAGIC HAS STOPPED", top + 113.0, 13, "#f8fafc")
+    ink.text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
+    ink.text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
+    ink.text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")
+    ink.text(
+        graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.",
+        105.0, top + 286.0, 10, "#fda4af")
 end
 
 return {
     draw = draw,
     draw_shader_error = draw_shader_error,
     draw_audio_error = draw_audio_error,
-    -- One relic, drawn the way the board draws it. The card is the smallest
-    -- piece of this presentation that can be looked at on its own, which is
-    -- what the storybook does with it.
-    draw_card = draw_card,
-    draw_card_back = draw_card_back,
-    draw_hand_card = draw_hand_card,
-    draw_flipping_card = draw_flipping_card,
-    -- A card as one surface rather than as the primitives it is drawn from,
-    -- which is what an effect deforming it has to have.
-    capture_card = capture_card,
-    card_width = CARD_W,
-    card_height = CARD_H,
-    -- The menu and shop screens share the vault's panel chrome, centred type,
-    -- and help modal instead of restating the presentation vocabulary.
     draw_backdrop = draw_backdrop,
     draw_help = draw_help,
-    text = text,
-    text_right = text_right,
-    -- The spell vocabulary the menu's selection list shares with the board.
-    spell_name = spell_name,
-    power_color = power_color,
-    school_color = school_color,
-    -- Where a spell's clock reads once its formation is complete and the ward
-    -- holds the pose the condition leaves behind.
-    power_settled_clock = power_settled_clock,
-    panel = panel,
-    -- One screen dissolving into another needs every colour of it at the same
-    -- opacity, which is what a screen laid over the city map asks for.
-    fade = fade,
-    text_centered = text_centered,
+    -- One relic turning over, which is the board's own flip and the storybook's.
+    draw_flipping_card = draw_flipping_card,
+    -- The band the player's hand is dealt into, so a story can run the real
+    -- measure-then-arrange pipeline instead of a copy of it.
+    fan_band = fan_band,
+    -- Where the board puts things, which is what an animation aims at.
     point = point,
     midpoint = midpoint,
     slot_pos = slot_pos,
@@ -2703,13 +1355,14 @@ return {
     hand_angle_at = hand_angle_at,
     hand_pos_at = hand_pos_at,
     hand_part_target = hand_part_target,
+    row_left = row_left,
+    row_right = row_right,
+    -- Pointer hits, each answered from the rectangle its entity was painted in.
     hit_hand = hit_hand,
     hit_ward = hit_ward,
     hit_commit = hit_commit,
     hit_pass = hit_pass,
     hit_help = hit_help,
-    row_left = row_left,
-    row_right = row_right,
     -- The board anchor, face-mode, and easing vocabulary Anim records use.
     -- Declared once here so choreography builds animations against the same
     -- ids this module interprets, instead of mirroring the integers.
@@ -2731,16 +1384,15 @@ return {
     anim_effect_move = ANIM_EFFECT_MOVE,
     anim_effect_ash_reappear = ANIM_EFFECT_ASH_REAPPEAR,
     anim_effect_throw = ANIM_EFFECT_THROW,
-    firebolt_burn_finished = firebolt_burn_finished,
-    -- The ash emitters and the two readings that steer them. Choreography owns
-    -- the systems and ticks them; this module owns their tuning and how far
-    -- along each burn is, so the flakes always leave from the front the shader
-    -- is actually cutting.
-    new_card_ash = new_card_ash,
+    -- The reveal's own burn reading, and the spell clocks the screen steers by.
     loss_burn_progress = loss_burn_progress,
-    step_reveal_ash = step_reveal_ash,
-    step_ward_ash = step_ward_ash,
-    fireball_formation = fireball_formation,
+    firebolt_burn_finished = powered_card.firebolt_burn_finished,
+    fireball_formation = powered_card.fireball_formation,
+    power_settled_clock = powered_card.settled_clock,
+    -- The ash emitters choreography owns and ticks.
+    new_card_ash = card_burn.new_card_ash,
+    step_reveal_ash = card_burn.step_sheet_ash,
+    step_ward_ash = card_burn.step_ward_ash,
     -- A spell's own emitters, on the same terms: choreography holds them and
     -- ticks them, and everything about how they look, where the carrier is, and
     -- where the board puts the target lives on this side.

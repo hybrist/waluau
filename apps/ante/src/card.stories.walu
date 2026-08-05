@@ -9,6 +9,10 @@ local graphics_module = require("waluau:engine/graphics")
 local game = require("./game")
 local layout = require("./layout")
 local render = require("./render")
+local entity = require("./entity")
+local ink = require("./ink")
+local card_entity = require("./entities/card")
+local hand_fan = require("./entities/hand_fan")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
 local presentation_resources = require("./presentation_resources")
@@ -65,9 +69,11 @@ local function tick(dt: f64, input: engine.Input): unit
 end
 
 -- Decoded images and fonts become GPU resources on the frame after they
--- arrive, so every story asks for that before it draws anything.
-local function ready(graphics: engine.Graphics): unit
+-- arrive, so every story asks for that before it draws anything, and takes
+-- back the same surface the game draws its entities on.
+local function ready(graphics: engine.Graphics): entity.Surface
     presentation_resources.prepare(assets, graphics)
+    return presentation_resources.surface(assets, graphics)
 end
 
 local function card(rank: i32, suit: i32): game.Card
@@ -75,11 +81,11 @@ local function card(rank: i32, suit: i32): game.Card
 end
 
 local function centered_x(width: f64): f64
-    return (width - render.card_width) * 0.5
+    return (width - card_entity.width) * 0.5
 end
 
 local function centered_y(): f64
-    return (HEIGHT - render.card_height) * 0.5
+    return (HEIGHT - card_entity.height) * 0.5
 end
 
 -- Every flag of the board's card renderer, named once so a story reads as the
@@ -93,19 +99,12 @@ local function draw_state(
     colored: bool,
     known: bool
 ): unit
-    ready(graphics)
-    render.draw_card(
-        graphics,
-        assets.effects,
-        assets.texture,
-        subject,
+    local surface = ready(graphics)
+    card_entity.draw_at(
+        surface,
+        card_entity.look(subject, selected, focused, hidden, colored, known),
         centered_x(WIDTH),
-        centered_y(),
-        selected,
-        focused,
-        hidden,
-        colored,
-        known
+        centered_y()
     )
 end
 
@@ -150,23 +149,16 @@ end
 -- The four schools side by side, in the colored state that makes each one's
 -- pattern legible. Nothing else on the board shows them together.
 local function draw_schools(graphics: engine.Graphics, alpha: f64): unit
-    ready(graphics)
+    local surface = ready(graphics)
     const GAP = 12.0
-    local span = render.card_width * 4.0 + GAP * 3.0
+    local span = card_entity.width * 4.0 + GAP * 3.0
     local x = (SCHOOLS_WIDTH - span) * 0.5
     for suit = 0::i32, 3::i32 do
-        render.draw_card(
-            graphics,
-            assets.effects,
-            assets.texture,
-            card(11 + suit, suit),
-            x + (suit::f64) * (render.card_width + GAP),
-            centered_y(),
-            false,
-            false,
-            false,
-            true,
-            false
+        card_entity.draw_at(
+            surface,
+            card_entity.look(card(11 + suit, suit), false, false, false, true, false),
+            x + (suit::f64) * (card_entity.width + GAP),
+            centered_y()
         )
     end
 end
@@ -176,12 +168,10 @@ end
 const FLIP_PERIOD = 1.7
 
 local function draw_turning(graphics: engine.Graphics, alpha: f64): unit
-    ready(graphics)
+    local surface = ready(graphics)
     local clock = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
     render.draw_flipping_card(
-        graphics,
-        assets.effects,
-        assets.texture,
+        surface,
         card(14, 0),
         centered_x(WIDTH),
         centered_y(),
@@ -199,7 +189,7 @@ end
 const FAN_COUNT: i32 = 5
 
 local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
-    ready(graphics)
+    local surface = ready(graphics)
     layout.update(graphics.width, graphics.height)
     local viewport = layout.current()
     graphics:push()
@@ -207,19 +197,18 @@ local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
     local hand = {
         card(14, 0), card(13, 1), card(9, 2), card(6, 3), card(3, 0)
     }
+    -- The band the board deals the hand into, asked for the same way the board
+    -- asks for it, so this story is the real fan rather than a copy of it.
+    local band = render.fan_band(viewport, FAN_COUNT)
     for index = 0, FAN_COUNT - 1 do
-        render.draw_hand_card(
-            graphics,
-            assets.effects,
-            assets.texture,
-            hand[index],
+        hand_fan.draw_slot(
+            surface,
+            card_entity.look(
+                hand[index], index == 1, index == 2, false, false, false),
+            band,
             index,
             1.0,
-            FAN_COUNT,
-            index == 1,
-            index == 2,
-            false,
-            false
+            FAN_COUNT
         )
     end
     graphics:pop()
@@ -270,12 +259,12 @@ end
 -- arrived there is nothing worth capturing, so this simply waits.
 local function capture(graphics: engine.Graphics): bool
     if sheet.captured then return true end
-    local card_back = assets.texture
-    if card_back == nil then return false end
-    local back = render.capture_card(
-        graphics, assets.effects, card_back, drawn_card(), false, false, true)
-    local face = render.capture_card(
-        graphics, assets.effects, card_back, drawn_card(), false, false, false)
+    local surface = presentation_resources.surface(assets, graphics)
+    if assets.texture == nil then return false end
+    local back = card_entity.capture(
+        surface, card_entity.look(drawn_card(), false, false, true, false, false))
+    local face = card_entity.capture(
+        surface, card_entity.look(drawn_card(), false, false, false, false, false))
     if back == nil or face == nil then return false end
     sheet.back = back
     sheet.face = face
@@ -298,10 +287,10 @@ local function draw_pose(
     -- Seen from behind, a card's face reads the wrong way round unless its
     -- source region is taken right to left.
     local source_x = 0.0
-    local source_width = render.card_width
+    local source_width = card_entity.width
     if face_up then
-        source_x = render.card_width
-        source_width = -render.card_width
+        source_x = card_entity.width
+        source_width = -card_entity.width
     end
     graphics:set_color_rgba(1.0, 1.0, 1.0, alpha)
     graphics:draw_sprite_mesh(
@@ -314,19 +303,20 @@ local function draw_pose(
         source_x,
         0.0,
         source_width,
-        render.card_height
+        card_entity.height
     )
 end
 
 -- The stack the card comes out of. A pull needs something to be pulled from,
 -- and the thinning silhouette is the same one the board's draw pile uses.
 local function draw_deck(graphics: engine.Graphics): unit
-    local x = DECK_X - render.card_width * 0.5
-    local y = DECK_Y - render.card_height * 0.5
-    render.panel(graphics, x + 6.0, y + 6.0, render.card_width, render.card_height, "#17171c", "#3f3f46")
-    render.panel(graphics, x + 3.0, y + 3.0, render.card_width, render.card_height, "#17171c", "#3f3f46")
-    render.panel(graphics, x, y, render.card_width, render.card_height, "#17171c", "#52525b")
-    render.draw_card_back(graphics, assets.texture, x, y, false)
+    local surface = presentation_resources.surface(assets, graphics)
+    local x = DECK_X - card_entity.width * 0.5
+    local y = DECK_Y - card_entity.height * 0.5
+    ink.panel(graphics, x + 6.0, y + 6.0, card_entity.width, card_entity.height, "#17171c", "#3f3f46")
+    ink.panel(graphics, x + 3.0, y + 3.0, card_entity.width, card_entity.height, "#17171c", "#3f3f46")
+    ink.panel(graphics, x, y, card_entity.width, card_entity.height, "#17171c", "#52525b")
+    card_entity.draw_back(surface, x, y, false)
 end
 
 -- Whatever is holding the card up, seen only as what it does to the air. It
@@ -398,15 +388,15 @@ end
 local function drawing(index: i32, count: i32): card_draw.Draw
     local filled = index
     if storybook.arg_i32("order") == 1 then filled = count - 1 - index end
-    local spacing = render.card_width + (storybook.arg_i32("gap")::f64)
+    local spacing = card_entity.width + (storybook.arg_i32("gap")::f64)
     local slot = ((filled::f64) - ((count - 1)::f64) * 0.5) * spacing
     return {
         from_x = DECK_X,
         from_y = DECK_Y,
         to_x = CAUGHT_X + slot,
         to_y = CAUGHT_Y,
-        width = render.card_width,
-        height = render.card_height,
+        width = card_entity.width,
+        height = card_entity.height,
         stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0,
         overshoot = (storybook.arg_i32("overshoot")::f64) / 100.0,
         rise = storybook.arg_i32("rise")::f64,

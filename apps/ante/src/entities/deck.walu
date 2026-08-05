@@ -1,0 +1,55 @@
+-- The sealed draw pile every dealt relic and ward flies out of. The stack
+-- silhouette thins as the run burns down; the label tracks the exact count.
+--
+-- Its box is the top card plus the caption underneath, because that caption is
+-- part of what the deck is: a board tight enough to clip it has not left room
+-- for the deck at all. The two shadow cards behind the stack deliberately hang
+-- past the box — they are depth, not content, and giving them width would
+-- shove the whole board over by six units for a thick deck and not for a thin
+-- one.
+
+local box = require("../box_layout")
+local entity = require("../entity")
+local ink = require("../ink")
+local card = require("./card")
+
+-- Distance from the top card's own top edge down to the caption's baseline.
+const CAPTION_DROP: f64 = 26.0
+const CAPTION_SIZE: f64 = 10.0
+
+function intrinsic(): box.Intrinsic
+    return box.fixed(card.width, card.height + CAPTION_DROP)
+end
+
+function draw_at(surface: entity.Surface, count: i32, x: f64, y: f64): unit
+    if count <= 0 then return end
+    local graphics = surface.graphics
+    if count > 18 then
+        ink.panel(graphics, x + 6.0, y + 6.0, card.width, card.height, "#17171c", "#3f3f46")
+    end
+    if count > 6 then
+        ink.panel(graphics, x + 3.0, y + 3.0, card.width, card.height, "#17171c", "#3f3f46")
+    end
+    ink.panel(graphics, x, y, card.width, card.height, "#17171c", "#52525b")
+    card.draw_back(surface, x, y, false)
+    ink.text_centered(
+        graphics, tostring(count) .. " SEALED",
+        x + card.width * 0.5, y + card.height + CAPTION_DROP,
+        CAPTION_SIZE, "#8a8a92")
+end
+
+function node(count: i32): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return intrinsic()
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            draw_at(surface, count, bounds.x, bounds.y)
+        end)
+end
+
+return {
+    node = node,
+    draw_at = draw_at,
+    caption_drop = CAPTION_DROP,
+}

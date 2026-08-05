@@ -10,7 +10,8 @@
 
 local engine = require("waluau:engine")
 local game = require("./game")
-local render = require("./render")
+local ink = require("./ink")
+local spell_launch = require("./spell_launch")
 local run_module = require("./run")
 local shop = require("./shop")
 local layout = require("./layout")
@@ -57,7 +58,7 @@ end
 -- it quoted were the ones it has already changed.
 function row_label(row: shop.Row, run: run_module.State, offer: i32): string
     if row.action == shop.action_sharpen then
-        local name: string = render.spell_name(row.kind)
+        local name: string = spell_launch.name(row.kind)
         if row.sold then return "SHARPENED " .. name end
         -- The spell an offer named can leave the loadout: the other offer of the
         -- same visit may have traded it away.
@@ -71,7 +72,7 @@ function row_label(row: shop.Row, run: run_module.State, offer: i32): string
             .. " TO " .. tostring(spell.cost - 1) .. " MANA"
     end
     if row.action == shop.action_learn then
-        local name: string = render.spell_name(row.kind)
+        local name: string = spell_launch.name(row.kind)
         if row.sold then
             return "LEARNED " .. name
                 .. "   KEY " .. tostring(run:slot_of(row.kind) + 1)
@@ -82,8 +83,8 @@ function row_label(row: shop.Row, run: run_module.State, offer: i32): string
         return "LEARN " .. name .. "   KEY " .. tostring(row.slot + 1)
     end
     if row.action == shop.action_replace then
-        return "TRADE " .. render.spell_name(row.kind)
-            .. " FOR " .. render.spell_name(offer)
+        return "TRADE " .. spell_launch.name(row.kind)
+            .. " FOR " .. spell_launch.name(offer)
     end
     if row.action == shop.action_cancel then return "KEEP BOTH SPELLS" end
     local vault: string = "ENTER VAULT " .. tostring(run.vault)
@@ -96,7 +97,7 @@ end
 -- names a spell or not.
 function row_ink(row: shop.Row): string
     if not row.available then return "#52525b" end
-    if row.kind ~= 0 then return render.power_color(row.kind) end
+    if row.kind ~= 0 then return spell_launch.color(row.kind) end
     return "#d4d4d8"
 end
 
@@ -111,28 +112,28 @@ function draw_row(
 ): unit
     local top: f64 = row_top(viewport, index)
     local edge: string = "#3f3f46"
-    local ink: string = row_ink(row)
+    local tone: string = row_ink(row)
     local price_ink: string = "#52525b"
     if row.available and row.price > 0 then price_ink = "#fbbf24" end
     if focused then
         edge = "#fbbf24"
-        if row.available then ink = "#fbbf24" end
+        if row.available then tone = "#fbbf24" end
     end
-    render.panel(
+    ink.panel(
         graphics, ROW_X, top, ROW_W, ROW_H,
-        render.fade("#17171c", alpha), render.fade(edge, alpha))
-    render.text(
-        graphics, label, ROW_X + 22.0, top + 33.0, 13, render.fade(ink, alpha))
+        ink.fade("#17171c", alpha), ink.fade(edge, alpha))
+    ink.text(
+        graphics, label, ROW_X + 22.0, top + 33.0, 13, ink.fade(tone, alpha))
     -- A bought line keeps its place with its price struck off: the stock of a
     -- visit is two offers, and one of them is now spent.
     if row.sold then
-        render.text_right(
+        ink.text_right(
             graphics, "SOLD", ROW_X + ROW_W - 22.0, top + 33.0, 13,
-            render.fade("#52525b", alpha))
+            ink.fade("#52525b", alpha))
     elseif row.price > 0 then
-        render.text_right(
+        ink.text_right(
             graphics, tostring(row.price) .. " MANA",
-            ROW_X + ROW_W - 22.0, top + 33.0, 13, render.fade(price_ink, alpha))
+            ROW_X + ROW_W - 22.0, top + 33.0, 13, ink.fade(price_ink, alpha))
     end
 end
 
@@ -151,21 +152,21 @@ function draw(
     local panel_y: f64 = panel_top(viewport)
     local panel_h: f64 = viewport.height - panel_y - 56.0
     local choosing: bool = shop.choosing(state)
-    render.panel(
+    ink.panel(
         graphics, PANEL_X, panel_y, PANEL_W, panel_h,
-        render.fade("#09090b", alpha * 0.94), render.fade("#a1a1aa", alpha))
-    render.text(graphics, "THE FENCE", 78.0, panel_y + 49.0, 24, render.fade("#fbbf24", alpha))
+        ink.fade("#09090b", alpha * 0.94), ink.fade("#a1a1aa", alpha))
+    ink.text(graphics, "THE FENCE", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
     local subtitle: string = "MANA SPENT HERE WILL NOT FIGHT IN VAULT " .. tostring(run.vault)
     local offered: i32 = 0
     if choosing then
         offered = state.offers[state.pending].kind
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end
-    render.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, render.fade("#a1a1aa", alpha))
-    render.text_right(
-        graphics, tostring(run.mana), 550.0, panel_y + 54.0, 24, render.fade("#67e8f9", alpha))
-    render.text_right(
-        graphics, "MANA ON HAND", 550.0, panel_y + 77.0, 9, render.fade("#155e75", alpha))
+    ink.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, ink.fade("#a1a1aa", alpha))
+    ink.text_right(
+        graphics, tostring(run.mana), 550.0, panel_y + 54.0, 24, ink.fade("#67e8f9", alpha))
+    ink.text_right(
+        graphics, "MANA ON HAND", 550.0, panel_y + 77.0, 9, ink.fade("#155e75", alpha))
 
     local rows: {shop.Row} = shop.rows(state, run)
     for index, row in rows do
@@ -176,13 +177,13 @@ function draw(
     if not choosing then
         -- Two offers are the whole stock of a visit, so say what the list is
         -- rather than leaving the player waiting for it to refill.
-        render.text_centered(
+        ink.text_centered(
             graphics, "TWO OFFERS A VISIT. THE NEXT FENCE HAS ITS OWN",
-            PANEL_CENTER, row_top(viewport, #rows) + 33.0, 11, render.fade("#8a8a92", alpha))
+            PANEL_CENTER, row_top(viewport, #rows) + 33.0, 11, ink.fade("#8a8a92", alpha))
     end
-    render.text_centered(
+    ink.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE VAULT",
-        PANEL_CENTER, viewport.height - 34.0, 11, render.fade("#a1a1aa", alpha))
+        PANEL_CENTER, viewport.height - 34.0, 11, ink.fade("#a1a1aa", alpha))
 end
 
 return {

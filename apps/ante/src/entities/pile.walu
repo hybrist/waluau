@@ -1,0 +1,46 @@
+-- One of the three right-edge piles, drawn face up so it always shows the last
+-- card that landed — every card in them is public history, unlike the sealed
+-- draw pile. `count` is how many cards have visibly arrived; the top card is
+-- read from the same ledger, so a scoop still in the air leaves both the
+-- thickness and the face showing exactly what the table last saw.
+--
+-- The stack's shadow steps left, away from the board edge, and hangs outside
+-- the box for the same reason the deck's hangs right: depth is not content.
+-- The piles carry no count label — which side each belongs to is clear from its
+-- place on the board, and the round orbs already tally the run.
+
+local game = require("../game")
+local box = require("../box_layout")
+local entity = require("../entity")
+local ink = require("../ink")
+local card = require("./card")
+
+function draw_at(
+    surface: entity.Surface, cards: {game.Card}, count: i32, x: f64, y: f64
+): unit
+    if count <= 0 then return end
+    local graphics = surface.graphics
+    if count > 18 then
+        ink.panel(graphics, x - 6.0, y + 6.0, card.width, card.height, "#17171c", "#3f3f46")
+    end
+    if count > 6 then
+        ink.panel(graphics, x - 3.0, y + 3.0, card.width, card.height, "#17171c", "#3f3f46")
+    end
+    ink.panel(graphics, x, y, card.width, card.height, "#17171c", "#52525b")
+    card.draw_face(surface, card.plain(cards[count - 1]), x, y)
+end
+
+function node(cards: {game.Card}, count: i32): entity.Node
+    return entity.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            return card.intrinsic()
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            draw_at(surface, cards, count, bounds.x, bounds.y)
+        end)
+end
+
+return {
+    node = node,
+    draw_at = draw_at,
+}

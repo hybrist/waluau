@@ -1,0 +1,95 @@
+-- The drawing vocabulary every entity shares: type, panels, the school inks,
+-- and the one fade an entire screen can be taken down by. These are
+-- primitives, not entities — they put ink at coordinates the caller already
+-- has, which is what an entity's paint uses once layout has told it where it
+-- is standing.
+
+local engine = require("waluau:engine")
+
+type Graphics = engine.Graphics
+
+-- Text is monospace at a size, and the size is also the distance from the top
+-- of the box to the baseline the engine prints on. Entities measuring a label
+-- rely on that, so it is stated once here rather than rediscovered per caller.
+function font_of(size: f64): string
+    return tostring(size) .. "px monospace"
+end
+
+function text(graphics: Graphics, value: string, x: f64, y: f64, size: f64, color: string): unit
+    graphics:set_color(color)
+    graphics:set_font(font_of(size))
+    graphics:print(value, x, y)
+end
+
+function text_centered(graphics: Graphics, value: string, center_x: f64, y: f64, size: f64, color: string): unit
+    graphics:set_color(color)
+    graphics:set_font(font_of(size))
+    graphics:print_aligned(value, center_x, y, "center")
+end
+
+function text_right(graphics: Graphics, value: string, right_x: f64, y: f64, size: f64, color: string): unit
+    graphics:set_color(color)
+    graphics:set_font(font_of(size))
+    graphics:print_aligned(value, right_x, y, "right")
+end
+
+-- Pen travel of a string at a size, against whichever font is actually loaded.
+-- This is what makes a label's intrinsic width a measurement rather than a
+-- guess from a character count.
+function text_width(graphics: Graphics, value: string, size: f64): f64
+    graphics:set_font(font_of(size))
+    return graphics:text_width(value)
+end
+
+function panel(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string, edge: string): unit
+    graphics:set_color(fill)
+    graphics:fill_rectangle(x, y, width, height)
+    graphics:set_color(edge)
+    graphics:set_line_width(2.0)
+    graphics:stroke_rectangle(x, y, width, height)
+end
+
+-- Back to the default program. Every effect binding is a borrow, and this is
+-- the return: an entity that leaves a shader bound has painted over whatever
+-- the next one draws.
+function stop_effect(graphics: Graphics): unit
+    graphics:use_default_shader()
+end
+
+function school_color(suit: i32): string
+    if suit == 0 then return "#ef4444" end
+    if suit == 1 then return "#38bdf8" end
+    if suit == 2 then return "#a855f7" end
+    return "#4ade80"
+end
+
+-- One colour of a palette written as "#rrggbb", at a fraction of its opacity.
+-- A screen that dissolves into another needs every one of its colours at the
+-- same fraction, and the renderer's colours are literals rather than channels,
+-- so the fade is spelled as the alpha pair the engine already accepts on the
+-- end of a hex colour. Colours that already carry an alpha pair are not
+-- fadeable this way and none are passed here.
+const FADE_DIGITS: string = "0123456789abcdef"
+
+function fade(color: string, alpha: f64): string
+    if alpha >= 1.0 then return color end
+    if alpha <= 0.0 then return color .. "00" end
+    local level: i32 = math.floor(alpha * 255.0 + 0.5)::i32
+    local high: i32 = math.floor((level::f64) / 16.0)::i32
+    local low: i32 = level - high * 16
+    return color
+        .. string.sub(FADE_DIGITS, high + 1, high + 1)
+        .. string.sub(FADE_DIGITS, low + 1, low + 1)
+end
+
+return {
+    font_of = font_of,
+    text = text,
+    text_centered = text_centered,
+    text_right = text_right,
+    text_width = text_width,
+    panel = panel,
+    stop_effect = stop_effect,
+    school_color = school_color,
+    fade = fade,
+}

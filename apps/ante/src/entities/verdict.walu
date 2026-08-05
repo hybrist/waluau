@@ -1,0 +1,101 @@
+-- The verdict of the vault just fought, read as a moment in the run. Taking it
+-- is an intermission — the mana on the table is the stake the next vault opens
+-- with — while losing it is where the whole run stops.
+
+local game = require("../game")
+local run_module = require("../run")
+local box = require("../box_layout")
+local entity = require("../entity")
+local modal = require("./modal")
+local label = require("./label")
+
+const HEADLINE_SIZE: f64 = 18.0
+const FIGURE_SIZE: f64 = 44.0
+const NOTE_SIZE: f64 = 13.0
+const KEYS_SIZE: f64 = 12.0
+
+const HEADLINE_INK: string = "#67e8f9"
+const FIGURE_INK: string = "#f8fafc"
+const NOTE_INK: string = "#d4d4d8"
+const QUIET_INK: string = "#8a8a92"
+
+const BLOCK_GAP: f64 = 26.0
+const FIGURE_GAP: f64 = 18.0
+
+function title_of(state: game.View, run: run_module.View): string
+    if game.view_cleared(state) then
+        return "VAULT " .. tostring(run.vault) .. " IS YOURS"
+    end
+    return "THE RUN ENDS"
+end
+
+function subtitle_of(state: game.View, run: run_module.View): string
+    if game.view_cleared(state) then
+        return "FIVE BREACHES COMPLETE. THE RUN GOES ON"
+    end
+    return "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
+        .. ". THE CARRIED MANA GOES WITH IT"
+end
+
+-- What the run walks away with: the vaults taken when it is over, the mana
+-- carried on when it is not.
+function tally(state: game.View, run: run_module.View): entity.Node
+    local caption: string = "VAULTS TAKEN"
+    local figure: string = tostring(run.cleared)
+    if game.view_cleared(state) then
+        caption = "MANA CARRIED ON"
+        figure = tostring(state.player_points)
+    end
+    return modal.column({
+        label.middle(caption, HEADLINE_SIZE, HEADLINE_INK),
+        label.middle(figure, FIGURE_SIZE, FIGURE_INK),
+    }, FIGURE_GAP)
+end
+
+function ahead_text(run: run_module.View): string
+    local text: string = "NEXT: VAULT " .. tostring(run.vault + 1)
+    if run.next_is_boss then return text .. "   BOSS BATTLE" end
+    return text
+end
+
+-- The next vault is not dealt straight off the verdict: the fence stands
+-- between them, spending this pile of mana.
+function onward(state: game.View, run: run_module.View): {entity.Node}
+    if game.view_cleared(state) then
+        return {
+            label.middle(ahead_text(run), NOTE_SIZE, modal.keys_ink),
+            label.middle(
+                "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER",
+                KEYS_SIZE, modal.keys_ink),
+        }
+    end
+    return {
+        label.middle(
+            "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER",
+            KEYS_SIZE, modal.keys_ink),
+    }
+end
+
+function body(state: game.View, run: run_module.View): entity.Node
+    local lines: {entity.Node} = {
+        tally(state, run),
+        entity.gap(0.0, BLOCK_GAP),
+        label.middle(
+            "BREACHES WON " .. tostring(state.player_tricks) .. " / 5",
+            NOTE_SIZE, NOTE_INK),
+        entity.gap(0.0, BLOCK_GAP),
+    }
+    for line in onward(state, run) do table.insert(lines, line) end
+    table.insert(lines, entity.gap(0.0, BLOCK_GAP))
+    table.insert(lines, label.middle(
+        "R RESTARTS THE RUN   M RETURNS TO MENU", KEYS_SIZE, QUIET_INK))
+    return entity.flow(
+        lines, entity.column(BLOCK_GAP * 0.5, box.justify_start, box.align_stretch))
+end
+
+function node(state: game.View, run: run_module.View): entity.Node
+    return modal.node(
+        title_of(state, run), subtitle_of(state, run), body(state, run))
+end
+
+return { node = node }

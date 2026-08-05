@@ -20,7 +20,6 @@
 -- vanishing and a board appearing.
 
 local engine = require("waluau:engine")
-local graphics_module = require("waluau:engine/graphics")
 local game = require("./game")
 local run_module = require("./run")
 local render = require("./render")
@@ -30,6 +29,7 @@ local flow = require("./flow")
 local shop = require("./shop")
 local shop_render = require("./shop_render")
 local layout = require("./layout")
+local entity = require("./entity")
 
 type State = {
     run: run_module.State,
@@ -183,18 +183,6 @@ function fence_open(state: State): bool
     return state.shop.open
 end
 
--- What the renderer needs to know about the run behind the live board.
-function run_view(state: State): render.RunView
-    local run: run_module.State = state.run
-    return {
-        vault = run.vault,
-        cleared = run.cleared,
-        boss = run:boss(),
-        next_is_boss = run:next_is_boss(),
-        carried_mana = run.mana,
-    }
-end
-
 function key_command(key: string): i32
     if key == "r" or key == "R" then return flow.command_restart end
     if key == "h" or key == "H" then return flow.command_history end
@@ -241,18 +229,12 @@ end
 
 -- The vault board. The entry module draws it under the city map whenever the
 -- map is not the whole picture, so a dissolve always has a vault to arrive at.
-function draw_vault(
-    state: State,
-    graphics: engine.Graphics,
-    effects: render.EffectShaders,
-    card_back: graphics_module.Texture?
-): unit
+function draw_vault(state: State, surface: entity.Surface): unit
     local ui: flow.State = state.ui
     choreography.draw(
-        graphics,
-        effects,
+        surface,
         game.view(state.rules),
-        run_view(state),
+        run_module.view(state.run),
         state.presentation,
         {
             hand_focus = flow.fan_focus(
@@ -266,9 +248,7 @@ function draw_vault(
             revealing = ui.revealing,
             casting = ui.casting,
             cast_slot = ui.cast_slot,
-        },
-        card_back
-    )
+        })
 end
 
 -- The fence's offers, at the opacity of the street they are laid out on: they
@@ -538,7 +518,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         end
         return
     end
-    if render.hit_help(viewport, at) then
+    if render.hit_help(at) then
         flow.gate(
             ui, rules:is_finished(), false,
             choreography.reveal_finished(state.presentation), flow.command_help)
@@ -560,14 +540,14 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
             if not rules:is_frozen(ward) then flow.toggle(ui.swap_wards, ward, 3) end
             return
         end
-        if render.hit_pass(viewport, at) then
+        if render.hit_pass(at) then
             ui.swap_hand = {}
             ui.swap_wards = {}
             submit_swap(state)
             return
         end
     end
-    if render.hit_commit(viewport, at, rules:feint_open()) then
+    if render.hit_commit(at) then
         if rules:feint_open() then submit_swap(state) else submit_breach(state) end
     end
 end

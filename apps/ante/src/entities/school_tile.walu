@@ -1,0 +1,44 @@
+-- One school of magic as a swatch: that school's live field running under its
+-- own sigil and name. The help legend is four of these in a row, and it draws
+-- them through the card's own field binding rather than a copy of it, so the
+-- legend teaches the language the board actually speaks.
+
+local box = require("../box_layout")
+local entity = require("../entity")
+local ink = require("../ink")
+local card = require("./card")
+
+const WIDTH: f64 = 136.0
+const HEIGHT: f64 = 76.0
+-- Where the sigil and the school's name sit inside the swatch.
+const SIGIL_DROP: f64 = 24.0
+const NAME_DROP: f64 = 56.0
+const NAME_SIZE: f64 = 12.0
+const NAME_INK: string = "#b5b5bd"
+
+local NAMES: {string} = { "RED", "BLUE", "BLACK", "GREEN" }
+
+function node(suit: i32): entity.Node
+    return entity.sized(
+        WIDTH, HEIGHT,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local graphics = surface.graphics
+            local center: f64 = bounds.x + bounds.width * 0.5
+            card.use_school_field(
+                surface, suit, false, true, bounds.width / bounds.height)
+            graphics:set_color("#17171c")
+            graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            ink.stop_effect(graphics)
+            graphics:set_color(ink.school_color(suit))
+            graphics:set_line_width(1.5)
+            graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            card.draw_sigil(surface, suit, center - 11.0, bounds.y + SIGIL_DROP)
+            ink.text_centered(
+                graphics, NAMES[suit], center, bounds.y + NAME_DROP,
+                NAME_SIZE, NAME_INK)
+        end)
+end
+
+return {
+    node = node,
+}
