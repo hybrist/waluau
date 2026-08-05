@@ -14,7 +14,6 @@
 -- choreography builds a deal months of frames before it is drawn, and it asks
 -- this module the same question the paint does, so an animation can only land
 -- where a card is actually going to be.
-
 local box = require("../box_layout")
 local entity = require("../entity")
 local card = require("./card")
@@ -27,7 +26,9 @@ const FLAT_PITCH: f64 = 116.0
 -- five-card row never reaches it; a boss battle's eleven-card row shrinks its
 -- pitch to fit.
 function pitch_for(span: f64, count: i32, preferred: f64): f64
-    if count <= 1 then return preferred end
+    if count <= 1 then
+        return preferred
+    end
     return math.min(preferred, span / ((count - 1)::f64))
 end
 
@@ -42,13 +43,12 @@ function row_style(pitch: f64): box.Style
 end
 
 function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
-    local tree: box.Tree = box.new()
-    local handles: {i32} = {}
+    local children: {box.Tree} = {}
     for index = 0::i32, count - 1 do
-        table.insert(handles, tree:leaf(index, card.intrinsic()))
+        table.insert(children, box.leaf(index, card.intrinsic()))
     end
-    local root: i32 = tree:flow(-1, handles, row_style(pitch))
-    local result: box.Result = tree:solve(root, bounds)
+    local root: box.Tree = box.flow(-1, children, row_style(pitch))
+    local result: box.Result = box.solve(root, bounds)
     local rects: {box.Rect} = {}
     for index = 0::i32, count - 1 do
         local frame: box.Frame? = box.frame(result, index)
@@ -68,7 +68,9 @@ end
 -- The row's own size at the given pitch, which is what a band asks for before
 -- it decides how much of the board to hand over.
 function intrinsic(count: i32, pitch: f64): box.Intrinsic
-    if count <= 0 then return box.fixed(0.0, 0.0) end
+    if count <= 0 then
+        return box.fixed(0.0, 0.0)
+    end
     return box.fixed(((count - 1)::f64) * pitch + card.width, card.height)
 end
 
@@ -83,11 +85,15 @@ function node(children: {entity.Node}, preferred: f64): entity.Node
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
             local rects: {box.Rect} = slot_rects(
-                #children, pitch_in(bounds, #children, preferred), bounds)
+                #children,
+                pitch_in(bounds, #children, preferred),
+                bounds
+            )
             for index = 0::i32, #children - 1 do
                 children[index].paint(surface, rects[index])
             end
-        end)
+        end
+    )
 end
 
 return {
@@ -97,5 +103,5 @@ return {
     intrinsic = intrinsic,
     pitch_for = pitch_for,
     pitch_in = pitch_in,
-    flat_pitch = FLAT_PITCH,
+    flat_pitch = FLAT_PITCH
 }

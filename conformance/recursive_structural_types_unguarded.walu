@@ -1,0 +1,5 @@
+-- conformance: error=cyclic type declaration detected: Loop -> Loop
+type Loop = Loop
+
+function unreachable(value: Loop): unit
+end

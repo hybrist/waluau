@@ -32,6 +32,33 @@ fn wasm_has_start_section(wasm: &[u8]) -> bool {
 }
 
 #[test]
+fn recursive_record_arrays_emit_finite_valid_wasm_types() {
+    let source = r#"
+        type Tree = {value: i32, children: {Tree}}
+
+        function leaf(value: i32): Tree
+            return {value = value, children = {}}
+        end
+
+        function sum(tree: Tree): i32
+            local total: i32 = tree.value
+            for child in tree.children do total += sum(child) end
+            return total
+        end
+
+        assert(sum({value = 1, children = {leaf(2), leaf(3)}}) == 6)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("recursive type emission should terminate");
+
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted recursive-tree module should validate");
+}
+
+#[test]
 fn exports_top_level_code_as_main_without_a_start_section() {
     let source = r#"
         local value: i32 = 1

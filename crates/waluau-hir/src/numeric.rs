@@ -207,6 +207,11 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
+        // Recursive aliases are represented by a finite opaque anchor at the
+        // cycle edge. Arrays are mutable, so do not make their element types
+        // generally covariant; only identify two arrays when their opaque
+        // alias identities are the same all the way down.
+        Some(expected) if same_opaque_array_identity(&actual, &expected) => Ok(expected),
         // A variadic pack in a scalar context contributes its first value.
         Some(expected)
             if matches!(actual, Type::Variadic(_)) && !matches!(expected, Type::Variadic(_)) =>
@@ -528,6 +533,24 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
         Some(expected) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to {expected}",
         ))),
+    }
+}
+
+fn same_opaque_array_identity(actual: &Type, expected: &Type) -> bool {
+    match (actual, expected) {
+        (
+            Type::Opaque {
+                name: actual_name, ..
+            },
+            Type::Opaque {
+                name: expected_name,
+                ..
+            },
+        ) => actual_name == expected_name,
+        (Type::Array(actual), Type::Array(expected)) => {
+            same_opaque_array_identity(actual, expected)
+        }
+        _ => false,
     }
 }
 

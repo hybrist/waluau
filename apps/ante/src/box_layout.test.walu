@@ -8,22 +8,27 @@ function edges(value: f64): layout.Edges
     return { left = value, top = value, right = value, bottom = value }
 end
 
-function row(
-    tree: layout.Tree, children: {i32}, gap: f64,
-    justify: i32, align: i32, padding: f64
-): i32
-    return tree:flow(NONE, children, {
-        axis = layout.axis_row,
-        gap = gap,
-        justify = justify,
-        align = align,
-        padding = edges(padding),
-    })
+function row(children: {layout.Tree}, gap: f64, justify: i32, align: i32, padding: f64): layout.Tree
+    return layout.flow(
+        NONE,
+        children,
+        {
+            axis = layout.axis_row,
+            gap = gap,
+            justify = justify,
+            align = align,
+            padding = edges(padding)
+        }
+    )
 end
 
 function ranged(
-    min_width: f64, preferred_width: f64, max_width: f64,
-    min_height: f64, preferred_height: f64, max_height: f64,
+    min_width: f64,
+    preferred_width: f64,
+    max_width: f64,
+    min_height: f64,
+    preferred_height: f64,
+    max_height: f64,
     baseline: f64
 ): layout.Intrinsic
     return {
@@ -33,7 +38,7 @@ function ranged(
         min_height = min_height,
         preferred_height = preferred_height,
         max_height = max_height,
-        baseline = baseline,
+        baseline = baseline
     }
 end
 
@@ -43,160 +48,249 @@ function frame_at(result: layout.Result, key: i32): layout.Frame
     return found::layout.Frame
 end
 
-describe("intrinsic box layout", function(): unit
-    it("derives a padded row measurement from its leaves", function(): unit
-        local tree: layout.Tree = layout.new()
-        local root: i32 = row(tree, {
-            tree:leaf(1, layout.fixed(40.0, 20.0)),
-            tree:leaf(2, layout.fixed(60.0, 30.0)),
-            tree:leaf(3, layout.fixed(50.0, 24.0)),
-        }, 10.0, layout.justify_start, layout.align_start, 8.0)
+describe(
+    "intrinsic box layout",
+    function(): unit
+        it(
+            "derives a padded row measurement from its leaves",
+            function(): unit
+                local root: layout.Tree = row(
+                    {
+                        layout.leaf(1, layout.fixed(40.0, 20.0)),
+                        layout.leaf(2, layout.fixed(60.0, 30.0)),
+                        layout.leaf(3, layout.fixed(50.0, 24.0))
+                    },
+                    10.0,
+                    layout.justify_start,
+                    layout.align_start,
+                    8.0
+                )
 
-        local measured: layout.Intrinsic = tree:measure(root)
-        expect(measured.preferred_width):toBe(186.0)
-        expect(measured.preferred_height):toBe(46.0)
-        expect(measured.min_width):toBe(186.0)
-        expect(measured.max_width):toBe(186.0)
-    end)
+                local measured: layout.Intrinsic = layout.measure(root)
+                expect(measured.preferred_width):toBe(186.0)
+                expect(measured.preferred_height):toBe(46.0)
+                expect(measured.min_width):toBe(186.0)
+                expect(measured.max_width):toBe(186.0)
+            end
+        )
 
-    it("centers intrinsic children without changing their sizes", function(): unit
-        local tree: layout.Tree = layout.new()
-        local root: i32 = row(tree, {
-            tree:leaf(1, layout.fixed(40.0, 20.0)),
-            tree:leaf(2, layout.fixed(40.0, 20.0)),
-        }, 10.0, layout.justify_center, layout.align_center, 0.0)
-        local result: layout.Result = tree:solve(
-            root, { x = 0.0, y = 0.0, width = 150.0, height = 60.0 })
+        it(
+            "centers intrinsic children without changing their sizes",
+            function(): unit
+                local root: layout.Tree = row(
+                    {
+                        layout.leaf(1, layout.fixed(40.0, 20.0)),
+                        layout.leaf(2, layout.fixed(40.0, 20.0))
+                    },
+                    10.0,
+                    layout.justify_center,
+                    layout.align_center,
+                    0.0
+                )
+                local result: layout.Result = layout.solve(
+                    root,
+                    { x = 0.0, y = 0.0, width = 150.0, height = 60.0 }
+                )
 
-        local first: layout.Frame = frame_at(result, 1)
-        local second: layout.Frame = frame_at(result, 2)
-        expect(first.rect.x):toBe(30.0)
-        expect(first.rect.y):toBe(20.0)
-        expect(second.rect.x):toBe(80.0)
-        expect(second.rect.width):toBe(40.0)
-        expect(result.overflowed):toBe(false)
-    end)
+                local first: layout.Frame = frame_at(result, 1)
+                local second: layout.Frame = frame_at(result, 2)
+                expect(first.rect.x):toBe(30.0)
+                expect(first.rect.y):toBe(20.0)
+                expect(second.rect.x):toBe(80.0)
+                expect(second.rect.width):toBe(40.0)
+                expect(result.overflowed):toBe(false)
+            end
+        )
 
-    it("distributes surplus according to grow factors", function(): unit
-        local tree: layout.Tree = layout.new()
-        local measure: layout.Intrinsic = ranged(
-            20.0, 40.0, 100.0, 20.0, 20.0, 20.0, -1.0)
-        local first: i32 = tree:flex(tree:leaf(1, measure), 1.0, 1.0)
-        local second: i32 = tree:flex(tree:leaf(2, measure), 2.0, 1.0)
-        local root: i32 = row(tree, { first, second },
-            0.0, layout.justify_start, layout.align_start, 0.0)
-        local result: layout.Result = tree:solve(
-            root, { x = 0.0, y = 0.0, width = 140.0, height = 20.0 })
+        it(
+            "distributes surplus according to grow factors",
+            function(): unit
+                local measure: layout.Intrinsic = ranged(20.0, 40.0, 100.0, 20.0, 20.0, 20.0, -1.0)
+                local first: layout.Tree = layout.flex(layout.leaf(1, measure), 1.0, 1.0)
+                local second: layout.Tree = layout.flex(layout.leaf(2, measure), 2.0, 1.0)
+                local root: layout.Tree = row(
+                    {first, second},
+                    0.0,
+                    layout.justify_start,
+                    layout.align_start,
+                    0.0
+                )
+                local result: layout.Result = layout.solve(
+                    root,
+                    { x = 0.0, y = 0.0, width = 140.0, height = 20.0 }
+                )
 
-        expect(frame_at(result, 1).rect.width):toBe(60.0)
-        expect(frame_at(result, 2).rect.width):toBe(80.0)
-    end)
+                expect(frame_at(result, 1).rect.width):toBe(60.0)
+                expect(frame_at(result, 2).rect.width):toBe(80.0)
+            end
+        )
 
-    it("shrinks toward intrinsic minima before reporting overflow", function(): unit
-        local tree: layout.Tree = layout.new()
-        local measure: layout.Intrinsic = ranged(
-            40.0, 80.0, 120.0, 20.0, 20.0, 20.0, -1.0)
-        local root: i32 = row(tree, {
-            tree:leaf(1, measure),
-            tree:leaf(2, measure),
-        }, 0.0, layout.justify_start, layout.align_start, 0.0)
+        it(
+            "shrinks toward intrinsic minima before reporting overflow",
+            function(): unit
+                local measure: layout.Intrinsic = ranged(40.0, 80.0, 120.0, 20.0, 20.0, 20.0, -1.0)
+                local root: layout.Tree = row(
+                    {layout.leaf(1, measure), layout.leaf(2, measure)},
+                    0.0,
+                    layout.justify_start,
+                    layout.align_start,
+                    0.0
+                )
 
-        local fitted: layout.Result = tree:solve(
-            root, { x = 0.0, y = 0.0, width = 100.0, height = 20.0 })
-        expect(frame_at(fitted, 1).rect.width):toBe(50.0)
-        expect(frame_at(fitted, 2).rect.width):toBe(50.0)
-        expect(fitted.overflowed):toBe(false)
+                local fitted: layout.Result = layout.solve(
+                    root,
+                    { x = 0.0, y = 0.0, width = 100.0, height = 20.0 }
+                )
+                expect(frame_at(fitted, 1).rect.width):toBe(50.0)
+                expect(frame_at(fitted, 2).rect.width):toBe(50.0)
+                expect(fitted.overflowed):toBe(false)
 
-        local overflow: layout.Result = tree:solve(
-            root, { x = 0.0, y = 0.0, width = 60.0, height = 20.0 })
-        expect(frame_at(overflow, 1).rect.width):toBe(40.0)
-        expect(frame_at(overflow, 2).rect.width):toBe(40.0)
-        expect(overflow.overflow_x):toBe(20.0)
-        expect(overflow.overflowed):toBe(true)
-    end)
+                local overflow: layout.Result = layout.solve(
+                    root,
+                    { x = 0.0, y = 0.0, width = 60.0, height = 20.0 }
+                )
+                expect(frame_at(overflow, 1).rect.width):toBe(40.0)
+                expect(frame_at(overflow, 2).rect.width):toBe(40.0)
+                expect(overflow.overflow_x):toBe(20.0)
+                expect(overflow.overflowed):toBe(true)
+            end
+        )
 
-    it("derives nested column and padding sizes recursively", function(): unit
-        local tree: layout.Tree = layout.new()
-        local label: i32 = tree:leaf(11, layout.fixed(72.0, 18.0))
-        local button: i32 = tree:flow(10, { label }, {
-            axis = layout.axis_row,
-            gap = 0.0,
-            justify = layout.justify_center,
-            align = layout.align_center,
-            padding = { left = 14.0, top = 9.0, right = 14.0, bottom = 9.0 },
-        })
-        local second_label: i32 = tree:leaf(13, layout.fixed(72.0, 18.0))
-        local second_button: i32 = tree:flow(12, { second_label }, {
-            axis = layout.axis_row,
-            gap = 0.0,
-            justify = layout.justify_center,
-            align = layout.align_center,
-            padding = { left = 14.0, top = 9.0, right = 14.0, bottom = 9.0 },
-        })
-        local root: i32 = tree:flow(NONE, { button, second_button }, {
-            axis = layout.axis_column,
-            gap = 6.0,
-            justify = layout.justify_start,
-            align = layout.align_start,
-            padding = edges(4.0),
-        })
+        it(
+            "derives nested column and padding sizes recursively",
+            function(): unit
+                local label: layout.Tree = layout.leaf(11, layout.fixed(72.0, 18.0))
+                local button: layout.Tree = layout.flow(
+                    10,
+                    {label},
+                    {
+                        axis = layout.axis_row,
+                        gap = 0.0,
+                        justify = layout.justify_center,
+                        align = layout.align_center,
+                        padding = { left = 14.0, top = 9.0, right = 14.0, bottom = 9.0 }
+                    }
+                )
+                local second_label: layout.Tree = layout.leaf(13, layout.fixed(72.0, 18.0))
+                local second_button: layout.Tree = layout.flow(
+                    12,
+                    {second_label},
+                    {
+                        axis = layout.axis_row,
+                        gap = 0.0,
+                        justify = layout.justify_center,
+                        align = layout.align_center,
+                        padding = { left = 14.0, top = 9.0, right = 14.0, bottom = 9.0 }
+                    }
+                )
+                local root: layout.Tree = layout.flow(
+                    NONE,
+                    {button, second_button},
+                    {
+                        axis = layout.axis_column,
+                        gap = 6.0,
+                        justify = layout.justify_start,
+                        align = layout.align_start,
+                        padding = edges(4.0)
+                    }
+                )
 
-        local measured: layout.Intrinsic = tree:measure(root)
-        expect(measured.preferred_width):toBe(108.0)
-        expect(measured.preferred_height):toBe(86.0)
-    end)
+                local measured: layout.Intrinsic = layout.measure(root)
+                expect(measured.preferred_width):toBe(108.0)
+                expect(measured.preferred_height):toBe(86.0)
+            end
+        )
 
-    it("aligns text-like leaves by their intrinsic baselines", function(): unit
-        local tree: layout.Tree = layout.new()
-        local small: layout.Intrinsic = ranged(
-            30.0, 30.0, 30.0, 20.0, 20.0, 20.0, 14.0)
-        local large: layout.Intrinsic = ranged(
-            40.0, 40.0, 40.0, 32.0, 32.0, 32.0, 24.0)
-        local root: i32 = row(tree, {
-            tree:leaf(1, small), tree:leaf(2, large),
-        }, 4.0, layout.justify_start, layout.align_baseline, 0.0)
-        local result: layout.Result = tree:solve(
-            root, { x = 0.0, y = 0.0, width = 100.0, height = 40.0 })
+        it(
+            "aligns text-like leaves by their intrinsic baselines",
+            function(): unit
+                local small: layout.Intrinsic = ranged(30.0, 30.0, 30.0, 20.0, 20.0, 20.0, 14.0)
+                local large: layout.Intrinsic = ranged(40.0, 40.0, 40.0, 32.0, 32.0, 32.0, 24.0)
+                local root: layout.Tree = row(
+                    {layout.leaf(1, small), layout.leaf(2, large)},
+                    4.0,
+                    layout.justify_start,
+                    layout.align_baseline,
+                    0.0
+                )
+                local result: layout.Result = layout.solve(
+                    root,
+                    { x = 0.0, y = 0.0, width = 100.0, height = 40.0 }
+                )
 
-        local first: layout.Frame = frame_at(result, 1)
-        local second: layout.Frame = frame_at(result, 2)
-        expect(first.baseline):toBe(24.0)
-        expect(second.baseline):toBe(24.0)
-        expect(first.rect.y):toBe(10.0)
-    end)
+                local first: layout.Frame = frame_at(result, 1)
+                local second: layout.Frame = frame_at(result, 2)
+                expect(first.baseline):toBe(24.0)
+                expect(second.baseline):toBe(24.0)
+                expect(first.rect.y):toBe(10.0)
+            end
+        )
 
-    it("includes baseline ascent and descent in intrinsic row height", function(): unit
-        local tree: layout.Tree = layout.new()
-        local high_baseline: layout.Intrinsic = ranged(
-            30.0, 30.0, 30.0, 20.0, 20.0, 20.0, 18.0)
-        local low_baseline: layout.Intrinsic = ranged(
-            30.0, 30.0, 30.0, 20.0, 20.0, 20.0, 2.0)
-        local root: i32 = row(tree, {
-            tree:leaf(1, high_baseline), tree:leaf(2, low_baseline),
-        }, 0.0, layout.justify_start, layout.align_baseline, 0.0)
+        it(
+            "includes baseline ascent and descent in intrinsic row height",
+            function(): unit
+                local high_baseline: layout.Intrinsic = ranged(
+                    30.0,
+                    30.0,
+                    30.0,
+                    20.0,
+                    20.0,
+                    20.0,
+                    18.0
+                )
+                local low_baseline: layout.Intrinsic = ranged(
+                    30.0,
+                    30.0,
+                    30.0,
+                    20.0,
+                    20.0,
+                    20.0,
+                    2.0
+                )
+                local root: layout.Tree = row(
+                    {layout.leaf(1, high_baseline), layout.leaf(2, low_baseline)},
+                    0.0,
+                    layout.justify_start,
+                    layout.align_baseline,
+                    0.0
+                )
 
-        local measured: layout.Intrinsic = tree:measure(root)
-        expect(measured.preferred_height):toBe(36.0)
+                local measured: layout.Intrinsic = layout.measure(root)
+                expect(measured.preferred_height):toBe(36.0)
 
-        local result: layout.Result = tree:solve(
-            root, { x = 0.0, y = 0.0, width = 60.0, height = 36.0 })
-        expect(frame_at(result, 1).baseline):toBe(18.0)
-        expect(frame_at(result, 2).baseline):toBe(18.0)
-        expect(frame_at(result, 2).rect.y):toBe(16.0)
-        expect(result.overflowed):toBe(false)
-    end)
+                local result: layout.Result = layout.solve(
+                    root,
+                    { x = 0.0, y = 0.0, width = 60.0, height = 36.0 }
+                )
+                expect(frame_at(result, 1).baseline):toBe(18.0)
+                expect(frame_at(result, 2).baseline):toBe(18.0)
+                expect(frame_at(result, 2).rect.y):toBe(16.0)
+                expect(result.overflowed):toBe(false)
+            end
+        )
 
-    it("uses paint order for overlapping hit lookup", function(): unit
-        local tree: layout.Tree = layout.new()
-        local root: i32 = row(tree, {
-            tree:leaf(1, layout.fixed(50.0, 30.0)),
-            tree:leaf(2, layout.fixed(50.0, 30.0)),
-        }, -20.0, layout.justify_start, layout.align_start, 0.0)
-        local result: layout.Result = tree:solve(
-            root, { x = 0.0, y = 0.0, width = 80.0, height = 30.0 })
+        it(
+            "uses paint order for overlapping hit lookup",
+            function(): unit
+                local root: layout.Tree = row(
+                    {
+                        layout.leaf(1, layout.fixed(50.0, 30.0)),
+                        layout.leaf(2, layout.fixed(50.0, 30.0))
+                    },
+                    -20.0,
+                    layout.justify_start,
+                    layout.align_start,
+                    0.0
+                )
+                local result: layout.Result = layout.solve(
+                    root,
+                    { x = 0.0, y = 0.0, width = 80.0, height = 30.0 }
+                )
 
-        expect(layout.hit(result, 10.0, 10.0)):toBe(1)
-        expect(layout.hit(result, 35.0, 10.0)):toBe(2)
-        expect(layout.hit(result, 90.0, 10.0)):toBe(-1)
-    end)
-end)
+                expect(layout.hit(result, 10.0, 10.0)):toBe(1)
+                expect(layout.hit(result, 35.0, 10.0)):toBe(2)
+                expect(layout.hit(result, 90.0, 10.0)):toBe(-1)
+            end
+        )
+    end
+)
