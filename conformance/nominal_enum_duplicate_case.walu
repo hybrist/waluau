@@ -1,0 +1,13 @@
+-- conformance: error=duplicate/unreachable match case 'Direction.north'
+enum Direction { north, south }
+
+function score(direction: Direction): i32
+    match direction do
+    case Direction.north then
+        return 1
+    case Direction.north then
+        return 2
+    case Direction.south then
+        return 3
+    end
+end

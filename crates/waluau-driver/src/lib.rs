@@ -2378,6 +2378,41 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_exports_nominal_enum_constants() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("faces.walu"),
+            r#"
+                enum Face { down, up }
+                const FACES_UP: Face = Face.up
+
+                function is_up(face: Face): bool
+                    return face == FACES_UP
+                end
+
+                return {
+                    FACES_UP = FACES_UP,
+                    is_up = is_up,
+                }
+            "#,
+        )
+        .expect("faces module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local faces = require("./faces")
+                local face: faces.Face = faces.FACES_UP
+                assert(faces.is_up(face))
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_rejects_non_literal_module_constant_at_declaration() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

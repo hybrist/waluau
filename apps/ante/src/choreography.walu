@@ -61,11 +61,6 @@ const ANIM_DEAL: i32 = 1
 const ANIM_SWAP: i32 = 2
 const ANIM_FIREBOLT_REPLACE: i32 = 3
 
--- TODO(waluau-language): Nominal enums would make render's slot, face, and
--- easing ids non-interchangeable instead of structurally identical i32s.
--- The id values themselves live in render's exports (render.slot_player,
--- render.faces_up, ...), declared once beside the code that interprets them.
-
 const FAN_EASE_RESPONSE: f64 = 14.0
 const FAN_EASE_SNAP: f64 = 0.001
 const DEAL_STEP: f64 = 0.1
@@ -365,19 +360,19 @@ end
 
 -- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
 -- Arch Mage's sealed row.
-function hand_slot_kind(owner: i32): i32
+function hand_slot_kind(owner: i32): render.Slot
     if owner > 0 then return render.slot_player end
     return render.slot_computer
 end
 
 -- Resting tilt of a slot in a hand row laid out for `count` cards; the wards
 -- and the Arch Mage's sealed row lie square to the board at any size.
-function slot_tilt_at(kind: i32, index: i32, count: i32): f64
+function slot_tilt_at(kind: render.Slot, index: i32, count: i32): f64
     if kind == render.slot_player then return render.hand_angle_at(index, 0.0, count) end
     return 0.0
 end
 
-function slot_part(state: State, kind: i32, index: i32): f64
+function slot_part(state: State, kind: render.Slot, index: i32): f64
     if kind == render.slot_player then return state.fan_parts[index] end
     return 0.0
 end
@@ -390,14 +385,14 @@ end
 
 -- Where a card sits *right now*, parting and all: only the player's fanned
 -- hand can differ from the settled slot render.slot_pos_at describes.
-function slot_pos_now(state: State, kind: i32, index: i32): render.Point
+function slot_pos_now(state: State, kind: render.Slot, index: i32): render.Point
     if kind == render.slot_player then
         return render.hand_pos_at(layout.current(), index, slot_part(state, kind, index), live_hand_count(state))
     end
     return render.slot_pos_at(layout.current(), kind, index, live_hand_count(state))
 end
 
-function slot_tilt_now(state: State, kind: i32, index: i32): f64
+function slot_tilt_now(state: State, kind: render.Slot, index: i32): f64
     if kind == render.slot_player then
         return render.hand_angle_at(index, slot_part(state, kind, index), live_hand_count(state))
     end
@@ -409,7 +404,7 @@ end
 -- over past its leading edge, overshooting its slot and dropping onto it.
 -- The hands keep the flat slide: five relics arriving as aerial throws would
 -- be a juggling act, not a deal, and the sealed row has nothing to show off.
-function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card, kind: i32, index: i32, count: i32, faces: i32, start: f64): f64
+function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card, kind: render.Slot, index: i32, count: i32, faces: render.Face, start: f64): f64
     local effect: i32 = render.anim_effect_move
     local duration: f64 = DEAL_SECONDS
     if kind == render.slot_middle then
@@ -477,7 +472,7 @@ function opening_deal(view: game.View, state: State): unit
     begin_anims(state, anims, finish, ANIM_DEAL)
 end
 
-function push_scoop(viewport: layout.State, anims: {render.Anim}, card: game.Card, from: render.Point, gather: render.Point, dest_kind: i32): unit
+function push_scoop(viewport: layout.State, anims: {render.Anim}, card: game.Card, from: render.Point, gather: render.Point, dest_kind: render.Slot): unit
     local carry_start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS
     table.insert(anims, {
         card = card,
@@ -493,7 +488,7 @@ function push_scoop(viewport: layout.State, anims: {render.Anim}, card: game.Car
         duration = SCOOP_GATHER_SECONDS,
         appear = 0.0,
         vanish = carry_start,
-        dest_kind = -1,
+        dest_kind = render.slot_none,
         dest_index = 0,
     })
     table.insert(anims, {
@@ -515,7 +510,7 @@ function push_scoop(viewport: layout.State, anims: {render.Anim}, card: game.Car
     })
 end
 
-function push_scoop_pair(viewport: layout.State, anims: {render.Anim}, first_card: game.Card, second_card: game.Card, kind: i32, first_index: i32, second_index: i32, count: i32): unit
+function push_scoop_pair(viewport: layout.State, anims: {render.Anim}, first_card: game.Card, second_card: game.Card, kind: render.Slot, first_index: i32, second_index: i32, count: i32): unit
     local a: render.Point = render.slot_pos_at(viewport, kind, first_index, count)
     local b: render.Point = render.slot_pos_at(viewport, kind, second_index, count)
     local gather: render.Point = render.midpoint(a, b)
@@ -561,10 +556,10 @@ end
 function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: game.Trick, owner: i32, start: f64): f64
     local side: game.TrickSide = game.trick_side(trick, owner)
     local live: {game.HandSlot} = game.view_side(view, owner)
-    local kind: i32 = hand_slot_kind(owner)
+    local kind: render.Slot = hand_slot_kind(owner)
     local old_count: i32 = #side.hand
     local new_count: i32 = #live
-    local faces: i32 = render.faces_up
+    local faces: render.Face = render.faces_up
     if owner < 0 then faces = render.faces_down end
     local finish: f64 = start
     local new_index: i32 = 0
@@ -625,7 +620,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
     if trick.winner ~= 0 then
         local winner: game.TrickSide = game.trick_side(trick, trick.winner)
         local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
-        local won_kind: i32 = render.slot_computer_won
+        local won_kind: render.Slot = render.slot_computer_won
         local won: {game.Card} = state.computer_won
         if trick.winner > 0 then
             won_kind = render.slot_player_won
@@ -684,7 +679,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
     local count: i32 = #outcome.hand_indices
     if outcome.winner == 0 or count == 0 then return end
     local player_won: bool = outcome.winner > 0
-    local hand_kind: i32 = hand_slot_kind(outcome.winner)
+    local hand_kind: render.Slot = hand_slot_kind(outcome.winner)
     local last_stagger: f64 = SWAP_STEP * ((count - 1)::f64)
     local aside_start: f64 = SWAP_LEAVE_SECONDS + last_stagger + 0.05
     local place_start: f64 = aside_start + SWAP_ASIDE_SECONDS + last_stagger + 0.1
@@ -707,9 +702,9 @@ function feint(outcome: game.FeintOutcome, state: State): unit
         local place: f64 = place_start + stagger
         local placed: f64 = place + SWAP_PLACE_SECONDS
         if placed > total then total = placed end
-        local leave_faces: i32 = render.faces_up
-        local settle_faces: i32 = render.faces_up
-        local return_faces: i32 = render.faces_up
+        local leave_faces: render.Face = render.faces_up
+        local settle_faces: render.Face = render.faces_up
+        local return_faces: render.Face = render.faces_up
         if not player_won then
             leave_faces = render.faces_down
             settle_faces = render.faces_flip_up
@@ -729,7 +724,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             duration = SWAP_LEAVE_SECONDS,
             appear = 0.0,
             vanish = place,
-            dest_kind = -1,
+            dest_kind = render.slot_none,
             dest_index = 0,
         })
         table.insert(anims, {
@@ -763,7 +758,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             duration = SWAP_ASIDE_SECONDS,
             appear = 0.0,
             vanish = place,
-            dest_kind = -1,
+            dest_kind = render.slot_none,
             dest_index = 0,
         })
         table.insert(anims, {

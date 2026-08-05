@@ -46,6 +46,45 @@ type State = {
 const ACTION_NONE: i32 = 0
 const ACTION_EXIT: i32 = 1
 
+-- Browser key strings are open-ended. Decode that host boundary once into the
+-- closed set the game understands; `other` is the deliberate fallback for
+-- future browser values and unmapped controls.
+enum Key {
+    exit,
+    restart,
+    history,
+    help,
+    confirm,
+    select,
+    cancel,
+    left,
+    right,
+    up,
+    down,
+    sort_ascending,
+    sort_descending,
+    pass,
+    other
+}
+
+function decode_key(key: string): Key
+    if key == "m" or key == "M" then return Key.exit end
+    if key == "r" or key == "R" then return Key.restart end
+    if key == "h" or key == "H" then return Key.history end
+    if key == "?" or key == "/" then return Key.help end
+    if key == "Enter" then return Key.confirm end
+    if key == " " then return Key.select end
+    if key == "Escape" then return Key.cancel end
+    if key == "ArrowLeft" or key == "a" then return Key.left end
+    if key == "ArrowRight" or key == "d" then return Key.right end
+    if key == "ArrowUp" or key == "w" then return Key.up end
+    if key == "ArrowDown" or key == "s" then return Key.down end
+    if key == "c" or key == "C" then return Key.sort_ascending end
+    if key == "v" or key == "V" then return Key.sort_descending end
+    if key == "p" or key == "P" then return Key.pass end
+    return Key.other
+end
+
 function new(): State
     local run: run_module.State = run_module.new(game.spell_firebolt, false)
     return {
@@ -210,14 +249,24 @@ function run_outcome(state: State): i32
         run.vault, run.rush, state.rules:is_victory(), state.rules:mana())
 end
 
-function key_command(key: string): i32
-    if key == "r" or key == "R" then return flow.command_restart end
-    if key == "h" or key == "H" then return flow.command_history end
-    if key == "?" or key == "/" then return flow.command_help end
-    if key == "Enter" or key == " " or key == "Escape" then
-        return flow.command_advance
+function key_command(key: Key): i32
+    match key do
+    case Key.exit then return flow.command_none
+    case Key.restart then return flow.command_restart
+    case Key.history then return flow.command_history
+    case Key.help then return flow.command_help
+    case Key.confirm then return flow.command_advance
+    case Key.select then return flow.command_advance
+    case Key.cancel then return flow.command_advance
+    case Key.left then return flow.command_none
+    case Key.right then return flow.command_none
+    case Key.up then return flow.command_none
+    case Key.down then return flow.command_none
+    case Key.sort_ascending then return flow.command_none
+    case Key.sort_descending then return flow.command_none
+    case Key.pass then return flow.command_none
+    case Key.other then return flow.command_none
     end
-    return flow.command_none
 end
 
 
@@ -374,21 +423,19 @@ function cast_slot_for(key: string, slots: i32): i32
     return -1
 end
 
--- TODO(waluau-language): Exhaustive enums and pattern matching for host key
--- values would replace this string ladder and make unmapped controls a
--- compile-time decision shared by every input adapter.
 function keypressed(state: State, city: city_map.State, key: string): i32
     local ui: flow.State = state.ui
     local rules: game.State = state.rules
     local presentation: choreography.State = state.presentation
-    if key == "m" or key == "M" then return ACTION_EXIT end
+    local control: Key = decode_key(key)
+    if control == Key.exit then return ACTION_EXIT end
     -- The fence answers its own list; nothing on the settled board behind it is
     -- reachable until the next vault is dealt. Restarting the run is the one
     -- gesture that still works everywhere, the fence included. A fence already
     -- left answers nothing: the offers on the screen are a picture the map is
     -- carrying out, and the board underneath is the live one.
     if on_map(state) then
-        if key == "r" or key == "R" then
+        if control == Key.restart then
             reset(state, city, state.run.rush, state.run.start_spell)
         elseif shop.keypressed(state.shop, state.run, key) == shop.result_leave then
             leave_shop(state)
@@ -438,21 +485,34 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         return ACTION_NONE
     end
     if ui.casting then
-        if key == "Escape" then
-            ui.casting = false
-        elseif key == "ArrowLeft" or key == "a" then
+        match control do
+        case Key.cancel then ui.casting = false
+        case Key.left then
             ui.ward_cursor -= 1
             if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
-        elseif key == "ArrowRight" or key == "d" then
+        case Key.right then
             ui.ward_cursor = (ui.ward_cursor + 1) % 3
-        elseif key == "Enter" or key == " " then
+        case Key.confirm then
             confirm_cast(state, ui.cast_slot, ui.ward_cursor)
+        case Key.select then
+            confirm_cast(state, ui.cast_slot, ui.ward_cursor)
+        case Key.exit then
+        case Key.restart then
+        case Key.history then
+        case Key.help then
+        case Key.up then
+        case Key.down then
+        case Key.sort_ascending then
+        case Key.sort_descending then
+        case Key.pass then
+        case Key.other then
         end
         return ACTION_NONE
     end
-    if consume_gate(state, city, key_command(key)) then return ACTION_NONE end
+    if consume_gate(state, city, key_command(control)) then return ACTION_NONE end
 
-    if key == "ArrowLeft" or key == "a" then
+    match control do
+    case Key.left then
         if ui.cursor_area == flow.cursor_hand then
             ui.hand_cursor -= 1
             if ui.hand_cursor < 0 then ui.hand_cursor = rules:hand_size() - 1 end
@@ -460,17 +520,17 @@ function keypressed(state: State, city: city_map.State, key: string): i32
             ui.ward_cursor -= 1
             if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
         end
-    elseif key == "ArrowRight" or key == "d" then
+    case Key.right then
         if ui.cursor_area == flow.cursor_hand then
             ui.hand_cursor = (ui.hand_cursor + 1) % rules:hand_size()
         else
             ui.ward_cursor = (ui.ward_cursor + 1) % 3
         end
-    elseif rules:feint_open() and (
-        key == "ArrowUp" or key == "ArrowDown" or key == "w" or key == "s"
-    ) then
-        ui.cursor_area = 1 - ui.cursor_area
-    elseif key == " " then
+    case Key.up then
+        if rules:feint_open() then ui.cursor_area = 1 - ui.cursor_area end
+    case Key.down then
+        if rules:feint_open() then ui.cursor_area = 1 - ui.cursor_area end
+    case Key.select then
         if rules:feint_open() then
             if ui.cursor_area == flow.cursor_hand then
                 flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
@@ -480,22 +540,28 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         else
             flow.toggle(ui.play_picks, ui.hand_cursor, 2)
         end
-    elseif key == "c" or key == "C" then
+    case Key.sort_ascending then
         local order: {i32} = rules:sort_player_hand(true)
         flow.apply_hand_order(ui, order)
         choreography.apply_hand_order(presentation, order)
-    elseif key == "v" or key == "V" then
+    case Key.sort_descending then
         local order: {i32} = rules:sort_player_hand(false)
         flow.apply_hand_order(ui, order)
         choreography.apply_hand_order(presentation, order)
-    elseif key == "p" or key == "P" then
+    case Key.pass then
         if rules:feint_open() then
             ui.swap_hand = {}
             ui.swap_wards = {}
             submit_swap(state)
         end
-    elseif key == "Enter" then
+    case Key.confirm then
         if rules:feint_open() then submit_swap(state) else submit_breach(state) end
+    case Key.exit then
+    case Key.restart then
+    case Key.history then
+    case Key.help then
+    case Key.cancel then
+    case Key.other then
     end
     return ACTION_NONE
 end

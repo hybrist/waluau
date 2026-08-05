@@ -37,6 +37,36 @@ fn inserts_phi_after_if_merge() {
 }
 
 #[test]
+fn lowers_nominal_enum_match_to_i32_branches() {
+    let source = r#"
+        enum Direction { north, east, south }
+        function entry(direction: Direction): i32
+            match direction do
+            case Direction.north then return 1
+            case Direction.east then return 2
+            case Direction.south then return 3
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("enum match IR should verify");
+    let function = &module.functions[0];
+    assert_eq!(function.params[0].1, Type::Numeric(NumericType::I32));
+    assert_eq!(
+        function
+            .blocks
+            .values()
+            .filter(|block| matches!(block.terminator, Terminator::Branch { .. }))
+            .count(),
+        2,
+        "three enum variants should lower to two comparisons:\n{}",
+        function.dump()
+    );
+}
+
+#[test]
 fn lowers_declared_extern_operator_overload_to_host_call() {
     let source = r#"
         type Tensor = extern

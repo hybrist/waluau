@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use waluau_ast::{
     DeclaredConstant, DeclaredImport, Function, FunctionExpr, FunctionName, Param, Program, Span,
     Stmt, Type, TypeDeclaration,
@@ -21,6 +22,8 @@ pub(super) struct Parser {
     /// Definition side table for editor tooling; see [`DefinitionSite`].
     definitions: Vec<DefinitionSite>,
     file_path: String,
+    /// Locally declared nominal enums and their declaration-order variants.
+    enums: HashMap<String, Vec<String>>,
 }
 
 impl Parser {
@@ -32,6 +35,7 @@ impl Parser {
             type_param_scope: Vec::new(),
             definitions: Vec::new(),
             file_path,
+            enums: HashMap::new(),
         }
     }
 
@@ -162,7 +166,15 @@ impl Parser {
                 self.advance();
                 continue;
             }
-            if self.is_type_decl_start() {
+            if self.is_enum_decl_start() {
+                match self.parse_enum_decl() {
+                    Ok(type_decl) => type_declarations.push(type_decl),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.synchronize_statement(&[], self.index);
+                    }
+                }
+            } else if self.is_type_decl_start() {
                 match self.parse_type_decl() {
                     Ok(type_decl) => type_declarations.push(type_decl),
                     Err(error) => {
@@ -577,6 +589,74 @@ impl Parser {
                 Some(TokenKind::Equal | TokenKind::Less)
             ) if keyword == "type"
         )
+    }
+
+    fn is_enum_decl_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+                self.peek_n(2).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Identifier(_)),
+                Some(TokenKind::LBrace)
+            ) if keyword == "enum"
+        )
+    }
+
+    /// Parses `enum Direction { north, east, south, west }` as a nominal i32
+    /// type declaration. Variant expressions are expanded by the parser into
+    /// typed integer constants; the existing opaque-type erasure then gives
+    /// enums an efficient i32 Wasm representation without sacrificing their
+    /// source-level identity.
+    fn parse_enum_decl(&mut self) -> Result<TypeDeclaration, Diagnostic> {
+        let keyword = self.expect_identifier()?;
+        debug_assert_eq!(keyword, "enum");
+        let (name, name_span) = self.expect_identifier_spanned()?;
+        if self.enums.contains_key(&name) {
+            return Err(Diagnostic::new(format!(
+                "duplicate enum declaration '{name}'"
+            )));
+        }
+        self.expect_simple(TokenKind::LBrace, "expected '{' after enum name")?;
+        let mut variants = Vec::new();
+        while !self.check_simple(&TokenKind::RBrace) {
+            let variant = self.expect_identifier()?;
+            if variants.contains(&variant) {
+                return Err(Diagnostic::new(format!(
+                    "duplicate enum variant '{name}.{variant}'"
+                )));
+            }
+            variants.push(variant);
+            if self.check_simple(&TokenKind::Comma) {
+                self.advance();
+            } else if !self.check_simple(&TokenKind::RBrace) {
+                return Err(self.diagnostic_at_current("expected ',' or '}' after enum variant"));
+            }
+        }
+        self.expect_simple(TokenKind::RBrace, "expected '}' after enum variants")?;
+        if variants.is_empty() {
+            return Err(Diagnostic::new(format!(
+                "enum '{name}' must declare at least one variant"
+            )));
+        }
+        self.enums.insert(name.clone(), variants.clone());
+        let ty = Type::Numeric(waluau_ast::NumericType::I32);
+        let index = self.record_definition(
+            name.clone(),
+            name_span,
+            DefinitionKind::TypeName,
+            Some(ty.clone()),
+            0,
+        );
+        self.definitions[index].detail = Some(format!("enum {name} {{ {} }}", variants.join(", ")));
+        Ok(TypeDeclaration {
+            name,
+            type_params: Vec::new(),
+            ty,
+        })
     }
 
     fn parse_type_decl(&mut self) -> Result<TypeDeclaration, Diagnostic> {

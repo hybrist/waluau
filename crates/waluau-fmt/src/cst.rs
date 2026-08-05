@@ -23,6 +23,7 @@ pub enum SyntaxKind {
     DeclareProperty,
     DeclareConst,
     TypeDecl,
+    EnumDecl,
 
     // Statements.
     LetStmt,
@@ -41,6 +42,8 @@ pub enum SyntaxKind {
     BreakStmt,
     ContinueStmt,
     ExprStmt,
+    MatchStmt,
+    MatchArm,
     /// A `{ ... }` sequence of statements inside a block-bearing construct.
     Block,
 

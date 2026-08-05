@@ -24,6 +24,44 @@ fn type_checks_valid_program() {
 }
 
 #[test]
+fn nominal_enums_reject_cross_enum_assignment() {
+    let source = r#"
+        enum Direction { north, south }
+        enum Facing { north, south }
+
+        local facing: Facing = Facing.north
+        local direction: Direction = facing
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert Facing to Direction"
+    );
+}
+
+#[test]
+fn enum_match_rejects_a_different_nominal_scrutinee() {
+    let source = r#"
+        enum Direction { north, south }
+        enum Facing { north, south }
+
+        function score(facing: Facing): i32
+            match facing do
+            case Direction.north then return 1
+            case Direction.south then return 2
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert Facing to Direction"
+    );
+}
+
+#[test]
 fn rejects_non_bool_condition() {
     let source = r#"
         function entry(x: i32): i32

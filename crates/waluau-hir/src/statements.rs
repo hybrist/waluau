@@ -671,6 +671,33 @@ fn collect_return_types_with_scope(
     let mut scope = vars.clone();
     for stmt in body {
         match stmt {
+            Stmt::Match {
+                value,
+                enum_ty,
+                arms,
+            } => {
+                let actual = infer_expr(
+                    value,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    Some(enum_ty.clone()),
+                )?;
+                if &actual != enum_ty {
+                    return Err(Diagnostic::new(format!(
+                        "match expects {enum_ty}, got {actual}"
+                    )));
+                }
+                for arm in arms {
+                    let _ = collect_return_types_with_scope(
+                        &arm.body,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        returns,
+                    )?;
+                }
+            }
             Stmt::Let {
                 name,
                 rebindability,
@@ -1232,6 +1259,9 @@ pub(super) fn stmts_always_return(stmts: &[Stmt]) -> bool {
                 && stmts_always_return(then_body)
                 && stmts_always_return(else_body)
         }
+        Stmt::Match { arms, .. } => {
+            !arms.is_empty() && arms.iter().all(|arm| stmts_always_return(&arm.body))
+        }
         Stmt::Expr(Expr::Call { callee, .. }) => {
             matches!(callee.as_ref(), Expr::Name(name, _, _) if name == "error")
         }
@@ -1289,6 +1319,7 @@ pub(super) fn primary_stmt_span(stmt: &Stmt) -> Option<waluau_ast::Span> {
         | Stmt::While { condition, .. }
         | Stmt::Repeat { condition, .. } => condition.span(),
         Stmt::IfCast { value, .. } => value.span(),
+        Stmt::Match { value, .. } => value.span(),
         Stmt::NumericFor { start, .. } => start.span(),
         Stmt::ForIn { iterator, .. } => iterator.span(),
         Stmt::Return(value) => value.span(),
@@ -1336,6 +1367,42 @@ fn check_stmt_inner(
     in_loop: bool,
 ) -> Result<bool, Diagnostic> {
     match stmt {
+        Stmt::Match {
+            value,
+            enum_ty,
+            arms,
+        } => {
+            let actual = infer_expr(
+                value,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(enum_ty.clone()),
+            )?;
+            if &actual != enum_ty {
+                return Err(Diagnostic::new(format!(
+                    "match expects {enum_ty}, got {actual}"
+                )));
+            }
+            seal_record_locals_in_expr(value, vars);
+            let mut all_return = !arms.is_empty();
+            for arm in arms {
+                let mut arm_scope = vars.clone();
+                let mut arm_returns = false;
+                for stmt in &arm.body {
+                    arm_returns |= check_stmt(
+                        stmt,
+                        &mut arm_scope,
+                        fn_signatures,
+                        active_type_params,
+                        expected_return,
+                        in_loop,
+                    )?;
+                }
+                all_return &= arm_returns;
+            }
+            Ok(all_return)
+        }
         Stmt::Let {
             name,
             rebindability,
@@ -2159,6 +2226,13 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
             expr_calls_name(condition, callee)
                 || then_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
                 || else_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+        }
+        Stmt::Match { value, arms, .. } => {
+            expr_calls_name(value, callee)
+                || arms
+                    .iter()
+                    .flat_map(|arm| &arm.body)
+                    .any(|stmt| stmt_calls_name(stmt, callee))
         }
         Stmt::IfCast {
             value,

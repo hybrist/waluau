@@ -1,4 +1,4 @@
-use waluau_ast::{BinaryOp, Expr, NumberLiteral, Span, TableField, UnaryOp};
+use waluau_ast::{BinaryOp, Expr, NumberLiteral, Span, TableField, Type, UnaryOp};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -338,6 +338,42 @@ impl Parser {
                 let name = self.expect_identifier()?;
                 let end_token = self.tokens.get(self.index.saturating_sub(1));
                 let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
+                if let Expr::Name(enum_name, _, _) = &expr
+                    && let Some(variants) = self.enums.get(enum_name)
+                {
+                    let Some(ordinal) = variants.iter().position(|variant| variant == &name) else {
+                        return Err(Diagnostic::new(format!(
+                            "unknown enum variant '{enum_name}.{name}'"
+                        )));
+                    };
+                    expr = Expr::Cast {
+                        expr: Box::new(Expr::Cast {
+                            expr: Box::new(Expr::Number(
+                                waluau_ast::NumberLiteral {
+                                    raw: ordinal.to_string(),
+                                },
+                                Some(Span {
+                                    start: start_pos,
+                                    end: end_pos,
+                                }),
+                            )),
+                            ty: Type::Numeric(waluau_ast::NumericType::I32),
+                            span: Some(Span {
+                                start: start_pos,
+                                end: end_pos,
+                            }),
+                        }),
+                        ty: Type::Named {
+                            name: enum_name.clone(),
+                            type_args: Vec::new(),
+                        },
+                        span: Some(Span {
+                            start: start_pos,
+                            end: end_pos,
+                        }),
+                    };
+                    continue;
+                }
                 expr = Expr::Field {
                     base: Box::new(expr),
                     name,

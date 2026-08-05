@@ -150,6 +150,12 @@ fn collect_referenced_symbols_from_stmts(stmts: &[Stmt], symbols: &mut HashSet<S
                 collect_referenced_symbols_from_stmts(then_body, symbols);
                 collect_referenced_symbols_from_stmts(else_body, symbols);
             }
+            Stmt::Match { value, arms, .. } => {
+                collect_referenced_symbols_from_expr(value, symbols);
+                for arm in arms {
+                    collect_referenced_symbols_from_stmts(&arm.body, symbols);
+                }
+            }
             Stmt::While { condition, body } => {
                 collect_referenced_symbols_from_expr(condition, symbols);
                 collect_referenced_symbols_from_stmts(body, symbols);
@@ -992,6 +998,19 @@ fn collect_stmt_variant_tags(stmt: &Stmt, tag_ids: &mut BTreeMap<String, i32>) {
                 collect_stmt_variant_tags(stmt, tag_ids);
             }
         }
+        Stmt::Match {
+            value,
+            enum_ty,
+            arms,
+        } => {
+            collect_expr_variant_tags(value, tag_ids);
+            collect_type_variant_tags(enum_ty, tag_ids);
+            for arm in arms {
+                for stmt in &arm.body {
+                    collect_stmt_variant_tags(stmt, tag_ids);
+                }
+            }
+        }
         Stmt::While { condition, body } => {
             collect_expr_variant_tags(condition, tag_ids);
             for stmt in body {
@@ -1264,6 +1283,22 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
             value: erase_expr_opaque_types(value),
             then_body: then_body.iter().map(erase_stmt_opaque_types).collect(),
             else_body: else_body.iter().map(erase_stmt_opaque_types).collect(),
+        },
+        Stmt::Match {
+            value,
+            enum_ty,
+            arms,
+        } => Stmt::Match {
+            value: erase_expr_opaque_types(value),
+            enum_ty: erase_type_opaque_types(enum_ty),
+            arms: arms
+                .iter()
+                .map(|arm| waluau_ast::EnumMatchArm {
+                    variant: arm.variant.clone(),
+                    ordinal: arm.ordinal,
+                    body: arm.body.iter().map(erase_stmt_opaque_types).collect(),
+                })
+                .collect(),
         },
         Stmt::While { condition, body } => Stmt::While {
             condition: erase_expr_opaque_types(condition),
@@ -3079,6 +3114,76 @@ impl Builder<'_> {
                 else_body,
             } => {
                 self.lower_if(condition, then_body, else_body, env, types)?;
+            }
+            Stmt::Match {
+                value,
+                enum_ty,
+                arms,
+            } => {
+                // HIR has already established that every variant appears once.
+                // Bind the scrutinee to an impossible source-level symbol so it
+                // is evaluated exactly once, then reuse the ordinary if/phi
+                // lowering for the exhaustive dispatch tree.
+                let match_symbol = SymbolId(usize::MAX);
+                let saved_value = env.insert(
+                    match_symbol,
+                    self.lower_expr(value, env, types, Some(enum_ty.clone()))?,
+                );
+                let saved_type = types.insert(match_symbol, enum_ty.clone());
+                let mut otherwise = arms
+                    .last()
+                    .expect("parser rejects empty matches")
+                    .body
+                    .clone();
+                for arm in arms[..arms.len() - 1].iter().rev() {
+                    let condition = Expr::Binary {
+                        op: BinaryOp::Eq,
+                        left: Box::new(Expr::Name(
+                            "$match".to_string(),
+                            Some(match_symbol),
+                            None,
+                        )),
+                        right: Box::new(Expr::Cast {
+                            expr: Box::new(Expr::Number(
+                                NumberLiteral {
+                                    raw: arm.ordinal.to_string(),
+                                },
+                                None,
+                            )),
+                            ty: enum_ty.clone(),
+                            span: None,
+                        }),
+                        resolved_name: None,
+                        span: None,
+                    };
+                    otherwise = vec![Stmt::If {
+                        condition,
+                        then_body: arm.body.clone(),
+                        else_body: otherwise,
+                    }];
+                }
+                for stmt in &otherwise {
+                    if self.current_block == DEAD_BLOCK {
+                        break;
+                    }
+                    self.lower_stmt(stmt, env, types)?;
+                }
+                match saved_value {
+                    Some(value) => {
+                        env.insert(match_symbol, value);
+                    }
+                    None => {
+                        env.remove(&match_symbol);
+                    }
+                }
+                match saved_type {
+                    Some(ty) => {
+                        types.insert(match_symbol, ty);
+                    }
+                    None => {
+                        types.remove(&match_symbol);
+                    }
+                }
             }
             Stmt::IfCast {
                 target_name,

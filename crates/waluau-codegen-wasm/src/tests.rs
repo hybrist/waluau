@@ -85,6 +85,32 @@ fn exports_top_level_code_as_main_without_a_start_section() {
 }
 
 #[test]
+fn emits_valid_wasm_for_nominal_enum_match() {
+    let source = r#"
+        enum Direction { north, east, south }
+        function score(direction: Direction): i32
+            match direction do
+            case Direction.north then return 1
+            case Direction.east then return 2
+            case Direction.south then return 3
+            end
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("nominal enum match module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("i32.eq"),
+        "enum dispatch should compare i32 tags:\n{wat}"
+    );
+}
+
+#[test]
 fn top_level_main_entry_point_takes_precedence_over_a_declared_main_export() {
     let source = r#"
         function main(): i32

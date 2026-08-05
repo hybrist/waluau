@@ -317,6 +317,17 @@ fn annotate_inferred_stmt_locals(
                     active_type_params,
                 )?;
             }
+            Stmt::Match { value, arms, .. } => {
+                annotate_inferred_expr_locals(value, vars, fn_signatures, active_type_params)?;
+                for arm in arms {
+                    annotate_inferred_stmt_locals(
+                        &mut arm.body,
+                        &mut vars.clone(),
+                        fn_signatures,
+                        active_type_params,
+                    )?;
+                }
+            }
             Stmt::While { condition, body } => {
                 annotate_inferred_expr_locals(condition, vars, fn_signatures, active_type_params)?;
                 annotate_inferred_stmt_locals(
@@ -1379,6 +1390,33 @@ fn resolve_stmt_type_refs(
     active_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     match stmt {
+        Stmt::Match {
+            value,
+            enum_ty,
+            arms,
+        } => {
+            *enum_ty = resolve_type_refs(
+                enum_ty,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                &mut Vec::new(),
+            )?;
+            resolve_expr_type_refs(value, raw_opaque, generic, opaque_cache, active_type_params)?;
+            for arm in arms {
+                for stmt in &mut arm.body {
+                    resolve_stmt_type_refs(
+                        stmt,
+                        raw_opaque,
+                        generic,
+                        opaque_cache,
+                        active_type_params,
+                    )?;
+                }
+            }
+            Ok(())
+        }
         Stmt::Let { ty, value, .. } => {
             if let Some(local_ty) = ty {
                 *local_ty = resolve_type_refs(
@@ -2102,6 +2140,15 @@ fn resolve_stmt_implicit_self(
     active_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     match stmt {
+        Stmt::Match { value, arms, .. } => {
+            resolve_expr_implicit_self(value, vars, fn_signatures, active_type_params)?;
+            for arm in arms {
+                for stmt in &mut arm.body {
+                    resolve_stmt_implicit_self(stmt, vars, fn_signatures, active_type_params)?;
+                }
+            }
+            Ok(())
+        }
         Stmt::FieldAssign { value, .. }
         | Stmt::Let { value, .. }
         | Stmt::Assign { value, .. }
@@ -2423,6 +2470,17 @@ fn annotate_stmt_resolved_members(
     active_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     match stmt {
+        Stmt::Match { value, arms, .. } => {
+            annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+            for arm in arms {
+                annotate_stmts_resolved_members(
+                    &mut arm.body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+            }
+        }
         Stmt::Let {
             name,
             rebindability,
@@ -2880,6 +2938,12 @@ fn fill_gsub_replacement_annotations(program: &mut Program) {
 fn fill_gsub_annotations_in_stmts(stmts: &mut [Stmt]) {
     for stmt in stmts {
         match stmt {
+            Stmt::Match { value, arms, .. } => {
+                fill_gsub_annotations_in_expr(value);
+                for arm in arms {
+                    fill_gsub_annotations_in_stmts(&mut arm.body);
+                }
+            }
             Stmt::Let { value, .. }
             | Stmt::Assign { value, .. }
             | Stmt::Return(value)

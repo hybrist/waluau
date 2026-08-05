@@ -1,4 +1,6 @@
-use waluau_ast::{AssignOp, BinaryOp, Binding, Expr, Rebindability, Span, Stmt, Type};
+use waluau_ast::{
+    AssignOp, BinaryOp, Binding, EnumMatchArm, Expr, Rebindability, Span, Stmt, Type,
+};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::TokenKind;
 
@@ -132,6 +134,10 @@ impl Parser {
     }
 
     pub(super) fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
+        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Identifier(keyword)) if keyword == "match")
+        {
+            return self.parse_match_stmt();
+        }
         if self.check_simple(&TokenKind::Local) {
             return self.parse_local_decl();
         }
@@ -282,6 +288,89 @@ impl Parser {
         }
 
         Ok(Stmt::Expr(self.parse_expr()?))
+    }
+
+    fn parse_match_stmt(&mut self) -> Result<Stmt, Diagnostic> {
+        let keyword = self.expect_identifier()?;
+        debug_assert_eq!(keyword, "match");
+        let value = self.parse_expr()?;
+        self.expect_simple(TokenKind::Do, "expected 'do' after match value")?;
+
+        let mut arms = Vec::new();
+        let mut enum_name: Option<String> = None;
+        while !self.check_simple(&TokenKind::End) {
+            let case = self.expect_identifier()?;
+            if case != "case" {
+                return Err(Diagnostic::new("expected 'case' or 'end' in match"));
+            }
+            let arm_enum = self.expect_identifier()?;
+            self.expect_simple(TokenKind::Dot, "expected '.' in enum match case")?;
+            let variant = self.expect_identifier()?;
+            self.expect_simple(TokenKind::Then, "expected 'then' after match case")?;
+
+            let Some(variants) = self.enums.get(&arm_enum) else {
+                return Err(Diagnostic::new(format!(
+                    "unknown enum '{arm_enum}' in match"
+                )));
+            };
+            if let Some(expected) = &enum_name {
+                if expected != &arm_enum {
+                    return Err(Diagnostic::new(format!(
+                        "match cases must use one enum; expected '{expected}', got '{arm_enum}'"
+                    )));
+                }
+            } else {
+                enum_name = Some(arm_enum.clone());
+            }
+            let Some(ordinal) = variants.iter().position(|name| name == &variant) else {
+                return Err(Diagnostic::new(format!(
+                    "unknown enum variant '{arm_enum}.{variant}'"
+                )));
+            };
+            if arms.iter().any(|arm: &EnumMatchArm| arm.variant == variant) {
+                return Err(Diagnostic::new(format!(
+                    "duplicate/unreachable match case '{arm_enum}.{variant}'"
+                )));
+            }
+
+            let scope_mark = self.definition_scope_mark();
+            let mut body = Vec::new();
+            while !self.check_simple(&TokenKind::End)
+                && !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Identifier(keyword)) if keyword == "case")
+            {
+                body.push(self.parse_stmt()?);
+            }
+            self.close_definition_scope(scope_mark, self.current_scope_boundary());
+            arms.push(EnumMatchArm {
+                variant,
+                ordinal: ordinal as i32,
+                body,
+            });
+        }
+        self.expect_simple(TokenKind::End, "expected 'end' after match")?;
+        let Some(enum_name) = enum_name else {
+            return Err(Diagnostic::new("match must contain at least one case"));
+        };
+        let variants = self.enums.get(&enum_name).expect("arm enum checked");
+        let missing = variants
+            .iter()
+            .filter(|variant| !arms.iter().any(|arm| &arm.variant == *variant))
+            .map(|variant| format!("{enum_name}.{variant}"))
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(Diagnostic::new(format!(
+                "non-exhaustive match for enum '{enum_name}'; missing: {}",
+                missing.join(", ")
+            )));
+        }
+        Ok(Stmt::Match {
+            value,
+            enum_ty: Type::Named {
+                name: enum_name,
+                type_args: Vec::new(),
+            },
+            arms,
+        })
     }
 
     fn parse_local_decl(&mut self) -> Result<Stmt, Diagnostic> {

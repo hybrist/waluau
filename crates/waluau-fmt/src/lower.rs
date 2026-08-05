@@ -38,6 +38,7 @@ fn tree(t: &Tree) -> Doc {
         K::DeclareProperty => declare_property(t),
         K::DeclareConst => declare_const(t),
         K::TypeDecl => type_decl(t),
+        K::EnumDecl => enum_decl(t),
 
         // Statements.
         K::LetStmt | K::ConstStmt => let_like(t),
@@ -51,6 +52,8 @@ fn tree(t: &Tree) -> Doc {
         K::ReturnStmt => return_stmt(t),
         K::BreakStmt | K::ContinueStmt => node_first_token(t),
         K::ExprStmt => node(&t.children[0]),
+        K::MatchStmt => match_stmt(t),
+        K::MatchArm => match_arm(t),
 
         // Pieces.
         K::BindingList => join(text(", "), t.children.iter().map(node)),
@@ -373,6 +376,20 @@ fn type_decl(t: &Tree) -> Doc {
     concat(parts)
 }
 
+fn enum_decl(t: &Tree) -> Doc {
+    let variants = t.children[3..t.children.len() - 1]
+        .iter()
+        .map(node)
+        .collect::<Vec<_>>();
+    concat([
+        node(&t.children[0]),
+        text(" "),
+        node(&t.children[1]),
+        text(" "),
+        bracketed_docs("{", "}", variants, true),
+    ])
+}
+
 // ---------------------------------------------------------------------------
 // Statements
 // ---------------------------------------------------------------------------
@@ -602,6 +619,34 @@ fn do_stmt(t: &Tree) -> Doc {
         block_body(&t.children[1]),
         hardline(),
         node(&t.children[2]), // end
+    ])
+}
+
+fn match_stmt(t: &Tree) -> Doc {
+    let mut parts = vec![
+        node(&t.children[0]),
+        text(" "),
+        node(&t.children[1]),
+        text(" "),
+        node(&t.children[2]),
+    ];
+    for arm in &t.children[3..t.children.len() - 1] {
+        parts.push(hardline());
+        parts.push(node(arm));
+    }
+    parts.push(hardline());
+    parts.push(node(t.children.last().expect("match end")));
+    concat(parts)
+}
+
+fn match_arm(t: &Tree) -> Doc {
+    concat([
+        node(&t.children[0]),
+        text(" "),
+        node(&t.children[1]),
+        text(" "),
+        node(&t.children[2]),
+        block_body(&t.children[3]),
     ])
 }
 
