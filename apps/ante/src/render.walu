@@ -19,6 +19,7 @@ local run_module = require("./run")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
+local divine_intervention = require("./divine_intervention")
 local box = require("./box_layout")
 local entity = require("./entity")
 local ink = require("./ink")
@@ -691,6 +692,102 @@ function fly_ease(clock: f64, delay: f64): f64
     return easing.in_out_cubic(t)
 end
 
+-- The fairy visits the three shared wards, then the two relics that complete
+-- their five-card formation. Relic targets follow the live fan rather than its
+-- closed layout, so the light lands on the card even while the row settles.
+function divine_target(
+    viewport: layout.State, target: i32, fan_parts: {f64}
+): Point
+    if target < 3 then
+        return slot_center(viewport, SLOT_MIDDLE, target, #fan_parts)
+    end
+    local hand_index: i32 = target - 3
+    local slot: box.Rect = hand_slot(
+        viewport, hand_index, fan_parts[hand_index], #fan_parts)
+    return point(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
+end
+
+function divine_fairy_position(
+    viewport: layout.State, clock: f64, fan_parts: {f64}
+): Point
+    local first_time: f64 = divine_intervention.contact_time(0)
+    local entrance: Point = point(-34.0, viewport.ward_y - 92.0)
+    if clock < first_time then
+        return lerp(
+            entrance, divine_target(viewport, 0, fan_parts),
+            easing.in_out_cubic(clock / first_time))
+    end
+    for target = 1::i32, divine_intervention.target_count - 1 do
+        local finish: f64 = divine_intervention.contact_time(target)
+        if clock < finish then
+            local start: f64 = divine_intervention.contact_time(target - 1)
+            return lerp(
+                divine_target(viewport, target - 1, fan_parts),
+                divine_target(viewport, target, fan_parts),
+                easing.in_out_cubic((clock - start) / (finish - start)))
+        end
+    end
+    local last: i32 = divine_intervention.target_count - 1
+    local depart: f64 = divine_intervention.contact_time(last)
+    local exit: Point = point(viewport.width + 38.0, viewport.player_y - 118.0)
+    return lerp(
+        divine_target(viewport, last, fan_parts), exit,
+        easing.in_out_cubic(
+            (clock - depart) / (divine_intervention.total_seconds - depart)))
+end
+
+function divine_flash(clock: f64): f64
+    local flash: f64 = 0.0
+    for target = 0::i32, divine_intervention.target_count - 1 do
+        local distance: f64 = math.abs(
+            clock - divine_intervention.contact_time(target))
+        if distance < 0.13 then
+            local strength: f64 = 1.0 - distance / 0.13
+            if strength > flash then flash = strength end
+        end
+    end
+    return flash
+end
+
+-- A tiny, restless ball of white light. Its mismatched sine rhythms keep the
+-- halo flickering without random state; at every landing the halo and core
+-- swell together into a bright contact flash over the converted card.
+--
+-- Like a card in flight it is drawn against the board's anchors rather than
+-- laid out: it is a visitor crossing the board, not a thing standing on it.
+function draw_divine_intervention(
+    surface: entity.Surface, clock: f64, active: bool, fan_parts: {f64}
+): unit
+    if not active or #fan_parts < 2 then return end
+    local graphics = surface.graphics
+    local viewport: layout.State = layout.current()
+    local at: Point = divine_fairy_position(viewport, clock, fan_parts)
+    local flicker: f64 = (math.sin(clock * 37.0) + math.sin(clock * 61.0)) * 1.4
+    local flash: f64 = divine_flash(clock)
+    local halo: f64 = 16.0 + flicker + flash * 20.0
+
+    graphics:set_color("#71717a")
+    graphics:fill_circle(at.x, at.y, halo)
+    graphics:set_color("#d4d4d8")
+    graphics:fill_circle(at.x, at.y, 11.0 + flash * 10.0)
+    graphics:set_color("#ffffff")
+    graphics:fill_circle(at.x, at.y, 6.0 + flash * 7.0)
+    -- Four orbiting motes sell the light as a living visitor rather than a
+    -- cursor, while staying entirely in the existing WebGL2 shape vocabulary.
+    for mote = 0::i32, 3::i32 do
+        local angle: f64 = clock * (4.0 + (mote::f64) * 0.35)
+            + (mote::f64) * math.pi * 0.5
+        local reach: f64 = halo + 5.0 + (mote::f64)
+        graphics:fill_circle(
+            at.x + math.cos(angle) * reach,
+            at.y + math.sin(angle) * reach,
+            1.6 + flash * 1.5)
+    end
+    centered_line(
+        surface, viewport, "DIVINE INTERVENTION",
+        viewport.ward_y - 72.0, 11.0, "#ffffff")
+end
+
 -- One winner card travelling from its revealed pose (`start`, a card centre)
 -- to a flank of the formation (`dest`, a card top-left): the centre lerps, the
 -- source tilt unwinds to flat, and the same sin-driven lift the other flights
@@ -1353,6 +1450,7 @@ return {
     draw_audio_error = draw_audio_error,
     draw_backdrop = draw_backdrop,
     draw_help = draw_help,
+    draw_divine_intervention = draw_divine_intervention,
     -- One relic turning over, which is the board's own flip and the storybook's.
     draw_flipping_card = draw_flipping_card,
     -- The band the player's hand is dealt into, so a story can run the real

@@ -59,7 +59,13 @@ function body(): entity.Node
         modal.heading("2. BREACH"),
         modal.body_line("BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS."),
         modal.body_line(
-            "LATER BREACHES ARE WORTH MORE MANA. IT CARRIES TO THE NEXT VAULT."),
+            "LATER BREACHES ARE WORTH MORE MANA."
+                .. " THREE ARCH MAGE WINS END THE RUN."),
+        entity.gap(0.0, BLOCK_GAP - LINE_GAP),
+        modal.heading("3. THE ANTE"),
+        modal.body_line(
+            "CLEARING A VAULT COSTS ITS ANTE IN MANA."
+                .. " WHAT IS LEFT CARRIES ON."),
         entity.gap(0.0, BLOCK_GAP - LINE_GAP),
         legend(),
         entity.gap(0.0, BLOCK_GAP - LINE_GAP),
@@ -70,11 +76,13 @@ function body(): entity.Node
 end
 
 -- "Three ward holds" would read as though a stalemate counted; only breaches
--- the Arch Mage actually wins end the vault early.
+-- the Arch Mage actually wins end the run. Five breaches is the vault; the
+-- ante is what leaving it costs, which is a third thing to learn and so a
+-- third numbered block — the card is a column, so it simply gets longer.
 function node(): entity.Node
     return modal.node(
         "THE JOB",
-        "SURVIVE FIVE BREACHES PER VAULT. THREE ARCH MAGE WINS END THE RUN",
+        "SURVIVE FIVE BREACHES, THEN PAY THE ANTE TO WALK OUT",
         body())
 end
 

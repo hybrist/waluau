@@ -30,6 +30,7 @@ local shop = require("./shop")
 local shop_render = require("./shop_render")
 local layout = require("./layout")
 local entity = require("./entity")
+local divine_intervention = require("./divine_intervention")
 
 type State = {
     run: run_module.State,
@@ -37,6 +38,7 @@ type State = {
     ui: flow.State,
     presentation: choreography.State,
     shop: shop.State,
+    intervention: divine_intervention.State,
     leaving_fence: bool,
     fence_fade: f64
 }
@@ -52,6 +54,7 @@ function new(): State
         ui = flow.new(),
         presentation = choreography.new(),
         shop = shop.new(),
+        intervention = divine_intervention.new(),
         leaving_fence = false,
         fence_fade = 0.0,
     }
@@ -71,6 +74,7 @@ function deal_vault(state: State): unit
     state.rules:reset(run:boss(), run.spells, run.mana)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
+    divine_intervention.reset(state.intervention)
     -- The opening deal is already reflected in rules state; choreography
     -- reveals that settled result as the screen comes alive.
     choreography.opening_deal(game.view(state.rules), state.presentation)
@@ -103,13 +107,17 @@ end
 -- run, or the first of a fresh one.
 --
 -- A taken vault is followed by the fence rather than by a deal: the run has
--- already moved on and is holding the mana it carried out, which is exactly
--- what the intermission spends. A lost run has nothing to spend and no loadout
--- to spend it on, so its fresh first vault is dealt straight away.
+-- already moved on and is holding what the ante left of the mana it carried
+-- out, which is exactly what the intermission spends. Taking the last vault of
+-- the table walks the same way — the run is won and goes on regardless. A lost
+-- run has nothing to spend and no loadout to spend it on, so its fresh first
+-- vault is dealt straight away.
 function advance_run(state: State, city: city_map.State): unit
-    local cleared: bool = state.rules:is_victory()
-    state.run:settle(cleared, state.rules:mana())
-    if cleared then
+    local outcome: i32 = state.run:settle(
+        state.rules:is_victory(), state.rules:mana())
+    if outcome == run_module.outcome_advance
+        or outcome == run_module.outcome_won
+    then
         shop.open_for(state.shop, state.run)
         state.leaving_fence = false
         return
@@ -126,6 +134,13 @@ end
 function leave_shop(state: State): unit
     state.leaving_fence = true
     deal_vault(state)
+end
+
+-- Which stop of the route carries the last vault the run's ante table is
+-- written for. The route runs past it — a run that takes it walks on into the
+-- endless city — so this names a landmark, not an end.
+function landmark_stop(state: State): i32
+    return city_map.vault_stop(run_module.run_length(state.run.rush))
 end
 
 -- Which stop of the route the run stands on: the vendor before the live vault
@@ -183,6 +198,18 @@ function fence_open(state: State): bool
     return state.shop.open
 end
 
+-- The verdict on the live vault, which only this screen can see: the run has
+-- not settled on it yet, because the verdict is drawn over a finished board and
+-- settling only happens once the player asks for what comes next. Reading it
+-- from the same classifier the settle uses is what keeps the screen and the
+-- movement it announces in agreement. A live vault has no verdict yet.
+function run_outcome(state: State): i32
+    if not state.rules:is_finished() then return run_module.outcome_none end
+    local run: run_module.State = state.run
+    return run_module.outcome_of(
+        run.vault, run.rush, state.rules:is_victory(), state.rules:mana())
+end
+
 function key_command(key: string): i32
     if key == "r" or key == "R" then return flow.command_restart end
     if key == "h" or key == "H" then return flow.command_history end
@@ -203,6 +230,12 @@ function update(state: State, city: city_map.State, dt: f64): i32
     -- the map under them to finish dissolving before they are taken down.
     if on_map(state) then return 0 end
     if state.leaving_fence and not city_map.visible(city) then close_fence(state) end
+    if state.intervention.active then
+        choreography.update_fan(state.presentation, flow.fan_focus(state.ui, true), dt)
+        local touched: {i32} = divine_intervention.update(state.intervention, dt)
+        for target in touched do state.rules:divine_intervention(target) end
+        return 0
+    end
     local ui: flow.State = state.ui
     local presentation: choreography.State = state.presentation
     local animating: bool = choreography.is_animating(presentation)
@@ -234,7 +267,7 @@ function draw_vault(state: State, surface: entity.Surface): unit
     choreography.draw(
         surface,
         game.view(state.rules),
-        run_module.view(state.run),
+        run_module.view(state.run, run_outcome(state)),
         state.presentation,
         {
             hand_focus = flow.fan_focus(
@@ -249,6 +282,9 @@ function draw_vault(state: State, surface: entity.Surface): unit
             casting = ui.casting,
             cast_slot = ui.cast_slot,
         })
+    render.draw_divine_intervention(
+        surface, state.intervention.clock, state.intervention.active,
+        state.presentation.fan_parts)
 end
 
 -- The fence's offers, at the opacity of the street they are laid out on: they
@@ -359,6 +395,21 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         end
         return ACTION_NONE
     end
+    -- Recognition sits ahead of ordinary board controls so the completing A
+    -- belongs to the invocation, not to one last cursor movement. Earlier
+    -- arrows remain normal play until the full hidden sequence is known.
+    if state.intervention.active then return ACTION_NONE end
+    if not rules:is_finished()
+        and not ui.revealing
+        and ui.modal == flow.modal_none
+        and not choreography.firebolt_pending(presentation)
+        and divine_intervention.keypressed(state.intervention, key)
+    then
+        choreography.skip(presentation)
+        flow.clear_picks(ui)
+        ui.casting = false
+        return ACTION_NONE
+    end
     -- Keep the struck ward stable until Firebolt's burn commits its discard
     -- and replacement. Other spell conditions are persistent and do not lock
     -- the board, but advancing the turn during this one-shot effect could make
@@ -457,6 +508,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
             shop_render.row_at(viewport, x, y, shop.row_count(state.shop, state.run)))
         return
     end
+    if state.intervention.active then return end
     local ui: flow.State = state.ui
     if flow.gate(
         ui, state.rules:is_finished(),
@@ -502,6 +554,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         end
         return
     end
+    if state.intervention.active then return end
     if choreography.firebolt_pending(state.presentation) then return end
     if consume_gate(state, city, flow.command_primary) then return end
 
@@ -597,6 +650,7 @@ function restore(
         ui = restored_ui,
         presentation = presentation::choreography.State,
         shop = intermission::shop.State,
+        intervention = divine_intervention.new(),
         -- Leaving a fence is a moment of movement, not a phase of the run. A
         -- snapshot lands on one side of it: an open fence comes back standing,
         -- and `place_city` puts the map and the offers where that leaves the
@@ -620,6 +674,7 @@ return {
     mousepressed = mousepressed,
     snapshot = snapshot,
     restore = restore,
+    landmark_stop = landmark_stop,
     action_none = ACTION_NONE,
     action_exit = ACTION_EXIT,
 }

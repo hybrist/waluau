@@ -10,6 +10,7 @@ local label = require("./entities/label")
 local capsule = require("./entities/capsule")
 local action_bar = require("./entities/action_bar")
 local modal = require("./entities/modal")
+local verdict = require("./entities/verdict")
 
 function blank(width: f64, height: f64): entity.Node
     return entity.sized(
@@ -124,6 +125,23 @@ describe("type-sized entities", function(): unit
         expect(action_bar.hit(metrics(), actions, band, 300.0, 110.0)):toBe(1)
         expect(action_bar.hit(metrics(), actions, band, 10.0, 110.0)):toBe(-1)
         expect(action_bar.hit(metrics(), actions, band, 100.0, 200.0)):toBe(-1)
+    end)
+
+    it("sets a verdict's two figures side by side and centred", function(): unit
+        local page: box.Rect = entity.rect(0.0, 0.0, 600.0, 200.0)
+        local pair: entity.Node = verdict.ledger("MANA HELD", 7, "ANTE OWED", 12)
+        local size: box.Intrinsic = pair.measure(metrics())
+
+        -- Two figures and the daylight between them, and a box that will take
+        -- the whole width the page stretches it to so the pair sits centred.
+        expect(size.preferred_width > verdict.ledger_gap):toBe(true)
+        expect(size.max_width > size.preferred_width):toBe(true)
+
+        local placed: {box.Rect} = entity.place(
+            metrics(), { pair },
+            entity.row(0.0, box.justify_center, box.align_start),
+            page)
+        expect(placed[0].x + placed[0].width * 0.5):toBe(300.0)
     end)
 
     it("keeps a modal on one page until its body outgrows it", function(): unit

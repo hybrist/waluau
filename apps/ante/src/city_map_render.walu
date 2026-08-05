@@ -234,11 +234,16 @@ end
 -- `alpha` carries the house itself and `label_alpha` the writing under it: a
 -- house being gone into keeps its walls all the way in while its map label,
 -- which would be a banner across the screen by then, drops away early.
+-- `final` is the house the run's table ends on. The route does not stop there —
+-- the city goes on and so does a run that took it — so it is drawn as a landmark
+-- walked past rather than as a terminus: a second roof over the first, and a
+-- label that says which vault it is the last of.
 function draw_vault_stop(
     graphics: Graphics,
     stop: city_map.Stop,
     label: string,
     reached: bool,
+    final: bool,
     alpha: f64,
     label_alpha: f64
 ): unit
@@ -251,16 +256,26 @@ function draw_vault_stop(
     graphics:stroke_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
     graphics:line(stop.x - 18.0, stop.y - 12.0, stop.x, stop.y - 24.0)
     graphics:line(stop.x, stop.y - 24.0, stop.x + 18.0, stop.y - 12.0)
+    if final then
+        graphics:line(stop.x - 22.0, stop.y - 17.0, stop.x, stop.y - 31.0)
+        graphics:line(stop.x, stop.y - 31.0, stop.x + 22.0, stop.y - 17.0)
+    end
     if label_alpha <= 0.0 then return end
     -- The dial is the marker saying "vault", not part of the building: a house
     -- being walked into keeps its walls and gives that up, rather than hanging
     -- a storey-high disc in the room.
     graphics:set_color(ink.fade(tone, label_alpha))
     graphics:fill_circle(stop.x, stop.y + 1.0, 4.0)
+    local writing: string = "VAULT " .. label
+    local plate: f64 = 52.0
+    if final then
+        writing = writing .. "   LAST"
+        plate = 86.0
+    end
     graphics:set_color(ink.fade("#0b0c12", label_alpha * 0.9))
-    graphics:fill_rectangle(stop.x - 26.0, stop.y + 19.0, 52.0, 17.0)
+    graphics:fill_rectangle(stop.x - plate * 0.5, stop.y + 19.0, plate, 17.0)
     ink.text_centered(
-        graphics, "VAULT " .. label, stop.x, stop.y + 32.0, 10,
+        graphics, writing, stop.x, stop.y + 32.0, 10,
         ink.fade(tone, label_alpha))
 end
 
@@ -293,12 +308,16 @@ function entered_stop(state: city_map.State): i32
     return math.floor(state.target + 0.5)::i32
 end
 
+-- `landmark` is the stop the run's last authored vault stands on, or -1 for a
+-- map nobody is running — the menu's drifting view. A stop index rather than a
+-- vault number: this module lays out a route and does not know what a run is.
 function draw_stops(
     state: city_map.State,
     graphics: Graphics,
     left: f64, right: f64, top: f64, bottom: f64,
     alpha: f64,
-    furniture: f64
+    furniture: f64,
+    landmark: i32
 ): unit
     local last: i32 = city_map.stop_count(state) - 1
     local entered: i32 = entered_stop(state)
@@ -306,15 +325,16 @@ function draw_stops(
         local stop: city_map.Stop = state.stops[index]
         if stop.x >= left and stop.x <= right and stop.y >= top and stop.y <= bottom then
             local reached: bool = (index::f64) <= state.travel + 0.001
+            local final: bool = index == landmark
             if index == entered then
                 draw_vault_stop(
                     graphics, stop, tostring(city_map.stop_vault(index)),
-                    reached, alpha, furniture)
+                    reached, final, alpha, furniture)
             elseif furniture > 0.0 then
                 if stop.vault then
                     draw_vault_stop(
                         graphics, stop, tostring(city_map.stop_vault(index)),
-                        reached, furniture, furniture)
+                        reached, final, furniture, furniture)
                 else
                     draw_vendor_stop(graphics, stop, reached, furniture)
                 end
@@ -349,7 +369,13 @@ function apply_camera(state: city_map.State, graphics: Graphics): unit
     graphics:translate(-state.camera_x, -state.camera_y)
 end
 
-function draw(state: city_map.State, graphics: Graphics, streak_color: string, alpha: f64): unit
+function draw(
+    state: city_map.State,
+    graphics: Graphics,
+    streak_color: string,
+    alpha: f64,
+    landmark: i32
+): unit
     if alpha <= 0.0 then return end
     -- A map that owns the frame clears it; one handing the screen to a vault
     -- must leave the vault underneath it to come through.
@@ -406,7 +432,8 @@ function draw(state: city_map.State, graphics: Graphics, streak_color: string, a
         draw_route_ahead(state, graphics, furniture)
         draw_route_done(state, graphics, furniture)
     end
-    draw_stops(state, graphics, left, right, top, bottom, alpha, furniture)
+    draw_stops(
+        state, graphics, left, right, top, bottom, alpha, furniture, landmark)
     if furniture > 0.0 then draw_party(state, graphics, furniture) end
     graphics:pop()
 end

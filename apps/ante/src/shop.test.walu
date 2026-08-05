@@ -13,6 +13,10 @@ local shop = require("./shop")
 local function shopping_run(spell: i32, mana: i32): run.State
     local state: run.State = run.new(spell, false)
     state:settle(true, mana)
+    -- The purse is set rather than carried: settle charges the vault its ante
+    -- on the way out, and what the ante costs is the run module's business.
+    -- Every price below is about the pool, not about how it got that size.
+    state.mana = mana
     return state
 end
 

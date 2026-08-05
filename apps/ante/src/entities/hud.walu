@@ -24,22 +24,32 @@ const TITLE_INK: string = "#fbbf24"
 const MANA_INK: string = "#67e8f9"
 const CAPTION_INK: string = "#155e75"
 const BOSS_INK: string = "#b45309"
+-- The mana pile once it no longer covers the ante.
+const SHORT_INK: string = "#fb7185"
 
--- Which vault of the sequence the robbers are standing in, how many they have
--- already taken, and whether this is one of the boss battles the run lands on
--- every third vault. Boss vaults wear the warning ink so the shrinking fan is
--- never a surprise.
+-- How far along the sequence the robbers are standing, and whether this is one
+-- of the boss battles the run lands on every third vault. Boss vaults wear the
+-- warning ink so the shrinking fan is never a surprise, and the last vault of
+-- the table wears it too.
+--
+-- Past that vault the denominator would be a lie — the city keeps going — so a
+-- run walking on says so instead, and counts what it has taken.
 --
 -- Spaces rather than a dash: the vault font has no em dash glyph, so a
 -- separator written as one renders as a gap anyway.
 function marker_text(run: run_module.View): string
     local text: string = "VAULT " .. tostring(run.vault)
-    if run.boss then text = text .. "   BOSS" end
-    return text .. "   CLEARED " .. tostring(run.cleared)
+    if run.vault > run.run_length then
+        return text .. "   ENDLESS   CLEARED " .. tostring(run.cleared)
+    end
+    text = text .. " / " .. tostring(run.run_length)
+    if run.vault == run.run_length then return text .. "   FINAL VAULT" end
+    if run.boss then return text .. "   BOSS" end
+    return text
 end
 
 function marker_ink(run: run_module.View): string
-    if run.boss then return BOSS_INK end
+    if run.boss or run.vault >= run.run_length then return BOSS_INK end
     return CAPTION_INK
 end
 
@@ -50,10 +60,16 @@ function title_block(run: run_module.View): entity.Node
     }, entity.column(STACK_GAP, box.justify_start, box.align_start))
 end
 
-function mana_block(state: game.View): entity.Node
+-- The mana on hand against the ante it owes, and the one glance that says
+-- whether the vault is being fought from above water or below it: the pile
+-- turns to warning ink the moment it stops covering what leaving costs.
+function mana_block(state: game.View, run: run_module.View): entity.Node
+    local tone: string = MANA_INK
+    if state.player_points < run.ante then tone = SHORT_INK end
     return entity.flow({
-        label.right(tostring(state.player_points), TITLE_SIZE, MANA_INK),
-        label.right("MANA", CAPTION_SIZE, CAPTION_INK),
+        label.right(tostring(state.player_points), TITLE_SIZE, tone),
+        label.right(
+            "MANA   ANTE " .. tostring(run.ante), CAPTION_SIZE, CAPTION_INK),
     }, entity.column(STACK_GAP, box.justify_start, box.align_end))
 end
 
@@ -64,7 +80,7 @@ function node(state: game.View, run: run_module.View): entity.Node
     return entity.flow({
         title_block(run),
         orb_track.node(state),
-        mana_block(state),
+        mana_block(state, run),
     }, entity.row(0.0, box.justify_space_between, box.align_end))
 end
 

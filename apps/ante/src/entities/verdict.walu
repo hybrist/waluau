@@ -1,6 +1,10 @@
 -- The verdict of the vault just fought, read as a moment in the run. Taking it
--- is an intermission — the mana on the table is the stake the next vault opens
--- with — while losing it is where the whole run stops.
+-- is an intermission — the mana left after the ante is the stake the next vault
+-- opens with — while losing it is where the whole run stops.
+--
+-- There are four of those moments and they are branched on the run's own
+-- classifier rather than re-decided from the board, so what this screen says
+-- and what the run then does are the same answer.
 
 local game = require("../game")
 local run_module = require("../run")
@@ -10,69 +14,125 @@ local modal = require("./modal")
 local label = require("./label")
 
 const HEADLINE_SIZE: f64 = 18.0
+const LEDGER_HEADLINE_SIZE: f64 = 15.0
 const FIGURE_SIZE: f64 = 44.0
+const LEDGER_FIGURE_SIZE: f64 = 40.0
 const NOTE_SIZE: f64 = 13.0
 const KEYS_SIZE: f64 = 12.0
 
 const HEADLINE_INK: string = "#67e8f9"
 const FIGURE_INK: string = "#f8fafc"
+const OWED_INK: string = "#fb7185"
 const NOTE_INK: string = "#d4d4d8"
 const QUIET_INK: string = "#8a8a92"
+const WON_INK: string = "#fbbf24"
 
 const BLOCK_GAP: f64 = 26.0
 const FIGURE_GAP: f64 = 18.0
+-- Daylight between the two halves of a comparison, wide enough that they read
+-- as two figures rather than one number split in half.
+const LEDGER_GAP: f64 = 64.0
 
-function title_of(state: game.View, run: run_module.View): string
-    if game.view_cleared(state) then
-        return "VAULT " .. tostring(run.vault) .. " IS YOURS"
-    end
-    return "THE RUN ENDS"
+function walks_on(run: run_module.View): bool
+    return run.outcome == run_module.outcome_advance
+        or run.outcome == run_module.outcome_won
 end
 
-function subtitle_of(state: game.View, run: run_module.View): string
-    if game.view_cleared(state) then
-        return "FIVE BREACHES COMPLETE. THE RUN GOES ON"
-    end
-    return "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
-        .. ". THE CARRIED MANA GOES WITH IT"
+function title_of(run: run_module.View): string
+    if run.outcome == run_module.outcome_lost_vault then return "THE RUN ENDS" end
+    if run.outcome == run_module.outcome_lost_ante then return "THE RUN ENDS" end
+    if run.outcome == run_module.outcome_won then return "THE HEIST IS DONE" end
+    return "VAULT " .. tostring(run.vault) .. " IS YOURS"
 end
 
--- What the run walks away with: the vaults taken when it is over, the mana
--- carried on when it is not.
-function tally(state: game.View, run: run_module.View): entity.Node
-    local caption: string = "VAULTS TAKEN"
-    local figure: string = tostring(run.cleared)
-    if game.view_cleared(state) then
-        caption = "MANA CARRIED ON"
-        figure = tostring(state.player_points)
+function subtitle_of(run: run_module.View): string
+    if run.outcome == run_module.outcome_lost_vault then
+        return "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
+            .. ". THE CARRIED MANA GOES WITH IT"
     end
+    -- The vault opened and the robbers still could not afford to leave it.
+    if run.outcome == run_module.outcome_lost_ante then
+        return "VAULT " .. tostring(run.vault) .. " OPENED, BUT THE ANTE WAS SHORT"
+    end
+    if run.outcome == run_module.outcome_won then
+        return "ALL " .. tostring(run.run_length)
+            .. " VAULTS TAKEN. THE CITY GOES ON PAST THEM"
+    end
+    return "FIVE BREACHES COMPLETE. THE RUN GOES ON"
+end
+
+-- One figure under its caption.
+function figure(
+    caption: string, caption_ink: string, value: string,
+    figure_ink: string, caption_size: f64, figure_size: f64
+): entity.Node
     return modal.column({
-        label.middle(caption, HEADLINE_SIZE, HEADLINE_INK),
-        label.middle(figure, FIGURE_SIZE, FIGURE_INK),
+        label.middle(caption, caption_size, caption_ink),
+        label.middle(value, figure_size, figure_ink),
     }, FIGURE_GAP)
+end
+
+-- Two figures side by side, for the verdict that is about a comparison: what
+-- was held against what was owed. A screen that showed only the shortfall would
+-- read as an arbitrary death.
+function ledger(
+    left_label: string, left_value: i32, right_label: string, right_value: i32
+): entity.Node
+    return entity.wide(entity.flow({
+        figure(
+            left_label, HEADLINE_INK, tostring(left_value), FIGURE_INK,
+            LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
+        figure(
+            right_label, OWED_INK, tostring(right_value), OWED_INK,
+            LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
+    }, entity.row(LEDGER_GAP, box.justify_center, box.align_start)))
+end
+
+-- What the run walks away with. A lost vault has only what it took; the other
+-- three are all comparisons against the ante, so they are two figures.
+function tally(state: game.View, run: run_module.View): entity.Node
+    if run.outcome == run_module.outcome_lost_vault then
+        return figure(
+            "VAULTS TAKEN", HEADLINE_INK, tostring(run.cleared), FIGURE_INK,
+            HEADLINE_SIZE, FIGURE_SIZE)
+    end
+    if run.outcome == run_module.outcome_lost_ante then
+        return ledger("MANA HELD", state.player_points, "ANTE OWED", run.ante)
+    end
+    if run.outcome == run_module.outcome_won then
+        return figure(
+            "MANA WALKED OUT WITH", HEADLINE_INK,
+            tostring(state.player_points - run.ante), WON_INK,
+            HEADLINE_SIZE, FIGURE_SIZE)
+    end
+    return ledger(
+        "MANA CARRIED ON", state.player_points - run.ante, "ANTE PAID", run.ante)
 end
 
 function ahead_text(run: run_module.View): string
     local text: string = "NEXT: VAULT " .. tostring(run.vault + 1)
-    if run.next_is_boss then return text .. "   BOSS BATTLE" end
-    return text
+    if run.next_is_boss then text = text .. "   BOSS BATTLE" end
+    return text .. "   ANTE " .. tostring(run.ante_ahead)
 end
 
 -- The next vault is not dealt straight off the verdict: the fence stands
--- between them, spending this pile of mana.
-function onward(state: game.View, run: run_module.View): {entity.Node}
-    if game.view_cleared(state) then
+-- between them, spending this pile of mana. A run that has walked off the end
+-- of the table has no fence ahead of it, only more city.
+function onward(run: run_module.View): {entity.Node}
+    if not walks_on(run) then
         return {
-            label.middle(ahead_text(run), NOTE_SIZE, modal.keys_ink),
             label.middle(
-                "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER",
+                "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER",
                 KEYS_SIZE, modal.keys_ink),
         }
     end
+    local prompt: string = "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER"
+    if run.outcome == run_module.outcome_won then
+        prompt = "ENTER OR CLICK WALKS ON INTO THE ENDLESS CITY"
+    end
     return {
-        label.middle(
-            "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER",
-            KEYS_SIZE, modal.keys_ink),
+        label.middle(ahead_text(run), NOTE_SIZE, modal.keys_ink),
+        label.middle(prompt, KEYS_SIZE, modal.keys_ink),
     }
 end
 
@@ -85,7 +145,7 @@ function body(state: game.View, run: run_module.View): entity.Node
             NOTE_SIZE, NOTE_INK),
         entity.gap(0.0, BLOCK_GAP),
     }
-    for line in onward(state, run) do table.insert(lines, line) end
+    for line in onward(run) do table.insert(lines, line) end
     table.insert(lines, entity.gap(0.0, BLOCK_GAP))
     table.insert(lines, label.middle(
         "R RESTARTS THE RUN   M RETURNS TO MENU", KEYS_SIZE, QUIET_INK))
@@ -94,8 +154,13 @@ function body(state: game.View, run: run_module.View): entity.Node
 end
 
 function node(state: game.View, run: run_module.View): entity.Node
-    return modal.node(
-        title_of(state, run), subtitle_of(state, run), body(state, run))
+    return modal.node(title_of(run), subtitle_of(run), body(state, run))
 end
 
-return { node = node }
+return {
+    node = node,
+    -- The comparison the three ante-facing verdicts are all about, exported so
+    -- its two halves can be measured without playing a vault to reach one.
+    ledger = ledger,
+    ledger_gap = LEDGER_GAP,
+}
