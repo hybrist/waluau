@@ -1673,6 +1673,7 @@ pub(crate) fn build_function(
         None
     };
 
+    let symbol_storage_types = type_env.clone();
     let mut builder = Builder {
         function: out,
         current_block: BlockId(0),
@@ -1692,6 +1693,7 @@ pub(crate) fn build_function(
         tag_ids,
         vararg_value,
         discriminants: HashMap::new(),
+        symbol_storage_types,
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -1748,6 +1750,10 @@ struct Builder<'a> {
     /// symbol and the payload types on the success/failure paths, so branching
     /// on `ok` (or `assert(ok)`) narrows `v` and unboxes it from its anyref slot.
     discriminants: HashMap<SymbolId, DiscriminantLink>,
+    /// Runtime storage types for named values. Flow narrowing may replace a
+    /// record field's source-level type in the branch-local type environment,
+    /// but it does not change the shape of the record already in storage.
+    symbol_storage_types: HashMap<SymbolId, Type>,
 }
 
 #[derive(Clone)]
@@ -2286,6 +2292,7 @@ impl Builder<'_> {
             body_env.insert(symbol_id, value);
         }
         self.function.value_symbols.insert(value, symbol_id);
+        self.symbol_storage_types.insert(symbol_id, ty.clone());
     }
 
     fn bind_local_value(
@@ -2307,6 +2314,7 @@ impl Builder<'_> {
             env.insert(symbol_id, value);
         }
         self.function.value_symbols.insert(value, symbol_id);
+        self.symbol_storage_types.insert(symbol_id, ty.clone());
         types.insert(symbol_id, ty);
     }
 
@@ -2904,6 +2912,8 @@ impl Builder<'_> {
                             });
                             env.insert(*base_symbol_id, rebuilt);
                             self.function.value_symbols.insert(rebuilt, *base_symbol_id);
+                            self.symbol_storage_types
+                                .insert(*base_symbol_id, updated_ty.clone());
                             types.insert(*base_symbol_id, updated_ty);
                             return Ok(());
                         }
@@ -6034,12 +6044,29 @@ impl Builder<'_> {
                 let field_ty = base_ty
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                let storage_field_ty = match base.as_ref() {
+                    Expr::Name(_, Some(symbol_id), _) => self
+                        .symbol_storage_types
+                        .get(symbol_id)
+                        .and_then(|ty| ty.record_field(name))
+                        .unwrap_or_else(|| field_ty.clone()),
+                    _ => field_ty.clone(),
+                };
                 let base = self.lower_expr(base, env, types, Some(base_ty))?;
                 let value = self.emit(Instruction::StructGet {
                     base,
                     field: name.clone(),
-                    field_ty: field_ty.clone(),
+                    field_ty: storage_field_ty.clone(),
                 });
+                let value = if storage_field_ty.nullable_inner().as_ref() == Some(&field_ty) {
+                    self.emit(Instruction::Cast {
+                        value,
+                        from: storage_field_ty,
+                        to: field_ty.clone(),
+                    })
+                } else {
+                    self.coerce_value(value, storage_field_ty, Some(field_ty.clone()))?
+                };
                 self.coerce_value(value, field_ty, expected)?
             }
         };
@@ -6328,6 +6355,7 @@ impl Builder<'_> {
             captures.iter().map(|(id, _)| *id).collect();
         capture_param_symbols.extend(nested_inner_captures);
 
+        let symbol_storage_types = nested_types.clone();
         let mut nested = Builder {
             function: lifted,
             current_block: BlockId(0),
@@ -6347,6 +6375,7 @@ impl Builder<'_> {
             tag_ids: self.tag_ids,
             vararg_value: None,
             discriminants: HashMap::new(),
+            symbol_storage_types,
         };
         if let Some(_name) = &function.name {
             let symbol_id = function.symbol_id.expect("resolved symbol_id");

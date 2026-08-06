@@ -1173,6 +1173,22 @@ fn boxed_nullable_pair_equality_conformance_compiles() {
 }
 
 #[test]
+fn nullable_numeric_record_field_conformance_validates() {
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../builtins/core.walu"),
+        include_str!("../../../conformance/nullable_numeric_record_fields.walu"),
+    );
+    let program = waluau_parser::parse(&source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("nullable numeric record field reads should emit valid wasm");
+}
+
+#[test]
 fn declared_host_event_callback_import_exports_trampoline() {
     let source = r#"
         type Event = extern

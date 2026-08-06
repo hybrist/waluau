@@ -1,0 +1,93 @@
+-- Flow-narrowed nullable numeric record fields unbox from their record storage
+-- in both ordinary value positions and call arguments. Explicit casts use the
+-- same field-read lowering path.
+
+type Options = { gap: f64?, count: i32? }
+
+function accept_f64(value: f64): f64
+    return value
+end
+
+function accept_i32(value: i32): i32
+    return value
+end
+
+function f64_narrowed_value(options: Options): f64
+    if options.gap ~= nil then
+        local value: f64 = options.gap
+        return value
+    end
+    return -1.0
+end
+
+function f64_cast_value(options: Options): f64
+    if options.gap ~= nil then
+        local value: f64 = options.gap::f64
+        return value
+    end
+    return -1.0
+end
+
+function f64_narrowed_argument(options: Options): f64
+    if options.gap ~= nil then
+        return accept_f64(options.gap)
+    end
+    return -1.0
+end
+
+function f64_cast_argument(options: Options): f64
+    if options.gap ~= nil then
+        return accept_f64(options.gap::f64)
+    end
+    return -1.0
+end
+
+function i32_narrowed_value(options: Options): i32
+    if options.count ~= nil then
+        local value: i32 = options.count
+        return value
+    end
+    return -1
+end
+
+function i32_cast_value(options: Options): i32
+    if options.count ~= nil then
+        local value: i32 = options.count::i32
+        return value
+    end
+    return -1
+end
+
+function i32_narrowed_argument(options: Options): i32
+    if options.count ~= nil then
+        return accept_i32(options.count)
+    end
+    return -1
+end
+
+function i32_cast_argument(options: Options): i32
+    if options.count ~= nil then
+        return accept_i32(options.count::i32)
+    end
+    return -1
+end
+
+local present: Options = { gap = 2.5, count = 7 }
+assert(f64_narrowed_value(present) == 2.5)
+assert(f64_cast_value(present) == 2.5)
+assert(f64_narrowed_argument(present) == 2.5)
+assert(f64_cast_argument(present) == 2.5)
+assert(i32_narrowed_value(present) == 7)
+assert(i32_cast_value(present) == 7)
+assert(i32_narrowed_argument(present) == 7)
+assert(i32_cast_argument(present) == 7)
+
+local absent: Options = { gap = nil, count = nil }
+assert(f64_narrowed_value(absent) == -1.0)
+assert(f64_cast_value(absent) == -1.0)
+assert(f64_narrowed_argument(absent) == -1.0)
+assert(f64_cast_argument(absent) == -1.0)
+assert(i32_narrowed_value(absent) == -1)
+assert(i32_cast_value(absent) == -1)
+assert(i32_narrowed_argument(absent) == -1)
+assert(i32_cast_argument(absent) == -1)
