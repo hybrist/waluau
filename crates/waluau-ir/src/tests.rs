@@ -386,6 +386,24 @@ fn clips_string_byte_ranges_and_adjusts_empty_ranges_to_nil() {
 }
 
 #[test]
+fn lowers_scalar_numeric_equality_with_single_value_string_byte_range() {
+    let source = r#"
+        declare function string_byte(value: string, index: i32): i32
+
+        function clipped_negative_end(): bool
+            return string.byte("\n\n", 2, -1) == 10
+        end
+
+        function exact_range(): bool
+            return string.byte("\n\n", 2, 2) == 10
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    build(&typed).expect("ir build should succeed");
+}
+
+#[test]
 fn lowers_if_expression_with_phi_result() {
     let source = r#"
         function entry(flag: bool, x: i32, y: i32): i32
