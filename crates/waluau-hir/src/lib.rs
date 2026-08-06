@@ -100,6 +100,30 @@ fn module_type_display_name(name: &str) -> &str {
     }
 }
 
+fn module_type_display(ty: &Type) -> String {
+    let rendered = ty.to_string();
+    let marker = "__waluau_m";
+    let mut remaining = rendered.as_str();
+    let mut display = String::with_capacity(rendered.len());
+
+    while let Some(offset) = remaining.find(marker) {
+        display.push_str(&remaining[..offset]);
+        let after_marker = &remaining[offset + marker.len()..];
+        let digits = after_marker
+            .bytes()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if digits > 0 && after_marker.as_bytes().get(digits) == Some(&b'_') {
+            remaining = &after_marker[digits + 1..];
+        } else {
+            display.push_str(marker);
+            remaining = after_marker;
+        }
+    }
+    display.push_str(remaining);
+    display
+}
+
 fn collect_module_bindings(
     top_level: &[Stmt],
     fn_signatures: &HashMap<String, FnSignature>,
