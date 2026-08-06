@@ -80,6 +80,7 @@ export function waluauWasmPlugin(options = {}) {
   const workspaceRoot = options.workspaceRoot ?? resolve(playgroundRoot, '../..')
   const outDir = options.outDir ?? resolve(playgroundRoot, 'src/waluau-wasm')
   const production = options.production ?? false
+  const buildWasm = options.buildWasm ?? buildWaluauWasm
   const fallbackLogger = {
     info: (message) => console.log(message),
     error: (message) => console.error(message),
@@ -88,6 +89,16 @@ export function waluauWasmPlugin(options = {}) {
   let buildTimer
   let buildInFlight = null
   let queued = false
+  let resolveInitialBuild
+  let rejectInitialBuild
+  const initialBuildReady = new Promise((resolveBuild, rejectBuild) => {
+    resolveInitialBuild = resolveBuild
+    rejectInitialBuild = rejectBuild
+  })
+  // buildStart's rejection is also observed by Vite. Keep this separate
+  // readiness promise from becoming an unhandled rejection when no browser
+  // request arrived before a failed startup build.
+  void initialBuildReady.catch(() => {})
 
   async function rebuild(logger = fallbackLogger, { reloadServer } = {}) {
     if (buildInFlight) {
@@ -96,7 +107,7 @@ export function waluauWasmPlugin(options = {}) {
     }
 
     logger.info('Building Waluau WASM compiler...', { clear: false })
-    buildInFlight = buildWaluauWasm({ workspaceRoot, outDir, production, logger })
+    buildInFlight = buildWasm({ workspaceRoot, outDir, production, logger })
       .then(() => {
         if (reloadServer) {
           reloadServer.ws.send({ type: 'full-reload' })
@@ -117,9 +128,23 @@ export function waluauWasmPlugin(options = {}) {
     name: 'waluau-wasm',
     enforce: 'pre',
     async buildStart() {
-      await rebuild(this.environment?.logger ?? fallbackLogger)
+      try {
+        await rebuild(this.environment?.logger ?? fallbackLogger)
+        resolveInitialBuild()
+      } catch (error) {
+        rejectInitialBuild(error)
+        throw error
+      }
     },
     configureServer(server) {
+      // Vite can begin accepting requests while buildStart is still producing
+      // the initial wasm-bindgen output. Serving the page in that window lets
+      // the browser import partial artifacts and permanently poisons the
+      // module singleton. Hold requests until the compiler build is complete.
+      server.middlewares.use((_request, _response, next) => {
+        initialBuildReady.then(() => next(), next)
+      })
+
       server.watcher.add(resolve(workspaceRoot, 'crates'))
       server.watcher.add(resolve(workspaceRoot, 'Cargo.lock'))
 

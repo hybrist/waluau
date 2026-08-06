@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "playwright test",
+    "test:plugin": "node --test vite-plugin-waluau-wasm.test.js",
     "test:ui": "playwright test --ui"
   },
   "dependencies": {
