@@ -26,20 +26,17 @@ local effect_shaders = require("./effect_shaders")
 local box = require("./box_layout")
 local ink = require("./ink")
 
+type Graphics = engine.Graphics
+
 -- Everything an entity needs to put ink on the board. Nothing here says where
 -- the board is; that arrives with the rectangle.
--- TODO(waluau-0u80): the engine.Graphics spellings below, and the ones every
--- module implementing a Node repeats, are here because a local
--- 'type Graphics = engine.Graphics' alias becomes a distinct nominal type that
--- will not satisfy this record across a module boundary. Once aliases are
--- transparent these can read as a plain local alias again.
 type Surface = {
-    graphics: engine.Graphics,
+    graphics: Graphics,
     effects: effect_shaders.EffectShaders,
     card_back: graphics_module.Texture?
 }
 
-type Metrics = { graphics: engine.Graphics? }
+type Metrics = { graphics: Graphics? }
 
 -- grow and shrink belong to a node's relationship with the flow around it,
 -- exactly as they do in the box layout this forwards them to.
@@ -66,9 +63,9 @@ end
 const FALLBACK_ADVANCE: f64 = 0.75
 
 function text_width(metrics: Metrics, value: string, size: f64): f64
-    local maybe: engine.Graphics? = metrics.graphics
+    local maybe: Graphics? = metrics.graphics
     if maybe == nil then return (#value::f64) * size * FALLBACK_ADVANCE end
-    return ink.text_width(maybe::engine.Graphics, value, size)
+    return ink.text_width(maybe::Graphics, value, size)
 end
 
 -- The composite's own children are keyed by their index inside one solve, and
