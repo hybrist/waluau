@@ -472,6 +472,34 @@ fn nullable_extern_aliases_narrow_after_nil_check() {
 }
 
 #[test]
+fn infers_method_call_local_after_early_return_nil_narrowing() {
+    let source = r#"
+        type RenderTarget = extern
+        type Texture = extern
+        type Graphics = extern
+
+        declare function Graphics:texture_from_render_target(target: RenderTarget): Texture
+
+        function render(
+            graphics: Graphics,
+            back: RenderTarget?,
+            face: RenderTarget?,
+            face_up: bool
+        ): Texture?
+            local target = back
+            if face_up then target = face end
+            if target == nil then return nil end
+            local texture = graphics:texture_from_render_target(target)
+            return texture
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("the surviving branch should keep target narrowed for local inference");
+}
+
+#[test]
 fn nullable_strings_narrow_after_nil_check() {
     let source = r#"
         function take(value: string): i32

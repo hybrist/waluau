@@ -777,18 +777,26 @@ fn annotate_inferred_stmt_locals(
                 else_body,
             } => {
                 annotate_inferred_expr_locals(condition, vars, fn_signatures, active_type_params)?;
+                let (mut then_scope, mut else_scope) = narrowed_scopes(condition, vars);
                 annotate_inferred_stmt_locals(
                     then_body,
-                    &mut vars.clone(),
+                    &mut then_scope,
                     fn_signatures,
                     active_type_params,
                 )?;
                 annotate_inferred_stmt_locals(
                     else_body,
-                    &mut vars.clone(),
+                    &mut else_scope,
                     fn_signatures,
                     active_type_params,
                 )?;
+                let then_returns = statements::stmts_always_return(then_body);
+                let else_returns = statements::stmts_always_return(else_body);
+                if then_returns && !else_returns {
+                    *vars = else_scope;
+                } else if else_returns && !then_returns {
+                    *vars = then_scope;
+                }
             }
             Stmt::Match { value, arms, .. } => {
                 annotate_inferred_expr_locals(value, vars, fn_signatures, active_type_params)?;
