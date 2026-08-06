@@ -3,9 +3,9 @@
 -- rather than leaking the typed nullable box or the raw i31 payload, so it
 -- compares equal to a `true`/`false` literal.
 --
--- `bool?` shares the i32 nullable box with `i32?`/`u32?`, whose array wrappers
--- canonicalize to the same wasm type (waluau-drtq), so this file deliberately
--- holds only one such array type.
+-- `bool?` shares the i32 nullable box with `i32?`/`u32?`; the mixed collision
+-- coverage lives in unknown_index_nullable_primitives.walu, while this fixture
+-- keeps the bool boxing behavior focused.
 
 function get(v, i)
     return v[i]

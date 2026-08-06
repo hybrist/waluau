@@ -89,9 +89,11 @@ pub(crate) const ERROR_TAG_INDEX: u32 = 0;
 const PROMISE_RESET_ACTIVE_EXPORT: &str = "__waluau_reset_active_coroutine";
 
 /// Field indices of the growable-array wrapper struct
-/// `(struct (field mut storage: ref null array) (field mut len: i32))`.
+/// `(struct (field mut storage: ref null array) (field mut len: i32)
+///          (field kind: i32))`.
 const GROWABLE_STORAGE_FIELD: u32 = 0;
 const GROWABLE_LEN_FIELD: u32 = 1;
+const GROWABLE_KIND_FIELD: u32 = 2;
 
 /// Collect the ordered set of function names that appear as `Closure` targets in the module.
 /// These each need a wrapper function with the env-based calling convention.
@@ -875,7 +877,11 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
     }
     // Emit array types next so function types can reference them. Each array
     // type is an interleaved pair: the raw storage array immediately followed
-    // by the growable wrapper struct `(struct (field mut storage) (field mut len:i32))`.
+    // by the growable wrapper struct
+    // `(struct (field mut storage) (field mut len:i32) (field kind:i32))`.
+    // The immutable kind is the wrapper's module-local type index. Dynamic
+    // operations inspect it because distinct source element types can have
+    // structurally identical storage and wrapper types after GC canonicalization.
     // `array_types` is depth-sorted, so a nested array's storage can reference
     // the inner element's wrapper struct as a backward reference.
     for array_ty in &array_types {
@@ -896,6 +902,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             FieldType {
                 element_type: StorageType::Val(ValType::I32),
                 mutable: true,
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
+                mutable: false,
             },
         ]);
     }
@@ -4875,7 +4885,9 @@ fn emit_block_instructions(
                     out.instruction(&Instruction::I32Const(elements.len() as i32)); // Length = initial size
                 }
 
-                // Create the growable array struct
+                // The wrapper type index doubles as a module-local element-kind
+                // tag for dynamic array dispatch.
+                out.instruction(&Instruction::I32Const(growable_struct_index as i32));
                 out.instruction(&Instruction::StructNew(growable_struct_index));
                 emit_value_store(out, local_plan, *value)?;
             }
@@ -5160,6 +5172,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::LocalGet(start_local));
                 out.instruction(&Instruction::I32Sub);
+                out.instruction(&Instruction::I32Const(growable_struct_index as i32));
                 out.instruction(&Instruction::StructNew(growable_struct_index));
                 emit_value_store(out, local_plan, *value)?;
             }
@@ -6200,10 +6213,7 @@ fn emit_dyn_len(
 ) -> Result<(), Diagnostic> {
     let wrappers = &ctx.array_registry.growable_array_element_types;
     for (_, wrapper_idx) in wrappers {
-        out.instruction(&Instruction::LocalGet(operand_local));
-        out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
-            *wrapper_idx,
-        )));
+        emit_dyn_array_kind_test(out, operand_local, *wrapper_idx);
         out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         out.instruction(&Instruction::LocalGet(operand_local));
         out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
@@ -6220,6 +6230,32 @@ fn emit_dyn_len(
         out.instruction(&Instruction::End);
     }
     Ok(())
+}
+
+/// Test whether an `anyref` local is the growable-array wrapper for one source
+/// element type. A `ref.test` alone is insufficient: Wasm GC canonicalizes
+/// structurally identical wrapper types, including the wrappers for `i32`,
+/// `u32`, and `bool`. Every wrapper therefore stores its module-local type
+/// index as an immutable element-kind tag, which disambiguates those values.
+fn emit_dyn_array_kind_test(out: &mut Function, operand_local: u32, wrapper_idx: u32) {
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+        wrapper_idx,
+    )));
+    out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+        wrapper_idx,
+    )));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: wrapper_idx,
+        field_index: GROWABLE_KIND_FIELD,
+    });
+    out.instruction(&Instruction::I32Const(wrapper_idx as i32));
+    out.instruction(&Instruction::I32Eq);
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::End);
 }
 
 /// True when a dynamic array read can box this element type into `unknown`
@@ -6289,10 +6325,7 @@ fn emit_dyn_index(
         let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
         let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
 
-        out.instruction(&Instruction::LocalGet(operand_local));
-        out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
-            *wrapper_idx,
-        )));
+        emit_dyn_array_kind_test(out, operand_local, *wrapper_idx);
         out.instruction(&Instruction::If(BlockType::Result(anyref)));
         // Bounds check against the logical length; the unsigned compare also
         // rejects negative indices.

@@ -92,7 +92,10 @@ pub(crate) struct ArrayTypeRegistry {
     /// no boxed f64 can exist at runtime.
     pub(crate) closure_gc_present: bool,
     /// Type indices for growable array wrapper structs, keyed by element type.
-    /// Each growable array value is `(struct (field storage: ref null array) (field len: i32))`;
+    /// Each growable array value is
+    /// `(struct (field storage: ref null array) (field len: i32) (field kind: i32))`;
+    /// `kind` distinguishes element types whose storage arrays are structurally
+    /// identical after Wasm GC canonicalization.
     /// the struct is emitted immediately after its backing array type so nested
     /// arrays can reference the inner struct without a forward reference.
     pub(crate) growable_array_indices: HashMap<String, u32>,
