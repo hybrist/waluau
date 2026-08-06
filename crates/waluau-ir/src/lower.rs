@@ -5959,16 +5959,28 @@ impl Builder<'_> {
                     ));
                 };
                 let struct_ty = Type::Record(record_fields.clone());
-                let lowered_fields = record_fields
-                    .iter()
-                    .map(|(name, field_ty)| {
-                        if let Some(field_expr) = fields.iter().find(|field| field.name == *name) {
-                            self.lower_expr(&field_expr.value, env, types, Some(field_ty.clone()))
-                        } else {
-                            self.emit_omitted_nullable_arg(field_ty)
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                // Record storage is canonicalized by field name, but table
+                // constructor expressions evaluate left-to-right as written.
+                // Lower into named values first, then assemble StructNew's
+                // operands in the record's canonical physical order.
+                let mut values_by_name = BTreeMap::new();
+                for field in fields {
+                    let field_ty = record_fields.get(&field.name).ok_or_else(|| {
+                        Diagnostic::new(format!("unknown record field '{}'", field.name))
+                    })?;
+                    let field_value =
+                        self.lower_expr(&field.value, env, types, Some(field_ty.clone()))?;
+                    values_by_name.insert(field.name.clone(), field_value);
+                }
+                let mut lowered_fields = Vec::with_capacity(record_fields.len());
+                for (name, field_ty) in record_fields {
+                    let field_value = if let Some(value) = values_by_name.remove(name) {
+                        value
+                    } else {
+                        self.emit_omitted_nullable_arg(field_ty)?
+                    };
+                    lowered_fields.push(field_value);
+                }
                 let value = self.emit(Instruction::StructNew {
                     struct_ty: struct_ty.clone(),
                     fields: lowered_fields,
