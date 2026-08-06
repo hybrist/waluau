@@ -1319,9 +1319,10 @@ function Graphics:custom_text_width(text: string): f64
 end
 
 -- Length of the horizontal run of set font pixels starting at column.
--- A helper function (rather than an inline loop) keeps the loop out of the
--- surrounding if-branch, which miscompiles today (waluau phi-ordering bug;
--- see the beads issue referenced from waluau-nnd9).
+-- TODO(waluau-ls7h): fold this back into an inline loop in Graphics:print.
+-- The helper only exists because a loop nested in an if-branch inside another
+-- loop used to miscompile with a phi-ordering error; that was fixed in PR #357
+-- and the shape compiles and runs correctly now.
 function glyph_run(slot: i32, row: i32, column: i32): i32
     local run: i32 = 1
     while column + run < font.width() and font.pixel(slot, row, column + run) do

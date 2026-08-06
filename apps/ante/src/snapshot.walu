@@ -56,6 +56,11 @@ function Reader:next_f64(): f64
     return parsed::f64
 end
 
+-- TODO(waluau-363i): every decoder built on this reader has to pull each token
+-- into its own local before assembling a record, because a record literal
+-- evaluates its fields in alphabetical order rather than written order and
+-- would silently swap two next_* reads. Once that is fixed the decoders can
+-- read straight into the literal again.
 function Reader:next_i32(): i32
     local decimal: f64 = self:next_f64()
     local value: i32 = decimal::i32
