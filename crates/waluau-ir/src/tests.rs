@@ -2002,6 +2002,37 @@ fn monomorphizes_generic_calls_with_inferred_type_arguments() {
 }
 
 #[test]
+fn monomorphizes_generic_table_builtin_calls_in_multi_bindings() {
+    let source = r#"
+        function exercise<T>(values: {T}, value: T): i32
+            local packed, removed, count, joined =
+                table.pack(value),
+                table.remove(values),
+                table.getn(values),
+                table.concat({"a", "b"}, ",")
+            local inserted, sorted = table.insert(values, value), table.sort({2, 1})
+            return count + #packed + table.getn(values)
+        end
+
+        function main(): i32
+            local values: {i32} = {1, 2}
+            assert(exercise<i32>(values, 3) == 4)
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+
+    assert!(
+        module
+            .functions
+            .iter()
+            .any(|function| function.name.starts_with("__waluau_generic$exercise"))
+    );
+}
+
+#[test]
 fn lowers_generic_method_declaration_after_hir_desugaring() {
     let source = r#"
         local point = { x = 41::i32 }
