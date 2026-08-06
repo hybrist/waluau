@@ -24,6 +24,21 @@ fn type_checks_valid_program() {
 }
 
 #[test]
+fn diagnostic_type_display_hides_nested_module_mangling() {
+    let ty = Type::Function {
+        params: vec![Type::Opaque {
+            name: "__waluau_m12_Graphics".to_string(),
+            ty: Box::new(Type::Record(Default::default())),
+        }],
+        return_type: Box::new(Type::Unit),
+    };
+
+    let display = super::module_type_display(&ty);
+    assert!(display.contains("Graphics"));
+    assert!(!display.contains("__waluau_m"));
+}
+
+#[test]
 fn nominal_enums_reject_cross_enum_assignment() {
     let source = r#"
         enum Direction { north, south }

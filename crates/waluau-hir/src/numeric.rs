@@ -426,7 +426,8 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             }
             _ => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {} to {}",
-                actual, expected_name
+                super::module_type_display(&actual),
+                super::module_type_display_name(&expected_name)
             ))),
         },
         Some(Type::Record(expected_fields)) => {
@@ -434,7 +435,8 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 let expected_record = Type::Record(expected_fields.clone());
                 return Err(Diagnostic::new(format!(
                     "cannot implicitly convert {} to {}",
-                    actual, expected_record
+                    super::module_type_display(&actual),
+                    super::module_type_display(&expected_record)
                 )));
             };
 
@@ -450,7 +452,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 coerce_type(actual_ty.clone(), Some(expected_ty.clone())).map_err(|_| {
                     Diagnostic::new(format!(
                         "record field '{}' expects {}, got {}",
-                        name, expected_ty, actual_ty
+                        name,
+                        super::module_type_display(expected_ty),
+                        super::module_type_display(actual_ty)
                     ))
                 })?;
             }
@@ -537,7 +541,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             "cannot implicitly convert {actual} to unit",
         ))),
         Some(expected) => Err(Diagnostic::new(format!(
-            "cannot implicitly convert {actual} to {expected}",
+            "cannot implicitly convert {} to {}",
+            super::module_type_display(&actual),
+            super::module_type_display(&expected)
         ))),
     }
 }

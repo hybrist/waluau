@@ -1996,6 +1996,119 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_treats_imported_module_type_aliases_as_transparent() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("gfx.walu"),
+            r#"
+                type Graphics = { width: f64 }
+
+                function make(): Graphics
+                    return { width = 2.0 }
+                end
+
+                return { make = make }
+            "#,
+        )
+        .expect("graphics module should write");
+        fs::write(
+            tempdir.path().join("engine.walu"),
+            r#"
+                local gfx = require("./gfx")
+
+                type Hooks = { draw: (gfx.Graphics, f64) -> unit }
+
+                function run_hooks(hooks: Hooks): unit
+                    hooks.draw(gfx.make(), 1.0)
+                end
+
+                return { run_hooks = run_hooks }
+            "#,
+        )
+        .expect("engine module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local gfx = require("./gfx")
+                local engine = require("./engine")
+
+                type Graphics = gfx.Graphics
+
+                local function draw(graphics: Graphics, dt: f64): unit
+                    assert(graphics.width + dt == 3.0)
+                end
+
+                engine.run_hooks({ draw = draw })
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_hides_module_mangling_in_callback_conversion_diagnostics() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("gfx.walu"),
+            r#"
+                type Graphics = { width: f64 }
+
+                function make(): Graphics
+                    return { width = 2.0 }
+                end
+
+                return { make = make }
+            "#,
+        )
+        .expect("graphics module should write");
+        fs::write(
+            tempdir.path().join("engine.walu"),
+            r#"
+                local gfx = require("./gfx")
+
+                type Hooks = { draw: (gfx.Graphics, f64) -> unit }
+
+                function run_hooks(hooks: Hooks): unit
+                    hooks.draw(gfx.make(), 1.0)
+                end
+
+                return { run_hooks = run_hooks }
+            "#,
+        )
+        .expect("engine module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local engine = require("./engine")
+
+                type WrongGraphics = { label: string }
+
+                local function draw(graphics: WrongGraphics, dt: f64): unit
+                    assert(graphics.label == tostring(dt))
+                end
+
+                engine.run_hooks({ draw = draw })
+            "#,
+        )
+        .expect("main module should write");
+
+        let error = super::compile_file(&input_path).expect_err("compile should fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("Graphics"),
+            "unexpected diagnostic: {message}"
+        );
+        assert!(
+            !message.contains("__waluau_m"),
+            "diagnostic leaked an internal module name: {message}"
+        );
+    }
+
+    #[test]
     fn compile_file_dispatches_methods_and_statics_across_modules() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
