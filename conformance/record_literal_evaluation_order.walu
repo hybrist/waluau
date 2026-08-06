@@ -1,0 +1,19 @@
+-- Record storage is canonicalized alphabetically, but field expressions must
+-- evaluate exactly once and left-to-right in the order written.
+type Pair = { kind: i32, cost: i32 }
+
+local counter: i32 = 0
+
+local function next_i32(): i32
+    counter += 1
+    return counter
+end
+
+local pair: Pair = {
+    kind = next_i32(),
+    cost = next_i32(),
+}
+
+assert(pair.kind == 1)
+assert(pair.cost == 2)
+assert(counter == 2)

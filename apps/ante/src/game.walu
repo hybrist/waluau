@@ -760,13 +760,9 @@ function next_spells(reader: snapshot_data.Reader): {Spell}
     local spells: {Spell} = {}
     local length: i32 = reader:next_length()
     for _ = 1, length do
-        -- TODO(waluau-363i): read each token into a local first, because a
-        -- record literal evaluates its fields in alphabetical order rather than
-        -- written order and these two are only told apart by their position in
-        -- the payload. Inline the reads once the compiler orders them.
-        local kind: i32 = reader:next_i32()
-        local cost: i32 = reader:next_i32()
-        table.insert(spells, { kind = kind, cost = cost })
+        table.insert(spells, {
+            kind = reader:next_i32(), cost = reader:next_i32(),
+        })
     end
     return spells
 end

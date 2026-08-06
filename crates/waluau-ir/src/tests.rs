@@ -2352,6 +2352,66 @@ fn lowers_record_table_literal_and_field_access() {
 }
 
 #[test]
+fn lowers_record_literal_fields_in_written_order() {
+    let source = r#"
+        function kind_value(): i32
+            return 1
+        end
+
+        function cost_value(): i32
+            return 2
+        end
+
+        function entry(): i32
+            local pair: { kind: i32, cost: i32 } = {
+                kind = kind_value(),
+                cost = cost_value(),
+            }
+            return pair.kind
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function should exist");
+
+    let calls = function
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(value, instruction)| match instruction {
+            Instruction::Call { name, .. } => Some((*value, name.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls.iter().map(|(_, name)| *name).collect::<Vec<_>>(),
+        ["kind_value", "cost_value"],
+        "record field expressions must evaluate left-to-right as written:\n{}",
+        function.dump()
+    );
+
+    let struct_fields = function
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .find_map(|(_, instruction)| match instruction {
+            Instruction::StructNew { fields, .. } => Some(fields),
+            _ => None,
+        })
+        .expect("record literal should lower to StructNew");
+    assert_eq!(
+        struct_fields,
+        &[calls[1].0, calls[0].0],
+        "StructNew operands must remain in canonical cost/kind storage order"
+    );
+}
+
+#[test]
 fn lowers_record_field_assignment() {
     let source = r#"
         function entry(): f64
