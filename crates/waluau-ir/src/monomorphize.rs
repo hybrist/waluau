@@ -1820,6 +1820,24 @@ impl<'a> Monomorphizer<'a> {
         types: &HashMap<SymbolId, Type>,
     ) -> Result<Option<Type>, Diagnostic> {
         match name {
+            crate::TABLE_CONCAT => return Ok(Some(Type::String)),
+            crate::TABLE_INSERT | crate::TABLE_SORT => return Ok(Some(Type::Unit)),
+            crate::TABLE_REMOVE => {
+                let element_ty = match args.first() {
+                    Some(array) => match self.infer_expr_type(array, subst, types)? {
+                        Type::Array(element) => *element,
+                        _ => Type::Unknown,
+                    },
+                    None => Type::Unknown,
+                };
+                return Ok(Some(element_ty));
+            }
+            crate::TABLE_GETN => {
+                return Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)));
+            }
+            crate::TABLE_PACK => {
+                return Ok(Some(Type::Array(Box::new(Type::Unknown))));
+            }
             crate::TABLE_CREATE => {
                 let element_ty = match args.get(1) {
                     Some(value) => self.infer_expr_type(value, subst, types)?,
