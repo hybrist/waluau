@@ -819,6 +819,28 @@ fn if_cast_narrows_extern_binding_only_in_success_branch() {
 }
 
 #[test]
+fn infers_method_call_local_inside_if_cast_branch() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+
+        declare function Element:value(): i32
+
+        function read(node: Node): i32
+            if Element(element) = node then
+                local result = element:value()
+                return result
+            end
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("the if-cast binding should be available during local inference");
+}
+
+#[test]
 fn if_cast_binding_does_not_escape_success_branch() {
     let source = r#"
         type Node = extern
