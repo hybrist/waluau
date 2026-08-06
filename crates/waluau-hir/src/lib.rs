@@ -862,24 +862,43 @@ fn annotate_inferred_stmt_locals(
                 }
             }
             Stmt::IfCast {
+                target_name,
+                target_ty,
+                binding,
                 value,
                 then_body,
                 else_body,
                 ..
             } => {
                 annotate_inferred_expr_locals(value, vars, fn_signatures, active_type_params)?;
+                let branch_scopes = checked_if_cast_scopes(
+                    target_name,
+                    target_ty,
+                    binding,
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                )?;
+                let mut then_scope = branch_scopes.then_scope;
+                let mut else_scope = branch_scopes.else_scope;
                 annotate_inferred_stmt_locals(
                     then_body,
-                    &mut vars.clone(),
+                    &mut then_scope,
                     fn_signatures,
                     active_type_params,
                 )?;
                 annotate_inferred_stmt_locals(
                     else_body,
-                    &mut vars.clone(),
+                    &mut else_scope,
                     fn_signatures,
                     active_type_params,
                 )?;
+                if statements::stmts_always_return(then_body)
+                    && !statements::stmts_always_return(else_body)
+                {
+                    *vars = else_scope;
+                }
             }
             Stmt::NumericFor {
                 name,
