@@ -28,6 +28,11 @@ local ink = require("./ink")
 
 -- Everything an entity needs to put ink on the board. Nothing here says where
 -- the board is; that arrives with the rectangle.
+-- TODO(waluau-0u80): the engine.Graphics spellings below, and the ones every
+-- module implementing a Node repeats, are here because a local
+-- 'type Graphics = engine.Graphics' alias becomes a distinct nominal type that
+-- will not satisfy this record across a module boundary. Once aliases are
+-- transparent these can read as a plain local alias again.
 type Surface = {
     graphics: engine.Graphics,
     effects: effect_shaders.EffectShaders,

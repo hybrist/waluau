@@ -303,9 +303,10 @@ function restore(snapshot_value: string): State?
     local offers: {Offer} = {}
     local offer_count: i32 = reader:next_length()
     for _ = 1, offer_count do
-        -- One token at a time into locals: a record literal's fields are not
-        -- guaranteed to be evaluated in written order, and these are only told
-        -- apart by their position in the payload.
+        -- TODO(waluau-363i): one token at a time into locals, because a record
+        -- literal evaluates its fields in alphabetical order rather than written
+        -- order and these are only told apart by their position in the payload.
+        -- Inline the reads once the compiler orders them.
         local action: i32 = reader:next_i32()
         local kind: i32 = reader:next_i32()
         local sold: bool = reader:next_bool()

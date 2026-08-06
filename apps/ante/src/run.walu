@@ -317,9 +317,10 @@ function restore(snapshot_value: string): State?
     local spells: {game.Spell} = {}
     local spell_count: i32 = reader:next_length()
     for _ = 1, spell_count do
-        -- One token at a time into locals: a record literal's fields are not
-        -- guaranteed to be evaluated in written order, and a kind and a cost
-        -- are only told apart by their position in the payload.
+        -- TODO(waluau-363i): one token at a time into locals, because a record
+        -- literal evaluates its fields in alphabetical order rather than written
+        -- order and a kind and a cost are only told apart by their position in
+        -- the payload. Inline the reads once the compiler orders them.
         local kind: i32 = reader:next_i32()
         local cost: i32 = reader:next_i32()
         table.insert(spells, { kind = kind, cost = cost })
