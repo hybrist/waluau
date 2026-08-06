@@ -6162,18 +6162,17 @@ impl Builder<'_> {
                     }
                 }
                 Type::Multi(multi_types) => {
-                    // table.unpack derives its static arity from the expected
-                    // multi-value type, so lowering must see the same expected
-                    // shape that inference used; other multi-value builtins
-                    // recover their arity from their arguments alone.
-                    let tuple_expected = if let Expr::Call { callee, .. } = expr {
-                        builtin_name(callee.as_ref())
-                            .is_some_and(|name| name == TABLE_UNPACK)
-                            .then(|| Type::Multi(multi_types.clone()))
-                    } else {
-                        None
-                    };
-                    let tuple = self.lower_expr(expr, env, types, tuple_expected)?;
+                    // Inference has already chosen this tuple's exact static
+                    // shape, potentially from the remaining expected binding
+                    // slots. Preserve that shape during lowering for every
+                    // multi-value expression; this does not turn a runtime
+                    // variadic result into a statically sized tuple.
+                    let tuple = self.lower_expr(
+                        expr,
+                        env,
+                        types,
+                        Some(Type::Multi(multi_types.clone())),
+                    )?;
                     for (index, part) in multi_types.into_iter().enumerate() {
                         if let Type::Variadic(element_ty) = part {
                             let pack = self.emit(Instruction::MultiGet {
@@ -10024,13 +10023,56 @@ impl Builder<'_> {
                     Err(error) => return Some(Err(error)),
                 };
                 if args.len() == 3 {
-                    let indices = match string_byte_static_indices(args, expected.as_ref()) {
-                        Ok(indices) => indices,
-                        Err(error) => return Some(Err(error)),
+                    let expected_count = expected.as_ref().and_then(|ty| match ty {
+                        Type::Multi(types) => Some(types.len()),
+                        _ => None,
+                    });
+                    let indices = if let Some(count) = expected_count {
+                        // The fixed IR tuple shape represents the values consumed by
+                        // the surrounding context. Evaluate both bounds once, then
+                        // materialize that prefix from the runtime start index.
+                        let first = match self.lower_expr(
+                            &args[1],
+                            env,
+                            types,
+                            Some(i32_ty.clone()),
+                        ) {
+                            Ok(first) => first,
+                            Err(error) => return Some(Err(error)),
+                        };
+                        if let Err(error) =
+                            self.lower_expr(&args[2], env, types, Some(i32_ty.clone()))
+                        {
+                            return Some(Err(error));
+                        }
+                        (0..count)
+                            .map(|offset| {
+                                if offset == 0 {
+                                    first
+                                } else {
+                                    let offset = self.emit_i32_const(offset as i32);
+                                    self.emit(Instruction::Binary {
+                                        op: BinaryOp::Add,
+                                        left: first,
+                                        right: offset,
+                                        operand_ty: i32_ty.clone(),
+                                        result_ty: i32_ty.clone(),
+                                    })
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        let indices = match string_byte_static_indices(args, expected.as_ref()) {
+                            Ok(indices) => indices,
+                            Err(error) => return Some(Err(error)),
+                        };
+                        indices
+                            .into_iter()
+                            .map(|index| self.emit_i32_const(index))
+                            .collect::<Vec<_>>()
                     };
                     let mut values = Vec::with_capacity(indices.len());
                     for index in indices {
-                        let index = self.emit_i32_const(index);
                         match self.emit_string_host_call(
                             STRING_BYTE_HOST,
                             vec![value, index],

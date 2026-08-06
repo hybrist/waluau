@@ -7,3 +7,10 @@ assert(string.byte(message) == 65)
 assert(message:byte(2) == 66)
 assert(string.byte(message, -1) == 67)
 assert(string.byte(message, 9) == nil)
+
+function byte_pair_sum(value: string, first: i32, last: i32): i32
+    local a: i32, b: i32 = string.byte(value, first, last)
+    return a + b
+end
+
+assert(byte_pair_sum(message, 2, 3) == 133)

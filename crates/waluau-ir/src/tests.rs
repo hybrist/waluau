@@ -404,6 +404,37 @@ fn lowers_scalar_numeric_equality_with_single_value_string_byte_range() {
 }
 
 #[test]
+fn lowers_expected_arity_string_byte_range_with_dynamic_bounds() {
+    let source = r#"
+        declare function string_byte(value: string, index: i32): i32
+
+        function byte_pair_sum(value: string, first: i32, last: i32): i32
+            local a: i32, b: i32 = string.byte(value, first, last)
+            return a + b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "byte_pair_sum")
+        .expect("byte_pair_sum should lower");
+    let byte_calls = function
+        .blocks
+        .values()
+        .flat_map(|block| &block.instructions)
+        .filter(|(_, instruction)| {
+            matches!(instruction, Instruction::HostCall { name, .. } if name == "string_byte")
+        })
+        .count();
+    assert_eq!(byte_calls, 2);
+}
+
+#[test]
 fn lowers_if_expression_with_phi_result() {
     let source = r#"
         function entry(flag: bool, x: i32, y: i32): i32
