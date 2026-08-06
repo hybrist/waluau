@@ -2881,6 +2881,64 @@ fn entry_string_literals(source: &str) -> Vec<String> {
 }
 
 #[test]
+fn statically_folded_type_builtins_evaluate_their_arguments_once() {
+    let source = r#"
+        function bump(box: { n: i32 }): i32
+            box.n += 1
+            return box.n
+        end
+
+        function entry(): string
+            local box: { n: i32 } = { n = 0 }
+            local first: string = type(bump(box))
+            local second: string = typeof(bump(box))
+            return second
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function should exist");
+    let bump_calls = function
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter(|(_, instruction)| {
+            matches!(instruction, Instruction::Call { name, .. } if name == "bump")
+        })
+        .count();
+    assert_eq!(
+        bump_calls,
+        2,
+        "type() and typeof() must each evaluate their argument exactly once:\n{}",
+        function.dump()
+    );
+    let folded_names = function
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter(
+            |(_, instruction)| matches!(instruction, Instruction::String(name) if name == "number"),
+        )
+        .count();
+    assert_eq!(folded_names, 2, "known type names should remain folded");
+    assert!(
+        function.blocks.values().all(|block| {
+            block
+                .instructions
+                .iter()
+                .all(|(_, instruction)| !matches!(instruction, Instruction::TypeName { .. }))
+        }),
+        "known type names should not use runtime classification:\n{}",
+        function.dump()
+    );
+}
+
+#[test]
 fn type_of_multi_value_call_reports_the_adjusted_first_value() {
     // Regression test for waluau-hlrk: `type()` on a multi-value call lowered
     // to the non-Lua string "unknown" because `Type::Multi` had no mapping.

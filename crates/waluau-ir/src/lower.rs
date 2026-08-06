@@ -8142,9 +8142,17 @@ impl Builder<'_> {
                 return Some(Err(Diagnostic::new(format!(
                     "{name} cannot classify a {arg_ty} value at compile time; \
                      annotate the argument with a concrete type or `unknown` \
-                     to classify it at runtime",
+                    to classify it at runtime",
                 ))));
             };
+            // The result can be folded from the static type, but Lua still
+            // evaluates the argument exactly once before classifying it.
+            // Lower without an expected type because the value is discarded;
+            // this also preserves calls that return an empty multi-value pack,
+            // which adjusts to nil for type()/typeof().
+            if let Err(error) = self.lower_expr(&args[0], env, types, None) {
+                return Some(Err(error));
+            }
             self.emit(Instruction::String(type_name.to_string()))
         };
         Some(self.coerce_value(value, Type::String, expected))
