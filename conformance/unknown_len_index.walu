@@ -19,6 +19,19 @@ assert(get({"x", "y"}, 0) == "x")
 assert(get({1.5, 2.5}, 1) == 2.5)
 assert(get({true, false}, 0) == true)
 
+-- These element types share the same Wasm storage representation. Dynamic
+-- dispatch must use the array's element kind rather than treating the first
+-- structurally matching wrapper as the value's type.
+local ints: {i32} = { 10, 20 }
+local uints: {u32} = { 30, 40 }
+local flags: {bool} = { true, false }
+assert(len_of(ints) == 2)
+assert(len_of(uints) == 2)
+assert(len_of(flags) == 2)
+assert(get(ints, 0) == 10)
+assert(get(uints, 1) == 40)
+assert(get(flags, 0) == true)
+
 -- Heterogeneous literals infer as {unknown} with boxed elements.
 local mixed = { true, 1, 2, 42 }
 assert(#mixed == 4)
