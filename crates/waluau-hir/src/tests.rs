@@ -1253,6 +1253,22 @@ fn type_checks_array_literals_indexing_and_length() {
 }
 
 #[test]
+fn annotated_nullable_primitive_arrays_infer_literal_elements_from_context() {
+    let source = r#"
+        function entry(): i32
+            local flags: {bool?} = {true, nil, false}
+            local labels: {string?} = {"first", nil, "last"}
+            local chunks: {bytes?} = {b"first", nil, b"last"}
+            return #flags + #labels + #chunks
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("the declared nullable element type should drive literal inference");
+}
+
+#[test]
 fn rejects_heterogeneous_array_literals() {
     let source = r#"
         function entry(): i32

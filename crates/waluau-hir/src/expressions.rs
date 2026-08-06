@@ -2022,15 +2022,25 @@ fn infer_array_literal(
         }
         return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
     }
+    // Literal inference may report the inner type even when it accepts a
+    // nullable expectation (notably `true` against `bool?`). Normalize
+    // successful coercions here, but retain the actual type on failure so the
+    // existing common-element diagnostic remains intact.
+    let coerce_expected_element = |actual: Type| match expected_element.as_ref() {
+        Some(expected_element @ Type::Nullable(_)) => {
+            coerce_type(actual.clone(), Some(expected_element.clone())).unwrap_or(actual)
+        }
+        _ => actual,
+    };
     let mut iter = elements.iter();
     let first = iter.next().expect("non-empty array literal");
-    let mut element_ty = infer_expr(
+    let mut element_ty = coerce_expected_element(infer_expr(
         first,
         vars,
         fn_signatures,
         active_type_params,
         expected_element.clone(),
-    )?;
+    )?);
     for element in iter {
         // Heterogeneous literals without a concrete expected element type fall
         // back to `{unknown}` with boxed elements, matching Lua's untyped
@@ -2043,6 +2053,7 @@ fn infer_array_literal(
                 active_type_params,
                 Some(element_ty.clone()),
             )
+            .map(&coerce_expected_element)
             .and_then(|actual| common_element_type(element_ty.clone(), actual))
             {
                 Ok(unified) => {

@@ -11,16 +11,7 @@ function get(v, i)
     return v[i]
 end
 
--- `{ true, nil, false }` does not infer as `{bool?}` yet (waluau-riyx), so the
--- nullable bool elements are produced by a helper instead.
-function flag(present: bool, on: bool): bool?
-    if present then
-        return on
-    end
-    return nil
-end
-
-local flags: {bool?} = { flag(true, true), flag(false, false), flag(true, false) }
+local flags: {bool?} = { true, nil, false }
 assert(#flags == 3)
 assert(get(flags, 0) == true)
 assert(get(flags, 2) == false)
