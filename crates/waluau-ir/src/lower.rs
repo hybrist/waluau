@@ -11610,14 +11610,16 @@ fn infer_numeric_common_type(
     expected: Option<NumericType>,
     infer: impl Fn(&Expr, Option<Type>) -> Result<Type, Diagnostic>,
 ) -> Result<Type, Diagnostic> {
+    // Match HIR inference: numeric binary operands consume only the first
+    // value of a multi-value result before their common type is selected.
     match (
         matches!(left, Expr::Number(..)),
         matches!(right, Expr::Number(..)),
     ) {
         (true, true) => {
             let ty = Type::Numeric(expected.unwrap_or(NumericType::F64));
-            let left_ty = infer(left, Some(ty.clone()))?;
-            let right_ty = infer(right, Some(ty))?;
+            let left_ty = first_of_multi(infer(left, Some(ty.clone()))?);
+            let right_ty = first_of_multi(infer(right, Some(ty))?);
             if left_ty == right_ty {
                 Ok(left_ty)
             } else {
@@ -11630,18 +11632,18 @@ fn infer_numeric_common_type(
             }
         }
         (true, false) => {
-            let right_ty = infer(right, None)?;
-            let left_ty = infer(left, Some(right_ty.clone()))?;
+            let right_ty = first_of_multi(infer(right, None)?);
+            let left_ty = first_of_multi(infer(left, Some(right_ty.clone()))?);
             common_numeric_type(left_ty, right_ty)
         }
         (false, true) => {
-            let left_ty = infer(left, None)?;
-            let right_ty = infer(right, Some(left_ty.clone()))?;
+            let left_ty = first_of_multi(infer(left, None)?);
+            let right_ty = first_of_multi(infer(right, Some(left_ty.clone()))?);
             common_numeric_type(left_ty, right_ty)
         }
         (false, false) => {
-            let left_ty = infer(left, None)?;
-            let right_ty = infer(right, None)?;
+            let left_ty = first_of_multi(infer(left, None)?);
+            let right_ty = first_of_multi(infer(right, None)?);
             common_numeric_type(left_ty, right_ty)
         }
     }

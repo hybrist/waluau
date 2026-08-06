@@ -48,6 +48,8 @@ pub(super) fn infer_numeric_common_type(
         _ => None,
     };
 
+    // Binary operands are scalar contexts. Adjust a call's multi-value result
+    // before using it to type the other operand (especially a number literal).
     match (
         matches!(left, Expr::Number(..)),
         matches!(right, Expr::Number(..)),
@@ -60,14 +62,16 @@ pub(super) fn infer_numeric_common_type(
                 fn_signatures,
                 active_type_params,
                 Some(Type::Numeric(ty)),
-            )?;
+            )
+            .map(super::expressions::first_of_multi)?;
             let right_ty = super::expressions::infer_expr(
                 right,
                 vars,
                 fn_signatures,
                 active_type_params,
                 Some(Type::Numeric(ty)),
-            )?;
+            )
+            .map(super::expressions::first_of_multi)?;
             require_same_numeric(left_ty.clone(), right_ty)?;
             Ok(left_ty)
         }
@@ -78,48 +82,44 @@ pub(super) fn infer_numeric_common_type(
                 fn_signatures,
                 active_type_params,
                 None,
-            )?;
+            )
+            .map(super::expressions::first_of_multi)?;
             let left_ty = super::expressions::infer_expr(
                 left,
                 vars,
                 fn_signatures,
                 active_type_params,
                 Some(right_ty.clone()),
-            )?;
+            )
+            .map(super::expressions::first_of_multi)?;
             common_numeric_type(left_ty, right_ty)
         }
         (false, true) => {
-            let left_ty = super::expressions::infer_expr(
-                left,
-                vars,
-                fn_signatures,
-                active_type_params,
-                None,
-            )?;
+            let left_ty =
+                super::expressions::infer_expr(left, vars, fn_signatures, active_type_params, None)
+                    .map(super::expressions::first_of_multi)?;
             let right_ty = super::expressions::infer_expr(
                 right,
                 vars,
                 fn_signatures,
                 active_type_params,
                 Some(left_ty.clone()),
-            )?;
+            )
+            .map(super::expressions::first_of_multi)?;
             common_numeric_type(left_ty, right_ty)
         }
         _ => {
-            let left_ty = super::expressions::infer_expr(
-                left,
-                vars,
-                fn_signatures,
-                active_type_params,
-                None,
-            )?;
+            let left_ty =
+                super::expressions::infer_expr(left, vars, fn_signatures, active_type_params, None)
+                    .map(super::expressions::first_of_multi)?;
             let right_ty = super::expressions::infer_expr(
                 right,
                 vars,
                 fn_signatures,
                 active_type_params,
                 None,
-            )?;
+            )
+            .map(super::expressions::first_of_multi)?;
             common_numeric_type(left_ty, right_ty)
         }
     }

@@ -3022,6 +3022,21 @@ fn type_checks_string_equality_in_control_flow() {
 }
 
 #[test]
+fn type_checks_scalar_numeric_equality_with_single_value_multi_result() {
+    let source = r#"
+        function clipped_negative_end(): bool
+            return string.byte("\n\n", 2, -1) == 10
+        end
+
+        function exact_range(): bool
+            return string.byte("\n\n", 2, 2) == 10
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn type_checks_bytes_literals_and_operations() {
     let source = r#"
         function entry(a: bytes, b: bytes): i32
