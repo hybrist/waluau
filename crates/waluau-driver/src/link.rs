@@ -559,12 +559,14 @@ fn merge_with_builtins(
             .collect::<HashSet<_>>();
         value_aliases.extend(module_constants);
         let type_namespaces = module_type_namespaces(modules, module, entry_id);
+        let transparent_type_aliases = transparent_module_type_aliases(module, &type_namespaces);
 
         let mut rewriter = Rewriter {
             prefix: &prefix,
             func_names: &func_names,
             type_names: &type_names,
             type_namespaces: &type_namespaces,
+            transparent_type_aliases: &transparent_type_aliases,
             global_names: &global_names,
             imports: &imports,
             re_exports,
@@ -573,6 +575,9 @@ fn merge_with_builtins(
         };
 
         for decl in &module.program.type_declarations {
+            if transparent_type_aliases.contains_key(&decl.name) {
+                continue;
+            }
             let mut lowered = decl.clone();
             rewriter.rewrite_type(&mut lowered.ty);
             lowered.name = format!("{prefix}{}", lowered.name);
@@ -1093,12 +1098,14 @@ fn compute_module_export(
         .map(|decl| decl.name.clone())
         .collect::<HashSet<_>>();
     let type_namespaces = module_type_namespaces(modules, module, entry_id);
+    let transparent_type_aliases = transparent_module_type_aliases(module, &type_namespaces);
     let empty_names = HashSet::new();
     let rewriter = Rewriter {
         prefix: &prefix,
         func_names: &empty_names,
         type_names: &type_names,
         type_namespaces: &type_namespaces,
+        transparent_type_aliases: &transparent_type_aliases,
         global_names: &empty_names,
         imports: &imports,
         re_exports: HashMap::new(),
@@ -1180,6 +1187,33 @@ fn module_type_namespaces(
     type_namespaces
 }
 
+/// Local aliases whose right-hand side is a directly imported module type.
+/// These are references to the target declaration, not new nominal types.
+fn transparent_module_type_aliases(
+    module: &LoadedModule,
+    type_namespaces: &HashMap<String, HashMap<String, String>>,
+) -> HashMap<String, String> {
+    module
+        .program
+        .type_declarations
+        .iter()
+        .filter_map(|declaration| {
+            if declaration.module_opaque || !declaration.type_params.is_empty() {
+                return None;
+            }
+            let Type::Named { name, type_args } = &declaration.ty else {
+                return None;
+            };
+            if !type_args.is_empty() {
+                return None;
+            }
+            let (namespace, member) = name.split_once('.')?;
+            let canonical = type_namespaces.get(namespace)?.get(member)?;
+            Some((declaration.name.clone(), canonical.clone()))
+        })
+        .collect()
+}
+
 fn exported_type_names(
     modules: &[LoadedModule],
     module_id: usize,
@@ -1249,11 +1283,13 @@ fn process_reexport_bindings(
 ) -> RequireAliases {
     let empty = HashSet::new();
     let empty_type_namespaces = HashMap::new();
+    let empty_type_aliases = HashMap::new();
     let mut rewriter = Rewriter {
         prefix: "",
         func_names: &empty,
         type_names: &empty,
         type_namespaces: &empty_type_namespaces,
+        transparent_type_aliases: &empty_type_aliases,
         global_names: &empty,
         imports,
         re_exports: HashMap::new(),
@@ -1411,6 +1447,8 @@ struct Rewriter<'a> {
     type_names: &'a HashSet<String>,
     /// Require-binding name -> exported type name -> canonical linked name.
     type_namespaces: &'a HashMap<String, HashMap<String, String>>,
+    /// Local alias name -> canonical declaration in the imported module.
+    transparent_type_aliases: &'a HashMap<String, String>,
     global_names: &'a HashSet<String>,
     imports: &'a HashMap<String, ResolvedImport>,
     re_exports: HashMap<String, String>,
@@ -1646,6 +1684,8 @@ impl Rewriter<'_> {
                     {
                         *name = canonical.clone();
                     }
+                } else if let Some(canonical) = self.transparent_type_aliases.get(name) {
+                    *name = canonical.clone();
                 } else if self.type_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
                 }
@@ -2748,7 +2788,7 @@ mod tests {
     use super::link_program;
     use std::fs;
     use tempfile::tempdir;
-    use waluau_ast::{Expr, Stmt};
+    use waluau_ast::{Expr, Stmt, Type};
 
     #[test]
     fn shared_ambient_types_from_dom_and_tfjs_do_not_conflict() {
@@ -2775,6 +2815,75 @@ mod tests {
                 .filter(|declaration| declaration.name == "Promise")
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn imported_type_alias_is_transparent_without_erasing_local_record_declarations() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("gfx.walu"),
+            r#"
+                type Graphics = { width: f64 }
+
+                function make(): Graphics
+                    return { width = 2.0 }
+                end
+
+                return { make = make }
+            "#,
+        )
+        .expect("graphics module should write");
+        fs::write(
+            dir.path().join("bridge.walu"),
+            r#"
+                local gfx = require("./gfx")
+
+                type GraphicsAlias = gfx.Graphics
+                type LocalState = { graphics: GraphicsAlias }
+
+                function make_state(): LocalState
+                    return { graphics = gfx.make() }
+                end
+
+                return { make_state = make_state }
+            "#,
+        )
+        .expect("bridge module should write");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                local bridge = require("./bridge")
+                local state = bridge.make_state()
+                assert(state.graphics.width == 2.0)
+            "#,
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu")).expect("link should succeed");
+        assert!(
+            program
+                .type_declarations
+                .iter()
+                .all(|declaration| !declaration.name.ends_with("_GraphicsAlias")),
+            "transparent aliases must not create linked declarations: {:?}",
+            program.type_declarations
+        );
+        let local_state = program
+            .type_declarations
+            .iter()
+            .find(|declaration| declaration.name.ends_with("_LocalState"))
+            .expect("the genuine local record declaration should remain mangled");
+        let Type::Record(fields) = &local_state.ty else {
+            panic!("LocalState should remain a record declaration");
+        };
+        assert!(
+            matches!(
+                fields.get("graphics"),
+                Some(Type::Named { name, type_args })
+                    if name.ends_with("_Graphics") && type_args.is_empty()
+            ),
+            "record fields should reference the canonical imported declaration: {fields:?}"
         );
     }
 
