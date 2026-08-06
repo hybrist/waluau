@@ -1,0 +1,17 @@
+-- Statically known type()/typeof() results may fold to string literals, but
+-- their argument expressions still evaluate exactly once.
+
+type Counter = { value: i32 }
+
+function bump(counter: Counter): i32
+    counter.value += 1
+    return counter.value
+end
+
+local counter: Counter = { value = 0 }
+
+assert(type(bump(counter)) == "number")
+assert(counter.value == 1)
+
+assert(typeof(bump(counter)) == "number")
+assert(counter.value == 2)
