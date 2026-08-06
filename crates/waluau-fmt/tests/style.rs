@@ -53,6 +53,15 @@ fn formats_module_opaque_type_declarations() {
 }
 
 #[test]
+fn formats_non_final_function_typed_record_fields() {
+    let src = "type Node={measure:(i32)->i32,split:(string)->(i32,string),grow:f64}\n";
+    assert_eq!(
+        fmt(src),
+        "type Node = { measure: (i32) -> i32, split: (string) -> (i32, string), grow: f64 }\n"
+    );
+}
+
+#[test]
 fn preserves_comments_and_blank_lines() {
     let src = "-- header\nlocal a = 1 -- trailing\n\nlocal b = 2\n";
     assert_eq!(

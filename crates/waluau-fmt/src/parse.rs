@@ -1091,7 +1091,10 @@ impl Parser {
         if self.eat(&TokenKind::Arrow, &mut Vec::new()) {
             // FunctionType = [TypeList(params), returnType].
             let params = Self::tree(SyntaxKind::TypeList, inner);
-            let ret = self.parse_return_type_list()?;
+            // Function types have one bare return type; multiple returns must
+            // be parenthesized. Comma-separated bare return lists are only
+            // valid on function declarations.
+            let ret = self.parse_type()?;
             return Ok(Self::tree(SyntaxKind::FunctionType, vec![params, ret]));
         }
         // Parenthesised grouping (`(T)`) or unit (`()`): inner types only.
