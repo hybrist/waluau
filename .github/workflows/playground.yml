@@ -57,6 +57,9 @@ jobs:
       - name: Lint playground
         run: pnpm --filter playground lint
 
+      - name: Test playground Vite plugin
+        run: pnpm --filter playground test:plugin
+
       - name: Build playground
         run: pnpm --filter playground build
 
