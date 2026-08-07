@@ -183,7 +183,7 @@ end
 function draw_face(surface: entity.Surface, value: Look, x: f64, y: f64): unit
     local graphics = surface.graphics
     local card: game.Card = value.card
-    -- Suit marks always keep their color color. Selection activates the
+    -- Suit marks always keep their color. Selection activates the
     -- color's grayscale pattern; contributing cards use its colored variant.
     if value.colored or value.selected then
         use_color_field(
@@ -257,7 +257,7 @@ function capture(surface: entity.Surface, value: Look): graphics_module.RenderTa
     -- among the face primitives, but on a target boundary the frame stroke is
     -- partially clipped and the five-pixel color stripe can otherwise
     -- disappear at the handoff. They remain part of this texture, so the burn
-    -- shader chars and removes them only when its front rounds them. A sealed
+    -- shader chars and removes them only when its front reaches them. A sealed
     -- card shows neither: its back is the packaged image, edge to edge.
     if not value.hidden then
         graphics:set_color("#52525b")

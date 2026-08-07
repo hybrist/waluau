@@ -2,7 +2,7 @@
 -- live board, plus the keyboard and mouse adapters that drive it. The entry
 -- module only routes engine callbacks here while this screen is active; audio
 -- unlock and resource lifetime stay with the entry module, so by the time
--- input rounds this screen the browser gesture requirement is already
+-- input reaches this screen the browser gesture requirement is already
 -- satisfied.
 --
 -- One screen spans a whole run: clearing a duel deals the next one in place

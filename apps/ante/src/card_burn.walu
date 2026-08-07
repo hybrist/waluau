@@ -1,4 +1,4 @@
--- How a card comes apart. A losing pair, a table_card Fireball is eating, and a
+-- How a card comes apart. A losing pair, a table card Fireball is eating, and a
 -- discard being rebuilt from its own ashes all run this: the card is captured
 -- whole into one texture, a noisy front eats the texture, and ash peels off
 -- exactly the ring the front is cutting along.
@@ -18,7 +18,7 @@ local entity = require("./entity")
 local ink = require("./ink")
 local card = require("./entities/card")
 
--- A reveal burns a pair, which is why there are two; the table_card Fireball is
+-- A reveal burns a pair, which is why there are two; the table card Fireball is
 -- eating sheds a sheet fall and a coarser departing one on top of it.
 type CardAsh = {
     reveal_first: particles.ParticleSystem,
@@ -154,7 +154,7 @@ function new_sheet_ash(seed: i32): particles.ParticleSystem
     return system
 end
 
--- The table_card Fireball is eating sheds a second, coarser fall on top of the
+-- The table card Fireball is eating sheds a second, coarser fall on top of the
 -- sheet ash: bigger pieces, released later, drifting wider and further.
 function new_table_card_ash(seed: i32): particles.ParticleSystem
     local system: particles.ParticleSystem = particles.new(38)
@@ -215,7 +215,7 @@ function step_table_card_ash(system: particles.ParticleSystem, progress: f64, dt
 end
 
 -- Particle quads are only carriers for the burn shader: its noisy alpha mask
--- cuts every side away before a flake rounds the screen, and each quad rides
+-- cuts every side away before a flake reaches the screen, and each quad rides
 -- its own rotation, so a square draw mode never shows a square. The ellipse
 -- fallback is what an optional-program failure falls back to, so a missing
 -- shader never exposes a rectangle in the fire.

@@ -51,7 +51,7 @@ const GRAB_U: f64 = 1.0
 const GRAB_V: f64 = 0.0
 -- How far the held corner gets ahead of the sheet at the height of the pull,
 -- in logical pixels. The stretch limit is what actually decides how much of
--- this rounds the card.
+-- this reaches the card.
 const PULL_REACH: f64 = 78.0
 -- The share of the flight the corner's lead lives in. The lead is an arc
 -- over this window — nothing at either end — and it is over before the turn
@@ -245,7 +245,7 @@ end
 -- How far the sheet has caught up with the held corner, over the pull's own
 -- window. It starts well behind — the corner accelerates away and the body
 -- has inertia — draws level partway through, whips past as the lead begins
--- to die, and is exactly level again as the lead rounds zero. One quadratic
+-- to die, and is exactly level again as the lead reaches zero. One quadratic
 -- through those three states, no seams.
 function follow_at(w: f64): f64
     return 0.3 + 2.4 * w - 1.7 * w * w

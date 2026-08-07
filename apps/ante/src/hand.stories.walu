@@ -140,7 +140,7 @@ storybook.publish(
                     0,
                     {"None", "First", "Left of middle", "Middle", "Right of middle", "Last"}
                 ),
-                -- Horizontal centre-to-centre distance before the whole hand rounds
+                -- Horizontal centre-to-centre distance before the whole hand reaches
                 -- its width cap. Values below the card width overlap.
                 storybook.range("pitch", 74, 36, 124, 2),
                 storybook.range("maximum_span", 520, 220, 760, 10),

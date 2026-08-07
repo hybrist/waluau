@@ -343,7 +343,7 @@ function draw_stops(
     end
 end
 
--- Where the player are: a breathing mote on the route, between two stops while
+-- Where the player is: a breathing mote on the route, between two stops while
 -- they are walking and on one while they are working.
 function draw_party(state: city_map.State, graphics: Graphics, alpha: f64): unit
     local standing: Point = city_map.position_at(state, state.travel)

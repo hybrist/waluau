@@ -15,8 +15,8 @@
 -- and wins `round + pot` back, and half of every pot is the Opponent's wager,
 -- which nothing ever charged it for.
 --
--- Bands, not values. Shuffles move these numbers around and a regression shop
--- that has to be re-pinned every time the deal changes is a shop nobody keeps.
+-- Bands, not values. Shuffles move these numbers around and a regression guard
+-- that has to be re-pinned every time the deal changes is a guard nobody keeps.
 
 require("waluau:vitest")
 
@@ -149,7 +149,7 @@ describe("Duel Magic duel economy", function()
         expect(mean_income(sample)):toBeGreaterThanOrEqual(2)
         expect(mean_income(sample)):toBeLessThanOrEqual(12)
         -- A duel can be walked out of poorer than it was walked into: every
-        -- swap a round then loses is wagered gold that never comes back.
+        -- swap that a round loses is wagered gold that never comes back.
         expect(sample.income_low):toBeLessThan(0)
         expect(sample.income_low):toBeGreaterThanOrEqual(-15)
     end)
@@ -164,7 +164,7 @@ describe("Duel Magic duel economy", function()
 
     it("pays a duel the same however big the purse it opened with", function()
         -- The load-bearing fact under the target. What a duel pays is fixed by
--- the rounds won, and the gold a swap wagers comes back inside the
+        -- the rounds won, and the gold a swap wagers comes back inside the
         -- pot that swap wins — so carrying more in buys nothing, and a run
         -- cannot outrun a rising target by hoarding. The samples are identical
         -- rather than merely close: same seeds, same deals, and a purse this
@@ -185,11 +185,11 @@ describe("Duel Magic duel economy", function()
         -- comes back inside a pot the round has to win, which in a mirror match
         -- is a coin flip, so contesting costs about half of every gold staked.
         -- What it buys is that the player's exchange runs instead of the Arch
-        -- Mage's — and the exchange lands on the shared table cards, which both hands
+        -- opponent's — and the exchange lands on the shared table cards, which both hands
         -- then play through. Improving the board improves the board for two.
         --
         -- So the swap, the mechanic the game is built around, is dominated by
-        -- passing. That is a rules problem rather than an target problem, tracked
+        -- passing. That is a rules problem rather than a target problem, tracked
         -- separately; the target only has to be designed knowing it is true, since
         -- charging for gold gives a player one more reason to never wager.
         local broke: Sample = measure(false, 0, STANDARD_TRIALS)
@@ -201,7 +201,7 @@ end)
 
 -- One whole run, duel after duel, until something ends it. The reference
 -- player never shops and never casts, so the only things gold moves for are
--- feints and targets — which is the comparison this is here to make.
+-- swaps and targets — which is the comparison this is here to make.
 type RunTrial = {
     duels: i32,
     ended_by: i32,
@@ -258,7 +258,7 @@ describe("Duel Magic run economy", function()
         -- Nothing walks forever: past the table the target outruns what a duel
         -- pays, so even a run that never loses a round is eventually stopped.
         expect(unfinished):toBe(0)
-        -- The Opponent stays the executioner by a wide margin. An target that
+        -- The opponent stays the executioner by a wide margin. A target that
         -- took a large share of these would have overtaken the eleven a cleared
         -- duel pays and turned the ramp into a second loss condition.
         expect(held):toBeGreaterThan(RUN_TRIALS / 2)

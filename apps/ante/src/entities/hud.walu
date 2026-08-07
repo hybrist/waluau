@@ -27,7 +27,7 @@ const BOSS_INK: string = "#b45309"
 -- The gold pile once it no longer covers the target.
 const SHORT_INK: string = "#fb7185"
 
--- How far along the sequence the player are standing, and whether this is one
+-- How far along the sequence the player is standing, and whether this is one
 -- of the boss battles the run lands on every third duel. Boss duels wear the
 -- warning ink so the shrinking fan is never a surprise, and the last duel of
 -- the table wears it too.

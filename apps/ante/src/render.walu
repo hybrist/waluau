@@ -917,7 +917,7 @@ end
 
 -- How many of a pile's cards have actually arrived: the ledger's total minus
 -- every card still flying a leg that lands on that pile, so the stack only
--- thickens when a card visibly rounds it. The swap's aside legs pass the burn
+-- thickens when a card visibly reaches it. The swap's aside legs pass the burn
 -- anchor as a waypoint, but they carry slot_none and stay uncounted.
 function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: Slot): i32
     local pending: i32 = 0

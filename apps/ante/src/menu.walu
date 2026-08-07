@@ -223,7 +223,7 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
 
     draw_item(state, viewport, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
     -- A boss battle deals eleven cards and never replaces a spent one. The
-    -- standard run rounds one every third duel; the rush is nothing else.
+    -- standard run reaches one every third duel; the rush is nothing else.
     -- Both labels carry the stakes without needing their own help screen.
     draw_item(state, viewport, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
     draw_item(state, viewport, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")

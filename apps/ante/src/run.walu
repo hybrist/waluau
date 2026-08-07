@@ -194,7 +194,7 @@ end
 
 -- The live duel has been fought to a verdict. Taking it advances the run,
 -- charges the duel its target, and carries what is left into the next one;
--- losing it — to the Opponent or to an target the purse could not cover — ends
+-- losing it — to the opponent or to a target the purse could not cover — ends
 -- the run, and what follows is the first duel of a fresh one. A duel the run
 -- already spent gold in is never fought twice.
 --

@@ -5,7 +5,7 @@
 -- does.
 --
 -- The route alternates the two things a run is made of: a street vendor the
--- player shop at, then a house whose duel they round. Stop 0 is the vendor
+-- player shop at, then a house whose duel they enter. Stop 0 is the vendor
 -- the starting spell is picked from, which is why the menu's spell list and
 -- every later shop stand on the same map at their own corner of the city.
 --

@@ -133,7 +133,7 @@ local function draw_focused(graphics: engine.Graphics, alpha: f64): unit
     draw_state(graphics, card(7, 3), false, true, false, false, false)
 end
 
--- A contributing card in a finished hand, in full color color.
+-- A contributing card in a finished hand, in full color.
 local function draw_contributing(graphics: engine.Graphics, alpha: f64): unit
     draw_state(graphics, card(12, 2), false, false, false, true, false)
 end
