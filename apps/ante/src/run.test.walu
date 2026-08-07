@@ -1,4 +1,4 @@
--- Deterministic, DOM-free checks for the roguelike run around Duel Magic:
+-- Deterministic, DOM-free checks for the roguelike run around Ante Magic:
 -- the boss cadence, gold carrying between duels, the spell loadout carried
 -- with it, and where a run ends.
 
@@ -28,7 +28,7 @@ local function clear_vault(state: run.State, gold: i32): unit
     settle_vault(state, 0, gold)
 end
 
-describe("Duel Magic run cadence", function()
+describe("Ante Magic run cadence", function()
     it("makes every third duel a boss battle", function()
         expect(run.boss_at(1, false)):toBe(false)
         expect(run.boss_at(2, false)):toBe(false)
@@ -143,7 +143,7 @@ describe("Duel Magic run cadence", function()
     end)
 end)
 
-describe("Duel Magic run loadout", function()
+describe("Ante Magic run loadout", function()
     it("gives a learned spell the next cast key while there is room", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         expect(state:open_slot()):toBe(1)
@@ -225,7 +225,7 @@ describe("Duel Magic run loadout", function()
     end)
 end)
 
-describe("Duel Magic target", function()
+describe("Ante Magic target", function()
     it("climbs across the run and takes its largest steps on boss duels", function()
         local previous: i32 = 0
         for duel = 1::i32, run.run_length(false) do
@@ -293,7 +293,7 @@ describe("Duel Magic target", function()
     end)
 end)
 
-describe("Duel Magic run outcomes", function()
+describe("Ante Magic run outcomes", function()
     it("names the four things a fought duel can turn out to be", function()
         local target: i32 = run.target_at(1, false)
         expect(run.outcome_of(1, false, false, 99)):toBe(run.outcome_lost_vault)
@@ -371,7 +371,7 @@ describe("Duel Magic run outcomes", function()
     end)
 end)
 
-describe("Duel Magic duel verdicts", function()
+describe("Ante Magic duel verdicts", function()
     it("clears a duel the Opponent failed to hold three times", function()
         math.randomseed(71)
         local state: game.State = game.new(
@@ -426,7 +426,7 @@ end)
 -- variant, spell, and opening gold are all the run's to say. What the screen
 -- adds on top is choreography, which needs a canvas and is covered by the
 -- app's browser suite instead.
-describe("Duel Magic run progression", function()
+describe("Ante Magic run progression", function()
     it("deals the next duel with the gold the last one left", function()
         math.randomseed(79)
         local state: run.State = run.new(game.spell_firebolt, false)

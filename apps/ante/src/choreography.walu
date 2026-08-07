@@ -1,4 +1,4 @@
--- Presentation choreography for Duel Magic. The engine adapter names domain
+-- Presentation choreography for Ante Magic. The engine adapter names domain
 -- beats; this module owns the animation records, board geometry, pile ledgers,
 -- fan motion, timing, and flip-sound cue placement needed to render them.
 

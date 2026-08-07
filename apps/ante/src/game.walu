@@ -1,4 +1,4 @@
--- DOM-free rules for Duel Magic. The presentation treats suits as
+-- DOM-free rules for Ante Magic. The presentation treats suits as
 -- colors, cards as cards, and the computer as the Opponent; the underlying
 -- five-card hand, exchange, wager, and trick rules remain unchanged.
 

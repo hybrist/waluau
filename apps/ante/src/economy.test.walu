@@ -136,7 +136,7 @@ const BOSS_TRIALS: i32 = 25
 -- misplays — the opponent is the same policy, so half the rounds go to it.
 -- And a cleared duel pays about eleven, which is what the target has to stay
 -- under to leave a run alive across nine of them.
-describe("Duel Magic duel economy", function()
+describe("Ante Magic duel economy", function()
     it("makes a standard duel close to a coin flip and pays the winner", function()
         local sample: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
         -- A mirror match, so a band reaching 100 would mean the Opponent never
@@ -240,7 +240,7 @@ const RUN_TRIALS: i32 = 300
 -- a swap is gold that has to be won back before the duel will let go of the
 -- player — and it changes it most in act three, where the table asks for more
 -- than any duel can pay.
-describe("Duel Magic run economy", function()
+describe("Ante Magic run economy", function()
     it("ends every run it plays", function()
         local held: i32 = 0
         local short: i32 = 0

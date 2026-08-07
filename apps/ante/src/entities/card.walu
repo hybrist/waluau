@@ -1,4 +1,4 @@
--- The card: the smallest piece of Duel Magic's presentation that can be
+-- The card: the smallest piece of Ante Magic's presentation that can be
 -- looked at on its own, and the atom every other board entity is built from.
 -- A card is drawn from a rank, a color, and four readings of what the table
 -- currently thinks of it — selected, focused, sealed, contributing — plus whether
