@@ -33,37 +33,37 @@ type Diagnostics = { fatal_error: string, warnings: string }
 
 function new(): State
     local gold: shader_program.State = shader_program.new(
-        "target.effects.gold-shimmer",
+        "ante.effects.gold-shimmer",
         "gold shimmer",
         false
     )
     local defeat: shader_program.State = shader_program.new(
-        "target.effects.defeat-shroud",
+        "ante.effects.defeat-shroud",
         "defeat shroud",
         true
     )
     local burn: shader_program.State = shader_program.new(
-        "target.effects.card-burn",
+        "ante.effects.card-burn",
         "card burn",
         false
     )
-    local red: shader_program.State = shader_program.new("target.effects.red-fire", "red", false)
+    local red: shader_program.State = shader_program.new("ante.effects.red-fire", "red", false)
     local blue: shader_program.State = shader_program.new(
-        "target.effects.blue-caustics",
+        "ante.effects.blue-caustics",
         "blue",
         false
     )
     local black: shader_program.State = shader_program.new(
-        "target.effects.black-hole",
+        "ante.effects.black-hole",
         "black",
         false
     )
     local green: shader_program.State = shader_program.new(
-        "target.effects.green-growth",
+        "ante.effects.green-growth",
         "green",
         false
     )
-    local ice: shader_program.State = shader_program.new("target.effects.ice-freeze", "ice", false)
+    local ice: shader_program.State = shader_program.new("ante.effects.ice-freeze", "ice", false)
     return {
         shaders = {
             gold_shimmer = gold,
@@ -77,7 +77,7 @@ function new(): State
             noise_texture = nil
         },
         programs = {gold, defeat, burn, red, blue, black, green, ice},
-        vertex_source = shader_sources.open("target.effects.vertex"),
+        vertex_source = shader_sources.open("ante.effects.vertex"),
         vertex_text = "",
         vertex_ready = false,
         vertex_error = ""

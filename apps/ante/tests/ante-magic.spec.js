@@ -115,7 +115,7 @@ test('starts a boss rush from its menu option', async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
-test('renders Duel Magic and loads its packaged card-back asset', async ({ page }) => {
+test('renders Ante Magic and loads its packaged card-back asset', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
@@ -200,7 +200,7 @@ test('reflows semantic layout and pointer targets through wide and tall canvases
     .toBeGreaterThan(40);
 });
 
-// Moved from the conformance runner: exercising Duel Magic's packaged asset
+// Moved from the conformance runner: exercising Ante Magic's packaged asset
 // manifest is this app's concern, not the compiler's. The probe wraps the real
 // AudioContext before the app boots so decode and playback are observable.
 test('plays card flips through the packaged audio manifest only after the begin gesture', async ({ page }) => {
@@ -401,7 +401,7 @@ test('carries the run into the next vault once this one is settled', async ({ pa
   expect(pageErrors).toEqual([]);
 });
 
-test('plays a complete Duel Magic game through the 2D engine', async ({ page }) => {
+test('plays a complete Ante Magic game through the 2D engine', async ({ page }) => {
   test.slow();
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
