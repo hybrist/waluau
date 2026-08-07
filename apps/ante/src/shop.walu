@@ -1,12 +1,12 @@
--- DOM-free intermission between two vaults of a run: the fence the robbers
--- visit with whatever mana the last vault left standing. It lays out two
+-- DOM-free intermission between two duels of a run: the shop the player
+-- visit with whatever gold the last duel left standing. It lays out two
 -- offers, rolled when the visit opens — sharpening a spell they already carry,
--- or a spell they do not — and both are paid for out of the pool the next vault
+-- or a spell they do not — and both are paid for out of the pool the next duel
 -- opens with, so every purchase is a smaller pot to fight in.
 --
 -- The two offers are the whole stock of a visit. Buying one marks that offer
--- sold and nothing takes its place: what restocks the fence is reaching the next
--- one, not spending mana at this one.
+-- sold and nothing takes its place: what restocks the shop is reaching the next
+-- one, not spending gold at this one.
 --
 -- This module owns what is on offer, what it costs, and which line of the offer
 -- the cursor is on. The loadout limits and the purse belong to the run module,
@@ -18,13 +18,13 @@ local run_module = require("./run")
 local snapshot_data = require("./snapshot")
 
 -- One thing this visit has for sale. `kind` names the spell it is about — the
--- one being sharpened, or the one being taught — rather than a loadout slot,
+-- one being upgraded, or the one being taught — rather than a loadout slot,
 -- because a trade can move a spell off the key it was rolled against and an
 -- offer must not follow it. `sold` is what stops a bought offer from being
 -- bought twice; the line stays on the screen, spent.
 type Offer = { action: i32, kind: i32, sold: bool }
 -- `pending` is the offer being asked about while a full loadout decides which
--- spell a new one trades away — the one stage where mana has not changed hands
+-- spell a new one trades away — the one stage where gold has not changed hands
 -- yet. It is -1 the rest of the time.
 type State = { open: bool, offers: {Offer}, cursor: i32, pending: i32 }
 -- One line of the shop: what it would do, which loadout slot it does it to,
@@ -45,7 +45,7 @@ const RESULT_LEAVE: i32 = 1
 -- Two lines of stock per visit, however many things the run could in principle
 -- be sold.
 const MAX_OFFERS: i32 = 2
--- Sharpening gets dearer as the spell gets cheaper: the first mana off a cast
+-- Sharpening gets dearer as the spell gets cheaper: the first gold off a cast
 -- is four, the next six, the last eight. A spell learned here always costs the
 -- same, because what it is worth is decided by which one the roll offered.
 const SHARPEN_PRICE: i32 = 4
@@ -53,15 +53,15 @@ const SHARPEN_PRICE_STEP: i32 = 2
 const LEARN_PRICE: i32 = 7
 
 const NOTHING_PENDING: i32 = -1
-const SNAPSHOT_SCHEMA: string = "ante-shop-v2"
+const SNAPSHOT_SCHEMA: string = "duel-shop-v2"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 
 function new(): State
     return { open = false, offers = {}, cursor = 0, pending = NOTHING_PENDING }
 end
 
--- Everything the fence could sell this run, in a stable order: one line per
--- spell it could sharpen, then one per spell it could teach. The roll draws
+-- Everything the shop could sell this run, in a stable order: one line per
+-- spell it could upgrade, then one per spell it could teach. The roll draws
 -- from this.
 function stock(run: run_module.State): {Offer}
     local pool: {Offer} = {}
@@ -113,7 +113,7 @@ function choosing(state: State): bool
 end
 
 -- What sharpening the spell in that slot costs next. Slots the run cannot
--- sharpen any further still answer a price; `rows` is what marks them closed.
+-- upgrade any further still answer a price; `rows` is what marks them closed.
 function sharpen_price(run: run_module.State, slot: i32): i32
     if slot < 0 or slot >= #run.spells then return SHARPEN_PRICE end
     local taken: i32 = game.spell_cost - run.spells[slot].cost
@@ -138,7 +138,7 @@ function offer_row(offer: Offer, run: run_module.State): Row
             kind = offer.kind,
             price = price,
             sold = offer.sold,
-            available = not offer.sold and run:can_sharpen(slot) and run.mana >= price,
+            available = not offer.sold and run:can_sharpen(slot) and run.gold >= price,
         }
     end
     return {
@@ -149,7 +149,7 @@ function offer_row(offer: Offer, run: run_module.State): Row
         sold = offer.sold,
         available = not offer.sold
             and not run:carries(offer.kind)
-            and run.mana >= LEARN_PRICE,
+            and run.gold >= LEARN_PRICE,
     }
 end
 
@@ -167,7 +167,7 @@ function rows(state: State, run: run_module.State): {Row}
                 kind = run.spells[slot].kind,
                 price = LEARN_PRICE,
                 sold = false,
-                available = run.mana >= LEARN_PRICE and not run:carries(offered),
+                available = run.gold >= LEARN_PRICE and not run:carries(offered),
             })
         end
         table.insert(list, {
@@ -208,11 +208,11 @@ function focus(state: State, run: run_module.State, row: i32): unit
     state.cursor = row
 end
 
--- Take the offer being asked about into the named slot. The mana leaves the
+-- Take the offer being asked about into the named slot. The gold leaves the
 -- purse only once the loadout accepts the spell, and the offer is marked sold
 -- rather than removed: the line stays where it was, spent.
 function commit_learn(state: State, run: run_module.State, offer: i32, slot: i32): unit
-    if run.mana < LEARN_PRICE then return end
+    if run.gold < LEARN_PRICE then return end
     if not run:learn(state.offers[offer].kind, slot) then return end
     run:spend(LEARN_PRICE)
     state.offers[offer].sold = true
@@ -241,7 +241,7 @@ function activate(state: State, run: run_module.State): i32
     end
     if row.action == ACTION_SHARPEN then
         if run:can_sharpen(row.slot) and run:spend(row.price) then
-            run:sharpen(row.slot)
+            run:upgrade(row.slot)
             state.offers[state.cursor].sold = true
         end
         return RESULT_STAY
@@ -268,7 +268,7 @@ function keypressed(state: State, run: run_module.State, key: string): i32
     end
     if key == "Enter" or key == " " then return activate(state, run) end
     -- Escape backs out of the replacement question, and otherwise out of the
-    -- shop: the next vault is always one press away.
+    -- shop: the next duel is always one press away.
     if key == "Escape" then
         if choosing(state) then
             local asked: i32 = state.pending

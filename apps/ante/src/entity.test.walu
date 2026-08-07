@@ -103,10 +103,10 @@ describe("type-sized entities", function(): unit
 
     it("sizes a capsule from its own label", function(): unit
         local short: box.Intrinsic = capsule.node("PASS", true).measure(metrics())
-        local long: box.Intrinsic = capsule.node("COMMIT FEINT", true).measure(metrics())
+        local long: box.Intrinsic = capsule.node("MAKE SWAP", true).measure(metrics())
 
         expect(short.preferred_width):toBe(97.0)
-        expect(long.preferred_width):toBe(163.0)
+        expect(long.preferred_width):toBe(138.25)
         expect(short.preferred_height):toBe(capsule.height)
         -- Both capsules print on the same line whatever their width.
         expect(short.baseline):toBe(long.baseline)
@@ -114,7 +114,7 @@ describe("type-sized entities", function(): unit
 
     it("finds a capsule where the band actually drew it", function(): unit
         local actions: {action_bar.Action} = {
-            action_bar.action("COMMIT FEINT", true),
+            action_bar.action("MAKE SWAP", true),
             action_bar.action("PASS", true),
         }
         local band: box.Rect = entity.rect(0.0, 100.0, 400.0, capsule.height)
@@ -129,7 +129,7 @@ describe("type-sized entities", function(): unit
 
     it("sets a verdict's two figures side by side and centred", function(): unit
         local page: box.Rect = entity.rect(0.0, 0.0, 600.0, 200.0)
-        local pair: entity.Node = verdict.ledger("MANA HELD", 7, "ANTE OWED", 12)
+        local pair: entity.Node = verdict.ledger("GOLD HELD", 7, "TARGET", 12)
         local size: box.Intrinsic = pair.measure(metrics())
 
         -- Two figures and the daylight between them, and a box that will take

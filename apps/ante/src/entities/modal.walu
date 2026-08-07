@@ -1,5 +1,5 @@
--- A secondary screen laid over the vault: the ledger, the help card, the
--- verdict of a fought vault. All three are the same object — a titled shell
+-- A secondary screen laid over the duel: the ledger, the help card, the
+-- verdict of a fought duel. All three are the same object — a titled shell
 -- around a column of content — so the shell is one entity and each of them is
 -- a body handed to it.
 --

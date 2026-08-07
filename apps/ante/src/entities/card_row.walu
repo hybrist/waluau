@@ -1,5 +1,5 @@
--- Cards laid flat in a centred row on one pitch: the Arch Mage's sealed hand,
--- the vault's three wards, and the five-card formation a resolved breach
+-- Cards laid flat in a centred row on one pitch: the Opponent's sealed hand,
+-- the duel's three table cards, and the five-card hand a resolved round
 -- leaves standing. All three are the same object at different widths, so they
 -- are the same entity.
 --
@@ -19,11 +19,11 @@ local entity = require("../entity")
 local card = require("./card")
 
 -- The pitch the row would keep given room, per row. The sealed row and the
--- wards share the flat 116; the fan has its own, tighter one.
+-- table cards share the flat 116; the fan has its own, tighter one.
 const FLAT_PITCH: f64 = 116.0
 
 -- Widest sideways spread a row may occupy before it starts tightening. A
--- five-card row never reaches it; a boss battle's eleven-card row shrinks its
+-- five-card row never rounds it; a boss battle's eleven-card row shrinks its
 -- pitch to fit.
 function pitch_for(span: f64, count: i32, preferred: f64): f64
     if count <= 1 then
@@ -74,7 +74,7 @@ function intrinsic(count: i32, pitch: f64): box.Intrinsic
     return box.fixed(((count - 1)::f64) * pitch + card.width, card.height)
 end
 
--- Children rather than cards: a ward carrying a spell condition draws itself
+-- Children rather than cards: a table_card carrying a spell condition draws itself
 -- through its own entity, and the row does not need to know which slots those
 -- are. `preferred` is the pitch the row keeps when it has the room; a narrower
 -- rectangle tightens it.

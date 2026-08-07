@@ -54,7 +54,7 @@ function alpha(progress: f64): string
 end
 
 -- Particle quads are only carriers for the burn shader: its noisy alpha mask
--- cuts every side away before the fleck reaches the screen. The ellipse is a
+-- cuts every side away before the fleck rounds the screen. The ellipse is a
 -- shader-less fallback, so an optional-program failure never exposes a square
 -- or a triangle in the fire.
 function draw(

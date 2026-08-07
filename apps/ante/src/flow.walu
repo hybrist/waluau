@@ -1,21 +1,21 @@
--- DOM-free heist flow. Keyboard and mouse arrive as plain intents here;
+-- DOM-free duel flow. Keyboard and mouse arrive as plain intents here;
 -- phase ordering, action acceptance, focus, pending binds, and development
 -- snapshot ownership live here.
 
 local snapshot_data = require("./snapshot")
 
 -- `casting` is the spell-targeting mode: entered by a cast key, it points
--- ward_cursor at the ward the spell would hit until the player confirms or
+-- table_card_cursor at the table_card the spell would hit until the player confirms or
 -- cancels. While it holds, ordinary binding input is suspended. `cast_slot` is
 -- which loadout slot is being aimed — one cast key per slot — and only means
 -- anything while `casting` holds.
 type State = {
     hand_cursor: i32,
-    ward_cursor: i32,
+    table_card_cursor: i32,
     cursor_area: i32,
     play_picks: {i32},
     swap_hand: {i32},
-    swap_wards: {i32},
+    swap_table_cards: {i32},
     modal: i32,
     revealing: bool,
     casting: bool,
@@ -40,25 +40,25 @@ const RESULT_RESET: i32 = 2
 const RESULT_REFILL: i32 = 3
 const RESULT_SKIP: i32 = 4
 const RESULT_FINISH_REVEAL: i32 = 5
--- The verdict is up and the player asked for what comes next. Which heist that
--- is — the next vault of the run, or the first vault of a fresh one — is the
+-- The verdict is up and the player asked for what comes next. Which duel that
+-- is — the next duel of the run, or the first duel of a fresh one — is the
 -- run's decision, not this module's.
 const RESULT_ADVANCE: i32 = 6
 
 const CURSOR_HAND: i32 = 0
 const CURSOR_WARDS: i32 = 1
 const FAN_CLOSED: i32 = -1
-const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v4"
+const UI_SNAPSHOT_SCHEMA: string = "duel-flow-v4"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
     return {
         hand_cursor = 0,
-        ward_cursor = 0,
+        table_card_cursor = 0,
         cursor_area = CURSOR_HAND,
         play_picks = {},
         swap_hand = {},
-        swap_wards = {},
+        swap_table_cards = {},
         modal = MODAL_NONE,
         revealing = false,
         casting = false,
@@ -79,20 +79,20 @@ end
 function clear_picks(state: State): unit
     state.play_picks = {}
     state.swap_hand = {}
-    state.swap_wards = {}
+    state.swap_table_cards = {}
     state.cursor_area = CURSOR_HAND
     state.hand_cursor = 0
-    state.ward_cursor = 0
+    state.table_card_cursor = 0
 end
 
 function reset(state: State): unit
     local fresh: State = new()
     state.hand_cursor = fresh.hand_cursor
-    state.ward_cursor = fresh.ward_cursor
+    state.table_card_cursor = fresh.table_card_cursor
     state.cursor_area = fresh.cursor_area
     state.play_picks = fresh.play_picks
     state.swap_hand = fresh.swap_hand
-    state.swap_wards = fresh.swap_wards
+    state.swap_table_cards = fresh.swap_table_cards
     state.modal = fresh.modal
     state.revealing = fresh.revealing
     state.casting = fresh.casting
@@ -117,15 +117,15 @@ end
 
 function fan_focus(state: State, animating: bool): i32
     if state.revealing or animating then return FAN_CLOSED end
-    -- Targeting a spell points at the wards, so the fan folds shut the same
-    -- way it does when the cursor crosses up to the ward row.
+    -- Targeting a spell points at the table cards, so the fan folds shut the same
+    -- way it does when the cursor crosses up to the table_card row.
     if state.casting then return FAN_CLOSED end
     if state.cursor_area ~= CURSOR_HAND then return FAN_CLOSED end
     return state.hand_cursor
 end
 
 -- Closing a modal returns to whatever is underneath it: the live board, or the
--- verdict when the heist has already been settled. A ledger opened over the
+-- verdict when the duel has already been settled. A ledger opened over the
 -- verdict must not close onto a finished board, which has no way on.
 function close_modal(state: State, finished: bool): unit
     if finished then
@@ -168,7 +168,7 @@ function gate(
     end
 
     -- The verdict is the one modal that does not simply close: dismissing it
-    -- is asking for the next heist, so it answers to the same advance gesture
+    -- is asking for the next duel, so it answers to the same advance gesture
     -- every other screen uses as well as to a click.
     if state.modal == MODAL_FINAL then
         if command == COMMAND_ADVANCE or command == COMMAND_PRIMARY then
@@ -192,11 +192,11 @@ end
 function snapshot(state: State): string
     local parts: {string} = { UI_SNAPSHOT_SCHEMA }
     snapshot_data.append_i32(parts, state.hand_cursor)
-    snapshot_data.append_i32(parts, state.ward_cursor)
+    snapshot_data.append_i32(parts, state.table_card_cursor)
     snapshot_data.append_i32(parts, state.cursor_area)
     snapshot_data.append_indices(parts, state.play_picks)
     snapshot_data.append_indices(parts, state.swap_hand)
-    snapshot_data.append_indices(parts, state.swap_wards)
+    snapshot_data.append_indices(parts, state.swap_table_cards)
     snapshot_data.append_i32(parts, state.modal)
     snapshot_data.append_bool(parts, state.revealing)
     snapshot_data.append_bool(parts, state.casting)
@@ -209,22 +209,22 @@ function restore(snapshot_value: string): State?
         snapshot_value, UI_SNAPSHOT_COLLECTION_LIMIT)
     if reader:next_string() ~= UI_SNAPSHOT_SCHEMA then return nil end
     local hand_cursor: i32 = reader:next_i32()
-    local ward_cursor: i32 = reader:next_i32()
+    local table_card_cursor: i32 = reader:next_i32()
     local cursor_area: i32 = reader:next_i32()
     local play_picks: {i32} = reader:next_indices()
     local swap_hand: {i32} = reader:next_indices()
-    local swap_wards: {i32} = reader:next_indices()
+    local swap_table_cards: {i32} = reader:next_indices()
     local modal: i32 = reader:next_i32()
     local revealing: bool = reader:next_bool()
     local casting: bool = reader:next_bool()
     local cast_slot: i32 = reader:next_i32()
     local restored: State = {
         hand_cursor = hand_cursor,
-        ward_cursor = ward_cursor,
+        table_card_cursor = table_card_cursor,
         cursor_area = cursor_area,
         play_picks = play_picks,
         swap_hand = swap_hand,
-        swap_wards = swap_wards,
+        swap_table_cards = swap_table_cards,
         modal = modal,
         revealing = revealing,
         casting = casting,
@@ -259,7 +259,7 @@ return {
     result_finish_reveal = RESULT_FINISH_REVEAL,
     result_advance = RESULT_ADVANCE,
     cursor_hand = CURSOR_HAND,
-    cursor_wards = CURSOR_WARDS,
+    cursor_table_cards = CURSOR_WARDS,
     modal_none = MODAL_NONE,
     modal_history = MODAL_HISTORY,
     modal_help = MODAL_HELP,

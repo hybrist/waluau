@@ -65,7 +65,7 @@ describe("Konami divine intervention", function()
         expect(game.view(rules).player_hand[1].card.suit):toBe(0)
         local pair: game.PairChoice = game.best_pair(
             game.hand_cards(game.view(rules).player_hand), game.view(rules).middle)
-        expect(game.category_name(pair.value)):toBe("perfect convergence")
+        expect(game.category_name(pair.value)):toBe("straight flush")
         expect(pair.first):toBe(0)
         expect(pair.second):toBe(1)
     end)

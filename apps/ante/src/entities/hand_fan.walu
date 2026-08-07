@@ -1,5 +1,5 @@
--- The player's hand: five relics held as an overlapping, tilted fan rather
--- than a row. Each step outward from the middle relic slides sideways, tilts
+-- The player's hand: five cards held as an overlapping, tilted fan rather
+-- than a row. Each step outward from the middle card slides sideways, tilts
 -- further from upright, and dips along a shallow arc, so the hand reads as
 -- something held rather than something laid out.
 --
@@ -15,38 +15,38 @@ local entity = require("../entity")
 local card = require("./card")
 local card_row = require("./card_row")
 
--- FAN_PITCH is well under a card width, so relics overlap; because each one
--- covers only its neighbour's right edge, the rank and school in the top-left
+-- FAN_PITCH is well under a card width, so cards overlap; because each one
+-- covers only its neighbour's right edge, the rank and color in the top-left
 -- corner stay readable.
 const FAN_MIDDLE: f64 = 2.0
 const FAN_PITCH: f64 = 74.0
 const FAN_TILT: f64 = 0.075
--- The arc's dip per squared step: the outermost relics of a five-card hand sit
+-- The arc's dip per squared step: the outermost cards of a five-card hand sit
 -- 4 * FAN_DROP below the middle one, which approximates a pivot far below the
 -- board.
 const FAN_DROP: f64 = 2.8
--- How far the fan slides open around the focused relic, in the same steps as
+-- How far the fan slides open around the focused card, in the same steps as
 -- everything else here — about a quarter of the gap to its neighbour. This is
 -- deliberately short of the ~0.41 steps it would take for FAN_PITCH to clear a
--- card width: relics keep their dealt stacking order, so the focused one still
--- tucks under the relic to its right, and the parting reads as the fan
+-- card width: cards keep their dealt stacking order, so the focused one still
+-- tucks under the card to its right, and the parting reads as the fan
 -- breathing rather than a card climbing out of it.
 const FAN_PART: f64 = 0.23
--- A focus of CLOSED — below the first of the relics — closes the fan, leaving
--- every relic at its resting slot. Focus only exists while the cursor can
--- actually move, so cards in flight and a resolving breach both draw the hand
+-- A focus of CLOSED — below the first of the cards — closes the fan, leaving
+-- every card at its resting slot. Focus only exists while the cursor can
+-- actually move, so cards in flight and a resolving round both draw the hand
 -- closed, which is what keeps animation endpoints honest: the resting slot
 -- describes the closed fan.
 const CLOSED: i32 = -1
 
 -- Both hand rows are laid out for however many cards they currently hold. The
 -- five-card layout is the reference; boss battles start at eleven and shrink
--- after every breach, so the geometry below is parametric on that count.
+-- after every round, so the geometry below is parametric on that count.
 function middle_of(count: i32): f64
     return ((count - 1)::f64) * 0.5
 end
 
--- How much a larger fan flattens its tilt and dip so its outermost relics keep
+-- How much a larger fan flattens its tilt and dip so its outermost cards keep
 -- the reference five-card silhouette instead of curling off the board.
 function scale_of(count: i32): f64
     local middle: f64 = middle_of(count)
@@ -54,10 +54,10 @@ function scale_of(count: i32): f64
     return FAN_MIDDLE / middle
 end
 
--- Where a relic sits along the fan: steps from the middle relic, negative to
+-- Where a card sits along the fan: steps from the middle card, negative to
 -- its left, plus however far the parting has pushed it. This one number is the
 -- fan's only degree of freedom — slide, dip, and tilt all read off it — so a
--- parting relic travels along the arc the fan already describes instead of
+-- parting card travels along the arc the fan already describes instead of
 -- skidding sideways out of the curve.
 function step_at(index: i32, part: f64, count: i32): f64
     return (index::f64) - middle_of(count) + part
@@ -67,7 +67,7 @@ function angle_at(index: i32, part: f64, count: i32): f64
     return step_at(index, part, count) * FAN_TILT * scale_of(count)
 end
 
--- How far the outermost relic dips below the middle one. The fan's box has to
+-- How far the outermost card dips below the middle one. The fan's box has to
 -- carry this on both sides of its centre line, or the arc would push the hand
 -- off whatever the layout gave it.
 function dip_of(count: i32): f64
@@ -87,7 +87,7 @@ function pitch_in(bounds: box.Rect, count: i32): f64
     return card_row.pitch_for(bounds.width - card.width, count, FAN_PITCH)
 end
 
--- The card box of one relic, in its own tilted frame: the rectangle the relic
+-- The card box of one card, in its own tilted frame: the rectangle the card
 -- is drawn into before the fan's rotation about its centre is applied.
 function slot_rect(bounds: box.Rect, index: i32, part: f64, count: i32): box.Rect
     local step: f64 = step_at(index, part, count)
@@ -101,10 +101,10 @@ function slot_rect(bounds: box.Rect, index: i32, part: f64, count: i32): box.Rec
         card.height)
 end
 
--- Where a relic's parting offset is headed: the fan opens around the focused
--- relic, everything left of it sliding left and everything right sliding
--- right, while the focused relic itself holds still. The screen eases each
--- relic toward this rather than reading it straight, so the fan parts over a
+-- Where a card's parting offset is headed: the fan opens around the focused
+-- card, everything left of it sliding left and everything right sliding
+-- right, while the focused card itself holds still. The screen eases each
+-- card toward this rather than reading it straight, so the fan parts over a
 -- few frames instead of snapping as the cursor steps along the hand.
 function part_target(index: i32, focus: i32): f64
     if focus == CLOSED then return 0.0 end
@@ -113,8 +113,8 @@ function part_target(index: i32, focus: i32): f64
     return 0.0
 end
 
--- One relic in the fan. Drawing it about its own centre lets the tilt carry
--- everything with it — the bind lift rises along the card's own axis rather
+-- One card in the fan. Drawing it about its own centre lets the tilt carry
+-- everything with it — the select lift rises along the card's own axis rather
 -- than straight up the screen, and the focus edge stays square to the card.
 function draw_slot(
     surface: entity.Surface, value: card.Look,
@@ -129,8 +129,8 @@ function draw_slot(
     graphics:pop()
 end
 
--- The topmost relic of the fan under a point, or -1. Later slots draw over
--- earlier ones, so the scan runs highest slot first, and each relic's card box
+-- The topmost card of the fan under a point, or -1. Later slots draw over
+-- earlier ones, so the scan runs highest slot first, and each card's card box
 -- is checked in its own tilted frame: the point moves into the card's local
 -- space by undoing the same centre/rotation transform the card was drawn with.
 function hit(bounds: box.Rect, parts: {f64}, x: f64, y: f64): i32
@@ -151,7 +151,7 @@ function hit(bounds: box.Rect, parts: {f64}, x: f64, y: f64): i32
     return -1
 end
 
--- The whole hand as one entity. Relics keep the order they were dealt in,
+-- The whole hand as one entity. Cards keep the order they were dealt in,
 -- focused or not: pulling the focused one to the front would slide it through
 -- its neighbours instead of opening a gap for it. The parting alone gives it
 -- room.

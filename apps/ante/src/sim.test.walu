@@ -1,4 +1,4 @@
--- Deterministic, DOM-free checks for Ante Magic.
+-- Deterministic, DOM-free checks for Duel Magic.
 
 require("waluau:vitest")
 
@@ -15,7 +15,7 @@ local function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
 end
 
--- The loadout a heist that is not about spells is dealt: the one spell a fresh
+-- The loadout a duel that is not about spells is dealt: the one spell a fresh
 -- run sets out with, at full price.
 local function starter_loadout(): {game.Spell}
     return { game.new_spell(game.spell_firebolt) }
@@ -52,7 +52,7 @@ local function force_stalemate(state: game.State): unit
     )
 end
 
-describe("Ante Magic scoring", function()
+describe("Duel Magic scoring", function()
     it("orders every five-card hand category", function()
         local straight_flush: i32 = game.rank_five({ card(10, 3), card(11, 3), card(12, 3), card(13, 3), card(14, 3) })
         local four_kind: i32 = game.rank_five({ card(9, 0), card(9, 1), card(9, 2), card(9, 3), card(2, 0) })
@@ -125,7 +125,7 @@ describe("Ante Magic scoring", function()
     end)
 end)
 
-describe("Ante Magic swaps", function()
+describe("Duel Magic swaps", function()
     it("exchanges a winning proposal once without consuming the deck", function()
         math.randomseed(7)
         local state = game.new(false, starter_loadout(), game.starting_mana)
@@ -218,7 +218,7 @@ describe("Ante Magic swaps", function()
         expect(game.view(state).player_hand[4].known):toBe(false)
     end)
 
-    it("sorts relics and watched marks without mutating the deal", function()
+    it("sorts cards and watched marks without mutating the deal", function()
         math.randomseed(48)
         local state = game.new(false, starter_loadout(), game.starting_mana)
         game_fixture.arrange_player(
@@ -251,12 +251,12 @@ describe("Ante Magic swaps", function()
         expect(game.view(state).player_hand[3].known):toBe(false)
         expect(game.view(state).player_hand[4].known):toBe(false)
 
-        local school_order = state:sort_player_hand(true)
-        expect(school_order[0]):toBe(0)
-        expect(school_order[1]):toBe(3)
-        expect(school_order[2]):toBe(2)
-        expect(school_order[3]):toBe(4)
-        expect(school_order[4]):toBe(1)
+        local color_order = state:sort_player_hand(true)
+        expect(color_order[0]):toBe(0)
+        expect(color_order[1]):toBe(3)
+        expect(color_order[2]):toBe(2)
+        expect(color_order[3]):toBe(4)
+        expect(color_order[4]):toBe(1)
         expect(game.view(state).player_hand[0].card.rank):toBe(14)
         expect(game.view(state).player_hand[0].card.suit):toBe(1)
         expect(game.view(state).player_hand[1].card.rank):toBe(3)
@@ -293,7 +293,7 @@ describe("Ante Magic swaps", function()
         expect(game.view(unaffordable_state).player_wager):toBe(0)
     end)
 
-    it("lets the Arch Mage make an unrestricted three-card feint", function()
+    it("lets the Opponent make an unrestricted three-card swap", function()
         local state = game.new(false, starter_loadout(), game.starting_mana)
         game_fixture.arrange_arch_mage(
             state,
@@ -318,7 +318,7 @@ describe("Ante Magic swaps", function()
         expect(marked_slots):toBe(3)
     end)
 
-    it("chooses the pair that completes the strongest formation", function()
+    it("chooses the pair that completes the strongest hand", function()
         local middle: {game.Card} = { card(2, 2), card(7, 2), card(11, 2) }
         local hand: {game.Card} = { card(14, 0), card(14, 1), card(5, 2), card(13, 2), card(9, 0) }
         local choice = game.best_pair(hand, middle)
@@ -328,7 +328,7 @@ describe("Ante Magic swaps", function()
     end)
 end)
 
-describe("Ante Magic development snapshots", function()
+describe("Duel Magic development snapshots", function()
     it("round-trips the complete rules state and rejects incompatible data", function()
         math.randomseed(49)
         local state: game.State = game.new(false, starter_loadout(), game.starting_mana)
@@ -351,7 +351,7 @@ describe("Ante Magic development snapshots", function()
             expect(game.view(restored).swap_middle_indices[0]):toBe(0)
         end
 
-        expect(game.restore("ante-state-v0,0") == nil):toBe(true)
+        expect(game.restore("duel-state-v0,0") == nil):toBe(true)
         expect(game.restore(encoded .. ",unexpected") == nil):toBe(true)
     end)
 
@@ -362,14 +362,14 @@ describe("Ante Magic development snapshots", function()
         ui.modal = flow.modal_help
 
         local encoded_flow: string = flow.snapshot(ui)
-        local framed: string = snapshot_data.frame("ante-test-frame", {
+        local framed: string = snapshot_data.frame("target-test-frame", {
             "1",
             run.snapshot(run_state),
             game.snapshot(rules),
             encoded_flow,
             "presentation",
         })
-        local sections: {string}? = snapshot_data.unframe(framed, "ante-test-frame", 5)
+        local sections: {string}? = snapshot_data.unframe(framed, "target-test-frame", 5)
         expect(sections == nil):toBe(false)
         if sections ~= nil then
             local payloads: {string} = sections
@@ -388,12 +388,12 @@ describe("Ante Magic development snapshots", function()
         end
 
         expect(snapshot_data.unframe(framed, "wrong-schema", 5) == nil):toBe(true)
-        expect(snapshot_data.unframe(framed, "ante-test-frame", 4) == nil):toBe(true)
-        expect(snapshot_data.unframe(framed .. "|extra", "ante-test-frame", 5) == nil):toBe(true)
+        expect(snapshot_data.unframe(framed, "target-test-frame", 4) == nil):toBe(true)
+        expect(snapshot_data.unframe(framed .. "|extra", "target-test-frame", 5) == nil):toBe(true)
     end)
 end)
 
-describe("Ante Magic heist flow", function()
+describe("Duel Magic duel flow", function()
     it("applies the same modal and animation gates to both input adapters", function()
         local keyboard: flow.State = flow.new()
         local mouse: flow.State = flow.new()
@@ -409,7 +409,7 @@ describe("Ante Magic heist flow", function()
         expect(flow.gate(mouse, false, true, false, flow.command_primary)):toBe(flow.result_skip)
     end)
 
-    it("finishes a reveal before advancing to breach cleanup", function()
+    it("finishes a reveal before advancing to round cleanup", function()
         local ui: flow.State = flow.new()
         flow.begin_reveal(ui)
 
@@ -425,7 +425,7 @@ describe("Ante Magic heist flow", function()
     end)
 end)
 
-describe("Ante Magic game flow", function()
+describe("Duel Magic game flow", function()
     it("plays all five rounds after three player wins", function()
         math.randomseed(42)
         local state = game.new(false, starter_loadout(), game.starting_mana)
@@ -479,7 +479,7 @@ describe("Ante Magic game flow", function()
         expect(game.view(state).player_points):toBe(final_points)
     end)
 
-    it("ends immediately on the Arch Mage's third win", function()
+    it("ends immediately on the Opponent's third win", function()
         math.randomseed(43)
         local state = game.new(false, starter_loadout(), game.starting_mana)
         for expected_round = FIRST_ROUND, 3 do
@@ -516,7 +516,7 @@ describe("Ante Magic game flow", function()
         expect(game.view(state).round):toBe(2)
     end)
 
-    it("does not count a stalemate as a third Arch Mage hold", function()
+    it("does not count a stalemate as a third Opponent hold", function()
         math.randomseed(45)
         local state = game.new(false, starter_loadout(), game.starting_mana)
         for _ = 1, 2 do
@@ -537,9 +537,9 @@ describe("Ante Magic game flow", function()
     end)
 end)
 
--- Boss battle hands shrink between breaches, so a forced win is sized to
+-- Challenge hands shrink between rounds, so a forced win is sized to
 -- whatever the hands currently hold: the player keeps a royal pair against
--- the fixed ward row while the Arch Mage holds a ladder that never beats it.
+-- the fixed table_card row while the Opponent holds a ladder that never beats it.
 local function force_boss_player_win(state: game.State): unit
     local count: i32 = #game.view(state).player_hand
     local player: {game.Card} = { card(13, 0), card(14, 0) }
@@ -550,8 +550,8 @@ local function force_boss_player_win(state: game.State): unit
         state, { card(10, 0), card(11, 0), card(12, 0) }, player, computer)
 end
 
-describe("Ante Magic boss battle", function()
-    it("deals eleven relics and never replaces a spent one", function()
+describe("Duel Magic boss battle", function()
+    it("deals eleven cards and never replaces a spent one", function()
         math.randomseed(50)
         local state = game.new(true, starter_loadout(), game.starting_mana)
         expect(state:is_boss()):toBe(true)
@@ -576,8 +576,8 @@ describe("Ante Magic boss battle", function()
             expect(trick.winner):toBe(1)
             expect(#trick.player_hand):toBe(expected_hand)
             expect(#trick.computer_hand):toBe(expected_hand)
-            -- Only the next ward row leaves the deck: spent relics are never
-            -- replaced, and the terminal breach reveals no further wards.
+            -- Only the next table_card row leaves the deck: spent cards are never
+            -- replaced, and the terminal round reveals no further table cards.
             if expected_round < LAST_ROUND then
                 expect(game.view(state).deck_count):toBe(deck_before - 3)
             else
@@ -604,7 +604,7 @@ describe("Ante Magic boss battle", function()
         expect(#game.view(state).computer_hand):toBe(5)
     end)
 
-    it("searches the whole eleven-card hand for the best feint", function()
+    it("searches the whole eleven-card hand for the best swap", function()
         local middle: {game.Card} = { card(9, 2), card(5, 0), card(6, 1) }
         local hand: {game.Card} = {
             card(2, 0), card(3, 1), card(4, 2), card(7, 3), card(8, 0),
@@ -612,10 +612,10 @@ describe("Ante Magic boss battle", function()
             card(9, 3), card(9, 0), card(9, 1),
         }
         -- Two of the hand's three nines must stay home while a third joins
-        -- the wards, so every fourfold-circle swap binds an index past the
+        -- the table cards, so every fourfold-circle swap binds an index past the
         -- old five-card option table.
         local choice = game.best_swap(hand, middle)
-        expect(game.category_name(choice.hand_value)):toBe("fourfold circle")
+        expect(game.category_name(choice.hand_value)):toBe("four of a kind")
         local high_index: i32 = 0
         for index in choice.hand_indices do
             if index > high_index then high_index = index end
@@ -643,15 +643,15 @@ describe("Ante Magic boss battle", function()
         end
     end)
 
-    it("restarts as the variant, loadout, and mana the reset asks for", function()
+    it("restarts as the variant, loadout, and gold the reset asks for", function()
         math.randomseed(53)
         local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_mana)
         state:reset(true, loadout_of(game.spell_clone), 23)
         expect(state:is_boss()):toBe(true)
         expect(state:hand_size()):toBe(11)
         expect(state:spell_kind(0)):toBe(game.spell_clone)
-        expect(state:mana()):toBe(23)
-        -- A vault dealt a pair of spells is fought with both, each on its own
+        expect(state:gold()):toBe(23)
+        -- A duel dealt a pair of spells is fought with both, each on its own
         -- key and at its own price.
         state:reset(false, {
             game.new_spell(game.spell_freeze_ray),
@@ -664,28 +664,28 @@ describe("Ante Magic boss battle", function()
         expect(state:spell_cost(0)):toBe(game.spell_cost)
         expect(state:spell_kind(1)):toBe(game.spell_clone)
         expect(state:spell_cost(1)):toBe(3)
-        expect(state:mana()):toBe(game.starting_mana)
+        expect(state:gold()):toBe(game.starting_mana)
     end)
 end)
 
-describe("Ante Magic spell casting", function()
+describe("Duel Magic spell casting", function()
     it("charges each spell its own price and refuses the rest", function()
         math.randomseed(57)
         local state = game.new(false, loadout_of(game.spell_raise_card), game.starting_mana)
         expect(state:spell_count()):toBe(1)
         expect(state:spell_kind(0)):toBe(game.spell_raise_card)
         expect(state:spell_cost(0)):toBe(game.spell_cost)
-        expect(state:mana()):toBe(10)
+        expect(state:gold()):toBe(10)
         expect(state:can_cast(0)):toBe(true)
         expect(state:cast_spell(0, 0)):toBe(true)
-        expect(state:mana()):toBe(5)
+        expect(state:gold()):toBe(5)
         expect(state:cast_spell(0, 1)):toBe(true)
-        expect(state:mana()):toBe(0)
+        expect(state:gold()):toBe(0)
         -- The third cast is unaffordable: nothing is charged and the caller
         -- hears a refusal instead of a launch.
         expect(state:can_cast(0)):toBe(false)
         expect(state:cast_spell(0, 2)):toBe(false)
-        expect(state:mana()):toBe(0)
+        expect(state:gold()):toBe(0)
     end)
 
     it("casts either spell of a pair at the price on its own key", function()
@@ -694,15 +694,15 @@ describe("Ante Magic spell casting", function()
             game.new_spell(game.spell_freeze_ray),
             { kind = game.spell_clone, cost = 2 },
         }, 4)
-        -- Four mana covers the sharpened spell on key 2 but not the full-price
+        -- Four gold covers the upgraded spell on key 2 but not the full-price
         -- one on key 1, and a slot the loadout does not have is never castable.
         expect(state:can_cast(0)):toBe(false)
         expect(state:can_cast(1)):toBe(true)
         expect(state:can_cast(2)):toBe(false)
         expect(state:cast_spell(2, 0)):toBe(false)
         expect(state:cast_spell(1, 0)):toBe(true)
-        expect(state:mana()):toBe(2)
-        -- The cheap cast was a Clone, so the ward it hit is not frozen; the
+        expect(state:gold()):toBe(2)
+        -- The cheap cast was a Clone, so the table_card it hit is not frozen; the
         -- Freeze Ray on key 1 is affordable again and does freeze one.
         expect(state:is_frozen(0)):toBe(false)
         expect(state:cast_spell(0, 1)):toBe(false)
@@ -712,7 +712,7 @@ describe("Ante Magic spell casting", function()
         }, game.spell_cost)
         expect(state:cast_spell(0, 1)):toBe(true)
         expect(state:is_frozen(1)):toBe(true)
-        expect(state:mana()):toBe(0)
+        expect(state:gold()):toBe(0)
     end)
 
     it("keeps the dealt loadout through development snapshots", function()
@@ -736,7 +736,7 @@ describe("Ante Magic spell casting", function()
         end
     end)
 
-    it("keeps frozen wards out of both sides' feints and thaws after resolution", function()
+    it("keeps frozen table cards out of both sides' feints and thaws after resolution", function()
         local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_mana)
         game_fixture.arrange_arch_mage(
             state,
@@ -746,8 +746,8 @@ describe("Ante Magic spell casting", function()
         expect(state:cast_spell(0, 0)):toBe(true)
         expect(state:is_frozen(0)):toBe(true)
 
-        -- A player proposal that names the frozen ward does not resolve the
-        -- feint or clear the condition.
+        -- A player proposal that names the frozen table_card does not resolve the
+        -- swap or clear the condition.
         expect(state:resolve_swap({ 0 }, { 0 }) == nil):toBe(true)
         expect(state:feint_open()):toBe(true)
         expect(state:is_frozen(0)):toBe(true)
@@ -756,12 +756,12 @@ describe("Ante Magic spell casting", function()
         assert(outcome ~= nil)
         local resolved: game.FeintOutcome = outcome::game.FeintOutcome
         expect(#resolved.middle_indices):toBe(2)
-        for ward in resolved.middle_indices do expect(ward == 0):toBe(false) end
+        for table_card in resolved.middle_indices do expect(table_card == 0):toBe(false) end
         expect(state:is_frozen(0)):toBe(false)
         expect(state:feint_open()):toBe(false)
     end)
 
-    it("retains a ward frozen after the feint for exactly one more round", function()
+    it("retains a table_card frozen after the swap for exactly one more round", function()
         math.randomseed(61)
         local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_mana)
         state:resolve_swap({}, {})
@@ -817,13 +817,13 @@ describe("Ante Magic spell casting", function()
         expect(game.snapshot(state)):toBe(before)
     end)
 
-    it("burns a ward only for a Firebolt this heist actually paid for", function()
+    it("burns a table_card only for a Firebolt this duel actually paid for", function()
         math.randomseed(67)
         local state = game.new(false, {
             game.new_spell(game.spell_freeze_ray),
             game.new_spell(game.spell_firebolt),
         }, game.starting_mana)
-        -- Carrying Firebolt is not casting it: nothing burns until the mana for
+        -- Carrying Firebolt is not casting it: nothing burns until the gold for
         -- one has changed hands.
         expect(state:resolve_firebolt(1) == nil):toBe(true)
         expect(state:cast_spell(0, 1)):toBe(true)

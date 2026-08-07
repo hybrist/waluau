@@ -1,10 +1,10 @@
--- The dark field the vault's wards stand on. It is chrome rather than
+-- The dark field the duel's table cards stand on. It is chrome rather than
 -- content: it takes the rectangle the cards were given and steps outside it,
 -- so the panel is always exactly as wide as the row it backs and never has to
 -- be re-authored when the row gains or loses a slot.
 --
 -- The field deliberately stops short of the cards' bottom edge. The row sits
--- on the panel rather than inside it, which is what keeps the wards reading as
+-- on the panel rather than inside it, which is what keeps the table cards reading as
 -- objects on a surface instead of tiles in a box.
 
 local box = require("../box_layout")

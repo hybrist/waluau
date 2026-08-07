@@ -1,6 +1,6 @@
--- The strip along the bottom of the vault: one cast hint per spell the robbers
+-- The strip along the bottom of the duel: one cast hint per spell the player
 -- carry, each on the key that casts it and in its own ink, greying out on its
--- own as the mana on hand stops covering its price; then the way back to the
+-- own as the gold on hand stops covering its price; then the way back to the
 -- menu, and the way into help.
 --
 -- The help caption is a click target as well as a caption, so it is a padded
@@ -38,7 +38,7 @@ function hint(state: game.View, slot: i32): entity.Node
     if state.player_points < spell.cost then ink = SPENT_INK end
     return label.left(
         tostring(slot + 1) .. " " .. spell_launch.name(spell.kind)
-            .. " " .. tostring(spell.cost) .. " MANA",
+            .. " " .. tostring(spell.cost) .. " GOLD",
         HINT_SIZE, ink)
 end
 

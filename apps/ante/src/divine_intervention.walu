@@ -1,4 +1,4 @@
--- DOM-free recognition and timing for Ante's hidden divine intervention.
+-- DOM-free recognition and timing for Target's hidden divine intervention.
 -- Rendering owns what the fairy looks like; this module only says when it is
 -- flying and which of the five cards it has reached.
 

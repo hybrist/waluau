@@ -1,5 +1,5 @@
--- Deterministic, DOM-free checks for the roguelike run around Ante Magic:
--- the boss cadence, mana carrying between vaults, the spell loadout carried
+-- Deterministic, DOM-free checks for the roguelike run around Duel Magic:
+-- the boss cadence, gold carrying between duels, the spell loadout carried
 -- with it, and where a run ends.
 
 require("waluau:vitest")
@@ -9,27 +9,27 @@ local game_fixture = require("../test/game_fixture")
 local run = require("./run")
 local flow = require("./flow")
 
--- One vault of a run, fought to a verdict and settled the way the heist screen
--- settles it: the rules say whether the vault opened and what mana survived,
--- and the run says what is dealt next. `arch_mage_wins` is how many wards the
--- Arch Mage held, so three of them is a lost vault.
+-- One duel of a run, fought to a verdict and settled the way the duel screen
+-- settles it: the rules say whether the duel opened and what gold survived,
+-- and the run says what is dealt next. `arch_mage_wins` is how many table cards the
+-- Opponent held, so three of them is a lost duel.
 local function settle_vault(
-    state: run.State, arch_mage_wins: i32, mana: i32
+    state: run.State, arch_mage_wins: i32, gold: i32
 ): game.State
-    local rules: game.State = game.new(state:boss(), state.spells, state.mana)
-    game_fixture.set_player_points(rules, mana)
+    local rules: game.State = game.new(state:boss(), state.spells, state.gold)
+    game_fixture.set_player_points(rules, gold)
     game_fixture.finish(rules, arch_mage_wins)
-    state:settle(rules:is_victory(), rules:mana())
+    state:settle(rules:is_victory(), rules:gold())
     return rules
 end
 
--- Take the live vault leaving `mana` behind, the way five survived breaches do.
-local function clear_vault(state: run.State, mana: i32): unit
-    settle_vault(state, 0, mana)
+-- Take the live duel leaving `gold` behind, the way five survived rounds do.
+local function clear_vault(state: run.State, gold: i32): unit
+    settle_vault(state, 0, gold)
 end
 
-describe("Ante Magic run cadence", function()
-    it("makes every third vault a boss battle", function()
+describe("Duel Magic run cadence", function()
+    it("makes every third duel a boss battle", function()
         expect(run.boss_at(1, false)):toBe(false)
         expect(run.boss_at(2, false)):toBe(false)
         expect(run.boss_at(3, false)):toBe(true)
@@ -38,17 +38,17 @@ describe("Ante Magic run cadence", function()
         expect(run.boss_at(9, false)):toBe(true)
     end)
 
-    it("makes every vault of a boss rush a boss battle", function()
+    it("makes every duel of a boss rush a boss battle", function()
         expect(run.boss_at(1, true)):toBe(true)
         expect(run.boss_at(2, true)):toBe(true)
         expect(run.boss_at(3, true)):toBe(true)
     end)
 
-    it("opens a run on the first vault with the starting mana", function()
+    it("opens a run on the first duel with the starting gold", function()
         local state: run.State = run.new(game.spell_clone, false)
-        expect(state.vault):toBe(1)
+        expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
-        expect(state.mana):toBe(game.starting_mana)
+        expect(state.gold):toBe(game.starting_mana)
         -- The menu's pick is the whole opening loadout, at full price and on
         -- the first cast key.
         expect(state:spell_count()):toBe(1)
@@ -59,43 +59,43 @@ describe("Ante Magic run cadence", function()
         expect(state:next_is_boss()):toBe(false)
     end)
 
-    it("carries a cleared vault's mana into the next one", function()
+    it("carries a cleared duel's gold into the next one", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         state:settle(true, 31)
-        expect(state.vault):toBe(2)
+        expect(state.duel):toBe(2)
         expect(state.cleared):toBe(1)
-        -- The vault charged its ante on the way out; the rest carries.
-        expect(state.mana):toBe(31 - run.ante_at(1, false))
+        -- The duel charged its target on the way out; the rest carries.
+        expect(state.gold):toBe(31 - run.ante_at(1, false))
         expect(state:boss()):toBe(false)
-        -- The vault after this one is where the cadence lands, so the board can
+        -- The duel after this one is where the cadence lands, so the board can
         -- warn about it while this one is still being fought.
         expect(state:next_is_boss()):toBe(true)
         state:settle(true, 18)
-        expect(state.vault):toBe(3)
-        expect(state.mana):toBe(18 - run.ante_at(2, false))
+        expect(state.duel):toBe(3)
+        expect(state.gold):toBe(18 - run.ante_at(2, false))
         expect(state:boss()):toBe(true)
     end)
 
-    it("ends the run on a lost vault, mana and all", function()
+    it("ends the run on a lost duel, gold and all", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         state:settle(true, 31)
-        -- A lost vault takes the carried mana with it: what follows is the
-        -- first vault of a fresh run, not a retry of the one that ended it.
+        -- A lost duel takes the carried gold with it: what follows is the
+        -- first duel of a fresh run, not a retry of the one that ended it.
         state:settle(false, 31)
-        expect(state.vault):toBe(1)
+        expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
-        expect(state.mana):toBe(game.starting_mana)
+        expect(state.gold):toBe(game.starting_mana)
         expect(state.start_spell):toBe(game.spell_firebolt)
     end)
 
-    it("restarts a run at the first vault with a fresh pool", function()
+    it("restarts a run at the first duel with a fresh pool", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         state:settle(true, 31)
         state:settle(true, 18)
         state:restart(game.spell_freeze_ray, true)
-        expect(state.vault):toBe(1)
+        expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
-        expect(state.mana):toBe(game.starting_mana)
+        expect(state.gold):toBe(game.starting_mana)
         expect(state.start_spell):toBe(game.spell_freeze_ray)
         expect(state:boss()):toBe(true)
     end)
@@ -107,23 +107,23 @@ describe("Ante Magic run cadence", function()
         local restored: run.State? = run.restore(encoded)
         expect(restored == nil):toBe(false)
         if restored ~= nil then
-            expect(restored.vault):toBe(2)
+            expect(restored.duel):toBe(2)
             expect(restored.cleared):toBe(1)
-            expect(restored.mana):toBe(27 - run.ante_at(1, true))
+            expect(restored.gold):toBe(27 - run.ante_at(1, true))
             expect(restored.spells[0].kind):toBe(game.spell_raise_card)
             expect(restored.start_spell):toBe(game.spell_raise_card)
             expect(restored.rush):toBe(true)
             expect(run.snapshot(restored)):toBe(encoded)
         end
 
-        expect(run.restore("ante-run-v1,1,10,0,1,0") == nil):toBe(true)
+        expect(run.restore("duel-run-v1,1,10,0,1,0") == nil):toBe(true)
         expect(run.restore(encoded .. ",unexpected") == nil):toBe(true)
     end)
 
     it("round-trips a bought loadout and refuses an impossible one", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         state:settle(true, 30)
-        expect(state:sharpen(0)):toBe(true)
+        expect(state:upgrade(0)):toBe(true)
         expect(state:learn(game.spell_clone, state:open_slot())):toBe(true)
         local encoded: string = run.snapshot(state)
         local restored: run.State? = run.restore(encoded)
@@ -138,12 +138,12 @@ describe("Ante Magic run cadence", function()
 
         -- A loadout of three spells, or of none, is not a run this build could
         -- have produced, so restoring it is a normal refusal.
-        expect(run.restore("ante-run-v2,1,10,0,0,1,0") == nil):toBe(true)
-        expect(run.restore("ante-run-v2,1,10,0,3,1,5,2,5,3,5,1,0") == nil):toBe(true)
+        expect(run.restore("duel-run-v2,1,10,0,0,1,0") == nil):toBe(true)
+        expect(run.restore("duel-run-v2,1,10,0,3,1,5,2,5,3,5,1,0") == nil):toBe(true)
     end)
 end)
 
-describe("Ante Magic run loadout", function()
+describe("Duel Magic run loadout", function()
     it("gives a learned spell the next cast key while there is room", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         expect(state:open_slot()):toBe(1)
@@ -175,37 +175,37 @@ describe("Ante Magic run loadout", function()
         local steps: i32 = game.spell_cost - run.min_spell_cost
         for _ = 1, steps do
             expect(state:can_sharpen(0)):toBe(true)
-            expect(state:sharpen(0)):toBe(true)
+            expect(state:upgrade(0)):toBe(true)
         end
         expect(state.spells[0].cost):toBe(run.min_spell_cost)
         expect(state:can_sharpen(0)):toBe(false)
-        expect(state:sharpen(0)):toBe(false)
-        expect(state:sharpen(1)):toBe(false)
+        expect(state:upgrade(0)):toBe(false)
+        expect(state:upgrade(1)):toBe(false)
     end)
 
     it("spends only what the carried pool covers", function()
         local state: run.State = run.new(game.spell_clone, false)
         expect(state:spend(4)):toBe(true)
-        expect(state.mana):toBe(game.starting_mana - 4)
+        expect(state.gold):toBe(game.starting_mana - 4)
         expect(state:spend(game.starting_mana)):toBe(false)
-        expect(state.mana):toBe(game.starting_mana - 4)
+        expect(state.gold):toBe(game.starting_mana - 4)
     end)
 
-    it("carries a bought loadout between vaults and drops it with the run", function()
+    it("carries a bought loadout between duels and drops it with the run", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         state:settle(true, 26)
         expect(state:learn(game.spell_clone, state:open_slot())):toBe(true)
-        expect(state:sharpen(1)):toBe(true)
+        expect(state:upgrade(1)):toBe(true)
         state:settle(true, 19)
-        -- The next vault is dealt the sharpened pair: the loadout belongs to the
-        -- run, not to the vault that bought it.
+        -- The next duel is dealt the upgraded pair: the loadout belongs to the
+        -- run, not to the duel that bought it.
         expect(state:spell_count()):toBe(2)
         expect(state.spells[1].cost):toBe(game.spell_cost - 1)
-        local dealt: game.State = game.new(state:boss(), state.spells, state.mana)
+        local dealt: game.State = game.new(state:boss(), state.spells, state.gold)
         expect(dealt:spell_count()):toBe(2)
         expect(dealt:spell_cost(1)):toBe(game.spell_cost - 1)
 
-        -- The Arch Mage taking the vault ends the run, and everything the run
+        -- The Opponent taking the duel ends the run, and everything the run
         -- bought goes with it: a fresh run sets out with its starting spell at
         -- full price.
         state:settle(false, 19)
@@ -214,41 +214,41 @@ describe("Ante Magic run loadout", function()
         expect(state.spells[0].cost):toBe(game.spell_cost)
     end)
 
-    it("keeps the loadout out of reach of the vault it is dealt to", function()
+    it("keeps the loadout out of reach of the duel it is dealt to", function()
         local state: run.State = run.new(game.spell_firebolt, false)
-        local dealt: game.State = game.new(state:boss(), state.spells, state.mana)
-        -- The vault holds a reading of the loadout. Nothing a heist does to its
+        local dealt: game.State = game.new(state:boss(), state.spells, state.gold)
+        -- The duel holds a reading of the loadout. Nothing a duel does to its
         -- own copy — and nothing done to the run's afterwards — crosses over.
-        expect(state:sharpen(0)):toBe(true)
+        expect(state:upgrade(0)):toBe(true)
         expect(dealt:spell_cost(0)):toBe(game.spell_cost)
         expect(state.spells[0].cost):toBe(game.spell_cost - 1)
     end)
 end)
 
-describe("Ante Magic ante", function()
-    it("climbs across the run and takes its largest steps on boss vaults", function()
+describe("Duel Magic target", function()
+    it("climbs across the run and takes its largest steps on boss duels", function()
         local previous: i32 = 0
-        for vault = 1::i32, run.run_length(false) do
-            local ante: i32 = run.ante_at(vault, false)
-            expect(ante):toBeGreaterThan(previous)
-            previous = ante
+        for duel = 1::i32, run.run_length(false) do
+            local target: i32 = run.ante_at(duel, false)
+            expect(target):toBeGreaterThan(previous)
+            previous = target
         end
-        -- Every boss vault asks for more of a step up than the standard vault
-        -- before it, so the end of an act is a mana wall as well as an
-        -- eleven-relic one.
-        for vault = 3::i32, run.run_length(false) do
-            if run.boss_at(vault, false) then
-                local boss_step: i32 = run.ante_at(vault, false)
-                    - run.ante_at(vault - 1, false)
-                local before: i32 = run.ante_at(vault - 1, false)
-                    - run.ante_at(vault - 2, false)
+        -- Every boss duel asks for more of a step up than the standard duel
+        -- before it, so the end of an act is a gold wall as well as an
+        -- eleven-card one.
+        for duel = 3::i32, run.run_length(false) do
+            if run.boss_at(duel, false) then
+                local boss_step: i32 = run.ante_at(duel, false)
+                    - run.ante_at(duel - 1, false)
+                local before: i32 = run.ante_at(duel - 1, false)
+                    - run.ante_at(duel - 2, false)
                 expect(boss_step):toBeGreaterThan(before)
             end
         end
-        -- The table crosses what a vault pays rather than staying under it.
-        -- Early vaults ask for well below the eleven a cleared one pays
+        -- The table crosses what a duel pays rather than staying under it.
+        -- Early duels ask for well below the eleven a cleared one pays
         -- (measured in economy.test.walu), so a run that is going well banks a
-        -- surplus; late vaults ask for more than any vault can pay, so the run
+        -- surplus; late duels ask for more than any duel can pay, so the run
         -- is spent out of that pile and arrives at the last one on fumes.
         expect(run.ante_at(1, false)):toBeLessThan(11)
         expect(run.ante_at(2, false)):toBeLessThan(11)
@@ -257,7 +257,7 @@ describe("Ante Magic ante", function()
         expect(run.ante_at(run.run_length(false) - 1, false)):toBeGreaterThan(11)
     end)
 
-    it("keeps climbing past the table, faster than a vault can pay", function()
+    it("keeps climbing past the table, faster than a duel can pay", function()
         local finish: i32 = run.run_length(false)
         local previous_step: i32 = 0
         for past = 1::i32, 4 do
@@ -265,7 +265,7 @@ describe("Ante Magic ante", function()
                 - run.ante_at(finish + past - 1, false)
             expect(step):toBeGreaterThan(previous_step)
             previous_step = step
-            -- The tail always ends. Every vault past the finish asks for more
+            -- The tail always ends. Every duel past the finish asks for more
             -- than the eleven a cleared one pays (measured in
             -- economy.test.walu), and the shortfall widens with the step, so a
             -- run walks on out of whatever surplus it arrived with and no
@@ -273,35 +273,35 @@ describe("Ante Magic ante", function()
             expect(run.ante_at(finish + past, false)):toBeGreaterThan(11)
         end
         -- Concretely: a run that finished the table holding fifty walks about
-        -- two more vaults, not twenty.
+        -- two more duels, not twenty.
         local purse: i32 = 50
         local walked: i32 = 0
         for past = 1::i32, 20 do
-            local ante: i32 = run.ante_at(finish + past, false)
-            if purse + 11 < ante then break end
-            purse = purse + 11 - ante
+            local target: i32 = run.ante_at(finish + past, false)
+            if purse + 11 < target then break end
+            purse = purse + 11 - target
             walked = past
         end
         expect(walked):toBeGreaterThan(0)
         expect(walked):toBeLessThan(5)
     end)
 
-    it("asks a boss rush for a steeper ante over a shorter run", function()
+    it("asks a boss rush for a steeper target over a shorter run", function()
         expect(run.run_length(true)):toBeLessThan(run.run_length(false))
         expect(run.ante_at(1, true)):toBeGreaterThan(run.ante_at(1, false))
         expect(run.ante_at(3, true)):toBeGreaterThan(run.ante_at(3, false))
     end)
 end)
 
-describe("Ante Magic run outcomes", function()
-    it("names the four things a fought vault can turn out to be", function()
-        local ante: i32 = run.ante_at(1, false)
+describe("Duel Magic run outcomes", function()
+    it("names the four things a fought duel can turn out to be", function()
+        local target: i32 = run.ante_at(1, false)
         expect(run.outcome_of(1, false, false, 99)):toBe(run.outcome_lost_vault)
-        -- Holding exactly the ante clears; a single mana short does not.
-        expect(run.outcome_of(1, false, true, ante)):toBe(run.outcome_advance)
-        expect(run.outcome_of(1, false, true, ante - 1)):toBe(run.outcome_lost_ante)
-        -- The Arch Mage holding the vault outranks the purse: a run that lost
-        -- the breaches is over for that reason, whatever it was carrying.
+        -- Holding exactly the target clears; a single gold short does not.
+        expect(run.outcome_of(1, false, true, target)):toBe(run.outcome_advance)
+        expect(run.outcome_of(1, false, true, target - 1)):toBe(run.outcome_lost_ante)
+        -- The Opponent holding the duel outranks the purse: a run that lost
+        -- the run is over for that reason, whatever it was carrying.
         expect(run.outcome_of(1, false, false, 0)):toBe(run.outcome_lost_vault)
     end)
 
@@ -309,70 +309,70 @@ describe("Ante Magic run outcomes", function()
         local finish: i32 = run.run_length(false)
         expect(run.outcome_of(finish, false, true, 999)):toBe(run.outcome_won)
         expect(run.outcome_of(finish - 1, false, true, 999)):toBe(run.outcome_advance)
-        -- Not a state the run stays in: the vault after the finish is an
+        -- Not a state the run stays in: the duel after the finish is an
         -- ordinary one again, however far past the table it is.
         expect(run.outcome_of(finish + 1, false, true, 999)):toBe(run.outcome_advance)
         expect(run.outcome_of(finish + 7, false, true, 999)):toBe(run.outcome_advance)
     end)
 
-    it("takes the last vault of the table and keeps the run going", function()
+    it("takes the last duel of the table and keeps the run going", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         local finish: i32 = run.run_length(false)
-        state.vault = finish
+        state.duel = finish
         state.cleared = finish - 1
         expect(state:settle(true, 200)):toBe(run.outcome_won)
-        -- Won, and still standing in the city: the next vault is dealt, the
+        -- Won, and still standing in the city: the next duel is dealt, the
         -- purse survived, and the loadout was never reset.
-        expect(state.vault):toBe(finish + 1)
+        expect(state.duel):toBe(finish + 1)
         expect(state.cleared):toBe(finish)
-        expect(state.mana):toBe(200 - run.ante_at(finish, false))
+        expect(state.gold):toBe(200 - run.ante_at(finish, false))
         expect(state:endless()):toBe(true)
         expect(state:settle(true, 200)):toBe(run.outcome_advance)
-        expect(state.vault):toBe(finish + 2)
+        expect(state.duel):toBe(finish + 2)
     end)
 
-    it("ends a run that opened the vault but could not pay the ante", function()
+    it("ends a run that opened the duel but could not pay the target", function()
         local state: run.State = run.new(game.spell_freeze_ray, false)
         state:settle(true, 40)
-        local short: i32 = run.ante_at(state.vault, false) - 1
+        local short: i32 = run.ante_at(state.duel, false) - 1
         expect(state:settle(true, short)):toBe(run.outcome_lost_ante)
-        -- The same ending as the Arch Mage taking it: a fresh first vault, the
+        -- The same ending as the Opponent taking it: a fresh first duel, the
         -- starting spell back at full price, and the purse gone.
-        expect(state.vault):toBe(1)
+        expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
-        expect(state.mana):toBe(game.starting_mana)
+        expect(state.gold):toBe(game.starting_mana)
         expect(state.start_spell):toBe(game.spell_freeze_ray)
     end)
 
     it("still charges an endless run, and still ends it", function()
         local state: run.State = run.new(game.spell_clone, false)
-        state.vault = run.run_length(false) + 3
+        state.duel = run.run_length(false) + 3
         state.cleared = run.run_length(false) + 2
-        local ante: i32 = state:ante()
-        expect(state:settle(true, ante - 1)):toBe(run.outcome_lost_ante)
-        expect(state.vault):toBe(1)
+        local target: i32 = state:target()
+        expect(state:settle(true, target - 1)):toBe(run.outcome_lost_ante)
+        expect(state.duel):toBe(1)
         expect(state:endless()):toBe(false)
     end)
 
     it("carries a run past the finish line through a snapshot", function()
         local state: run.State = run.new(game.spell_raise_card, false)
-        state.vault = run.run_length(false) + 3
+        state.duel = run.run_length(false) + 3
         state.cleared = run.run_length(false) + 2
-        state.mana = 61
+        state.gold = 61
         local restored: run.State? = run.restore(run.snapshot(state))
         expect(restored == nil):toBe(false)
         if restored ~= nil then
-            expect(restored.vault):toBe(run.run_length(false) + 3)
-            expect(restored.mana):toBe(61)
-            -- The ante is read back off the vault rather than stored, so a
+            expect(restored.duel):toBe(run.run_length(false) + 3)
+            expect(restored.gold):toBe(61)
+            -- The target is read back off the duel rather than stored, so a
             -- payload from before the finish line needs nothing added to it.
-            expect(restored:ante()):toBe(state:ante())
+            expect(restored:target()):toBe(state:target())
         end
     end)
 end)
 
-describe("Ante Magic vault verdicts", function()
-    it("clears a vault the Arch Mage failed to hold three times", function()
+describe("Duel Magic duel verdicts", function()
+    it("clears a duel the Opponent failed to hold three times", function()
         math.randomseed(71)
         local state: game.State = game.new(
             false, { game.new_spell(game.spell_firebolt) }, game.starting_mana)
@@ -382,7 +382,7 @@ describe("Ante Magic vault verdicts", function()
         expect(game.view_cleared(game.view(state))):toBe(true)
     end)
 
-    it("loses a vault the Arch Mage held three times", function()
+    it("loses a duel the Opponent held three times", function()
         math.randomseed(73)
         local state: game.State = game.new(
             false, { game.new_spell(game.spell_firebolt) }, game.starting_mana)
@@ -403,7 +403,7 @@ describe("Ante Magic vault verdicts", function()
         -- The verdict stays up until the screen deals whatever comes next.
         expect(keyboard.modal):toBe(flow.modal_final)
         -- Restart is still its own answer: the whole run over again, rather
-        -- than whatever vault the run would have moved to.
+        -- than whatever duel the run would have moved to.
         expect(flow.gate(keyboard, true, false, true, flow.command_restart))
             :toBe(flow.result_reset)
         -- The ledger opens over the verdict, and closing it puts the verdict
@@ -422,61 +422,61 @@ describe("Ante Magic vault verdicts", function()
     end)
 end)
 
--- The heist screen deals each vault from the run the same way these do: the
--- variant, spell, and opening mana are all the run's to say. What the screen
+-- The duel screen deals each duel from the run the same way these do: the
+-- variant, spell, and opening gold are all the run's to say. What the screen
 -- adds on top is choreography, which needs a canvas and is covered by the
 -- app's browser suite instead.
-describe("Ante Magic run progression", function()
-    it("deals the next vault with the mana the last one left", function()
+describe("Duel Magic run progression", function()
+    it("deals the next duel with the gold the last one left", function()
         math.randomseed(79)
         local state: run.State = run.new(game.spell_firebolt, false)
         local first: game.State = settle_vault(state, 0, 42)
-        expect(first:mana()):toBe(42)
-        expect(state.vault):toBe(2)
+        expect(first:gold()):toBe(42)
+        expect(state.duel):toBe(2)
         expect(state.cleared):toBe(1)
 
-        local second: game.State = game.new(state:boss(), state.spells, state.mana)
-        expect(second:mana()):toBe(42 - run.ante_at(1, false))
+        local second: game.State = game.new(state:boss(), state.spells, state.gold)
+        expect(second:gold()):toBe(42 - run.ante_at(1, false))
         expect(second:is_boss()):toBe(false)
         expect(second:is_finished()):toBe(false)
         expect(second:spell_kind(0)):toBe(game.spell_firebolt)
 
         clear_vault(state, 30)
-        expect(state.vault):toBe(3)
+        expect(state.duel):toBe(3)
         expect(state.cleared):toBe(2)
-        -- The third vault is the boss battle: eleven relics, no replacements.
-        local third: game.State = game.new(state:boss(), state.spells, state.mana)
-        expect(third:mana()):toBe(30 - run.ante_at(2, false))
+        -- The third duel is the boss battle: eleven cards, no replacements.
+        local third: game.State = game.new(state:boss(), state.spells, state.gold)
+        expect(third:gold()):toBe(30 - run.ante_at(2, false))
         expect(third:is_boss()):toBe(true)
         expect(third:hand_size()):toBe(11)
     end)
 
-    it("ends the run where the Arch Mage stops it", function()
+    it("ends the run where the Opponent stops it", function()
         math.randomseed(83)
         local state: run.State = run.new(game.spell_clone, false)
         clear_vault(state, 42)
         local lost: game.State = settle_vault(state, 3, 42)
         expect(lost:is_victory()):toBe(false)
 
-        expect(state.vault):toBe(1)
+        expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
-        local fresh: game.State = game.new(state:boss(), state.spells, state.mana)
-        expect(fresh:mana()):toBe(game.starting_mana)
+        local fresh: game.State = game.new(state:boss(), state.spells, state.gold)
+        expect(fresh:gold()):toBe(game.starting_mana)
         expect(fresh:spell_kind(0)):toBe(game.spell_clone)
     end)
 
-    it("keeps every vault of a boss rush a boss battle", function()
+    it("keeps every duel of a boss rush a boss battle", function()
         math.randomseed(89)
         local state: run.State = run.new(game.spell_freeze_ray, true)
         local opening: game.State = settle_vault(state, 0, 25)
         expect(opening:is_boss()):toBe(true)
         expect(opening:hand_size()):toBe(11)
 
-        expect(state.vault):toBe(2)
+        expect(state.duel):toBe(2)
         expect(state:boss()):toBe(true)
         expect(state:next_is_boss()):toBe(true)
-        local second: game.State = game.new(state:boss(), state.spells, state.mana)
-        expect(second:mana()):toBe(25 - run.ante_at(1, true))
+        local second: game.State = game.new(state:boss(), state.spells, state.gold)
+        expect(second:gold()):toBe(25 - run.ante_at(1, true))
         expect(second:hand_size()):toBe(11)
     end)
 end)

@@ -1,16 +1,16 @@
 -- WebGL2 presentation for the DOM-free city map. Muted rooftops keep whatever
 -- list is standing over them readable; the saturated things are the route the
--- heist walks and the thief streak passing somewhere else in the city.
+-- duel walks and the thief streak passing somewhere else in the city.
 --
 -- Everything is drawn at `alpha`, so the same picture serves both the map
--- screens and the handover into and out of a vault. At full opacity it clears
+-- screens and the handover into and out of a duel. At full opacity it clears
 -- the frame; at anything less it lays itself over whatever is already there,
--- which is the vault the map is giving the screen to.
+-- which is the duel the map is giving the screen to.
 --
 -- The push into a house is drawn as well as zoomed. As the camera closes, the
 -- route furniture and then the surrounding city drop away, so what is left
 -- growing into the frame is the one house being entered — its dark interior
--- becomes the room the vault's own backdrop fades in behind.
+-- becomes the room the duel's own backdrop fades in behind.
 
 local engine = require("waluau:engine")
 local ink = require("./ink")
@@ -180,7 +180,7 @@ function dashed_line(
     end
 end
 
--- The road still to come, from wherever the heist stands to as far ahead as the
+-- The road still to come, from wherever the duel stands to as far ahead as the
 -- route has been walked out.
 function draw_route_ahead(state: city_map.State, graphics: Graphics, alpha: f64): unit
     local last: i32 = city_map.stop_count(state) - 1
@@ -198,7 +198,7 @@ function draw_route_ahead(state: city_map.State, graphics: Graphics, alpha: f64)
     end
 end
 
--- The road already walked, ending exactly where the heist stands rather than at
+-- The road already walked, ending exactly where the duel stands rather than at
 -- the last stop it passed, so the line and the marker are never apart.
 function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64): unit
     local standing: Point = city_map.position_at(state, state.travel)
@@ -227,8 +227,8 @@ function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64):
     graphics:line(state.stops[passed].x, state.stops[passed].y, standing.x, standing.y)
 end
 
--- A house with a vault in it: a gabled block on the corner, wearing the number
--- of the vault it holds so the map says how far into the run the heist is. The
+-- A house with a duel in it: a gabled block on the corner, wearing the number
+-- of the duel it holds so the map says how far into the run the duel is. The
 -- number sits on its own plate, because it lands on rooftops as often as on
 -- street and has to be read off either.
 -- `alpha` carries the house itself and `label_alpha` the writing under it: a
@@ -237,7 +237,7 @@ end
 -- `final` is the house the run's table ends on. The route does not stop there —
 -- the city goes on and so does a run that took it — so it is drawn as a landmark
 -- walked past rather than as a terminus: a second roof over the first, and a
--- label that says which vault it is the last of.
+-- label that says which duel it is the last of.
 function draw_vault_stop(
     graphics: Graphics,
     stop: city_map.Stop,
@@ -261,12 +261,12 @@ function draw_vault_stop(
         graphics:line(stop.x, stop.y - 31.0, stop.x + 22.0, stop.y - 17.0)
     end
     if label_alpha <= 0.0 then return end
-    -- The dial is the marker saying "vault", not part of the building: a house
+    -- The dial is the marker saying "duel", not part of the building: a house
     -- being walked into keeps its walls and gives that up, rather than hanging
     -- a storey-high disc in the room.
     graphics:set_color(ink.fade(tone, label_alpha))
     graphics:fill_circle(stop.x, stop.y + 1.0, 4.0)
-    local writing: string = "VAULT " .. label
+    local writing: string = "DUEL " .. label
     local plate: f64 = 52.0
     if final then
         writing = writing .. "   LAST"
@@ -308,9 +308,9 @@ function entered_stop(state: city_map.State): i32
     return math.floor(state.target + 0.5)::i32
 end
 
--- `landmark` is the stop the run's last authored vault stands on, or -1 for a
+-- `landmark` is the stop the run's last authored duel stands on, or -1 for a
 -- map nobody is running — the menu's drifting view. A stop index rather than a
--- vault number: this module lays out a route and does not know what a run is.
+-- duel number: this module lays out a route and does not know what a run is.
 function draw_stops(
     state: city_map.State,
     graphics: Graphics,
@@ -331,7 +331,7 @@ function draw_stops(
                     graphics, stop, tostring(city_map.stop_vault(index)),
                     reached, final, alpha, furniture)
             elseif furniture > 0.0 then
-                if stop.vault then
+                if stop.duel then
                     draw_vault_stop(
                         graphics, stop, tostring(city_map.stop_vault(index)),
                         reached, final, furniture, furniture)
@@ -343,7 +343,7 @@ function draw_stops(
     end
 end
 
--- Where the robbers are: a breathing mote on the route, between two stops while
+-- Where the player are: a breathing mote on the route, between two stops while
 -- they are walking and on one while they are working.
 function draw_party(state: city_map.State, graphics: Graphics, alpha: f64): unit
     local standing: Point = city_map.position_at(state, state.travel)
@@ -377,8 +377,8 @@ function draw(
     landmark: i32
 ): unit
     if alpha <= 0.0 then return end
-    -- A map that owns the frame clears it; one handing the screen to a vault
-    -- must leave the vault underneath it to come through.
+    -- A map that owns the frame clears it; one handing the screen to a duel
+    -- must leave the duel underneath it to come through.
     if alpha >= 1.0 then graphics:clear(NIGHT) end
     graphics:set_color(ink.fade(ASPHALT, alpha))
     graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)

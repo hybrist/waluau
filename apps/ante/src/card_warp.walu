@@ -162,12 +162,12 @@ end
 -- at the corner itself, zero at the corner opposite it, and a half at the two
 -- corners either side. Everything the pull does is a function of this.
 function grip_coordinate(pose: Pose, u: f64, v: f64): f64
-    local toward_u: f64 = math.abs(u - (1.0 - pose.grab_u))
-    local toward_v: f64 = math.abs(v - (1.0 - pose.grab_v))
-    return (toward_u + toward_v) * 0.5
+    local totable_card_u: f64 = math.abs(u - (1.0 - pose.grab_u))
+    local totable_card_v: f64 = math.abs(v - (1.0 - pose.grab_v))
+    return (totable_card_u + totable_card_v) * 0.5
 end
 
--- The share of the corner's lead that reaches a point. At the held corner it
+-- The share of the corner's lead that rounds a point. At the held corner it
 -- is always exactly one, whatever the rest of the sheet is doing — the corner
 -- is where the hand is, so it is never the thing that lags or overshoots.
 function pull_weight(pose: Pose, u: f64, v: f64): f64

@@ -1,5 +1,5 @@
 -- Deterministic, DOM-free checks for the generated city map: its streets, the
--- route the heist walks through them, and the pans and dissolves that carry the
+-- route the duel walks through them, and the pans and dissolves that carry the
 -- picture from one screen to the next.
 
 require("waluau:vitest")
@@ -61,7 +61,7 @@ describe("city map", function()
         end
     end)
 
-    it("alternates vendors and vaults along streets it generated", function()
+    it("alternates vendors and duels along streets it generated", function()
         local city: city_map.State = city_map.new(17)
         -- A realistic measured viewport: the anchor claims below are about a
         -- screen someone is actually looking at, not the unmeasured default.
@@ -71,7 +71,7 @@ describe("city map", function()
         expect(city_map.stop_count(city)):toBeGreaterThanOrEqual(24)
         for index = 0::i32, city_map.stop_count(city) - 1 do
             local stop: city_map.Stop = city.stops[index]
-            expect(stop.vault):toBe(index % 2 == 1)
+            expect(stop.duel):toBe(index % 2 == 1)
             expect(contains(city.vertical_streets, stop.x)):toBe(true)
             expect(contains(city.horizontal_streets, stop.y)):toBe(true)
             -- The route never stands on the city's outermost street, so every
@@ -99,7 +99,7 @@ describe("city map", function()
         end
     end)
 
-    it("numbers the route so vaults and the fences before them agree", function()
+    it("numbers the route so duels and the fences before them agree", function()
         expect(city_map.fence_stop(1)):toBe(0)
         expect(city_map.vault_stop(1)):toBe(1)
         expect(city_map.fence_stop(3)):toBe(4)
@@ -109,7 +109,7 @@ describe("city map", function()
         expect(city_map.stop_vault(4)):toBe(3)
         expect(city_map.stop_vault(5)):toBe(3)
 
-        -- Following a vault the route has not been walked out to still finds a
+        -- Following a duel the route has not been walked out to still finds a
         -- stop there: the map extends itself rather than ending.
         local city: city_map.State = city_map.new(23)
         city_map.follow(city, city_map.vault_stop(40))
@@ -188,7 +188,7 @@ describe("city map", function()
         expect(on_screen(city, city_map.position(city))):toBe(true)
     end)
 
-    it("goes into the house before handing the screen to the vault", function()
+    it("goes into the house before handing the screen to the duel", function()
         local city: city_map.State = city_map.new(88)
         city_map.warp(city, city_map.vault_stop(1))
         expect(city.cover):toBe(1.0)
@@ -203,7 +203,7 @@ describe("city map", function()
         expect(city.zoom):toBeGreaterThan(1.5)
         expect(city.cover):toBe(1.0)
 
-        -- Then the vault takes over, and by the time it has the door is wide
+        -- Then the duel takes over, and by the time it has the door is wide
         -- enough to be the frame around it.
         step_seconds(city, 0.3)
         expect(city.cover):toBeLessThan(1.0)
@@ -232,8 +232,8 @@ describe("city map", function()
         local city: city_map.State = city_map.new(31)
         city_map.warp(city, city_map.fence_stop(1))
 
-        -- Asking for the next vault while standing at its fence is a walk
-        -- first: the camera cannot go into a house the heist has not reached.
+        -- Asking for the next duel while standing at its shop is a walk
+        -- first: the camera cannot go into a house the duel has not reached.
         city_map.follow(city, city_map.vault_stop(1))
         city_map.hide(city)
         step_seconds(city, 0.3)
@@ -248,7 +248,7 @@ describe("city map", function()
         step_seconds(city, 1.0)
         expect(city.zoom):toBeGreaterThan(20.0)
 
-        -- And coming out of a vault the camera opens up before anyone steps
+        -- And coming out of a duel the camera opens up before anyone steps
         -- into the street.
         city_map.follow(city, city_map.fence_stop(2))
         city_map.show(city)

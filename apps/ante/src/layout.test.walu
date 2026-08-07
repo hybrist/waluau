@@ -4,7 +4,7 @@ require("waluau:vitest")
 
 local layout = require("./layout")
 
-describe("Ante Magic canvas layout", function()
+describe("Duel Magic canvas layout", function()
     it("uses additional width as logical layout space", function()
         layout.update(1200.0, 600.0)
         local state: layout.State = layout.current()
@@ -49,8 +49,8 @@ describe("Ante Magic canvas layout", function()
         -- rows keep clear daylight between them.
         expect(state.computer_y):toBeGreaterThan(116.0)
         expect(state.player_y):toBeLessThan(state.height - 91.0)
-        expect(state.ward_y):toBeGreaterThan(state.computer_y + 128.0)
-        expect(state.ward_y + 128.0):toBeLessThan(state.player_y - 64.0)
+        expect(state.table_card_y):toBeGreaterThan(state.computer_y + 128.0)
+        expect(state.table_card_y + 128.0):toBeLessThan(state.player_y - 64.0)
     end)
 
     it("keeps a usable hand lane at the packed board width", function()
@@ -60,7 +60,7 @@ describe("Ante Magic canvas layout", function()
         expect(state.scale):toBe(1.0)
         expect(state.width):toBe(700.0)
         expect(state.hand_span):toBe(260.0)
-        -- The ward row still clears both side columns.
+        -- The table_card row still clears both side columns.
         expect(state.center_x - 168.0):toBeGreaterThan(state.side_left + 104.0)
         expect(state.center_x + 168.0):toBeLessThan(state.side_right)
     end)

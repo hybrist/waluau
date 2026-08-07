@@ -1,19 +1,19 @@
 -- DOM-free city map behind every screen of a run: the streets and rooftops the
--- robbers cross, the route they take through them, and the camera that follows
--- it. One module owns that picture for the menu, for the fence between vaults,
--- and for the dive into a vault, so the map never restarts when the screen
+-- player cross, the route they take through them, and the camera that follows
+-- it. One module owns that picture for the menu, for the shop between duels,
+-- and for the dive into a duel, so the map never restarts when the screen
 -- does.
 --
 -- The route alternates the two things a run is made of: a street vendor the
--- robbers shop at, then a house whose vault they breach. Stop 0 is the vendor
+-- player shop at, then a house whose duel they round. Stop 0 is the vendor
 -- the starting spell is picked from, which is why the menu's spell list and
--- every later fence stand on the same map at their own corner of the city.
+-- every later shop stand on the same map at their own corner of the city.
 --
--- Nothing here knows what a vault contains or what a fence sells. It knows
--- where the next stop is, how far along the way the heist stands, and how much
+-- Nothing here knows what a duel contains or what a shop sells. It knows
+-- where the next stop is, how far along the way the duel stands, and how much
 -- of the screen the map is currently worth — `cover`, which is 1.0 while the
--- map is the picture and 0.0 once the vault has taken it over. Its private
--- random stream keeps generation and animation timing from changing the heist's
+-- map is the picture and 0.0 once the duel has taken it over. Its private
+-- random stream keeps generation and animation timing from changing the duel's
 -- deck shuffle.
 
 type Building = {
@@ -24,9 +24,9 @@ type Building = {
     tone: i32,
     detail: i32
 }
--- One place the heist stops. `vault` tells the two kinds apart: a house with a
--- vault in it, or the street vendor standing between two of them.
-type Stop = { x: f64, y: f64, vault: bool }
+-- One place the duel stops. `duel` tells the two kinds apart: a house with a
+-- duel in it, or the street vendor standing between two of them.
+type Stop = { x: f64, y: f64, duel: bool }
 type Point = { x: f64, y: f64 }
 type State = {
     vertical_streets: {f64},
@@ -72,14 +72,14 @@ const STREET_WIDTH: f64 = 20.0
 const RANDOM_MODULUS: f64 = 2147483647.0
 const RANDOM_MULTIPLIER: f64 = 16807.0
 
--- The map is read at 1:1, and a vault is gone into rather than cut to: the
+-- The map is read at 1:1, and a duel is gone into rather than cut to: the
 -- camera closes on the house until the room behind its door is the whole
--- screen, which is where the vault's own backdrop takes over. Nine octaves of
+-- screen, which is where the duel's own backdrop takes over. Nine octaves of
 -- doubling would be a telescope; five puts a map marker across the screen.
 const MAP_ZOOM: f64 = 1.0
 const DIVE_OCTAVES: f64 = 4.9
 -- Where on the screen the stop being followed sits. A map screen carries a
--- list of options down its left — the fence's offers, the menu's spells — so
+-- list of options down its left — the shop's offers, the menu's spells — so
 -- the stop stands a fixed length in from the left edge, clear of that column;
 -- a canvas too narrow for that length parks it at three-quarters of whatever
 -- width there is instead. The length is fixed rather than a share of the
@@ -87,7 +87,7 @@ const DIVE_OCTAVES: f64 = 4.9
 -- (see the route margins below): a stop can only be brought under an anchor
 -- the route's own margins cover, so the anchor must not wander further right
 -- on wider canvases. Vertically the stop rides just past half the live
--- height. A vault is dived into head-on, so the push in walks both anchors
+-- height. A duel is dived into head-on, so the push in walks both anchors
 -- back to the middle of the screen as the map goes.
 const STOP_ANCHOR_X: f64 = 736.0
 const STOP_ANCHOR_MAX_SHARE_X: f64 = 0.75
@@ -104,19 +104,19 @@ const ROUTE_MARGIN_RIGHT: f64 = 560.0
 const ROUTE_MARGIN_TOP: f64 = 320.0
 const ROUTE_MARGIN_BOTTOM: f64 = 320.0
 -- The two movements a screen change is made of, each walked at a steady pace so
--- it takes the same time every time: the robbers cross a block to the door, and
+-- it takes the same time every time: the player cross a block to the door, and
 -- then the camera goes in after them. They never overlap — a push into a house
--- the heist has not reached yet would be a push into the road outside it.
+-- the duel has not reached yet would be a push into the road outside it.
 const STOP_SECONDS: f64 = 0.62
 const DIVE_SECONDS: f64 = 0.80
 -- How much of the dive is spent purely closing on the house. Until then the map
 -- keeps the whole screen: the push in is the thing being shown, not something
--- to fade through. The rest of it hands over to the vault's own backdrop, by
+-- to fade through. The rest of it hands over to the duel's own backdrop, by
 -- which time the door is wide enough to be the frame around it.
 const DIVE_HANDOVER: f64 = 0.5
 const CAMERA_RATE: f64 = 3.2
 -- How far past the stop being walked to the route is kept generated. Three
--- vaults of dashed road ahead is enough to read as a plan without the map
+-- duels of dashed road ahead is enough to read as a plan without the map
 -- promising a run that has an end.
 const LOOKAHEAD: i32 = 7
 const MAX_STEP_BLOCKS: i32 = 3
@@ -213,14 +213,14 @@ function walk_axis(position: i32, low: i32, high: i32, span: i32, forward: bool)
     return next
 end
 
--- Vendors and vaults alternate from the start of the route, so every odd stop
+-- Vendors and duels alternate from the start of the route, so every odd stop
 -- is a house and every even one the vendor standing before it.
 function append_stop(state: State): unit
     local index: i32 = #state.stops
     table.insert(state.stops, {
         x = state.vertical_streets[state.walk_column],
         y = state.horizontal_streets[state.walk_row],
-        vault = index % 2 == 1,
+        duel = index % 2 == 1,
     })
 end
 
@@ -242,7 +242,7 @@ function walk_next(state: State): unit
 end
 
 -- Walk far enough that the route holds that many stops. The map extends itself
--- as the run asks for more of it, because a run has no last vault to generate
+-- as the run asks for more of it, because a run has no last duel to generate
 -- up to.
 function ensure_stops(state: State, count: i32): unit
     while #state.stops < count do walk_next(state) end
@@ -267,22 +267,22 @@ function begin_route(state: State): unit
     ensure_stops(state, LOOKAHEAD)
 end
 
--- Vaults and vendors alternate along the route: the run sets out from the
--- vendor standing before its first vault, so vault `n` is stop 2n-1 and the
--- fence before it stop 2n-2. Vault numbers are the run's, and 1-based.
-function vault_stop(vault: i32): i32
-    return vault * 2 - 1
+-- Duels and vendors alternate along the route: the run sets out from the
+-- vendor standing before its first duel, so duel `n` is stop 2n-1 and the
+-- shop before it stop 2n-2. Duel numbers are the run's, and 1-based.
+function vault_stop(duel: i32): i32
+    return duel * 2 - 1
 end
 
-function fence_stop(vault: i32): i32
-    return vault * 2 - 2
+function fence_stop(duel: i32): i32
+    return duel * 2 - 2
 end
 
 function stop_count(state: State): i32
     return #state.stops
 end
 
--- Which vault a stop is, counting from one. Vendor stops answer with the vault
+-- Which duel a stop is, counting from one. Vendor stops answer with the duel
 -- they stand before, which is the one the map is on its way to.
 function stop_vault(index: i32): i32
     return math.floor((index::f64) / 2.0)::i32 + 1
@@ -391,9 +391,9 @@ end
 
 -- Put every value the dive owns where its progress says they are. `street` is
 -- the second reading of the same movement: `cover` is how much of the screen
--- the map is worth, and this is how much of it is the street the heist is
+-- the map is worth, and this is how much of it is the street the duel is
 -- standing on rather than a house it is inside. A screen that belongs to a stop
--- — a fence's offers — is worth this much, so it waits for the camera to come
+-- — a shop's offers — is worth this much, so it waits for the camera to come
 -- back out instead of arriving while the room is still the picture.
 function apply_dive(state: State): unit
     state.zoom = dive_zoom(state.dive)
@@ -538,7 +538,7 @@ end
 
 -- The city camera consumes the live logical viewport. Resizing does not
 -- regenerate the route or move the party; it only changes how much city is
--- visible and where a vault dive converges.
+-- visible and where a duel dive converges.
 function resize(state: State, width: f64, height: f64): unit
     if width < 1.0 or height < 1.0 then return end
     if state.view_width == width and state.view_height == height then return end
@@ -553,7 +553,7 @@ end
 -- between runs; a run in progress never does, because the ground it has already
 -- covered is the progress it is showing.
 --
--- The dissolve is left running rather than settled: abandoning a vault for the
+-- The dissolve is left running rather than settled: abandoning a duel for the
 -- menu asks for the map back, and the new city rises over the board being left
 -- instead of replacing it between two frames.
 function regenerate(state: State): unit
@@ -567,7 +567,7 @@ function regenerate(state: State): unit
 end
 
 -- Let go of the route: the camera sweeps the city instead of watching the
--- heist. This is the menu's view of the map.
+-- duel. This is the menu's view of the map.
 function drift(state: State): unit
     state.drifting = true
 end
@@ -599,7 +599,7 @@ function hide(state: State): unit
     state.dive_target = 1.0
 end
 
--- Whether the map still owes the screen anything. A vault that has fully taken
+-- Whether the map still owes the screen anything. A duel that has fully taken
 -- over does not pay for a map draw underneath it.
 function visible(state: State): bool
     return state.cover > 0.002
@@ -612,7 +612,7 @@ function update(state: State, dt: f64): unit
         choose_streak(state, true)
     end
 
-    -- The two movements take turns. On the map the heist walks; once it is on
+    -- The two movements take turns. On the map the duel walks; once it is on
     -- the doorstep the camera goes in after it, and coming back out the camera
     -- opens up before anyone steps into the street. Either way what is on the
     -- screen is one thing moving rather than two.

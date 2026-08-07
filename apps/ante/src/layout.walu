@@ -1,4 +1,4 @@
--- Ante Magic's live viewport. The board is laid out from the canvas's
+-- Duel Magic's live viewport. The board is laid out from the canvas's
 -- actual dimensions every frame: one derived unit scale keeps cards, text,
 -- circles, and line widths proportional to each other, while the logical
 -- width and height stay live so every screen places its semantic regions
@@ -21,7 +21,7 @@ type State = {
     center_y: f64,
     computer_y: f64,
     player_y: f64,
-    ward_y: f64,
+    table_card_y: f64,
     action_y: f64,
     side_left: f64,
     side_right: f64,
@@ -37,15 +37,15 @@ const CARD_HEIGHT: f64 = 128.0
 
 -- Across, at its tightest: a margin and one card column on each flank — the
 -- sealed deck on the left, the three piles on the right — a seam between
--- each column and the play area, and the fixed three-ward row.
--- WARD_ROW_SPAN mirrors render.walu's ward row: three cards on a 116-unit
+-- each column and the play area, and the fixed three-table_card row.
+-- WARD_ROW_SPAN mirrors render.walu's table_card row: three cards on a 116-unit
 -- pitch (2 * 116 + 104).
 const BOARD_MARGIN: f64 = 56.0
 const COLUMN_SEAM: f64 = 22.0
 const WARD_ROW_SPAN: f64 = 336.0
 
--- Down, at its tightest: the title band over the Arch Mage's sealed row,
--- three card rows, the packed clearances between the rows (the ward prompt
+-- Down, at its tightest: the title band over the Opponent's sealed row,
+-- three card rows, the packed clearances between the rows (the table_card prompt
 -- and the action capsules live inside these), and the footer strip under
 -- the fan.
 const TOP_BAND: f64 = 116.0
@@ -55,11 +55,11 @@ const FOOTER_BAND: f64 = 27.0
 -- Height beyond the packed board — a canvas whose width is the tighter fit —
 -- is shared out rather than dumped into one gap: a share grows the title
 -- band, a share keeps the fan off the floor, and the rest opens the middle
--- of the board through the centred ward row.
+-- of the board through the centred table_card row.
 const EXTRA_ABOVE: f64 = 0.3
 const EXTRA_BELOW: f64 = 0.2
 
--- The ward row rides just below the midpoint between the sealed row and the
+-- The table_card row rides just below the midpoint between the sealed row and the
 -- fan, leaving the lower clearance for the action capsules.
 const WARD_BIAS: f64 = 12.0
 
@@ -95,8 +95,8 @@ function calculate(canvas_width: f64, canvas_height: f64): State
     -- player_y is the fan's centre line: half a card plus the footer strip
     -- off the bottom edge, lifted by its share of any extra height.
     local player_y: f64 = height - FOOTER_BAND - CARD_HEIGHT * 0.5 - extra * EXTRA_BELOW
-    local ward_center_y: f64 = (computer_y + CARD_HEIGHT * 0.5 + player_y) * 0.5 + WARD_BIAS
-    local ward_y: f64 = ward_center_y - CARD_HEIGHT * 0.5
+    local table_card_center_y: f64 = (computer_y + CARD_HEIGHT * 0.5 + player_y) * 0.5 + WARD_BIAS
+    local table_card_y: f64 = table_card_center_y - CARD_HEIGHT * 0.5
 
     local hand_span: f64 = width - (BOARD_MARGIN + CARD_WIDTH + HAND_SEAM) * 2.0
     local widest_span: f64 = CARD_WIDTH * 5.0
@@ -111,8 +111,8 @@ function calculate(canvas_width: f64, canvas_height: f64): State
         center_y = height * 0.5,
         computer_y = computer_y,
         player_y = player_y,
-        ward_y = ward_y,
-        action_y = ward_y + 120.0,
+        table_card_y = table_card_y,
+        action_y = table_card_y + 120.0,
         side_left = BOARD_MARGIN,
         side_right = width - BOARD_MARGIN - CARD_WIDTH,
         hand_span = hand_span,

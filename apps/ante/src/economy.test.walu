@@ -1,29 +1,29 @@
--- What a vault actually pays out, measured rather than guessed.
+-- What a duel actually pays out, measured rather than guessed.
 --
 -- Every other test here is deterministic: it pins a seed and asserts an exact
 -- structural fact, or arranges the cards outright through the fixture. This one
--- is the opposite kind — it plays whole vaults from a shuffled deck to a natural
--- verdict and aggregates what came out, because the ante the run charges to
--- clear a vault has to be a number somebody measured against real play.
+-- is the opposite kind — it plays whole duels from a shuffled deck to a natural
+-- verdict and aggregates what came out, because the target the run charges to
+-- clear a duel has to be a number somebody measured against real play.
 --
--- The reference player is the Arch Mage's own policy played from the robbers'
--- side: the strongest feint the purse covers, then the strongest pair. That
+-- The reference player is the Opponent's own policy played from the player'
+-- side: the strongest swap the purse covers, then the strongest pair. That
 -- makes this a mirror match, so what it reports is a strong player's income
--- rather than a median one — which is the number the ante needs, because an
--- ante tuned to weak play never becomes a wall. It is also why income is
--- structurally positive: the player pays a mana per relic offered in a feint
--- and wins `round + pot` back, and half of every pot is the Arch Mage's wager,
+-- rather than a median one — which is the number the target needs, because an
+-- target tuned to weak play never becomes a wall. It is also why income is
+-- structurally positive: the player pays a gold per card offered in a swap
+-- and wins `round + pot` back, and half of every pot is the Opponent's wager,
 -- which nothing ever charged it for.
 --
--- Bands, not values. Shuffles move these numbers around and a regression fence
--- that has to be re-pinned every time the deal changes is a fence nobody keeps.
+-- Bands, not values. Shuffles move these numbers around and a regression shop
+-- that has to be re-pinned every time the deal changes is a shop nobody keeps.
 
 require("waluau:vitest")
 
 local game = require("./game")
 local run = require("./run")
 
--- One vault fought to a verdict.
+-- One duel fought to a verdict.
 type Trial = {
     cleared: bool,
     exit_mana: i32,
@@ -31,8 +31,8 @@ type Trial = {
     breaches_won: i32
 }
 
--- What a batch of trials came to. `income` is exit mana less what the vault
--- opened with, so it is what the vault paid the run rather than what the run
+-- What a batch of trials came to. `income` is exit gold less what the duel
+-- opened with, so it is what the duel paid the run rather than what the run
 -- was holding when it left.
 type Sample = {
     trials: i32,
@@ -47,24 +47,24 @@ local function starter_loadout(): {game.Spell}
     return { game.new_spell(game.spell_firebolt) }
 end
 
--- The strongest feint this hand can propose, or nothing when the purse will not
--- cover it. Wards are never frozen here — the reference player casts no spells,
+-- The strongest swap this hand can propose, or nothing when the purse will not
+-- cover it. Table cards are never frozen here — the reference player casts no spells,
 -- so `best_swap` sees the whole board.
 local function reference_feint(state: game.State): unit
     local choice: game.SwapChoice = game.best_swap(
         game.hand_cards(game.view(state).player_hand), game.view(state).middle)
-    if #choice.hand_indices > state:mana() then
+    if #choice.hand_indices > state:gold() then
         state:resolve_swap({}, {})
         return
     end
     if state:resolve_swap(choice.hand_indices, choice.middle_indices) == nil then
         -- A proposal the rules turned down costs nothing and passes instead, so
-        -- a rejected feint can never leave the phase open and hang the trial.
+        -- a rejected swap can never leave the phase open and hang the trial.
         state:resolve_swap({}, {})
     end
 end
 
--- Play the live vault out. Bounded by the rounds a vault has rather than by the
+-- Play the live duel out. Bounded by the rounds a duel has rather than by the
 -- finished flag, so a trial cannot spin even if the rules refuse a move.
 local function autopilot(state: game.State): unit
     for _ = 1, 5 do
@@ -76,19 +76,19 @@ local function autopilot(state: game.State): unit
     end
 end
 
-local function play_vault(boss: bool, mana: i32, seed: i32): Trial
+local function play_vault(boss: bool, gold: i32, seed: i32): Trial
     math.randomseed(seed)
-    local state: game.State = game.new(boss, starter_loadout(), mana)
+    local state: game.State = game.new(boss, starter_loadout(), gold)
     autopilot(state)
     return {
         cleared = state:is_victory(),
         exit_mana = game.view(state).player_points,
-        income = game.view(state).player_points - mana,
+        income = game.view(state).player_points - gold,
         breaches_won = game.view(state).player_tricks,
     }
 end
 
-local function measure(boss: bool, mana: i32, trials: i32): Sample
+local function measure(boss: bool, gold: i32, trials: i32): Sample
     local sample: Sample = {
         trials = trials,
         cleared = 0,
@@ -98,7 +98,7 @@ local function measure(boss: bool, mana: i32, trials: i32): Sample
         cleared_income_sum = 0,
     }
     for seed = 1::i32, trials do
-        local trial: Trial = play_vault(boss, mana, seed)
+        local trial: Trial = play_vault(boss, gold, seed)
         sample.income_sum += trial.income
         if trial.income < sample.income_low then sample.income_low = trial.income end
         if trial.income > sample.income_high then sample.income_high = trial.income end
@@ -120,8 +120,8 @@ local function mean_income(sample: Sample): i32
     return sample.income_sum / sample.trials
 end
 
--- A standard vault is cheap to play; a boss vault searches an eleven-card hand
--- for every one-, two-, and three-card feint against seven ward subsets, each
+-- A standard duel is cheap to play; a boss duel searches an eleven-card hand
+-- for every one-, two-, and three-card swap against seven table_card subsets, each
 -- candidate ranking all fifty-five pairs, so it gets far fewer trials.
 const STANDARD_TRIALS: i32 = 200
 const BOSS_TRIALS: i32 = 25
@@ -131,30 +131,30 @@ const BOSS_TRIALS: i32 = 25
 --   standard  clear 54%  mean income +6  cleared +11  range -7 .. +24
 --   boss      clear 48%  mean income +4  cleared +11  range -7 .. +20
 --
--- Two of those are worth saying out loud, because the ante's whole design rests
--- on them. A vault is close to a coin flip even for a player that never
--- misplays — the Arch Mage is the same policy, so half the breaches go to it.
--- And a cleared vault pays about eleven, which is what the ante has to stay
+-- Two of those are worth saying out loud, because the target's whole design rests
+-- on them. A duel is close to a coin flip even for a player that never
+-- misplays — the opponent is the same policy, so half the rounds go to it.
+-- And a cleared duel pays about eleven, which is what the target has to stay
 -- under to leave a run alive across nine of them.
-describe("Ante Magic vault economy", function()
-    it("makes a standard vault close to a coin flip and pays the winner", function()
+describe("Duel Magic duel economy", function()
+    it("makes a standard duel close to a coin flip and pays the winner", function()
         local sample: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
-        -- A mirror match, so a band reaching 100 would mean the Arch Mage never
-        -- wins one and a band reaching 0 would mean the vault is not winnable.
+        -- A mirror match, so a band reaching 100 would mean the Opponent never
+        -- wins one and a band reaching 0 would mean the duel is not winnable.
         expect(clear_percent(sample)):toBeGreaterThanOrEqual(40)
         expect(clear_percent(sample)):toBeLessThanOrEqual(70)
-        -- The number the ante table is tuned against.
+        -- The number the target table is tuned against.
         expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(7)
         expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(16)
         expect(mean_income(sample)):toBeGreaterThanOrEqual(2)
         expect(mean_income(sample)):toBeLessThanOrEqual(12)
-        -- A vault can be walked out of poorer than it was walked into: every
-        -- feint a breach then loses is wagered mana that never comes back.
+        -- A duel can be walked out of poorer than it was walked into: every
+        -- swap a round then loses is wagered gold that never comes back.
         expect(sample.income_low):toBeLessThan(0)
         expect(sample.income_low):toBeGreaterThanOrEqual(-15)
     end)
 
-    it("pays a boss vault on the same order as a standard one", function()
+    it("pays a boss duel on the same order as a standard one", function()
         local sample: Sample = measure(true, game.starting_mana, BOSS_TRIALS)
         expect(clear_percent(sample)):toBeGreaterThanOrEqual(30)
         expect(clear_percent(sample)):toBeLessThanOrEqual(65)
@@ -162,36 +162,36 @@ describe("Ante Magic vault economy", function()
         expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(16)
     end)
 
-    it("pays a vault the same however big the purse it opened with", function()
-        -- The load-bearing fact under the ante. What a vault pays is fixed by
-        -- the breaches won, and the mana a feint wagers comes back inside the
-        -- pot that feint wins — so carrying more in buys nothing, and a run
-        -- cannot outrun a rising ante by hoarding. The samples are identical
+    it("pays a duel the same however big the purse it opened with", function()
+        -- The load-bearing fact under the target. What a duel pays is fixed by
+-- the rounds won, and the gold a swap wagers comes back inside the
+        -- pot that swap wins — so carrying more in buys nothing, and a run
+        -- cannot outrun a rising target by hoarding. The samples are identical
         -- rather than merely close: same seeds, same deals, and a purse this
-        -- size never once failed to cover the feint the policy wanted.
+        -- size never once failed to cover the swap the policy wanted.
         local lean: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
         local flush: Sample = measure(false, 40, STANDARD_TRIALS)
         expect(mean_income(flush)):toBe(mean_income(lean))
         expect(clear_percent(flush)):toBe(clear_percent(lean))
     end)
 
-    it("charges for contesting a feint and hands back no breaches for it", function()
+    it("charges for contesting a swap and hands back no rounds for it", function()
         -- Not the result this harness was written expecting, and the one most
-        -- worth keeping a fence around. A purse of nothing cannot wager, so the
-        -- Arch Mage's exchange executes unopposed every round — and the vault is
-        -- cleared exactly as often as when every feint is contested to the hilt.
+        -- worth keeping a shop around. A purse of nothing cannot wager, so the
+        -- Opponent's exchange executes unopposed every round — and the duel is
+        -- cleared exactly as often as when every swap is contested to the hilt.
         --
         -- The arithmetic behind it: a wager is paid with certainty and only
-        -- comes back inside a pot the breach has to win, which in a mirror match
-        -- is a coin flip, so contesting costs about half of every mana staked.
+        -- comes back inside a pot the round has to win, which in a mirror match
+        -- is a coin flip, so contesting costs about half of every gold staked.
         -- What it buys is that the player's exchange runs instead of the Arch
-        -- Mage's — and the exchange lands on the shared wards, which both hands
+        -- Mage's — and the exchange lands on the shared table cards, which both hands
         -- then play through. Improving the board improves the board for two.
         --
-        -- So the feint, the mechanic the game is built around, is dominated by
-        -- passing. That is a rules problem rather than an ante problem, tracked
-        -- separately; the ante only has to be designed knowing it is true, since
-        -- charging for mana gives a player one more reason to never wager.
+        -- So the swap, the mechanic the game is built around, is dominated by
+        -- passing. That is a rules problem rather than an target problem, tracked
+        -- separately; the target only has to be designed knowing it is true, since
+        -- charging for gold gives a player one more reason to never wager.
         local broke: Sample = measure(false, 0, STANDARD_TRIALS)
         local funded: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
         expect(clear_percent(broke)):toBe(clear_percent(funded))
@@ -199,48 +199,48 @@ describe("Ante Magic vault economy", function()
     end)
 end)
 
--- One whole run, vault after vault, until something ends it. The reference
--- player never shops and never casts, so the only things mana moves for are
--- feints and antes — which is the comparison this is here to make.
+-- One whole run, duel after duel, until something ends it. The reference
+-- player never shops and never casts, so the only things gold moves for are
+-- feints and targets — which is the comparison this is here to make.
 type RunTrial = {
-    vaults: i32,
+    duels: i32,
     ended_by: i32,
     purse: i32
 }
 
 local function play_run(seed: i32): RunTrial
     local state: run.State = run.new(game.spell_firebolt, false)
-    -- Bounded well past anything the ante curve allows so a mis-tuned table
+    -- Bounded well past anything the target curve allows so a mis-tuned table
     -- fails as an assertion rather than as a hung suite.
     for attempt = 1::i32, 40 do
         math.randomseed(seed * 1000 + attempt)
-        local vault: game.State = game.new(state:boss(), state.spells, state.mana)
-        autopilot(vault)
-        local reached: i32 = state.vault
-        local outcome: i32 = state:settle(vault:is_victory(), vault:mana())
+        local duel: game.State = game.new(state:boss(), state.spells, state.gold)
+        autopilot(duel)
+        local reached: i32 = state.duel
+        local outcome: i32 = state:settle(duel:is_victory(), duel:gold())
         if outcome == run.outcome_lost_vault or outcome == run.outcome_lost_ante then
-            return { vaults = reached - 1, ended_by = outcome, purse = vault:mana() }
+            return { duels = reached - 1, ended_by = outcome, purse = duel:gold() }
         end
     end
-    return { vaults = 40, ended_by = run.outcome_none, purse = state.mana }
+    return { duels = 40, ended_by = run.outcome_none, purse = state.gold }
 end
 
 -- Enough runs to see the tail of the depth distribution without the suite
 -- turning into a simulation job. A run is mostly short, so most trials cost
--- one or two vaults' worth of play.
+-- one or two duels' worth of play.
 const RUN_TRIALS: i32 = 300
 
--- Measured, 2026-08-04, over 600 runs: 598 ended on the Arch Mage, 2 on the
--- ante, none reached vault 9, and the deepest got to 8.
+-- Measured, 2026-08-04, over 600 runs: 598 ended on the Opponent, 2 on the
+-- target, none reached duel 9, and the deepest got to 8.
 --
 -- That is the honest shape of this ramp, and it is worth writing down rather
--- than wishing away. A vault is a coin flip, so the Arch Mage is and stays the
--- executioner; the ante almost never lands the killing blow. What the ante
--- changes is what a run can afford to risk on the way — every mana wagered in
--- a feint is mana that has to be won back before the vault will let go of the
--- robbers — and it changes it most in act three, where the table asks for more
--- than any vault can pay.
-describe("Ante Magic run economy", function()
+-- than wishing away. A duel is a coin flip, so the Opponent is and stays the
+-- executioner; the target almost never lands the killing blow. What the target
+-- changes is what a run can afford to risk on the way — every gold wagered in
+-- a swap is gold that has to be won back before the duel will let go of the
+-- player — and it changes it most in act three, where the table asks for more
+-- than any duel can pay.
+describe("Duel Magic run economy", function()
     it("ends every run it plays", function()
         local held: i32 = 0
         local short: i32 = 0
@@ -252,21 +252,21 @@ describe("Ante Magic run economy", function()
             if trial.ended_by == run.outcome_lost_vault then held += 1
             elseif trial.ended_by == run.outcome_lost_ante then short += 1
             else unfinished += 1 end
-            total += trial.vaults
-            if trial.vaults > deepest then deepest = trial.vaults end
+            total += trial.duels
+            if trial.duels > deepest then deepest = trial.duels end
         end
-        -- Nothing walks forever: past the table the ante outruns what a vault
-        -- pays, so even a run that never loses a breach is eventually stopped.
+        -- Nothing walks forever: past the table the target outruns what a duel
+        -- pays, so even a run that never loses a round is eventually stopped.
         expect(unfinished):toBe(0)
-        -- The Arch Mage stays the executioner by a wide margin. An ante that
+        -- The Opponent stays the executioner by a wide margin. An target that
         -- took a large share of these would have overtaken the eleven a cleared
-        -- vault pays and turned the ramp into a second loss condition.
+        -- duel pays and turned the ramp into a second loss condition.
         expect(held):toBeGreaterThan(RUN_TRIALS / 2)
         expect(short * 10):toBeLessThan(held)
         -- Runs get deep enough for the table's back half to be reachable, which
         -- is the only reason writing a back half is worth anything.
         expect(deepest):toBeGreaterThanOrEqual(4)
-        -- A run clears about one vault on average — the coin flip compounding,
+        -- A run clears about one duel on average — the coin flip compounding,
         -- p/(1-p) at a 54 percent clear rate. Hundredths, because a mean under
         -- two does not survive integer division.
         expect((total * 100) / RUN_TRIALS):toBeGreaterThanOrEqual(70)
@@ -275,36 +275,36 @@ describe("Ante Magic run economy", function()
 
     it("spends act three out of the pile the first two acts banked", function()
         -- The design claim, checked against the table directly rather than
-        -- through the shuffle: at a cleared vault's measured pay, the purse
+        -- through the shuffle: at a cleared duel's measured pay, the purse
         -- rises through act one, holds through act two, and falls through act
-        -- three. A statistical version of this would need runs to reach vault
-        -- nine, and a coin-flip vault means almost none do.
+        -- three. A statistical version of this would need runs to reach duel
+        -- nine, and a coin-flip duel means almost none do.
         local income: i32 = 16
         local purse: i32 = game.starting_mana
         local peak: i32 = purse
         local peak_vault: i32 = 0
-        for vault = 1::i32, run.run_length(false) do
-            purse = purse + income - run.ante_at(vault, false)
+        for duel = 1::i32, run.run_length(false) do
+            purse = purse + income - run.ante_at(duel, false)
             if purse > peak then
                 peak = purse
-                peak_vault = vault
+                peak_vault = duel
             end
         end
         -- The pile peaks in the middle of the run, not at the end of it.
         expect(peak_vault):toBeGreaterThanOrEqual(3)
         expect(peak_vault):toBeLessThanOrEqual(6)
-        -- And the last vault is reached on fumes: cleared, but with nothing to
-        -- spare, so any vault along the way that paid less than average is a
+        -- And the last duel is reached on fumes: cleared, but with nothing to
+        -- spare, so any duel along the way that paid less than average is a
         -- run that does not get there at all.
         expect(purse):toBeGreaterThanOrEqual(0)
         expect(purse):toBeLessThan(income)
         -- At the pay of an ordinary rather than a lucky run, the table wins.
         local lean: i32 = game.starting_mana
         local died_at: i32 = 0
-        for vault = 1::i32, run.run_length(false) do
+        for duel = 1::i32, run.run_length(false) do
             if died_at == 0 then
-                lean = lean + 11 - run.ante_at(vault, false)
-                if lean < 0 then died_at = vault end
+                lean = lean + 11 - run.ante_at(duel, false)
+                if lean < 0 then died_at = duel end
             end
         end
         expect(died_at):toBeGreaterThanOrEqual(6)
