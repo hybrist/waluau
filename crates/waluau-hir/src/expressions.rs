@@ -512,7 +512,20 @@ fn infer_expr_inner(
 ) -> Result<Type, Diagnostic> {
     match expr {
         Expr::Number(value, _) => resolve_number_literal(value, expected),
-        Expr::Bool(..) => Ok(Type::Bool),
+        // A bool literal boxes into a `bool?` expectation, the way number and
+        // string literals already did for their own nullables. Every other
+        // expectation deliberately falls through as plain `bool`: letting the
+        // literal consume the expectation the way `Expr::String` does would
+        // move the mismatch report from the statement to the literal, and the
+        // statement is what carries the useful message (`assignment to 'x'
+        // expects f64, got bool`) and, for array elements, a structured
+        // `inference/conflict` diagnostic with a remediation action.
+        Expr::Bool(..) => match expected {
+            Some(nullable @ Type::Nullable(_)) if nullable.nullable_inner() == Some(Type::Bool) => {
+                Ok(nullable)
+            }
+            _ => Ok(Type::Bool),
+        },
         Expr::Nil(..) => coerce_type(Type::Nil, expected),
         Expr::IsVariant { expr, tag, .. } => {
             let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
@@ -2052,7 +2065,10 @@ fn infer_array_literal(
     }
     if elements.is_empty() {
         if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
-            return Ok(Type::Array(Box::new(element_ty)));
+            // `element_type` looks through a nullable, so coerce back into the
+            // expectation rather than returning the bare array: `{i32}?` must
+            // stay `{i32}?`.
+            return coerce_type(Type::Array(Box::new(element_ty)), expected);
         }
         return Err(super::signatures::inference_diagnostic(
             "inference/missing-context",

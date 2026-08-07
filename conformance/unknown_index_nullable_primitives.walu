@@ -28,32 +28,14 @@ local present_int: i32? = get(ints, 0)
 assert(present_int ~= nil)
 assert(present_int == 1)
 
-function maybe_uint(present: bool, value: u32): u32?
-    if present then
-        return value
-    end
-    return nil
-end
-
-local uints: {u32?} = { maybe_uint(true, 4), maybe_uint(false, 0), maybe_uint(true, 6) }
+local uints: {u32?} = { 4, nil, 6 }
 assert(len_of(uints) == 3)
 assert(get(uints, 0) == 4)
 assert(get(uints, 2) == 6)
 local missing_uint: u32? = get(uints, 1)
 assert(missing_uint == nil)
 
-function maybe_flag(present: bool, value: bool): bool?
-    if present then
-        return value
-    end
-    return nil
-end
-
-local flags: {bool?} = {
-    maybe_flag(true, true),
-    maybe_flag(false, false),
-    maybe_flag(true, false),
-}
+local flags: {bool?} = { true, nil, false }
 assert(len_of(flags) == 3)
 assert(get(flags, 0) == true)
 assert(get(flags, 2) == false)

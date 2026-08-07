@@ -1,0 +1,78 @@
+-- A literal takes its type from the nullable it is assigned into, the same way
+-- it does from a plain annotation. Number, string, and bytes literals already
+-- did; bool literals and array literals are here because they used to need a
+-- helper function to produce a present `bool?` or a typed `{T}?`.
+
+-- Bools, in every position a literal reaches an expectation.
+local set_true: bool? = true
+local set_false: bool? = false
+local unset: bool? = nil
+assert(set_true == true)
+assert(set_false == false)
+assert(unset == nil)
+-- A present `false` is a value, not an absence.
+assert(set_false ~= nil)
+
+type Options = { verbose: bool?, cached: bool? }
+
+local options: Options = { verbose = false, cached = true }
+assert(options.verbose == false)
+assert(options.cached == true)
+assert(options.verbose ~= nil)
+
+function flag(present: bool): bool?
+    if present then
+        return false
+    end
+    return nil
+end
+
+assert(flag(true) == false)
+assert(flag(true) ~= nil)
+assert(flag(false) == nil)
+
+local reassigned: bool? = true
+reassigned = false
+assert(reassigned == false)
+reassigned = nil
+assert(reassigned == nil)
+
+-- Arrays. The element type reaches the literal through the nullable, so `{9}`
+-- is a `{i32}` and not the `{f64}` an uncontexted literal would infer.
+local ints: {i32}? = {9, 8}
+local no_ints: {i32}? = nil
+local int_defaults: {i32} = {1}
+assert(#(ints or int_defaults) == 2)
+assert((ints or int_defaults)[0] == 9)
+assert(#(no_ints or int_defaults) == 1)
+
+local empty: {u32}? = {}
+local uint_defaults: {u32} = {5}
+assert(#(empty or uint_defaults) == 0)
+
+local flags: {bool}? = {true, false}
+local flag_defaults: {bool} = {}
+assert(#(flags or flag_defaults) == 2)
+assert((flags or flag_defaults)[1] == false)
+
+local nested: {{i32}}? = {{1}, {2, 3}}
+local nested_defaults: {{i32}} = {}
+assert(#(nested or nested_defaults) == 2)
+assert(#((nested or nested_defaults)[1]) == 2)
+
+-- Through a record field and a return type, not just a local annotation.
+type Bucket = { values: {i32}? }
+
+local bucket: Bucket = { values = {4, 5, 6} }
+assert(#(bucket.values or int_defaults) == 3)
+
+function sized(count: i32): {i32}?
+    if count == 0 then
+        return {}
+    end
+    return {7}
+end
+
+assert(#(sized(0) or int_defaults) == 0)
+assert(#(sized(1) or int_defaults) == 1)
+assert((sized(1) or int_defaults)[0] == 7)

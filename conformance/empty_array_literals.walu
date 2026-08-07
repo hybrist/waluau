@@ -26,7 +26,17 @@ function make(): {i32}
 end
 assert(#make() == 0)
 
--- 6. array-of-records element type, matching fixtures/snake reset()
+-- 6. through a nullable annotation: `{i32}?` is still an array of i32, so the
+--    literal is present rather than nil, and its elements keep their type
+local maybe_xs: {i32}? = {}
+local settled: {i32} = maybe_xs or make()
+assert(#settled == 0)
+table.insert(settled, 0, 7)
+assert(settled[0] == 7)
+local maybe_filled: {i32}? = {9}
+assert(#(maybe_filled or xs) == 1)
+
+-- 7. array-of-records element type, matching fixtures/snake reset()
 local state: { snake: {{ x: i32, y: i32 }} } = { snake = {} }
 table.insert(state.snake, 0, { x = 3, y = 4 })
 state.snake = {}
