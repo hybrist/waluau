@@ -21,7 +21,7 @@ const CAPTION_SIZE: f64 = 9.0
 const STACK_GAP: f64 = 8.0
 
 const TITLE_INK: string = "#fbbf24"
-const MANA_INK: string = "#67e8f9"
+const GOLD_INK: string = "#67e8f9"
 const CAPTION_INK: string = "#155e75"
 const BOSS_INK: string = "#b45309"
 -- The gold pile once it no longer covers the target.
@@ -54,34 +54,37 @@ function marker_ink(run: run_module.View): string
 end
 
 function title_block(run: run_module.View): entity.Node
-    return entity.flow({
-        label.left("TARGET MAGIC", TITLE_SIZE, TITLE_INK),
+    return entity.down({ gap = STACK_GAP }, {
+        label.left("DUEL MAGIC", TITLE_SIZE, TITLE_INK),
         label.left(marker_text(run), CAPTION_SIZE, marker_ink(run)),
-    }, entity.column(STACK_GAP, box.justify_start, box.align_start))
+    })
 end
 
 -- The gold on hand against the target it owes, and the one glance that says
 -- whether the duel is being fought from above water or below it: the pile
 -- turns to warning ink the moment it stops covering what leaving costs.
-function mana_block(state: game.View, run: run_module.View): entity.Node
-    local tone: string = MANA_INK
+function gold_block(state: game.View, run: run_module.View): entity.Node
+    local tone: string = GOLD_INK
     if state.player_points < run.target then tone = SHORT_INK end
-    return entity.flow({
+    return entity.down({ gap = STACK_GAP, align = box.align_end }, {
         label.right(tostring(state.player_points), TITLE_SIZE, tone),
         label.right(
             "GOLD   TARGET " .. tostring(run.target), CAPTION_SIZE, CAPTION_INK),
-    }, entity.column(STACK_GAP, box.justify_start, box.align_end))
+    })
 end
 
 -- The orbs sit on the caption's bottom edge rather than the middle of the
 -- band, which is what keeps the tally reading as part of the header line
 -- instead of floating between the two rows of type.
 function node(state: game.View, run: run_module.View): entity.Node
-    return entity.flow({
+    return entity.across({
+        justify = box.justify_space_between,
+        align = box.align_end,
+    }, {
         title_block(run),
         orb_track.node(state),
-        mana_block(state, run),
-    }, entity.row(0.0, box.justify_space_between, box.align_end))
+        gold_block(state, run),
+    })
 end
 
 return {

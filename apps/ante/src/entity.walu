@@ -329,6 +329,160 @@ function contains(bounds: box.Rect, x: f64, y: f64): bool
         and y >= bounds.y and y <= bounds.y + bounds.height
 end
 
+-- Modifiers. Each one answers the same two questions as the entity it wraps, so
+-- a modified entity is an entity and they chain:
+-- `label.left(...):padded(8.0, 4.0):min_width(96.0)`. Reading them left to
+-- right is reading outwards from the content, which is the order the rectangle
+-- is divided up in.
+--
+-- These build their node directly rather than wrapping the entity in a
+-- single-child flow. A flow would hand its child the child's *preferred* size
+-- inside the padded box; padding should hand over the whole of what is left.
+
+-- Room around an entity, on all four sides. Widths and heights grow by the
+-- padding, and the baseline moves down with the content.
+function Node:padding(insets: box.Edges): Node
+    local inner: Node = self
+    local horizontal: f64 = insets.left + insets.right
+    local vertical: f64 = insets.top + insets.bottom
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            local value: box.Intrinsic = inner.measure(metrics)
+            local shifted: f64 = value.baseline
+            if shifted >= 0.0 then shifted = shifted + insets.top end
+            return {
+                min_width = value.min_width + horizontal,
+                preferred_width = value.preferred_width + horizontal,
+                max_width = math.min(box.unbounded, value.max_width + horizontal),
+                min_height = value.min_height + vertical,
+                preferred_height = value.preferred_height + vertical,
+                max_height = math.min(box.unbounded, value.max_height + vertical),
+                baseline = shifted,
+            }
+        end,
+        paint = function(surface: Surface, bounds: box.Rect): unit
+            inner.paint(surface, rect(
+                bounds.x + insets.left,
+                bounds.y + insets.top,
+                math.max(0.0, bounds.width - horizontal),
+                math.max(0.0, bounds.height - vertical)))
+        end,
+        grow = inner.grow,
+        shrink = inner.shrink,
+    }
+end
+
+-- The common case: the same room on each axis.
+function Node:padded(horizontal: f64, vertical: f64): Node
+    return self:padding(even_padding(horizontal, vertical))
+end
+
+-- A floor under an entity's width. The content keeps its own size and is handed
+-- the whole of the wider rectangle, so a line that aligns itself — every
+-- `label` does — aligns inside the column rather than inside its own type.
+-- This is what makes a table's columns line up whatever their cells measure.
+function Node:min_width(width: f64): Node
+    local inner: Node = self
+    local floor: f64 = math.max(0.0, width)
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            local value: box.Intrinsic = inner.measure(metrics)
+            return {
+                min_width = math.max(value.min_width, floor),
+                preferred_width = math.max(value.preferred_width, floor),
+                max_width = math.max(value.max_width, floor),
+                min_height = value.min_height,
+                preferred_height = value.preferred_height,
+                max_height = value.max_height,
+                baseline = value.baseline,
+            }
+        end,
+        paint = inner.paint,
+        grow = inner.grow,
+        shrink = inner.shrink,
+    }
+end
+
+function Node:min_height(height: f64): Node
+    local inner: Node = self
+    local floor: f64 = math.max(0.0, height)
+    return {
+        measure = function(metrics: Metrics): box.Intrinsic
+            local value: box.Intrinsic = inner.measure(metrics)
+            return {
+                min_width = value.min_width,
+                preferred_width = value.preferred_width,
+                max_width = value.max_width,
+                min_height = math.max(value.min_height, floor),
+                preferred_height = math.max(value.preferred_height, floor),
+                max_height = math.max(value.max_height, floor),
+                baseline = value.baseline,
+            }
+        end,
+        paint = inner.paint,
+        grow = inner.grow,
+        shrink = inner.shrink,
+    }
+end
+
+-- The chainable spellings of `wide` and `flexible`, so a run of modifiers does
+-- not have to turn itself inside out for these two.
+function Node:widened(): Node
+    return wide(self)
+end
+
+function Node:flex(node_grow: f64, node_shrink: f64): Node
+    return flexible(self, node_grow, node_shrink)
+end
+
+-- A row or column with its options named rather than counted:
+-- `entity.down({ gap = 8.0, align = box.align_center }, children)` says only
+-- the two things it cares about and takes the rest as it finds them.
+--
+-- Two Waluau limits show through here.
+--
+-- TODO(waluau-3gyg): `and`/`or` are bool-only, so no default can be written as
+-- `spec.gap or 0.0`. Each optional field costs a named local and an `if`, which
+-- is the whole of `spec_style` below; with `or` it would be one line per field.
+-- Waluau has no default arguments either, so this record-of-nullables is the
+-- named-argument idiom and every user of it pays the same tax.
+--
+-- The other is a bug, not a gap: each nullable numeric field is read into a
+-- local before it is unboxed, because reading one straight out of the record
+-- emits invalid wasm (waluau-v7z1).
+type FlowSpec = {
+    gap: f64?,
+    justify: i32?,
+    align: i32?,
+    padding: box.Edges?
+}
+
+function spec_style(axis: i32, spec: FlowSpec): box.Style
+    local flow_gap: f64 = 0.0
+    local maybe_gap: f64? = spec.gap
+    if maybe_gap ~= nil then flow_gap = maybe_gap::f64 end
+    local flow_justify: i32 = box.justify_start
+    local maybe_justify: i32? = spec.justify
+    if maybe_justify ~= nil then flow_justify = maybe_justify::i32 end
+    local flow_align: i32 = box.align_start
+    local maybe_align: i32? = spec.align
+    if maybe_align ~= nil then flow_align = maybe_align::i32 end
+    local flow_padding: box.Edges = no_padding()
+    local maybe_padding: box.Edges? = spec.padding
+    if maybe_padding ~= nil then flow_padding = maybe_padding::box.Edges end
+    return style(axis, flow_gap, flow_justify, flow_align, flow_padding)
+end
+
+-- Children stacked down the board.
+function down(spec: FlowSpec, children: {Node}): Node
+    return flow(children, spec_style(box.axis_column, spec))
+end
+
+-- Children laid across it.
+function across(spec: FlowSpec, children: {Node}): Node
+    return flow(children, spec_style(box.axis_row, spec))
+end
+
 return {
     rect = rect,
     metrics_of = metrics_of,
@@ -345,6 +499,8 @@ return {
     stretch = stretch,
     wide = wide,
     flow = flow,
+    down = down,
+    across = across,
     layer = layer,
     place = place,
     band = band,

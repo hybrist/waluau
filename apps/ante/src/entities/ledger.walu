@@ -13,8 +13,9 @@ const ROW_GAP: f64 = 30.0
 const ROUND_SIZE: f64 = 13.0
 const VERDICT_SIZE: f64 = 13.0
 const FORMATION_SIZE: f64 = 10.0
--- The three columns of a ledger row, wide enough for the longest thing each
--- of them holds so the rows read as a table rather than as ragged lines.
+-- The first two columns of a ledger row, wide enough for the longest thing each
+-- of them holds so the rows read as a table rather than as ragged lines. These
+-- are the columns' own widths; the third takes whatever is left.
 const ROUND_WIDTH: f64 = 124.0
 const VERDICT_WIDTH: f64 = 180.0
 
@@ -29,25 +30,22 @@ function verdict_text(trick: game.Trick): string
 end
 
 -- A cell that holds its column's width whatever its own type measures, which
--- is what keeps the three columns lined up down the card.
+-- is what keeps the three columns lined up down the card. The floor is the
+-- column's width, so a short verdict and a long one start the next column in
+-- the same place; the line inside still aligns itself left.
 function cell(text: string, size: f64, color: string, width: f64): entity.Node
-    local line: entity.Node = label.left(text, size, color)
-    return entity.flow(
-        { line },
-        entity.style(
-            box.axis_row, 0.0, box.justify_start, box.align_baseline,
-            entity.edges(0.0, 0.0, math.max(0.0, width), 0.0)))
+    return label.left(text, size, color):min_width(width)
 end
 
 function row(trick: game.Trick): entity.Node
-    return entity.flow({
+    return entity.across({ align = box.align_baseline }, {
         cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
         cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
         label.left(
             game.category_name(trick.player_value) .. " VS "
                 .. game.category_name(trick.computer_value),
             FORMATION_SIZE, FORMATION_INK),
-    }, entity.row(0.0, box.justify_start, box.align_baseline))
+    })
 end
 
 function body(state: game.View): entity.Node

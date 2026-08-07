@@ -47,26 +47,27 @@ function hints(state: game.View): entity.Node
     for slot = 0::i32, #state.spells - 1 do
         table.insert(lines, hint(state, slot))
     end
-    return entity.flow(
-        lines, entity.row(HINT_GAP, box.justify_start, box.align_baseline))
+    return entity.across({ gap = HINT_GAP, align = box.align_baseline }, lines)
 end
 
 -- A caption inside a target: the padding is what makes the box worth clicking,
 -- and it carries the type's baseline down with it so the whole strip still
 -- reads as one line.
-function target(caption: entity.Node, justify: i32): entity.Node
-    return entity.flow({ caption }, entity.style(
-        box.axis_row, 0.0, justify, box.align_baseline,
-        entity.even_padding(TARGET_PAD_X, TARGET_PAD_Y)))
+--
+-- The caption is given the padded box whole, so where the line sits inside it
+-- is the line's own alignment. That is why this no longer takes a justify: a
+-- single child at its preferred size has nothing to be justified against, so
+-- the argument never moved anything.
+function target(caption: entity.Node): entity.Node
+    return caption:padded(TARGET_PAD_X, TARGET_PAD_Y)
 end
 
 function help(): entity.Node
-    return target(label.right("? HELP", HELP_SIZE, QUIET_INK), box.justify_end)
+    return target(label.right("? HELP", HELP_SIZE, QUIET_INK))
 end
 
 function menu(): entity.Node
-    return target(
-        label.centered("M MENU", HINT_SIZE, QUIET_INK), box.justify_center)
+    return target(label.centered("M MENU", HINT_SIZE, QUIET_INK))
 end
 
 function outer_style(): box.Style
@@ -80,7 +81,9 @@ end
 function node(state: game.View): entity.Node
     return entity.layer({
         entity.flow(outer(state), outer_style()),
-        entity.flow({ menu() }, entity.row(0.0, box.justify_center, box.align_baseline)),
+        entity.across(
+            { justify = box.justify_center, align = box.align_baseline },
+            { menu() }),
     })
 end
 
