@@ -1,0 +1,145 @@
+-- `a or b` where `a` is nullable supplies `b` as a default: the result is the
+-- unboxed left value when it is present and the fallback when it is nil. This
+-- is not Lua's truthiness `or`, which is why a `bool?` left operand is a
+-- compile error rather than a coin flip -- see nullable_or_ambiguous_bool.walu.
+
+type Point = { x: f64, y: f64 }
+
+local abc: string = "abc"
+local empty: string = ""
+
+-- Numerics. `string.byte` out of range yields nil, so it produces both a
+-- present and an absent nullable number.
+local present: i32 = string.byte(abc, 1) or 0
+assert(present == 97)
+local absent: i32 = string.byte(empty, 1) or 42
+assert(absent == 42)
+
+-- A nullable fallback keeps the result nullable, so `a or b or c` chains.
+local chained: i32 = string.byte(empty, 1) or string.byte(abc, 2) or 7
+assert(chained == 98)
+local chained_all_nil: i32 = string.byte(empty, 1) or string.byte(empty, 2) or 7
+assert(chained_all_nil == 7)
+
+local some_f: f64? = 1.5
+local none_f: f64? = nil
+assert((some_f or 9.5) == 1.5)
+assert((none_f or 9.5) == 9.5)
+
+-- The result widens into the annotated type like any other value.
+local widened: f64 = string.byte(abc, 1) or 0
+assert(widened == 97.0)
+
+-- Bools. `or` is a compile error on a `bool?` left operand, because a present
+-- `false` and nil would read the same way at the call site. What that call
+-- site usually means is "set and true", and equality already spells it: a
+-- nullable compared against a plain value is false when it is nil.
+function maybe_flag(present_flag: bool, value: bool): bool?
+    if present_flag then
+        return value
+    end
+    return nil
+end
+
+local set_true: bool? = maybe_flag(true, true)
+local set_false: bool? = maybe_flag(true, false)
+local unset: bool? = maybe_flag(false, true)
+
+assert((set_true == true) == true)
+assert((set_false == true) == false)
+assert((unset == true) == false)
+
+-- The mirror holds too: `== false` is true only for a present `false`.
+assert((set_true == false) == false)
+assert((set_false == false) == true)
+assert((unset == false) == false)
+
+-- Strings.
+local some_s: string? = "left"
+local none_s: string? = nil
+assert((some_s or "right") == "left")
+assert((none_s or "right") == "right")
+assert(#(none_s or "abcd") == 4)
+
+-- Records.
+function maybe_point(present_point: bool): Point?
+    if present_point then
+        local point: Point = { x = 3.0, y = 4.0 }
+        return point
+    end
+    return nil
+end
+
+local origin: Point = { x = 0.0, y = 0.0 }
+local picked: Point = maybe_point(true) or origin
+assert(picked.x == 3.0)
+local fell_back: Point = maybe_point(false) or origin
+assert(fell_back.x == 0.0)
+
+-- Arrays.
+function maybe_values(present_values: bool): {i32}?
+    if present_values then
+        local values: {i32} = {9}
+        return values
+    end
+    return nil
+end
+
+local defaults: {i32} = {1, 2}
+local chosen: {i32} = maybe_values(true) or defaults
+assert(#chosen == 1)
+assert(chosen[0] == 9)
+local chosen_default: {i32} = maybe_values(false) or defaults
+assert(#chosen_default == 2)
+assert(chosen_default[0] == 1)
+
+-- The fallback is evaluated only when the left operand is nil.
+local calls: i32 = 0
+
+function bump(): i32
+    calls += 1
+    return 5
+end
+
+local kept: i32 = string.byte(abc, 1) or bump()
+assert(kept == 97)
+assert(calls == 0)
+local taken: i32 = string.byte(empty, 1) or bump()
+assert(taken == 5)
+assert(calls == 1)
+
+-- The result is a value, usable wherever its type is.
+function twice(value: i32): i32
+    return value * 2
+end
+
+assert(twice(string.byte(empty, 1) or 3) == 6)
+
+-- Waluau has no default arguments, so a record of nullable fields is the
+-- named-argument idiom. This is what the rule is for: one line per optional
+-- field, at the boundary that reads them.
+type Style = { gap: f64, size: i32, label: string }
+
+function style(gap: f64?, size: i32?, label: string?): Style
+    return { gap = gap or 0.0, size = size or 12, label = label or "" }
+end
+
+local defaulted: Style = style(nil, nil, nil)
+assert(defaulted.gap == 0.0)
+assert(defaulted.size == 12)
+assert(defaulted.label == "")
+local given: Style = style(2.5, 20, "title")
+assert(given.gap == 2.5)
+assert(given.size == 20)
+assert(given.label == "title")
+
+-- Reading a captured nullable, and re-reading it after it changes.
+local captured: i32? = nil
+
+local read = function(): i32
+    return captured or 4
+end
+
+assert(read() == 4)
+captured = 9
+assert(read() == 9)

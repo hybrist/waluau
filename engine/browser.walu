@@ -130,23 +130,18 @@ function start(config: Config, game: Game): Session
     local host: Element = body
     local mount_id: string? = config.mount
     if mount_id ~= nil then
-        local target: Element? = document:get_element_by_id(mount_id::string)
-        if target ~= nil then host = target::Element end
+        host = document:get_element_by_id(mount_id::string) or body
     end
     local owns_page: bool = host == body
-    local fluid: bool = false
-    local canvas_sizing: bool? = config.canvas_sizing
-    if canvas_sizing ~= nil then fluid = canvas_sizing::bool end
+    local fluid: bool = config.canvas_sizing == true
     -- A config without a viewport falls back to the browser's own space, so
     -- a fluid game never has to invent a size just to satisfy the record.
-    local config_width: u32 = 1
-    local config_height: u32 = 1
-    if window.innerWidth > 0 then config_width = window.innerWidth::u32 end
-    if window.innerHeight > 0 then config_height = window.innerHeight::u32 end
-    local maybe_width: u32? = config.width
-    if maybe_width ~= nil then config_width = maybe_width::u32 end
-    local maybe_height: u32? = config.height
-    if maybe_height ~= nil then config_height = maybe_height::u32 end
+    local page_width: u32 = 1
+    local page_height: u32 = 1
+    if window.innerWidth > 0 then page_width = window.innerWidth::u32 end
+    if window.innerHeight > 0 then page_height = window.innerHeight::u32 end
+    local config_width: u32 = config.width or page_width
+    local config_height: u32 = config.height or page_height
     if owns_page then
         body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
     end

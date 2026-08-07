@@ -1463,8 +1463,21 @@ impl<'a> Monomorphizer<'a> {
                 | waluau_ast::BinaryOp::LessEq
                 | waluau_ast::BinaryOp::Greater
                 | waluau_ast::BinaryOp::GreaterEq
-                | waluau_ast::BinaryOp::And
-                | waluau_ast::BinaryOp::Or => Ok(Type::Bool),
+                | waluau_ast::BinaryOp::And => Ok(Type::Bool),
+                // `a or b` with a nullable `a` supplies a default instead of
+                // testing truthiness: the result is `a`'s inner type, or `a`'s
+                // own type when the fallback is itself nullable. `bool?` is
+                // rejected by the type checker, so it cannot reach here.
+                waluau_ast::BinaryOp::Or => {
+                    let left_ty = self.infer_expr_type(left, subst, types)?;
+                    let Some(inner) = left_ty.nullable_inner() else {
+                        return Ok(Type::Bool);
+                    };
+                    match self.infer_expr_type(right, subst, types) {
+                        Ok(Type::Nullable(_) | Type::Nil) => Ok(left_ty),
+                        _ => Ok(inner),
+                    }
+                }
                 waluau_ast::BinaryOp::Concat => Ok(Type::String),
                 _ => {
                     let left_ty = self.infer_expr_type(left, subst, types)?;

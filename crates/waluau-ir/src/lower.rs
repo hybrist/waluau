@@ -5441,6 +5441,14 @@ impl Builder<'_> {
                 ..
             } => match op {
                 BinaryOp::And | BinaryOp::Or => {
+                    if matches!(op, BinaryOp::Or)
+                        && let Some((nullable_ty, result_ty)) =
+                            self.nullable_or_types(left, right, types)?
+                    {
+                        return self.lower_nullable_or(
+                            left, right, nullable_ty, result_ty, env, types, expected,
+                        );
+                    }
                     let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
                     let left_value = self.lower_expr(left, env, types, Some(Type::Bool))?;
                     let rhs_block = self.new_block();
@@ -6961,16 +6969,70 @@ impl Builder<'_> {
                     let raw = self.infer_binary_operand_type(left, right, op, types, expected.clone())?;
                     coerce_type(raw, expected)
                 }
+                BinaryOp::Or => {
+                    if let Some((_, result_ty)) = self.nullable_or_types(left, right, types)? {
+                        return coerce_type(result_ty, expected);
+                    }
+                    Ok(Type::Bool)
+                }
                 BinaryOp::Less
                 | BinaryOp::LessEq
                 | BinaryOp::Greater
                 | BinaryOp::GreaterEq
                 | BinaryOp::Eq
                 | BinaryOp::NotEq
-                | BinaryOp::And
-                | BinaryOp::Or => Ok(Type::Bool),
+                | BinaryOp::And => Ok(Type::Bool),
             },
         }
+    }
+
+    /// The left operand's type and the result type of `a or b` when `a` is
+    /// nullable and `b` supplies its default: `T` for a plain fallback, `T?`
+    /// for a nullable one so `a or b or c` chains. `None` means the operands
+    /// are an ordinary bool pair.
+    ///
+    /// The fallback's own type decides which of the two it is checked against,
+    /// because a `T?` fallback does not satisfy an expected `T` -- checking
+    /// against `T` first would report a mismatch instead of chaining.
+    fn nullable_or_types(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<Option<(Type, Type)>, Diagnostic> {
+        let Ok(nullable_ty @ Type::Nullable(_)) =
+            self.infer_expr_type(left, types, None).map(first_of_multi)
+        else {
+            return Ok(None);
+        };
+        let inner = nullable_ty.nullable_inner().expect("matched Type::Nullable");
+        // `bool?` is the one nullable type whose inner values include the value
+        // a reader expects `or` to fall through on, so `flag or true` cannot be
+        // read without knowing which rule applies.
+        if inner == Type::Bool {
+            return Err(Diagnostic::new(
+                "'or' does not apply to a bool? left operand: whether a present \
+                 'false' takes the fallback is ambiguous. Write 'flag == true' for \
+                 set-and-true, or compare against nil explicitly",
+            ));
+        }
+        let fallback_is_nullable = matches!(
+            self.infer_expr_type(right, types, None).map(first_of_multi),
+            Ok(Type::Nullable(_) | Type::Nil)
+        );
+        let result_ty = if fallback_is_nullable {
+            nullable_ty.clone()
+        } else {
+            inner.clone()
+        };
+        self.infer_expr_type(right, types, Some(result_ty.clone()))
+            .map_err(|_| {
+                Diagnostic::new(format!(
+                    "the fallback of 'or' must be {inner} or {nullable_ty} \
+                     to match the nullable left operand"
+                ))
+            })?;
+        Ok(Some((nullable_ty, result_ty)))
     }
 
     fn infer_binary_operand_type(
@@ -10408,6 +10470,73 @@ impl Builder<'_> {
         );
         self.current_block = exit;
         Ok(array)
+    }
+
+    /// `a or b` where `a: T?` supplies `b` as its default. The left operand is
+    /// evaluated once and branched on nil: present means the unboxed left
+    /// value, nil means the fallback. Only nil takes the fallback -- this
+    /// never looks at truthiness the way Lua's `or` does.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_nullable_or(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        nullable_ty: Type,
+        result_ty: Type,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let inner = nullable_ty
+            .nullable_inner()
+            .expect("caller checked the nullable left operand");
+        let left_value = self.lower_expr(left, env, types, Some(nullable_ty.clone()))?;
+        let is_null = self.emit(Instruction::IsNull {
+            value: left_value,
+            ty: inner.clone(),
+        });
+        let fallback_block = self.new_block();
+        let present_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: is_null,
+                then_block: fallback_block,
+                else_block: present_block,
+            },
+        );
+
+        self.current_block = present_block;
+        // A `T?` result keeps the left value as-is; a `T` result unboxes it,
+        // which is a no-op for reference-typed nullables and unwraps the
+        // payload struct for boxed ones.
+        let present_value = if result_ty == nullable_ty {
+            left_value
+        } else {
+            let unboxed = self.emit(Instruction::Cast {
+                value: left_value,
+                from: nullable_ty,
+                to: inner.clone(),
+            });
+            self.coerce_value(unboxed, inner, Some(result_ty.clone()))?
+        };
+        let present_exit = self.current_block;
+        self.set_terminator(present_exit, Terminator::Jump(merge_block));
+
+        self.current_block = fallback_block;
+        let fallback_value = self.lower_expr(right, env, types, Some(result_ty.clone()))?;
+        let fallback_exit = self.current_block;
+        self.set_terminator(fallback_exit, Terminator::Jump(merge_block));
+
+        self.current_block = merge_block;
+        let mut incoming = vec![
+            (present_exit, present_value),
+            (fallback_exit, fallback_value),
+        ];
+        incoming.sort_by_key(|(pred, _)| *pred);
+        let value = self.emit(Instruction::Phi(incoming));
+        self.coerce_value(value, result_ty, expected)
     }
 
     /// Equality between a nullable value and a value of its inner type (or

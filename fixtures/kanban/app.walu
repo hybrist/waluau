@@ -232,23 +232,12 @@ function install_kanban(_run_once: i32): unit
 
     local saved_title: string? = storage:get_item("waluau-kanban:card:0:title")
     if saved_title ~= nil then
-        local saved_description: string? = storage:get_item("waluau-kanban:card:0:description")
-        local saved_priority: string? = storage:get_item("waluau-kanban:card:0:priority")
-        local saved_tags: string? = storage:get_item("waluau-kanban:card:0:tags")
-        local saved_status: string? = storage:get_item("waluau-kanban:card:0:status")
+        -- A field the storage never wrote keeps the value declared above.
         card_title = saved_title
-        if saved_description ~= nil then
-            card_description = saved_description
-        end
-        if saved_priority ~= nil then
-            card_priority = saved_priority
-        end
-        if saved_tags ~= nil then
-            card_tags = saved_tags
-        end
-        if saved_status ~= nil then
-            card_status = saved_status
-        end
+        card_description = storage:get_item("waluau-kanban:card:0:description") or card_description
+        card_priority = storage:get_item("waluau-kanban:card:0:priority") or card_priority
+        card_tags = storage:get_item("waluau-kanban:card:0:tags") or card_tags
+        card_status = storage:get_item("waluau-kanban:card:0:status") or card_status
         card_node:set_attribute("data-status", card_status)
         card_node.text_content = card_title .. " " .. card_description .. " " .. card_priority .. " priority " .. card_tags
         card_node:append_child(card_controls)
