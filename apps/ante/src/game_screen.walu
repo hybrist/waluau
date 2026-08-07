@@ -1,22 +1,22 @@
--- The heist screen: the run, the rules/flow/choreography triple behind the
+-- The duel screen: the run, the rules/flow/choreography triple behind the
 -- live board, plus the keyboard and mouse adapters that drive it. The entry
 -- module only routes engine callbacks here while this screen is active; audio
 -- unlock and resource lifetime stay with the entry module, so by the time
 -- input reaches this screen the browser gesture requirement is already
 -- satisfied.
 --
--- One screen spans a whole run: clearing a vault deals the next one in place
+-- One screen spans a whole run: clearing a duel deals the next one in place
 -- rather than handing control back to the entry module, so the run's carried
--- mana never has to leave this screen. The fence between two vaults is part of
--- that span — it spends the same carried mana — so this screen owns it too, and
+-- gold never has to leave this screen. The shop between two duels is part of
+-- that span — it spends the same carried gold — so this screen owns it too, and
 -- routes input and drawing to it while it stands.
 --
 -- Where the run stands is also a place on the shared city map, which this
--- screen aims but does not own: the fence is a vendor on a street corner and
--- the vault is the house at the end of the next block. `leaving_fence` is the
+-- screen aims but does not own: the shop is a vendor on a street corner and
+-- the duel is the house at the end of the next block. `leaving_fence` is the
 -- one moment the two disagree — the offers are still on the screen while the
--- map they are drawn on dissolves into the vault that has already been dealt
--- behind it — so that walking into a heist is one movement instead of a list
+-- map they are drawn on dissolves into the duel that has already been dealt
+-- behind it — so that walking into a duel is one movement instead of a list
 -- vanishing and a board appearing.
 
 local engine = require("waluau:engine")
@@ -89,7 +89,7 @@ function new(): State
     local run: run_module.State = run_module.new(game.spell_firebolt, false)
     return {
         run = run,
-        rules = game.new(run:boss(), run.spells, run.mana),
+        rules = game.new(run:boss(), run.spells, run.gold),
         ui = flow.new(),
         presentation = choreography.new(),
         shop = shop.new(),
@@ -99,18 +99,18 @@ function new(): State
     }
 end
 
--- Whether the map is the screen. The fence stands on it; a vault that has been
--- walked into has taken it over, and so has one whose fence is being left.
+-- Whether the map is the screen. The shop stands on it; a duel that has been
+-- walked into has taken it over, and so has one whose shop is being left.
 function on_map(state: State): bool
     return state.shop.open and not state.leaving_fence
 end
 
--- Deal the vault the run is currently on: its variant and opening mana are the
--- run's to say, so nothing outside this screen decides what the next heist is
+-- Deal the duel the run is currently on: its variant and opening gold are the
+-- run's to say, so nothing outside this screen decides what the next duel is
 -- dealt as.
 function deal_vault(state: State): unit
     local run: run_module.State = state.run
-    state.rules:reset(run:boss(), run.spells, run.mana)
+    state.rules:reset(run:boss(), run.spells, run.gold)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
     divine_intervention.reset(state.intervention)
@@ -128,12 +128,12 @@ end
 -- spell was picked at, so the map is put back at the mouth of the route instead
 -- of walking the whole city back to it.
 function open_route(city: city_map.State): unit
-    city_map.warp(city, city_map.fence_stop(1))
+    city_map.warp(city, city_map.shop_stop(1))
 end
 
--- Start a run at its first vault. `rush` is the boss-rush run and `spell` the
--- starting spell every vault of it is fought with; the entry module passes the
--- menu's choices, and an in-game restart replays the same pair from vault one.
+-- Start a run at its first duel. `rush` is the boss-rush run and `spell` the
+-- starting spell every duel of it is fought with; the entry module passes the
+-- menu's choices, and an in-game restart replays the same pair from duel one.
 function reset(state: State, city: city_map.State, rush: bool, spell: i32): unit
     state.run:restart(spell, rush)
     close_fence(state)
@@ -141,19 +141,19 @@ function reset(state: State, city: city_map.State, rush: bool, spell: i32): unit
     deal_vault(state)
 end
 
--- The live vault has been fought to a verdict and the player asked for what
--- comes next. The run settles on which vault that is — the next one of this
+-- The live duel has been fought to a verdict and the player asked for what
+-- comes next. The run settles on which duel that is — the next one of this
 -- run, or the first of a fresh one.
 --
--- A taken vault is followed by the fence rather than by a deal: the run has
--- already moved on and is holding what the ante left of the mana it carried
--- out, which is exactly what the intermission spends. Taking the last vault of
+-- A taken duel is followed by the shop rather than by a deal: the run has
+-- already moved on and is holding what the target left of the gold it carried
+-- out, which is exactly what the intermission spends. Taking the last duel of
 -- the table walks the same way — the run is won and goes on regardless. A lost
 -- run has nothing to spend and no loadout to spend it on, so its fresh first
--- vault is dealt straight away.
+-- duel is dealt straight away.
 function advance_run(state: State, city: city_map.State): unit
     local outcome: i32 = state.run:settle(
-        state.rules:is_victory(), state.rules:mana())
+        state.rules:is_victory(), state.rules:gold())
     if outcome == run_module.outcome_advance
         or outcome == run_module.outcome_won
     then
@@ -166,8 +166,8 @@ function advance_run(state: State, city: city_map.State): unit
     deal_vault(state)
 end
 
--- The fence is done with: deal the vault the run has been standing in front of,
--- loadout, prices, and remaining mana as the shop left them. The offers are not
+-- The shop is done with: deal the duel the run has been standing in front of,
+-- loadout, prices, and remaining gold as the shop left them. The offers are not
 -- taken down here — the map carries them out as it dissolves, and `update`
 -- clears them once it has.
 function leave_shop(state: State): unit
@@ -175,24 +175,24 @@ function leave_shop(state: State): unit
     deal_vault(state)
 end
 
--- Which stop of the route carries the last vault the run's ante table is
+-- Which stop of the route carries the last duel the run's target table is
 -- written for. The route runs past it — a run that takes it walks on into the
 -- endless city — so this names a landmark, not an end.
 function landmark_stop(state: State): i32
-    return city_map.vault_stop(run_module.run_length(state.run.rush))
+    return city_map.duel_stop(run_module.run_length(state.run.rush))
 end
 
--- Which stop of the route the run stands on: the vendor before the live vault
--- while the intermission is up, and the vault's own house otherwise.
+-- Which stop of the route the run stands on: the vendor before the live duel
+-- while the intermission is up, and the duel's own house otherwise.
 function city_stop(state: State): i32
-    if on_map(state) then return city_map.fence_stop(state.run.vault) end
-    return city_map.vault_stop(state.run.vault)
+    if on_map(state) then return city_map.shop_stop(state.run.duel) end
+    return city_map.duel_stop(state.run.duel)
 end
 
--- How much of the offer list is on the screen. Leaving a fence takes it down
+-- How much of the offer list is on the screen. Leaving a shop takes it down
 -- before the walk to the next house is under way, and the map's own `street`
--- keeps it from arriving while the camera is still inside the last vault: a
--- list about where the heist is standing waits until it is standing there.
+-- keeps it from arriving while the camera is still inside the last duel: a
+-- list about where the duel is standing waits until it is standing there.
 const FENCE_FADE_SECONDS: f64 = 0.28
 
 function fade_toward(value: f64, goal: f64, step: f64): f64
@@ -206,7 +206,7 @@ function fade_toward(value: f64, goal: f64, step: f64): f64
     return next
 end
 
--- Aim the map at where the run stands and say whether the map or the vault is
+-- Aim the map at where the run stands and say whether the map or the duel is
 -- the picture. Called every frame, resources loaded or not, so the walk between
 -- two stops keeps time with the run rather than with the asset loader.
 function steer_city(state: State, city: city_map.State, dt: f64): unit
@@ -237,16 +237,16 @@ function fence_open(state: State): bool
     return state.shop.open
 end
 
--- The verdict on the live vault, which only this screen can see: the run has
+-- The verdict on the live duel, which only this screen can see: the run has
 -- not settled on it yet, because the verdict is drawn over a finished board and
 -- settling only happens once the player asks for what comes next. Reading it
 -- from the same classifier the settle uses is what keeps the screen and the
--- movement it announces in agreement. A live vault has no verdict yet.
+-- movement it announces in agreement. A live duel has no verdict yet.
 function run_outcome(state: State): i32
     if not state.rules:is_finished() then return run_module.outcome_none end
     local run: run_module.State = state.run
     return run_module.outcome_of(
-        run.vault, run.rush, state.rules:is_victory(), state.rules:mana())
+        run.duel, run.rush, state.rules:is_victory(), state.rules:gold())
 end
 
 function key_command(key: Key): i32
@@ -273,9 +273,9 @@ end
 -- Returns how many card-flip sound cues this tick earned; the entry module
 -- owns audio resources and playback.
 function update(state: State, city: city_map.State, dt: f64): i32
-    -- The fence is a still screen standing between two vaults: the board behind
+    -- The shop is a still screen standing between two duels: the board behind
     -- it is already settled, so nothing advances while it is up. Once it has
-    -- been left the vault is dealt and running, and the offers only wait for
+    -- been left the duel is dealt and running, and the offers only wait for
     -- the map under them to finish dissolving before they are taken down.
     if on_map(state) then return 0 end
     if state.leaving_fence and not city_map.visible(city) then close_fence(state) end
@@ -289,16 +289,16 @@ function update(state: State, city: city_map.State, dt: f64): i32
     local presentation: choreography.State = state.presentation
     local animating: bool = choreography.is_animating(presentation)
     choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
-    local burned_ward: i32 = choreography.update_power(presentation, dt)
-    if burned_ward >= 0 then
-        local discarded: game.Card? = state.rules:resolve_firebolt(burned_ward)
+    local burned_table_card: i32 = choreography.update_power(presentation, dt)
+    if burned_table_card >= 0 then
+        local discarded: game.Card? = state.rules:resolve_firebolt(burned_table_card)
         if discarded ~= nil then
             local rules_view: game.View = game.view(state.rules)
             choreography.firebolt_resolved(
                 presentation,
                 discarded::game.Card,
-                rules_view.middle[burned_ward],
-                burned_ward)
+                rules_view.middle[burned_table_card],
+                burned_table_card)
         end
     end
     if ui.revealing then
@@ -310,8 +310,8 @@ function update(state: State, city: city_map.State, dt: f64): i32
     return 0
 end
 
--- The vault board. The entry module draws it under the city map whenever the
--- map is not the whole picture, so a dissolve always has a vault to arrive at.
+-- The duel board. The entry module draws it under the city map whenever the
+-- map is not the whole picture, so a dissolve always has a duel to arrive at.
 function draw_vault(state: State, surface: entity.Surface): unit
     local ui: flow.State = state.ui
     choreography.draw(
@@ -322,11 +322,11 @@ function draw_vault(state: State, surface: entity.Surface): unit
         {
             hand_focus = flow.fan_focus(
                 ui, choreography.is_animating(state.presentation)),
-            ward_cursor = ui.ward_cursor,
+            table_card_cursor = ui.table_card_cursor,
             cursor_area = ui.cursor_area,
             play_picks = ui.play_picks,
             swap_hand = ui.swap_hand,
-            swap_wards = ui.swap_wards,
+            swap_table_cards = ui.swap_table_cards,
             modal = ui.modal,
             revealing = ui.revealing,
             casting = ui.casting,
@@ -337,8 +337,8 @@ function draw_vault(state: State, surface: entity.Surface): unit
         state.presentation.fan_parts)
 end
 
--- The fence's offers, at the opacity of the street they are laid out on: they
--- arrive as the camera comes back out of the last vault, and are gone before
+-- The shop's offers, at the opacity of the street they are laid out on: they
+-- arrive as the camera comes back out of the last duel, and are gone before
 -- the walk to the next house begins.
 function draw_fence(state: State, city: city_map.State, viewport: layout.State, graphics: engine.Graphics): unit
     shop_render.draw(
@@ -347,36 +347,36 @@ end
 
 function submit_swap(state: State): unit
     local ui: flow.State = state.ui
-    local outcome: game.FeintOutcome?
-    if #ui.swap_hand == 0 and #ui.swap_wards == 0 then
+    local outcome: game.SwapOutcome?
+    if #ui.swap_hand == 0 and #ui.swap_table_cards == 0 then
         outcome = state.rules:resolve_swap({}, {})
-    elseif #ui.swap_hand ~= #ui.swap_wards or #ui.swap_hand > state.rules:mana() then
+    elseif #ui.swap_hand ~= #ui.swap_table_cards or #ui.swap_hand > state.rules:gold() then
         return
     else
-        outcome = state.rules:resolve_swap(ui.swap_hand, ui.swap_wards)
+        outcome = state.rules:resolve_swap(ui.swap_hand, ui.swap_table_cards)
     end
     flow.clear_picks(ui)
     if outcome ~= nil then
-        -- A resolved feint thaws every ward, so a Freeze Ray standing on the
+        -- A resolved swap thaws every table_card, so a Freeze Ray standing on the
         -- board loses its condition with it. Which spell is standing there is
         -- the presentation's own reading, not a question for the loadout.
         choreography.clear_freeze(state.presentation)
-        choreography.feint(outcome::game.FeintOutcome, state.presentation)
+        choreography.swap(outcome::game.SwapOutcome, state.presentation)
     end
 end
 
--- Pay for and launch the spell in the aimed loadout slot at the given ward. The
--- rules charge the mana only when they accept the cast, so a cancelled or
+-- Pay for and launch the spell in the aimed loadout slot at the given table_card. The
+-- rules charge the gold only when they accept the cast, so a cancelled or
 -- unaffordable attempt costs nothing; targeting mode ends either way.
-function confirm_cast(state: State, slot: i32, ward: i32): unit
-    if state.rules:cast_spell(slot, ward) then
+function confirm_cast(state: State, slot: i32, table_card: i32): unit
+    if state.rules:cast_spell(slot, table_card) then
         choreography.apply_power(
-            state.presentation, state.rules:spell_kind(slot), ward)
+            state.presentation, state.rules:spell_kind(slot), table_card)
     end
     state.ui.casting = false
 end
 
-function submit_breach(state: State): unit
+function submit_round(state: State): unit
     local ui: flow.State = state.ui
     if #ui.play_picks ~= 2 then return end
     local trick: game.Trick? = state.rules:play(ui.play_picks[0], ui.play_picks[1])
@@ -395,8 +395,8 @@ function consume_gate(state: State, city: city_map.State, command: i32): bool
         choreography.is_animating(state.presentation),
         choreography.reveal_finished(state.presentation), command)
     if result == flow.result_live then return false end
-    -- Restart is a run restart, not a redeal of the live vault: a vault the
-    -- run already paid mana into cannot be fought a second time.
+    -- Restart is a run restart, not a redeal of the live duel: a duel the
+    -- run already paid gold into cannot be fought a second time.
     if result == flow.result_reset then
         reset(state, city, state.run.rush, state.run.start_spell)
     elseif result == flow.result_advance then
@@ -430,9 +430,9 @@ function keypressed(state: State, city: city_map.State, key: string): i32
     local presentation: choreography.State = state.presentation
     local control: Key = decode_key(key)
     if control == Key.exit then return ACTION_EXIT end
-    -- The fence answers its own list; nothing on the settled board behind it is
-    -- reachable until the next vault is dealt. Restarting the run is the one
-    -- gesture that still works everywhere, the fence included. A fence already
+    -- The shop answers its own list; nothing on the settled board behind it is
+    -- reachable until the next duel is dealt. Restarting the run is the one
+    -- gesture that still works everywhere, the shop included. A shop already
     -- left answers nothing: the offers on the screen are a picture the map is
     -- carrying out, and the board underneath is the live one.
     if on_map(state) then
@@ -458,10 +458,10 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         ui.casting = false
         return ACTION_NONE
     end
-    -- Keep the struck ward stable until Firebolt's burn commits its discard
+    -- Keep the struck table_card stable until Firebolt's burn commits its discard
     -- and replacement. Other spell conditions are persistent and do not lock
     -- the board, but advancing the turn during this one-shot effect could make
-    -- its target name a newly dealt ward instead of the card the bolt hit.
+    -- its target name a newly dealt table_card instead of the card the bolt hit.
     if choreography.firebolt_pending(presentation) then return ACTION_NONE end
     local cast_slot: i32 = cast_slot_for(key, rules:spell_count())
     if cast_slot >= 0 then
@@ -476,7 +476,7 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         end
         if not rules:can_cast(cast_slot) then return ACTION_NONE end
         -- The cast should respond on the first gesture. If the opening deal
-        -- is still running, settle it before targeting begins so the wards
+        -- is still running, settle it before targeting begins so the table cards
         -- are visibly present for the aim cursor.
         if choreography.is_animating(presentation) then
             choreography.skip(presentation)
@@ -489,14 +489,14 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         match control do
         case Key.cancel then ui.casting = false
         case Key.left then
-            ui.ward_cursor -= 1
-            if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
+            ui.table_card_cursor -= 1
+            if ui.table_card_cursor < 0 then ui.table_card_cursor = 2 end
         case Key.right then
-            ui.ward_cursor = (ui.ward_cursor + 1) % 3
+            ui.table_card_cursor = (ui.table_card_cursor + 1) % 3
         case Key.confirm then
-            confirm_cast(state, ui.cast_slot, ui.ward_cursor)
+            confirm_cast(state, ui.cast_slot, ui.table_card_cursor)
         case Key.select then
-            confirm_cast(state, ui.cast_slot, ui.ward_cursor)
+            confirm_cast(state, ui.cast_slot, ui.table_card_cursor)
         case Key.exit then
         case Key.restart then
         case Key.history then
@@ -518,25 +518,25 @@ function keypressed(state: State, city: city_map.State, key: string): i32
             ui.hand_cursor -= 1
             if ui.hand_cursor < 0 then ui.hand_cursor = rules:hand_size() - 1 end
         else
-            ui.ward_cursor -= 1
-            if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
+            ui.table_card_cursor -= 1
+            if ui.table_card_cursor < 0 then ui.table_card_cursor = 2 end
         end
     case Key.right then
         if ui.cursor_area == flow.cursor_hand then
             ui.hand_cursor = (ui.hand_cursor + 1) % rules:hand_size()
         else
-            ui.ward_cursor = (ui.ward_cursor + 1) % 3
+            ui.table_card_cursor = (ui.table_card_cursor + 1) % 3
         end
     case Key.up then
-        if rules:feint_open() then ui.cursor_area = 1 - ui.cursor_area end
+        if rules:swap_open() then ui.cursor_area = 1 - ui.cursor_area end
     case Key.down then
-        if rules:feint_open() then ui.cursor_area = 1 - ui.cursor_area end
+        if rules:swap_open() then ui.cursor_area = 1 - ui.cursor_area end
     case Key.select then
-        if rules:feint_open() then
+        if rules:swap_open() then
             if ui.cursor_area == flow.cursor_hand then
                 flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
-            elseif not rules:is_frozen(ui.ward_cursor) then
-                flow.toggle(ui.swap_wards, ui.ward_cursor, 3)
+            elseif not rules:is_frozen(ui.table_card_cursor) then
+                flow.toggle(ui.swap_table_cards, ui.table_card_cursor, 3)
             end
         else
             flow.toggle(ui.play_picks, ui.hand_cursor, 2)
@@ -550,13 +550,13 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         flow.apply_hand_order(ui, order)
         choreography.apply_hand_order(presentation, order)
     case Key.pass then
-        if rules:feint_open() then
+        if rules:swap_open() then
             ui.swap_hand = {}
-            ui.swap_wards = {}
+            ui.swap_table_cards = {}
             submit_swap(state)
         end
     case Key.confirm then
-        if rules:feint_open() then submit_swap(state) else submit_breach(state) end
+        if rules:swap_open() then submit_swap(state) else submit_round(state) end
     case Key.exit then
     case Key.restart then
     case Key.history then
@@ -583,11 +583,11 @@ function mousemoved(state: State, x: f64, y: f64): unit
         choreography.reveal_finished(state.presentation), flow.command_none
     ) ~= flow.result_live then return end
     local at: render.Point = render.point(x, y)
-    -- While aiming a cast, the pointer only steers the ward the spell would
+    -- While aiming a cast, the pointer only steers the table_card the spell would
     -- hit; the fan below stays folded and unfocused.
     if ui.casting then
-        local target: i32 = render.hit_ward(viewport, at)
-        if target >= 0 then ui.ward_cursor = target end
+        local target: i32 = render.hit_table_card(viewport, at)
+        if target >= 0 then ui.table_card_cursor = target end
         return
     end
     local hand: i32 = choreography.hit_hand(state.presentation, at)
@@ -596,11 +596,11 @@ function mousemoved(state: State, x: f64, y: f64): unit
         ui.hand_cursor = hand
         return
     end
-    if state.rules:feint_open() then
-        local ward: i32 = render.hit_ward(viewport, at)
-        if ward >= 0 then
-            ui.cursor_area = flow.cursor_wards
-            ui.ward_cursor = ward
+    if state.rules:swap_open() then
+        local table_card: i32 = render.hit_table_card(viewport, at)
+        if table_card >= 0 then
+            ui.cursor_area = flow.cursor_table_cards
+            ui.table_card_cursor = table_card
         end
     end
 end
@@ -628,12 +628,12 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     local ui: flow.State = state.ui
     local rules: game.State = state.rules
     local at: render.Point = render.point(x, y)
-    -- Clicking a ward while aiming confirms the cast on it; anywhere else
+    -- Clicking a table_card while aiming confirms the cast on it; anywhere else
     -- keeps targeting open for the keyboard to finish or cancel.
     if ui.casting then
-        local target: i32 = render.hit_ward(viewport, at)
+        local target: i32 = render.hit_table_card(viewport, at)
         if target >= 0 then
-            ui.ward_cursor = target
+            ui.table_card_cursor = target
             confirm_cast(state, ui.cast_slot, target)
         end
         return
@@ -648,27 +648,27 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     if hand >= 0 then
         ui.cursor_area = flow.cursor_hand
         ui.hand_cursor = hand
-        if rules:feint_open() then flow.toggle(ui.swap_hand, hand, 3)
+        if rules:swap_open() then flow.toggle(ui.swap_hand, hand, 3)
         else flow.toggle(ui.play_picks, hand, 2) end
         return
     end
-    if rules:feint_open() then
-        local ward: i32 = render.hit_ward(viewport, at)
-        if ward >= 0 then
-            ui.cursor_area = flow.cursor_wards
-            ui.ward_cursor = ward
-            if not rules:is_frozen(ward) then flow.toggle(ui.swap_wards, ward, 3) end
+    if rules:swap_open() then
+        local table_card: i32 = render.hit_table_card(viewport, at)
+        if table_card >= 0 then
+            ui.cursor_area = flow.cursor_table_cards
+            ui.table_card_cursor = table_card
+            if not rules:is_frozen(table_card) then flow.toggle(ui.swap_table_cards, table_card, 3) end
             return
         end
         if render.hit_pass(at) then
             ui.swap_hand = {}
-            ui.swap_wards = {}
+            ui.swap_table_cards = {}
             submit_swap(state)
             return
         end
     end
     if render.hit_commit(at) then
-        if rules:feint_open() then submit_swap(state) else submit_breach(state) end
+        if rules:swap_open() then submit_swap(state) else submit_round(state) end
     end
 end
 
@@ -718,8 +718,8 @@ function restore(
         presentation = presentation::choreography.State,
         shop = intermission::shop.State,
         intervention = divine_intervention.new(),
-        -- Leaving a fence is a moment of movement, not a phase of the run. A
-        -- snapshot lands on one side of it: an open fence comes back standing,
+        -- Leaving a shop is a moment of movement, not a phase of the run. A
+        -- snapshot lands on one side of it: an open shop comes back standing,
         -- and `place_city` puts the map and the offers where that leaves the
         -- run.
         leaving_fence = false,

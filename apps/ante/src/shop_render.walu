@@ -1,11 +1,11 @@
--- The fence's screen: the intermission between two vaults, drawn as one
--- cursor-driven list of offers in the vault's own panel chrome. The shop module
+-- The shop's screen: the intermission between two duels, drawn as one
+-- cursor-driven list of offers in the duel's own panel chrome. The shop module
 -- owns what the lines are and what they cost; this module owns where they sit,
 -- which is also why the pointer's row lookup lives here.
 --
 -- The list stands on the city map, at the vendor the route has reached, and
 -- keeps to a column so the map beside it can be read at the same time. Every
--- colour it draws goes through `alpha`: arriving at a fence and leaving one are
+-- colour it draws goes through `alpha`: arriving at a shop and leaving one are
 -- dissolves the map runs, and the offers travel with it.
 
 local engine = require("waluau:engine")
@@ -29,7 +29,7 @@ const ROW_H: f64 = 54.0
 const ROW_PITCH: f64 = 64.0
 
 -- The panel opens a share of the live height down the screen, and its header
--- — title, subtitle, and the mana readout — takes a fixed band before the
+-- — title, subtitle, and the gold readout — takes a fixed band before the
 -- first offer line.
 const PANEL_TOP_SHARE: f64 = 0.1133333333
 const PANEL_HEADER_H: f64 = 128.0
@@ -59,17 +59,17 @@ end
 function row_label(row: shop.Row, run: run_module.State, offer: i32): string
     if row.action == shop.action_sharpen then
         local name: string = spell_launch.name(row.kind)
-        if row.sold then return "SHARPENED " .. name end
+        if row.sold then return "UPGRADED " .. name end
         -- The spell an offer named can leave the loadout: the other offer of the
         -- same visit may have traded it away.
-        if row.slot < 0 then return "SHARPEN " .. name .. "   TRADED AWAY" end
+        if row.slot < 0 then return "UPGRADE " .. name .. "   TRADED AWAY" end
         local spell: game.Spell = run.spells[row.slot]
         if not run:can_sharpen(row.slot) then
-            return "SHARPEN " .. name .. "   AS CHEAP AS IT GETS"
+            return "UPGRADE " .. name .. "   AS CHEAP AS IT GETS"
         end
-        return "SHARPEN " .. name
-            .. "   CAST " .. tostring(spell.cost)
-            .. " TO " .. tostring(spell.cost - 1) .. " MANA"
+        return "UPGRADE " .. name
+            .. "   USE " .. tostring(spell.cost)
+            .. " TO " .. tostring(spell.cost - 1) .. " GOLD"
     end
     if row.action == shop.action_learn then
         local name: string = spell_launch.name(row.kind)
@@ -87,9 +87,9 @@ function row_label(row: shop.Row, run: run_module.State, offer: i32): string
             .. " FOR " .. spell_launch.name(offer)
     end
     if row.action == shop.action_cancel then return "KEEP BOTH SPELLS" end
-    local vault: string = "ENTER VAULT " .. tostring(run.vault)
-    if run:boss() then vault = vault .. "   BOSS BATTLE" end
-    return vault .. "   ANTE " .. tostring(run:ante())
+    local duel: string = "ENTER DUEL " .. tostring(run.duel)
+    if run:boss() then duel = duel .. "   CHALLENGE" end
+    return duel .. "   TARGET " .. tostring(run:target())
 end
 
 -- Idle ink: an offer about a spell wears that spell's colour the way the menu's
@@ -132,7 +132,7 @@ function draw_row(
             ink.fade("#52525b", alpha))
     elseif row.price > 0 then
         ink.text_right(
-            graphics, tostring(row.price) .. " MANA",
+            graphics, tostring(row.price) .. " GOLD",
             ROW_X + ROW_W - 22.0, top + 33.0, 13, ink.fade(price_ink, alpha))
     end
 end
@@ -155,8 +155,8 @@ function draw(
     ink.panel(
         graphics, PANEL_X, panel_y, PANEL_W, panel_h,
         ink.fade("#09090b", alpha * 0.94), ink.fade("#a1a1aa", alpha))
-    ink.text(graphics, "THE FENCE", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
-    local subtitle: string = "MANA SPENT HERE WILL NOT FIGHT IN VAULT " .. tostring(run.vault)
+    ink.text(graphics, "THE SHOP", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
+    local subtitle: string = "GOLD SPENT HERE WILL NOT ENTER DUEL " .. tostring(run.duel)
     local offered: i32 = 0
     if choosing then
         offered = state.offers[state.pending].kind
@@ -164,15 +164,15 @@ function draw(
     end
     ink.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, ink.fade("#a1a1aa", alpha))
     ink.text_right(
-        graphics, tostring(run.mana), 550.0, panel_y + 54.0, 24, ink.fade("#67e8f9", alpha))
+        graphics, tostring(run.gold), 550.0, panel_y + 54.0, 24, ink.fade("#67e8f9", alpha))
     ink.text_right(
-        graphics, "MANA ON HAND", 550.0, panel_y + 77.0, 9, ink.fade("#155e75", alpha))
-    -- What the vault beyond this list will cost to walk out of, under the purse
-    -- it will be paid from. The fence informs rather than refuses — the ante is
-    -- charged on the way out and there is a whole heist in between to earn it —
-    -- but it cannot inform once the mana is already spent.
+        graphics, "GOLD ON HAND", 550.0, panel_y + 77.0, 9, ink.fade("#155e75", alpha))
+    -- What the duel beyond this list will cost to walk out of, under the purse
+    -- it will be paid from. The shop informs rather than refuses — the target is
+    -- charged on the way out and there is a whole duel in between to earn it —
+    -- but it cannot inform once the gold is already spent.
     ink.text_right(
-        graphics, "ANTE " .. tostring(run:ante()) .. " TO CLEAR IT",
+        graphics, "TARGET " .. tostring(run:target()) .. " TO CLEAR IT",
         550.0, panel_y + 95.0, 9, ink.fade("#b45309", alpha))
 
     local rows: {shop.Row} = shop.rows(state, run)
@@ -185,11 +185,11 @@ function draw(
         -- Two offers are the whole stock of a visit, so say what the list is
         -- rather than leaving the player waiting for it to refill.
         ink.text_centered(
-            graphics, "TWO OFFERS A VISIT. THE NEXT FENCE HAS ITS OWN",
+            graphics, "TWO OFFERS PER VISIT. THE NEXT SHOP HAS ITS OWN",
             PANEL_CENTER, row_top(viewport, #rows) + 33.0, 11, ink.fade("#8a8a92", alpha))
     end
     ink.text_centered(
-        graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE VAULT",
+        graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE DUEL",
         PANEL_CENTER, viewport.height - 34.0, 11, ink.fade("#a1a1aa", alpha))
 end
 

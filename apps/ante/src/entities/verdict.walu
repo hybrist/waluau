@@ -1,5 +1,5 @@
--- The verdict of the vault just fought, read as a moment in the run. Taking it
--- is an intermission — the mana left after the ante is the stake the next vault
+-- The verdict of the duel just fought, read as a moment in the run. Taking it
+-- is an intermission — the gold left after the target is the stake the next duel
 -- opens with — while losing it is where the whole run stops.
 --
 -- There are four of those moments and they are branched on the run's own
@@ -40,25 +40,25 @@ end
 
 function title_of(run: run_module.View): string
     if run.outcome == run_module.outcome_lost_vault then return "THE RUN ENDS" end
-    if run.outcome == run_module.outcome_lost_ante then return "THE RUN ENDS" end
-    if run.outcome == run_module.outcome_won then return "THE HEIST IS DONE" end
-    return "VAULT " .. tostring(run.vault) .. " IS YOURS"
+    if run.outcome == run_module.outcome_lost_target then return "THE RUN ENDS" end
+    if run.outcome == run_module.outcome_won then return "THE DUEL IS DONE" end
+    return "DUEL " .. tostring(run.duel) .. " IS YOURS"
 end
 
 function subtitle_of(run: run_module.View): string
     if run.outcome == run_module.outcome_lost_vault then
-        return "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
-            .. ". THE CARRIED MANA GOES WITH IT"
+        return "THE OPPONENT WON DUEL " .. tostring(run.duel)
+            .. ". YOUR GOLD IS LOST"
     end
-    -- The vault opened and the robbers still could not afford to leave it.
-    if run.outcome == run_module.outcome_lost_ante then
-        return "VAULT " .. tostring(run.vault) .. " OPENED, BUT THE ANTE WAS SHORT"
+    -- The duel opened and the player still could not afford to leave it.
+    if run.outcome == run_module.outcome_lost_target then
+        return "DUEL " .. tostring(run.duel) .. " WON, BUT THE GOLD TARGET WAS MISSED"
     end
     if run.outcome == run_module.outcome_won then
         return "ALL " .. tostring(run.run_length)
-            .. " VAULTS TAKEN. THE CITY GOES ON PAST THEM"
+            .. " DUELS WON. THE CITY GOES ON PAST THEM"
     end
-    return "FIVE BREACHES COMPLETE. THE RUN GOES ON"
+    return "FIVE ROUNDS COMPLETE. THE RUN GOES ON"
 end
 
 -- One figure under its caption.
@@ -88,36 +88,36 @@ function ledger(
     }, entity.row(LEDGER_GAP, box.justify_center, box.align_start)))
 end
 
--- What the run walks away with. A lost vault has only what it took; the other
--- three are all comparisons against the ante, so they are two figures.
+-- What the run walks away with. A lost duel has only what it took; the other
+-- three are all comparisons against the target, so they are two figures.
 function tally(state: game.View, run: run_module.View): entity.Node
     if run.outcome == run_module.outcome_lost_vault then
         return figure(
-            "VAULTS TAKEN", HEADLINE_INK, tostring(run.cleared), FIGURE_INK,
+            "DUELS WON", HEADLINE_INK, tostring(run.cleared), FIGURE_INK,
             HEADLINE_SIZE, FIGURE_SIZE)
     end
-    if run.outcome == run_module.outcome_lost_ante then
-        return ledger("MANA HELD", state.player_points, "ANTE OWED", run.ante)
+    if run.outcome == run_module.outcome_lost_target then
+        return ledger("GOLD HELD", state.player_points, "TARGET", run.target)
     end
     if run.outcome == run_module.outcome_won then
         return figure(
-            "MANA WALKED OUT WITH", HEADLINE_INK,
-            tostring(state.player_points - run.ante), WON_INK,
+            "GOLD CARRIED ON", HEADLINE_INK,
+            tostring(state.player_points - run.target), WON_INK,
             HEADLINE_SIZE, FIGURE_SIZE)
     end
     return ledger(
-        "MANA CARRIED ON", state.player_points - run.ante, "ANTE PAID", run.ante)
+        "GOLD CARRIED ON", state.player_points - run.target, "TARGET MET", run.target)
 end
 
 function ahead_text(run: run_module.View): string
-    local text: string = "NEXT: VAULT " .. tostring(run.vault + 1)
-    if run.next_is_boss then text = text .. "   BOSS BATTLE" end
-    return text .. "   ANTE " .. tostring(run.ante_ahead)
+    local text: string = "NEXT: DUEL " .. tostring(run.duel + 1)
+    if run.next_is_boss then text = text .. "   CHALLENGE" end
+    return text .. "   TARGET " .. tostring(run.ante_ahead)
 end
 
--- The next vault is not dealt straight off the verdict: the fence stands
--- between them, spending this pile of mana. A run that has walked off the end
--- of the table has no fence ahead of it, only more city.
+-- The next duel is not dealt straight off the verdict: the shop stands
+-- between them, spending this pile of gold. A run that has walked off the end
+-- of the table has no shop ahead of it, only more city.
 function onward(run: run_module.View): {entity.Node}
     if not walks_on(run) then
         return {
@@ -126,7 +126,7 @@ function onward(run: run_module.View): {entity.Node}
                 KEYS_SIZE, modal.keys_ink),
         }
     end
-    local prompt: string = "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER"
+    local prompt: string = "ENTER OR CLICK VISITS THE SHOP   H OPENS THE HISTORY"
     if run.outcome == run_module.outcome_won then
         prompt = "ENTER OR CLICK WALKS ON INTO THE ENDLESS CITY"
     end
@@ -141,7 +141,7 @@ function body(state: game.View, run: run_module.View): entity.Node
         tally(state, run),
         entity.gap(0.0, BLOCK_GAP),
         label.middle(
-            "BREACHES WON " .. tostring(state.player_tricks) .. " / 5",
+            "ROUNDS WON " .. tostring(state.player_tricks) .. " / 5",
             NOTE_SIZE, NOTE_INK),
         entity.gap(0.0, BLOCK_GAP),
     }
@@ -159,8 +159,8 @@ end
 
 return {
     node = node,
-    -- The comparison the three ante-facing verdicts are all about, exported so
-    -- its two halves can be measured without playing a vault to reach one.
+    -- The comparison the three target-facing verdicts are all about, exported so
+    -- its two halves can be measured without playing a duel to reach one.
     ledger = ledger,
     ledger_gap = LEDGER_GAP,
 }

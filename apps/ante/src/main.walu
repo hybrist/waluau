@@ -1,12 +1,12 @@
--- Ante Magic hosted by the 2D engine. This entry module is intentionally an
+-- Duel Magic hosted by the 2D engine. This entry module is intentionally an
 -- adapter: it owns the engine session, the shared presentation resources, the
 -- city map every screen stands on, and which screen is live. The menu and the
--- heist board each live behind their own screen module; neither knows the other
+-- duel board each live behind their own screen module; neither knows the other
 -- exists.
 --
 -- The city map is shared rather than owned by a screen because the run crosses
 -- it: the menu's title drifts over it, the starting spell is picked at its first
--- vendor, every fence between two vaults is another one, and a vault is the
+-- vendor, every shop between two duels is another one, and a duel is the
 -- house the camera goes into. Drawing it here — under whichever screen is live,
 -- and only while it still owes the frame anything — is what makes each of those
 -- a pan and a push in rather than a cut.
@@ -22,8 +22,8 @@ local layout = require("./layout")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
 
-const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v4"
--- The live screen marker plus the heist screen's five sections.
+const HOT_SNAPSHOT_SCHEMA: string = "duel-hmr-v4"
+-- The live screen marker plus the duel screen's five sections.
 const HOT_SNAPSHOT_SECTIONS: i32 = 6
 
 const SCREEN_MENU: i32 = 0
@@ -36,7 +36,7 @@ end
 function install_ante_magic(): unit
     local screen: i32 = SCREEN_MENU
     local menu_state: menu.State = menu.new()
-    local heist: game_screen.State = game_screen.new()
+    local duel: game_screen.State = game_screen.new()
     local city: city_map.State = city_map.new(math.random(2147483646))
     local assets: presentation_resources.State = presentation_resources.new()
     local function load_assets_async(): i32
@@ -51,12 +51,12 @@ function install_ante_magic(): unit
     -- The begin gesture doubles as the browser audio unlock. No reseed: the
     -- host seeds math.random per instance, so each run deals a different
     -- shuffle. sim.test.walu pins its own seeds. `rush` is the menu's choice
-    -- between the standard run — where every third vault is a boss battle —
-    -- and the boss rush, where every vault is; `spell` is the starting spell
+    -- between the standard run — where every third duel is a boss battle —
+    -- and the boss rush, where every duel is; `spell` is the starting spell
     -- picked on the menu's second list and carried for the whole run.
     local function begin_run(rush: bool, spell: i32): unit
         if not presentation_resources.unlock_audio(assets) then return end
-        game_screen.reset(heist, city, rush, spell)
+        game_screen.reset(duel, city, rush, spell)
         screen = SCREEN_GAME
     end
 
@@ -67,21 +67,21 @@ function install_ante_magic(): unit
 
     local function update(dt: f64, input: engine.Input): unit
         -- Whichever screen is live aims the map first, and the map is advanced
-        -- once afterwards. A heist whose resources are still loading still gets
+        -- once afterwards. A duel whose resources are still loading still gets
         -- to aim, so its walk between two stops keeps time with the run rather
         -- than with the asset loader.
         if screen == SCREEN_MENU then
             menu.update(menu_state, city, dt)
         else
-            game_screen.steer_city(heist, city, dt)
+            game_screen.steer_city(duel, city, dt)
             if presentation_resources.can_update(assets) then
-                play_flip_cues(assets, game_screen.update(heist, city, dt))
+                play_flip_cues(assets, game_screen.update(duel, city, dt))
             end
         end
         city_map.update(city, dt)
     end
 
-    -- Three layers, bottom to top: the vault board, the city map over it, and
+    -- Three layers, bottom to top: the duel board, the city map over it, and
     -- the live screen's own list over that. The map is what gives way, so the
     -- board is drawn whenever the map is not the whole picture and skipped once
     -- it is.
@@ -99,23 +99,23 @@ function install_ante_magic(): unit
         if not presentation_resources.draw_failure(assets, graphics) then
             if city.cover < 1.0 then
                 game_screen.draw_vault(
-                    heist, presentation_resources.surface(assets, graphics))
+                    duel, presentation_resources.surface(assets, graphics))
             end
             if city_map.visible(city) then
                 -- The menu's map is a drifting view of a city nobody is running,
-                -- so it has no last vault to mark.
+                -- so it has no last duel to mark.
                 local landmark: i32 = -1
                 if screen ~= SCREEN_MENU then
-                    landmark = game_screen.landmark_stop(heist)
+                    landmark = game_screen.landmark_stop(duel)
                 end
                 city_map_render.draw(
-                    city, graphics, ink.school_color(city.streak_suit),
+                    city, graphics, ink.color_ink(city.streak_suit),
                     city.cover, landmark)
             end
             if screen == SCREEN_MENU then
                 menu.draw(menu_state, canvas, graphics, assets.effects, assets.sound_finished)
-            elseif game_screen.fence_open(heist) then
-                game_screen.draw_fence(heist, city, canvas, graphics)
+            elseif game_screen.fence_open(duel) then
+                game_screen.draw_fence(duel, city, canvas, graphics)
             end
         end
         graphics:pop()
@@ -135,7 +135,7 @@ function install_ante_magic(): unit
             menu_action(menu.keypressed(menu_state, key))
             return
         end
-        if game_screen.keypressed(heist, city, key) == game_screen.action_exit then
+        if game_screen.keypressed(duel, city, key) == game_screen.action_exit then
             leave_run()
         end
     end
@@ -149,7 +149,7 @@ function install_ante_magic(): unit
             menu.mousemoved(menu_state, canvas, x, y)
             return
         end
-        game_screen.mousemoved(heist, x, y)
+        game_screen.mousemoved(duel, x, y)
     end
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
@@ -161,14 +161,14 @@ function install_ante_magic(): unit
             menu_action(menu.mousepressed(menu_state, canvas, x, y, button))
             return
         end
-        game_screen.mousepressed(heist, city, x, y, button)
+        game_screen.mousepressed(duel, city, x, y, button)
     end
 
     -- No configured viewport: the canvas takes the browser's space and the
     -- layout module derives everything from whatever size that turns out to
     -- be, frame by frame.
     local session: engine.Session? = engine.start({
-        title = "Ante Magic",
+        title = "Duel Magic",
         update_hz = 60.0,
         max_frame_seconds = 0.25,
         background = "#09090b",
@@ -187,7 +187,7 @@ function install_ante_magic(): unit
     hot.register({
         snapshot = function(): string
             local sections: {string} = { tostring(screen) }
-            for section in game_screen.snapshot(heist) do
+            for section in game_screen.snapshot(duel) do
                 table.insert(sections, section)
             end
             return snapshot_data.frame(HOT_SNAPSHOT_SCHEMA, sections)
@@ -206,14 +206,14 @@ function install_ante_magic(): unit
             local restored: game_screen.State? = game_screen.restore(
                 payloads[1], payloads[2], payloads[3], payloads[4], payloads[5])
             if restored == nil then return false end
-            heist = restored::game_screen.State
+            duel = restored::game_screen.State
             menu.reset(menu_state, city)
             screen = restored_screen
             -- A restored run is set down where it stands rather than played
-            -- back to it: the map takes the heist's stop with no walk and no
+            -- back to it: the map takes the duel's stop with no walk and no
             -- dissolve left to run.
             if restored_screen == SCREEN_GAME then
-                game_screen.place_city(heist, city)
+                game_screen.place_city(duel, city)
             end
             return true
         end,

@@ -1,6 +1,6 @@
--- The five breaches of a vault, as five orbs. Each one is the verdict of the
+-- The five rounds of a duel, as five orbs. Each one is the verdict of the
 -- round it stands for; the one the board is currently fighting wears an amber
--- ring behind it. The three outcomes a resolved breach can have are declared
+-- ring behind it. The three outcomes a resolved round can have are declared
 -- here because the help legend draws the same orbs from them, so a colour only
 -- ever means one thing on screen.
 
@@ -43,7 +43,7 @@ function draw_orb(
 end
 
 -- One round's orb, keyed off the winner recorded for it. A stalemate is not a
--- ward hold: it does not count toward the Arch Mage's three wins, so it must
+-- table_card hold: it does not count toward the Opponent's three wins, so it must
 -- not wear the lost colour or the run looks like it should have ended early.
 function orb(state: game.View, round: i32): entity.Node
     return entity.sized(

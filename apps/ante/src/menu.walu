@@ -1,21 +1,21 @@
--- The menu screen shown before a heist begins: a cursor-driven option list,
+-- The menu screen shown before a duel begins: a cursor-driven option list,
 -- not a tap-through splash. It owns the pre-game presentation and turns raw
--- input into screen actions; the entry module decides what starting the heist
+-- input into screen actions; the entry module decides what starting the duel
 -- means (audio unlock, fresh deal, screen switch), so this module stays free
 -- of resource and rules concerns.
 --
 -- Picking NEW RUN or BOSS RUSH leads to a second list: the starting spell the
--- robbers bring on the job. That list is the run's first fence — a street
+-- player bring on the job. That list is the run's first shop — a street
 -- vendor standing at the mouth of the route — so this screen aims the shared
 -- city map at it and lets the map pan there from the drifting view the title
 -- sits over. Only confirming a spell emits a start action, so the entry module
 -- always receives a complete mode-plus-spell choice. Both entries start a run —
--- a sequence of vaults sharing one mana pool; they differ only in how often a
--- vault is fought as a boss battle.
+-- a sequence of duels sharing one gold pool; they differ only in how often a
+-- duel is fought as a boss battle.
 --
 -- The map itself belongs to the entry module and outlives this screen, which is
 -- why it arrives as a parameter rather than living here: the pan that starts on
--- this screen finishes on the heist's.
+-- this screen finishes on the duel's.
 
 local engine = require("waluau:engine")
 local render = require("./render")
@@ -92,7 +92,7 @@ function update(state: State, city: city_map.State, dt: f64): unit
     state.clock += dt
     city_map.show(city)
     if state.stage == STAGE_SPELL then
-        city_map.follow(city, city_map.fence_stop(1))
+        city_map.follow(city, city_map.shop_stop(1))
     else
         city_map.drift(city)
     end
@@ -166,21 +166,21 @@ end
 
 function draw_spell_stage(state: State, viewport: layout.State, graphics: engine.Graphics): unit
     local heading_y: f64 = title_y(viewport)
-    -- The pick lasts the whole run, not one vault, and the mana it burns is
-    -- the same pool the next vault inherits. It is bought at a vendor like
+    -- The pick lasts the whole run, not one duel, and the gold it burns is
+    -- the same pool the next duel inherits. It is bought at a vendor like
     -- every later upgrade, which is what the map behind this list is showing.
     local mode: string = "NEW RUN"
     if state.rush_choice then mode = "BOSS RUSH" end
-    ink.text_centered(graphics, "THE FIRST FENCE", viewport.center_x, heading_y, 30, "#fbbf24")
+    ink.text_centered(graphics, "CHOOSE YOUR START", viewport.center_x, heading_y, 30, "#fbbf24")
     ink.text_centered(
         graphics, "CHOOSE A STARTING SPELL", viewport.center_x, heading_y + 34.0, 12, "#d4d4d8")
     ink.text_centered(
-        graphics, mode .. "   CARRIED ALL RUN, EVERY CAST COSTS 5 MANA",
+        graphics, mode .. "   CARRIED ALL RUN, EVERY USE COSTS 5 GOLD",
         viewport.center_x, heading_y + 56.0, 11, "#a1a1aa")
     for spell = 0::i32, SPELL_COUNT - 1 do
         local kind: i32 = spell + 1
         -- Each idle row wears its spell's colour, so the list doubles as the
-        -- legend for the effect the pick will launch in the vault.
+        -- legend for the effect the pick will launch in the duel.
         draw_item(
             state, viewport, graphics, spell,
             spell_launch.name(kind), spell_launch.color(kind))
@@ -191,7 +191,7 @@ function draw_spell_stage(state: State, viewport: layout.State, graphics: engine
 end
 
 -- `ready` reports whether the required flip sound has finished loading. The
--- menu accepts NEW RUN either way — the heist screen already waits for its
+-- menu accepts NEW RUN either way — the duel screen already waits for its
 -- resources — but says so instead of promising a start that visibly stalls.
 --
 -- The city map is already on the screen by the time this runs: the entry module
@@ -200,8 +200,8 @@ end
 function draw(state: State, viewport: layout.State, graphics: engine.Graphics, effects: effect_shaders.EffectShaders, ready: bool): unit
     local heading_y: f64 = title_y(viewport)
     if state.help_open then
-        -- The same help card the vault shows, drawn on a surface with no card
-        -- back: nothing on it is a relic.
+        -- The same help card the duel shows, drawn on a surface with no card
+        -- back: nothing on it is a card.
         render.draw_help(
             { graphics = graphics, effects = effects, card_back = nil }, viewport)
         return
@@ -210,41 +210,41 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
         draw_spell_stage(state, viewport, graphics)
         return
     end
-    ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
+    ink.text_centered(graphics, "TARGET MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
     ink.text_centered(
-        graphics, "VAULT AFTER VAULT ON ONE POOL OF MANA. FIVE BREACHES EACH",
+        graphics, "DUEL AFTER DUEL ON ONE POOL OF GOLD. FIVE ROUNDS EACH",
         viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")
-    -- The four schools of magic as small mana motes under the title, in the
-    -- same colours the footer legend uses in the vault.
+    -- The four colors of magic as small gold motes under the title, in the
+    -- same colours the footer legend uses in the duel.
     for i = 0::i32, 3::i32 do
-        graphics:set_color(ink.school_color(i))
+        graphics:set_color(ink.color_ink(i))
         graphics:fill_circle(viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
     end
 
     draw_item(state, viewport, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
-    -- A boss battle deals eleven relics and never replaces a spent one. The
-    -- standard run reaches one every third vault; the rush is nothing else.
+    -- A boss battle deals eleven cards and never replaces a spent one. The
+    -- standard run reaches one every third duel; the rush is nothing else.
     -- Both labels carry the stakes without needing their own help screen.
     draw_item(state, viewport, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
     draw_item(state, viewport, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
     if state.cursor == ITEM_NEW_RUN then
         ink.text_centered(
-            graphics, "EVERY THIRD VAULT IS A BOSS BATTLE. MANA CARRIES OVER",
+            graphics, "EVERY THIRD DUEL IS A CHALLENGE. GOLD CARRIES OVER",
             viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
     elseif state.cursor == ITEM_BOSS_RUSH then
         ink.text_centered(
-            graphics, "EVERY VAULT A BOSS. ELEVEN RELICS, NO REPLACEMENTS",
+            graphics, "EVERY DUEL IS A CHALLENGE. ELEVEN CARDS, NO REPLACEMENTS",
             viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
     elseif not ready then
         ink.text_centered(
-            graphics, "PREPARING THE VAULT", viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#8a8a92")
+            graphics, "PREPARING THE DUEL", viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#8a8a92")
     end
 
     ink.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS",
         viewport.center_x, viewport.height - 76.0, 11, "#a1a1aa")
     ink.text_centered(
-        graphics, "IN THE VAULT: ? HELP   H LEDGER   R RESTART RUN   M MENU",
+        graphics, "IN A DUEL: ? HELP   H HISTORY   R RESTART RUN   M MENU",
         viewport.center_x, viewport.height - 52.0, 10, "#8a8a92")
 end
 

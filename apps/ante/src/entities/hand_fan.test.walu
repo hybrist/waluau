@@ -30,7 +30,7 @@ describe("hand fan", function(): unit
         expect(first.x):toBe(0.0)
         expect(last.x + last.width):toBe(400.0)
         expect(middle.x + middle.width * 0.5):toBe(200.0)
-        -- The outermost relics dip below the middle one by the arc's drop.
+        -- The outermost cards dip below the middle one by the arc's drop.
         expect(first.y - middle.y):toBeCloseTo(11.2, 9)
         expect(last.y):toBe(first.y)
     end)
@@ -43,21 +43,21 @@ describe("hand fan", function(): unit
     end)
 
     it("flattens a longer hand back toward the reference silhouette", function(): unit
-        -- An eleven-relic boss hand keeps the outermost tilt of a five-card
+        -- An eleven-card boss hand keeps the outermost tilt of a five-card
         -- one rather than curling off the board.
         expect(hand_fan.angle_at(10, 0.0, 11)):toBeCloseTo(
             hand_fan.angle_at(4, 0.0, COUNT), 9)
         expect(hand_fan.dip_of(11)):toBeCloseTo(hand_fan.dip_of(COUNT), 9)
     end)
 
-    it("opens around the focused relic and closes with no focus", function(): unit
+    it("opens around the focused card and closes with no focus", function(): unit
         expect(hand_fan.part_target(0, 2) < 0.0):toBe(true)
         expect(hand_fan.part_target(2, 2)):toBe(0.0)
         expect(hand_fan.part_target(4, 2) > 0.0):toBe(true)
         expect(hand_fan.part_target(0, hand_fan.closed)):toBe(0.0)
     end)
 
-    it("prefers the relic drawn on top where two overlap", function(): unit
+    it("prefers the card drawn on top where two overlap", function(): unit
         local bounds = entity.rect(
             0.0, 0.0, 400.0, hand_fan.intrinsic(COUNT).preferred_height)
         local parts: {f64} = { 0.0, 0.0, 0.0, 0.0, 0.0 }
@@ -66,7 +66,7 @@ describe("hand fan", function(): unit
         expect(hand_fan.hit(
             bounds, parts,
             middle.x + card.width * 0.5, middle.y + card.height * 0.5)):toBe(2)
-        -- The overlap between two relics belongs to the later one, which is
+        -- The overlap between two cards belongs to the later one, which is
         -- the one drawn over the other.
         local third = hand_fan.slot_rect(bounds, 3, 0.0, COUNT)
         expect(hand_fan.hit(

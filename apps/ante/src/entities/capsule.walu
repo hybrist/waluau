@@ -1,10 +1,10 @@
--- A clickable capsule: the commit and pass controls of the vault. Inactive
+-- A clickable capsule: the commit and pass controls of the duel. Inactive
 -- capsules stay visible but grey — a click still lands, the screen owns the
 -- rules, it simply will not satisfy them yet — so being unavailable is a
 -- colour rather than a disappearance.
 --
 -- The capsule is as wide as its label plus its padding. That is the whole
--- reason it is an entity: COMMIT FEINT and PASS no longer need two authored
+-- reason it is an entity: COMMIT SWAP and PASS no longer need two authored
 -- widths that have to be re-tuned whenever either word changes.
 
 local box = require("../box_layout")

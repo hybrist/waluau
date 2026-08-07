@@ -1,5 +1,5 @@
 -- Deterministic test adapter for the deep rules module. Production enters
--- through shuffled deals; tests enter through explicit relic and ward layouts
+-- through shuffled deals; tests enter through explicit card and table_card layouts
 -- without spreading mutable State setup across every scenario.
 
 local game = require("../src/game")
@@ -10,7 +10,7 @@ function arrange_breach(
     player_hand: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    game.test_arrange_breach(state, middle, player_hand, computer_hand)
+    game.test_arrange_round(state, middle, player_hand, computer_hand)
 end
 
 function arrange_arch_mage(
@@ -18,7 +18,7 @@ function arrange_arch_mage(
     middle: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    game.test_arrange_arch_mage(state, middle, computer_hand)
+    game.test_arrange_opponent(state, middle, computer_hand)
 end
 
 function arrange_player(
@@ -33,8 +33,8 @@ function set_player_points(state: game.State, points: i32): unit
     game.test_set_player_points(state, points)
 end
 
--- Force a finished heist holding the given number of wards for the Arch Mage,
--- so run-level tests reach a verdict without playing five breaches out.
+-- Force a finished duel holding the given number of table cards for the Opponent,
+-- so run-level tests reach a verdict without playing five rounds out.
 function finish(state: game.State, computer_tricks: i32): unit
     game.test_finish(state, computer_tricks)
 end

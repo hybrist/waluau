@@ -1,4 +1,4 @@
--- How a card comes apart. A losing pair, a ward Fireball is eating, and a
+-- How a card comes apart. A losing pair, a table card Fireball is eating, and a
 -- discard being rebuilt from its own ashes all run this: the card is captured
 -- whole into one texture, a noisy front eats the texture, and ash peels off
 -- exactly the ring the front is cutting along.
@@ -7,7 +7,7 @@
 -- presentation state, are advanced once per tick beside the clock that drives
 -- the burn, and are drawn wherever the card they came off is standing. Their
 -- coordinates are card-local — the emitter sits at the card's centre — so a
--- relic burning inside the fan's rotation sheds along the card's own down.
+-- card burning inside the fan's rotation sheds along the card's own down.
 
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
@@ -18,13 +18,13 @@ local entity = require("./entity")
 local ink = require("./ink")
 local card = require("./entities/card")
 
--- A reveal burns a pair, which is why there are two; the ward Fireball is
+-- A reveal burns a pair, which is why there are two; the table card Fireball is
 -- eating sheds a sheet fall and a coarser departing one on top of it.
 type CardAsh = {
     reveal_first: particles.ParticleSystem,
     reveal_second: particles.ParticleSystem,
-    ward_sheet: particles.ParticleSystem,
-    ward_fall: particles.ParticleSystem
+    table_card_sheet: particles.ParticleSystem,
+    table_card_fall: particles.ParticleSystem
 }
 
 -- The burn is intentionally long enough to read as three distinct beats:
@@ -43,11 +43,11 @@ const CARD_HALF_DIAGONAL: f64 = 82.4621
 const SHEET_ASH_START: f64 = 0.56
 const SHEET_ASH_END: f64 = 0.95
 const SHEET_ASH_RATE: f64 = 50.0
--- The departing ward's own, larger flakes: released later, from a front that
+-- The departing table_card's own, larger flakes: released later, from a front that
 -- is already past the card's edges, and falling further.
-const WARD_ASH_START: f64 = 0.64
-const WARD_ASH_END: f64 = 0.97
-const WARD_ASH_RATE: f64 = 44.0
+const TABLE_CARD_ASH_START: f64 = 0.64
+const TABLE_CARD_ASH_END: f64 = 0.97
+const TABLE_CARD_ASH_RATE: f64 = 44.0
 -- A burn reading below zero means nothing is burning at all.
 const NOT_BURNING: f64 = -1.0
 -- Past this much of a burn there is no legible sheet left, which is the cutoff
@@ -154,9 +154,9 @@ function new_sheet_ash(seed: i32): particles.ParticleSystem
     return system
 end
 
--- The ward Fireball is eating sheds a second, coarser fall on top of the
+-- The table card Fireball is eating sheds a second, coarser fall on top of the
 -- sheet ash: bigger pieces, released later, drifting wider and further.
-function new_ward_ash(seed: i32): particles.ParticleSystem
+function new_table_card_ash(seed: i32): particles.ParticleSystem
     local system: particles.ParticleSystem = particles.new(38)
     system:set_seed(seed)
     system:set_particle_lifetime(0.40, 0.78)
@@ -181,8 +181,8 @@ function new_card_ash(): CardAsh
     return {
         reveal_first = new_sheet_ash(401),
         reveal_second = new_sheet_ash(929),
-        ward_sheet = new_sheet_ash(613),
-        ward_fall = new_ward_ash(607),
+        table_card_sheet = new_sheet_ash(613),
+        table_card_fall = new_table_card_ash(607),
     }
 end
 
@@ -210,8 +210,8 @@ function step_sheet_ash(system: particles.ParticleSystem, progress: f64, dt: f64
     step_ash(system, progress, SHEET_ASH_START, SHEET_ASH_END, SHEET_ASH_RATE, dt)
 end
 
-function step_ward_ash(system: particles.ParticleSystem, progress: f64, dt: f64): unit
-    step_ash(system, progress, WARD_ASH_START, WARD_ASH_END, WARD_ASH_RATE, dt)
+function step_table_card_ash(system: particles.ParticleSystem, progress: f64, dt: f64): unit
+    step_ash(system, progress, TABLE_CARD_ASH_START, TABLE_CARD_ASH_END, TABLE_CARD_ASH_RATE, dt)
 end
 
 -- Particle quads are only carriers for the burn shader: its noisy alpha mask
@@ -264,7 +264,7 @@ function draw_captured(
     draw_ash(surface, ash, x, y, seed + 401)
 end
 
--- The seed a card's own burn runs on, so the same relic always chars the same
+-- The seed a card's own burn runs on, so the same card always chars the same
 -- way. `salt` separates the burns a single card can be in at once.
 function seed_of(value: game.Card, salt: i32): i32
     return value.rank * 17 + value.suit * 97 + salt
@@ -282,7 +282,7 @@ function draw_disintegrating(
         return
     end
     local lift: f64 = 0.0
-    if value.selected then lift = -card.bind_lift end
+    if value.selected then lift = -card.select_lift end
     if progress >= 1.0 then
         draw_ash(surface, ash, x, y + lift, seed + 401)
         return
@@ -384,7 +384,7 @@ end
 return {
     new_card_ash = new_card_ash,
     step_sheet_ash = step_sheet_ash,
-    step_ward_ash = step_ward_ash,
+    step_table_card_ash = step_table_card_ash,
     draw_ash = draw_ash,
     draw_captured = draw_captured,
     draw_disintegrating = draw_disintegrating,

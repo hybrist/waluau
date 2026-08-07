@@ -1,4 +1,4 @@
--- Presentation choreography for Ante Magic. The engine adapter names domain
+-- Presentation choreography for Duel Magic. The engine adapter names domain
 -- beats; this module owns the animation records, board geometry, pile ledgers,
 -- fan motion, timing, and flip-sound cue placement needed to render them.
 
@@ -30,14 +30,14 @@ type State = {
     -- the clocks that release them and are never written to a snapshot.
     ash: card_burn.CardAsh,
     -- The same again for what a spell has in the air: the carrier's trail, the
-    -- burst its landing threw, and the dust off a raised ward's grave. Live
+    -- burst its landing threw, and the dust off a raised table_card's grave. Live
     -- simulations, ticked beside the clock that releases them, never
     -- snapshotted.
     spells: render.SpellParticles,
     discards: {game.Card},
     computer_won: {game.Card},
     player_won: {game.Card},
-    -- Scratch geometry for the thrown ward cards: one deformable sheet the
+    -- Scratch geometry for the thrown table_card cards: one deformable sheet the
     -- renderer rebuilds each frame a throw is in the air. Working state like
     -- the ash, never snapshotted — and kept here because a card deformed
     -- sixty times a second should not be sixty allocations.
@@ -45,11 +45,11 @@ type State = {
 }
 type Interaction = {
     hand_focus: i32,
-    ward_cursor: i32,
+    table_card_cursor: i32,
     cursor_area: i32,
     play_picks: {i32},
     swap_hand: {i32},
-    swap_wards: {i32},
+    swap_table_cards: {i32},
     modal: i32,
     revealing: bool,
     casting: bool,
@@ -65,7 +65,7 @@ const FAN_EASE_RESPONSE: f64 = 14.0
 const FAN_EASE_SNAP: f64 = 0.001
 const DEAL_STEP: f64 = 0.1
 const DEAL_SECONDS: f64 = 0.38
--- How long a ward's throw takes: card_draw's authored 0.7 second draw at
+-- How long a table_card's throw takes: card_draw's authored 0.7 second draw at
 -- the 130 playback the card stories settled on.
 const THROW_SECONDS: f64 = 0.54
 -- Where in a throw leg the card is edge on. The throw turns late — the
@@ -98,7 +98,7 @@ const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
 -- A burn reading below zero means nothing is burning: an ash emitter goes
 -- quiet on it, while the flakes already in the air keep falling.
 const NOT_BURNING: f64 = -1.0
-const SNAPSHOT_SCHEMA: string = "ante-presentation-v4"
+const SNAPSHOT_SCHEMA: string = "target-presentation-v4"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
@@ -169,35 +169,35 @@ function apply_power(state: State, kind: i32, target: i32): unit
     state.power_kind = kind
     state.power_clock = 0.0
     state.power_target = target
-    -- A new condition starts its ward's burn from nothing; whatever the last
+    -- A new condition starts its table_card's burn from nothing; whatever the last
     -- one left in the air belongs to a card that is no longer there. The same
     -- holds for the last cast's trail and burst, and for the dust off a grave
     -- that is no longer open.
-    state.ash.ward_sheet:reset()
-    state.ash.ward_fall:reset()
+    state.ash.table_card_sheet:reset()
+    state.ash.table_card_fall:reset()
     state.spells.sparks.trail:reset()
     state.spells.sparks.burst:reset()
     state.spells.grave_dust:reset()
 end
 
--- Both of a burning ward's falls run off one reading of its burn.
-function tick_ward_ash(state: State, progress: f64, dt: f64): unit
-    render.step_reveal_ash(state.ash.ward_sheet, progress, dt)
-    render.step_ward_ash(state.ash.ward_fall, progress, dt)
+-- Both of a burning table_card's falls run off one reading of its burn.
+function tick_table_card_ash(state: State, progress: f64, dt: f64): unit
+    render.step_reveal_ash(state.ash.table_card_sheet, progress, dt)
+    render.step_table_card_ash(state.ash.table_card_fall, progress, dt)
 end
 
--- Advance a spell condition and return the ward whose Firebolt has just
+-- Advance a spell condition and return the table_card whose Firebolt has just
 -- finished burning, or -1 when no rules mutation is due this frame. Clearing
 -- the condition at that boundary lets the replacement card render intact.
 --
 -- The particle ticks are deliberately outside that decision. They read the
 -- clock this function has already advanced and never touch power_kind,
--- power_clock, or the returned ward, so the rules boundary fires on exactly the
+-- power_clock, or the returned table_card, so the rules boundary fires on exactly the
 -- frame it always did — a visual emitter must not be able to move when a card
 -- is replaced.
 function update_power(state: State, dt: f64): i32
     if state.power_kind == 0 then
-        tick_ward_ash(state, NOT_BURNING, dt)
+        tick_table_card_ash(state, NOT_BURNING, dt)
         render.step_spell_particles(
             state.spells, layout.current(), 0, 0.0, state.power_target, dt)
         return -1
@@ -207,7 +207,7 @@ function update_power(state: State, dt: f64): i32
     if state.power_kind == game.spell_firebolt then
         burning = render.fireball_formation(state.power_clock)
     end
-    tick_ward_ash(state, burning, dt)
+    tick_table_card_ash(state, burning, dt)
     render.step_spell_particles(
         state.spells, layout.current(),
         state.power_kind, state.power_clock, state.power_target, dt)
@@ -223,7 +223,7 @@ function update_power(state: State, dt: f64): i32
 end
 
 -- Drop a Freeze Ray's standing condition, leaving any other spell's alone. The
--- rules thaw every ward when a feint resolves and again when a breach does, and
+-- rules thaw every table_card when a swap resolves and again when a round does, and
 -- the ice on the board has to go with them.
 function clear_freeze(state: State): unit
     if state.power_kind == game.spell_freeze_ray then apply_power(state, 0, 0) end
@@ -241,7 +241,7 @@ function apply_hand_order(state: State, order: {i32}): unit
     state.fan_parts = parts
 end
 
--- One resting parting offset per relic: the fan_parts list is the fan's live
+-- One resting parting offset per card: the fan_parts list is the fan's live
 -- degree of freedom, so its length is what sizes every fan loop and hit scan.
 function closed_fan_parts(count: i32): {f64}
     local parts: {f64} = {}
@@ -336,13 +336,13 @@ function finish_reveal(state: State): unit
 end
 
 -- The counterpart to finish_reveal for a spell: jump the launch to the reading
--- where the formation has completed and only the condition's idle motion is
--- left. A cleared ward has no clock to settle, so it keeps the resting zero.
+-- where the hand has completed and only the condition's idle motion is
+-- left. A cleared table_card has no clock to settle, so it keeps the resting zero.
 --
 -- Firebolt settles differently from the other three, and deliberately. Its
--- burn owes a rules mutation — update_power hands the ward back at
+-- burn owes a rules mutation — update_power hands the table_card back at
 -- firebolt_burn_finished so resolve_firebolt can replace the card — and a
--- snapshot taken mid-burn caught a heist where that mutation had not happened
+-- snapshot taken mid-burn caught a duel where that mutation had not happened
 -- yet. The settled reading is past that boundary, so the first update after a
 -- restore pays the debt and clears the condition. A burn that had already
 -- resolved before the snapshot left power_kind at zero and returns above.
@@ -359,14 +359,14 @@ function reveal_finished(state: State): bool
 end
 
 -- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
--- Arch Mage's sealed row.
+-- Opponent's sealed row.
 function hand_slot_kind(owner: i32): render.Slot
     if owner > 0 then return render.slot_player end
     return render.slot_computer
 end
 
--- Resting tilt of a slot in a hand row laid out for `count` cards; the wards
--- and the Arch Mage's sealed row lie square to the board at any size.
+-- Resting tilt of a slot in a hand row laid out for `count` cards; the table cards
+-- and the Opponent's sealed row lie square to the board at any size.
 function slot_tilt_at(kind: render.Slot, index: i32, count: i32): f64
     if kind == render.slot_player then return render.hand_angle_at(index, 0.0, count) end
     return 0.0
@@ -377,7 +377,7 @@ function slot_part(state: State, kind: render.Slot, index: i32): f64
     return 0.0
 end
 
--- The current live row size: fan_parts always carries one entry per relic in
+-- The current live row size: fan_parts always carries one entry per card in
 -- the player's hand, and both sides' hands are dealt and spent in lockstep.
 function live_hand_count(state: State): i32
     return #state.fan_parts
@@ -399,10 +399,10 @@ function slot_tilt_now(state: State, kind: render.Slot, index: i32): f64
     return 0.0
 end
 
--- One card off the deck. A card bound for a ward slot is thrown — the full
+-- One card off the deck. A card selected for a table_card slot is thrown — the full
 -- three-dimensional draw the card stories rehearse: up off the board, turned
 -- over past its leading edge, overshooting its slot and dropping onto it.
--- The hands keep the flat slide: five relics arriving as aerial throws would
+-- The hands keep the flat slide: five cards arriving as aerial throws would
 -- be a juggling act, not a deal, and the sealed row has nothing to show off.
 function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card, kind: render.Slot, index: i32, count: i32, faces: render.Face, start: f64): f64
     local effect: i32 = render.anim_effect_move
@@ -432,9 +432,9 @@ function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card
     return finish
 end
 
--- Once Firebolt's old ward is fully gone, expose the rules result as one
+-- Once Firebolt's old table_card is fully gone, expose the rules result as one
 -- coordinated presentation beat: the burned card joins the neutral pile,
--- while its replacement flies from the sealed deck into the empty ward slot.
+-- while its replacement flies from the sealed deck into the empty table_card slot.
 -- The live middle already contains replacement; the animation's destination
 -- mark keeps that settled copy hidden until this card lands.
 function firebolt_resolved(
@@ -549,7 +549,7 @@ function push_ash_pair(viewport: layout.State, anims: {render.Anim}, first_card:
     return push_ash_reappearance(viewport, anims, second_card, ASH_REAPPEAR_STEP)
 end
 
--- Slide each surviving card from its slot in the pre-breach layout to its
+-- Slide each surviving card from its slot in the pre-round layout to its
 -- slot in the settled one. In the base game both layouts hold five cards; in
 -- a boss battle the new layout is two cards narrower, so every survivor moves
 -- as the row recentres, not just the ones past a spent slot.
@@ -606,7 +606,7 @@ end
 
 function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: State): unit
     clear_freeze(state)
-    -- The trick records the pre-breach hands; the live view holds the settled
+    -- The trick records the pre-round hands; the live view holds the settled
     -- ones. In a boss battle those layouts differ (the rows narrow by two
     -- cards), so departure legs read the trick's layout while landings and
     -- deals target the settled one.
@@ -675,7 +675,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
     begin_anims(state, anims, finish, ANIM_DEAL)
 end
 
-function feint(outcome: game.FeintOutcome, state: State): unit
+function swap(outcome: game.SwapOutcome, state: State): unit
     local count: i32 = #outcome.hand_indices
     if outcome.winner == 0 or count == 0 then return end
     local player_won: bool = outcome.winner > 0
@@ -798,9 +798,9 @@ end
 -- half-way through parting, which no development reload owes anyone.
 --
 -- What is written is state a reload cannot re-derive: the fan's row size (one
--- resting offset per relic, so every fan loop and hit scan stays the right
+-- resting offset per card, so every fan loop and hit scan stays the right
 -- width for a boss battle's longer hand), the spell condition standing on a
--- ward, and the three pile ledgers.
+-- table_card, and the three pile ledgers.
 function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_i32(parts, #state.fan_parts)
     snapshot_data.append_i32(parts, state.power_kind)
@@ -830,7 +830,7 @@ function restore_snapshot(reader: snapshot_data.Reader): State
     -- The reveal comes back finished rather than mid-burn. The trick it shows
     -- was already resolved by the rules before the reveal began, and the flow
     -- gate still waits for the player to advance out of it, so this settles a
-    -- transition without advancing the heist.
+    -- transition without advancing the duel.
     finish_reveal(state)
     finish_power(state)
     return state
@@ -864,11 +864,11 @@ function draw(
         run = run,
         interaction = {
             hand_focus = interaction.hand_focus,
-            ward_cursor = interaction.ward_cursor,
+            table_card_cursor = interaction.table_card_cursor,
             cursor_area = interaction.cursor_area,
             play_picks = interaction.play_picks,
             swap_hand = interaction.swap_hand,
-            swap_wards = interaction.swap_wards,
+            swap_table_cards = interaction.swap_table_cards,
             modal = interaction.modal,
             revealing = interaction.revealing,
             casting = interaction.casting,
@@ -919,7 +919,7 @@ return {
     apply_hand_order = apply_hand_order,
     reveal_flip_cues = reveal_flip_cues,
     opening_deal = opening_deal,
-    feint = feint,
+    swap = swap,
     record_burned_losers = record_burned_losers,
     resolved_breach_cleanup = resolved_breach_cleanup,
     append_snapshot = append_snapshot,

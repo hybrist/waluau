@@ -1,7 +1,7 @@
--- The relic, in every state the board can put it in. A card is drawn from a
--- rank, a school, and four flags — sealed, bound, focused, watched — and the
+-- The card, in every state the board can put it in. A card is drawn from a
+-- rank, a color, and four flags — sealed, selected, focused, watched — and the
 -- combinations are what these stories pin down, one per state, without having
--- to deal a heist that happens to produce them.
+-- to deal a duel that happens to produce them.
 
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
@@ -42,7 +42,7 @@ local function staged_size(size: f64): u32
     return (size * STAGE_SCALE)::u32
 end
 
--- The card back, the display font, and the school shaders every story here
+-- The card back, the display font, and the color shaders every story here
 -- draws with. One set is loaded for the whole file: Storybook moves between
 -- these stories constantly, and the assets do not change between them.
 local assets = presentation_resources.new()
@@ -122,8 +122,8 @@ local function draw_face_down(graphics: engine.Graphics, alpha: f64): unit
     draw_state(graphics, card(13, 0), false, false, true, false, false)
 end
 
--- Bound: the card is committed to the formation being built. It lifts, takes
--- its school's edge, and runs that school's pattern.
+-- Selected: the card is committed to the hand being built. It lifts, takes
+-- its color's edge, and runs that color's pattern.
 local function draw_bound(graphics: engine.Graphics, alpha: f64): unit
     draw_state(graphics, card(14, 1), true, false, false, false, false)
 end
@@ -133,20 +133,20 @@ local function draw_focused(graphics: engine.Graphics, alpha: f64): unit
     draw_state(graphics, card(7, 3), false, true, false, false, false)
 end
 
--- A contributing card in a finished formation, in full school color.
+-- A contributing card in a finished hand, in full color.
 local function draw_contributing(graphics: engine.Graphics, alpha: f64): unit
     draw_state(graphics, card(12, 2), false, false, false, true, false)
 end
 
--- Watched: the Arch Mage has seen this relic. Sealed and watched at once is
+-- Watched: the Opponent has seen this card. Sealed and watched at once is
 -- the state the player reads through the back.
 local function draw_watched(graphics: engine.Graphics, alpha: f64): unit
     draw_state(graphics, card(10, 2), false, false, true, false, true)
 end
 
--- The four schools side by side, in the colored state that makes each one's
+-- The four colors side by side, in the colored state that makes each one's
 -- pattern legible. Nothing else on the board shows them together.
-local function draw_schools(graphics: engine.Graphics, alpha: f64): unit
+local function draw_colors(graphics: engine.Graphics, alpha: f64): unit
     local surface = ready(graphics)
     const GAP = 12.0
     local span = card_entity.width * 4.0 + GAP * 3.0
@@ -161,7 +161,7 @@ local function draw_schools(graphics: engine.Graphics, alpha: f64): unit
     end
 end
 
--- The turn itself, looping: the same flip the board plays when a relic is
+-- The turn itself, looping: the same flip the board plays when a card is
 -- revealed, off a clock this story owns.
 const FLIP_PERIOD = 1.7
 
@@ -431,13 +431,13 @@ storybook.publish({
         storybook.range("rank", 13, 2, 14, 1),
     }),
     storybook.story("Face down", card_scene(draw_face_down)),
-    storybook.story("Bound", card_scene(draw_bound)),
+    storybook.story("Selected", card_scene(draw_bound)),
     storybook.story("Focused", card_scene(draw_focused)),
     storybook.story("Contributing", card_scene(draw_contributing)),
     storybook.story("Watched", card_scene(draw_watched)),
     storybook.story("Turning over", card_scene(draw_turning)),
-    storybook.story("Every school", {
-        draw = staged(draw_schools),
+    storybook.story("Every color", {
+        draw = staged(draw_colors),
         load = load,
         update = tick,
         width = staged_size(SCHOOLS_WIDTH),

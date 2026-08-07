@@ -1,4 +1,4 @@
--- The sealed draw pile every dealt relic and ward flies out of. The stack
+-- The sealed draw pile every dealt card and table_card flies out of. The stack
 -- silhouette thins as the run burns down; the label tracks the exact count.
 --
 -- Its box is the top card plus the caption underneath, because that caption is

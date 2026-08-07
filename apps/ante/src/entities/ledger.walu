@@ -1,6 +1,6 @@
--- The breach ledger: every round of this vault, who took it, and which two
--- formations settled it. One row per breach, and the rows are a column rather
--- than a running y cursor, so the ledger of a five-breach vault and the ledger
+-- The round ledger: every round of this duel, who took it, and which two
+-- hands settled it. One row per round, and the rows are a column rather
+-- than a running y cursor, so the ledger of a five-round duel and the ledger
 -- of an empty one are the same code.
 
 local game = require("../game")
@@ -24,9 +24,9 @@ const VERDICT_INK: string = "#f8fafc"
 const FORMATION_INK: string = "#b5b5bd"
 
 function verdict_text(trick: game.Trick): string
-    if trick.winner > 0 then return "ROBBERS +" .. tostring(trick.points) end
-    if trick.winner < 0 then return "ARCH MAGE" end
-    return "STALEMATE"
+    if trick.winner > 0 then return "YOU +" .. tostring(trick.points) end
+    if trick.winner < 0 then return "OPPONENT" end
+    return "TIE"
 end
 
 -- A cell that holds its column's width whatever its own type measures, which
@@ -39,7 +39,7 @@ end
 
 function row(trick: game.Trick): entity.Node
     return entity.across({ align = box.align_baseline }, {
-        cell("BREACH " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
+        cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
         cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
         label.left(
             game.category_name(trick.player_value) .. " VS "
@@ -51,7 +51,7 @@ end
 function body(state: game.View): entity.Node
     if #state.history == 0 then
         return modal.column({
-            label.left("NO DEFENSES BREACHED YET.", 16.0, "#8a8a92"),
+            label.left("NO ROUNDS WON YET.", 16.0, "#8a8a92"),
         }, ROW_GAP)
     end
     local rows: {entity.Node} = {}
@@ -61,7 +61,7 @@ end
 
 function node(state: game.View): entity.Node
     return modal.node(
-        "BREACH LEDGER", "H, ESC, OR A CLICK CLOSES THE LEDGER", body(state))
+        "ROUND HISTORY", "H, ESC, OR A CLICK CLOSES THE HISTORY", body(state))
 end
 
 return { node = node }

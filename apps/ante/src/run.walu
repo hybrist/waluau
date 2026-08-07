@@ -1,55 +1,55 @@
--- DOM-free run state: the roguelike frame around the heist. A run is a
--- sequence of vaults fought with one mana pool. Clearing a vault carries the
--- mana that survived it into the next one; losing a vault ends the run, and
--- the mana with it.
+-- DOM-free run state: the roguelike frame around the duel. A run is a
+-- sequence of duels fought with one gold pool. Clearing a duel carries the
+-- gold that survived it into the next one; losing a duel ends the run, and
+-- the gold with it.
 --
--- This module owns the shape of the sequence — which vault is live, how much
--- mana it opens with, which vaults are boss battles, and the spell loadout
--- every vault is fought with — and nothing about the heist inside a vault.
--- Whether the live vault was won or lost is the rules module's answer, so
--- nothing here duplicates it. What the intermission between vaults sells is the
+-- This module owns the shape of the sequence — which duel is live, how much
+-- gold it opens with, which duels are boss battles, and the spell loadout
+-- every duel is fought with — and nothing about the duel inside a duel.
+-- Whether the live duel was won or lost is the rules module's answer, so
+-- nothing here duplicates it. What the intermission between duels sells is the
 -- shop's answer; this module only applies the purchase to the run.
 
 local game = require("./game")
 local snapshot_data = require("./snapshot")
 
--- `vault` is 1-based and counts every attempt in the sequence, cleared or
--- live. `mana` is what the live vault was dealt, not what it has left: the
--- rules spend from their own pool, and a cleared vault hands its remainder
--- back here — which is also the purse the intermission between vaults shops
--- from. `spells` is the loadout every vault of the run is fought with, in the
+-- `duel` is 1-based and counts every attempt in the sequence, cleared or
+-- live. `gold` is what the live duel was dealt, not what it has left: the
+-- rules spend from their own pool, and a cleared duel hands its remainder
+-- back here — which is also the purse the intermission between duels shops
+-- from. `spells` is the loadout every duel of the run is fought with, in the
 -- order the spells were learned; `start_spell` is the one the menu picked, so a
 -- run that ends can start over carrying what it originally set out with rather
 -- than what it had bought by the time it died. `rush` is the boss-rush run,
--- where every vault is a boss battle rather than every third.
+-- where every duel is a boss battle rather than every third.
 type State = {
-    vault: i32,
-    mana: i32,
+    duel: i32,
+    gold: i32,
     cleared: i32,
     spells: {game.Spell},
     start_spell: i32,
     rush: bool
 }
 
--- Every third vault is the boss battle variant, so a run's cadence is two
--- standard heists and then eleven relics with no replacements.
+-- Every third duel is the boss battle variant, so a run's cadence is two
+-- standard heists and then eleven cards with no replacements.
 const BOSS_EVERY: i32 = 3
--- Nine vaults is the run the ante table is written for: three acts of two
+-- Nine duels is the run the target table is written for: three acts of two
 -- heists and a boss, ending on one. The boss rush is a shorter, steeper sprint
--- rather than nine consecutive eleven-relic battles.
+-- rather than nine consecutive eleven-card battles.
 const RUN_LENGTH: i32 = 9
 const RUSH_LENGTH: i32 = 5
--- Past the last vault the city keeps going and the table runs out, so the ante
--- takes over on a formula. The step grows with every vault beyond the finish,
--- which is what makes the tail end: a vault pays about eleven and the demand
+-- Past the last duel the city keeps going and the table runs out, so the target
+-- takes over on a formula. The step grows with every duel beyond the finish,
+-- which is what makes the tail end: a duel pays about eleven and the demand
 -- climbs past that immediately and never comes back down.
 const ENDLESS_STEP: i32 = 6
--- Two spells are as many as the robbers can hold ready at once — keys 1 and 2
--- in the vault. Learning a third is a trade, not an addition.
+-- Two spells are as many as the player can hold ready at once — keys 1 and 2
+-- in the duel. Learning a third is a trade, not an addition.
 const MAX_SPELLS: i32 = 2
--- However cheap a spell is sharpened, a cast is never free.
+-- However cheap a spell is upgraded, a cast is never free.
 const MIN_SPELL_COST: i32 = 2
-const SNAPSHOT_SCHEMA: string = "ante-run-v2"
+const SNAPSHOT_SCHEMA: string = "duel-run-v2"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
@@ -57,8 +57,8 @@ const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 -- loadout.
 function new(spell: i32, rush: bool): State
     return {
-        vault = 1,
-        mana = game.starting_mana,
+        duel = 1,
+        gold = game.starting_gold,
         cleared = 0,
         spells = { game.new_spell(spell) },
         start_spell = spell,
@@ -66,113 +66,113 @@ function new(spell: i32, rush: bool): State
     }
 end
 
--- Whether the numbered vault is fought as a boss battle. Vault numbers are
--- 1-based, so the third, sixth, and ninth vaults are the boss cadence.
-function boss_at(vault: i32, rush: bool): bool
+-- Whether the numbered duel is fought as a boss battle. Duel numbers are
+-- 1-based, so the third, sixth, and ninth duels are the boss cadence.
+function boss_at(duel: i32, rush: bool): bool
     if rush then return true end
-    return vault % BOSS_EVERY == 0
+    return duel % BOSS_EVERY == 0
 end
 
 function State:boss(): bool
-    return boss_at(self.vault, self.rush)
+    return boss_at(self.duel, self.rush)
 end
 
 function State:next_is_boss(): bool
-    return boss_at(self.vault + 1, self.rush)
+    return boss_at(self.duel + 1, self.rush)
 end
 
--- How many vaults the authored curve covers. The run does not stop there — what
+-- How many duels the authored curve covers. The run does not stop there — what
 -- it marks is where the table ends and the endless formula takes over.
 function run_length(rush: bool): i32
     if rush then return RUSH_LENGTH end
     return RUN_LENGTH
 end
 
--- What clearing the numbered vault costs, taken out of the mana the robbers
+-- What clearing the numbered duel costs, taken out of the gold the player
 -- walk out holding. Priced against measured play rather than guessed: a cleared
--- vault pays about eleven mana (see `economy.test.walu`), and the table is
+-- duel pays about eleven gold (see `economy.test.walu`), and the table is
 -- built around that number crossing it.
 --
 -- The first act asks for well under eleven, so a run that is going well banks a
--- surplus. The second holds near it. The third asks for more than a vault can
+-- surplus. The second holds near it. The third asks for more than a duel can
 -- pay, so the pile that took two acts to build is what act three is spent out
--- of — a run arrives at the last vault on fumes, and one that stumbled anywhere
+-- of — a run arrives at the last duel on fumes, and one that stumbled anywhere
 -- along the way does not arrive at all. That is where the difficulty ramps: not
--- in making a breach harder to win, which nothing here touches, but in what
+-- in making a round harder to win, which nothing here touches, but in what
 -- winning has to be worth by the time the run is deep.
 --
--- Boss vaults take the largest steps, which is what makes the end of an act a
--- mana wall as well as an eleven-relic one.
+-- Boss duels take the largest steps, which is what makes the end of an act a
+-- gold wall as well as an eleven-card one.
 --
 -- The table is written out inside the function rather than held module-side so
 -- the values sit next to the reasoning about them.
-function ante_at(vault: i32, rush: bool): i32
+function target_at(duel: i32, rush: bool): i32
     local table_values: {i32} = { 3, 5, 8, 12, 16, 21, 25, 29, 34 }
     if rush then table_values = { 5, 10, 16, 23, 30 } end
     local length: i32 = #table_values
-    if vault < 1 then return table_values[0] end
-    if vault <= length then return table_values[vault - 1] end
+    if duel < 1 then return table_values[0] end
+    if duel <= length then return table_values[duel - 1] end
     -- Past the table the demand climbs by a step that itself grows, so the gap
-    -- between what a vault pays and what it costs to leave widens every time.
-    local ante: i32 = table_values[length - 1]
-    for step = 1::i32, vault - length do
-        ante += ENDLESS_STEP + step
+    -- between what a duel pays and what it costs to leave widens every time.
+    local target: i32 = table_values[length - 1]
+    for step = 1::i32, duel - length do
+        target += ENDLESS_STEP + step
     end
-    return ante
+    return target
 end
 
-function State:ante(): i32
-    return ante_at(self.vault, self.rush)
+function State:target(): i32
+    return target_at(self.duel, self.rush)
 end
 
--- Whether the run is past the vault its table was written for, and walking on
+-- Whether the run is past the duel its table was written for, and walking on
 -- for the sake of walking on.
 function State:endless(): bool
-    return self.vault > run_length(self.rush)
+    return self.duel > run_length(self.rush)
 end
 
--- The verdict of a fought vault, read as a moment in the run. There are two
--- ways to lose a vault and two ways to leave one, and this says which without
+-- The verdict of a fought duel, read as a moment in the run. There are two
+-- ways to lose a duel and two ways to leave one, and this says which without
 -- applying any of them — one classifier, so the screen showing a verdict and
 -- the settle that acts on it can never disagree about what happened.
 --
--- `OUTCOME_WON` is a milestone rather than a stop: the last vault of the table
+-- `OUTCOME_WON` is a milestone rather than a stop: the last duel of the table
 -- is cleared exactly the way any other is, and the run walks on into the
 -- endless city. Only the two losses end a run.
 const OUTCOME_NONE: i32 = 0
 const OUTCOME_LOST_VAULT: i32 = 1
-const OUTCOME_LOST_ANTE: i32 = 2
+const OUTCOME_LOST_TARGET: i32 = 2
 const OUTCOME_ADVANCE: i32 = 3
 const OUTCOME_WON: i32 = 4
 
 function outcome_of(
-    vault: i32, rush: bool, cleared: bool, carried_mana: i32
+    duel: i32, rush: bool, cleared: bool, carried_gold: i32
 ): i32
     if not cleared then return OUTCOME_LOST_VAULT end
-    if carried_mana < ante_at(vault, rush) then return OUTCOME_LOST_ANTE end
+    if carried_gold < target_at(duel, rush) then return OUTCOME_LOST_TARGET end
     -- The finish line is a moment the run passes through once, not a state it
-    -- stays in, so this is the vault the table ends on and no vault after it.
-    if vault == run_length(rush) then return OUTCOME_WON end
+    -- stays in, so this is the duel the table ends on and no duel after it.
+    if duel == run_length(rush) then return OUTCOME_WON end
     return OUTCOME_ADVANCE
 end
 
--- The run as the board reads it: which vault of the sequence this is, how many
--- the robbers have already taken, whether this one and the next are boss
--- battles, the mana the run carried in, what leaving this vault and the next
+-- The run as the board reads it: which duel of the sequence this is, how many
+-- the player have already taken, whether this one and the next are boss
+-- battles, the gold the run carried in, what leaving this duel and the next
 -- one costs, how far the authored curve runs, and the verdict on the live
--- vault. Read-only, the way game.View is — a screen showing the run must not be
+-- duel. Read-only, the way game.View is — a screen showing the run must not be
 -- able to move it.
 --
--- `outcome` is the rules module's answer about a vault this module has not
--- settled yet, so it arrives rather than being re-derived here; a live vault
+-- `outcome` is the rules module's answer about a duel this module has not
+-- settled yet, so it arrives rather than being re-derived here; a live duel
 -- passes OUTCOME_NONE.
 type View = {
-    vault: i32,
+    duel: i32,
     cleared: i32,
     boss: bool,
     next_is_boss: bool,
-    carried_mana: i32,
-    ante: i32,
+    carried_gold: i32,
+    target: i32,
     ante_ahead: i32,
     run_length: i32,
     outcome: i32
@@ -180,45 +180,45 @@ type View = {
 
 function view(state: State, outcome: i32): View
     return {
-        vault = state.vault,
+        duel = state.duel,
         cleared = state.cleared,
         boss = state:boss(),
         next_is_boss = state:next_is_boss(),
-        carried_mana = state.mana,
-        ante = state:ante(),
-        ante_ahead = ante_at(state.vault + 1, state.rush),
+        carried_gold = state.gold,
+        target = state:target(),
+        ante_ahead = target_at(state.duel + 1, state.rush),
         run_length = run_length(state.rush),
         outcome = outcome,
     }
 end
 
--- The live vault has been fought to a verdict. Taking it advances the run,
--- charges the vault its ante, and carries what is left into the next one;
--- losing it — to the Arch Mage or to an ante the purse could not cover — ends
--- the run, and what follows is the first vault of a fresh one. A vault the run
--- already spent mana in is never fought twice.
+-- The live duel has been fought to a verdict. Taking it advances the run,
+-- charges the duel its target, and carries what is left into the next one;
+-- losing it — to the opponent or to a target the purse could not cover — ends
+-- the run, and what follows is the first duel of a fresh one. A duel the run
+-- already spent gold in is never fought twice.
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:
--- what a finished heist decided is not this module's to decide again.
-function State:settle(cleared: bool, carried_mana: i32): i32
+-- what a finished duel decided is not this module's to decide again.
+function State:settle(cleared: bool, carried_gold: i32): i32
     local outcome: i32 = outcome_of(
-        self.vault, self.rush, cleared, carried_mana)
-    if outcome == OUTCOME_LOST_VAULT or outcome == OUTCOME_LOST_ANTE then
+        self.duel, self.rush, cleared, carried_gold)
+    if outcome == OUTCOME_LOST_VAULT or outcome == OUTCOME_LOST_TARGET then
         self:restart(self.start_spell, self.rush)
         return outcome
     end
-    -- Taking the last vault of the table and taking any other one are the same
+    -- Taking the last duel of the table and taking any other one are the same
     -- movement; what differs is only the screen that says so.
-    self.mana = carried_mana - self:ante()
+    self.gold = carried_gold - self:target()
     self.cleared += 1
-    self.vault += 1
+    self.duel += 1
     return outcome
 end
 
 function State:restart(spell: i32, rush: bool): unit
     local fresh: State = new(spell, rush)
-    self.vault = fresh.vault
-    self.mana = fresh.mana
+    self.duel = fresh.duel
+    self.gold = fresh.gold
     self.cleared = fresh.cleared
     self.spells = fresh.spells
     self.start_spell = spell
@@ -248,21 +248,21 @@ function State:slot_of(kind: i32): i32
     return -1
 end
 
--- Spend from the carried pool. Buying between vaults comes out of the same mana
--- the next vault opens with, so a purchase is always a smaller pool to fight in.
-function State:spend(mana: i32): bool
-    if mana < 0 or mana > self.mana then return false end
-    self.mana -= mana
+-- Spend from the carried pool. Buying between duels comes out of the same gold
+-- the next duel opens with, so a purchase is always a smaller pool to fight in.
+function State:spend(gold: i32): bool
+    if gold < 0 or gold > self.gold then return false end
+    self.gold -= gold
     return true
 end
 
--- Whether the spell in that slot has room left to be sharpened.
+-- Whether the spell in that slot has room left to be upgraded.
 function State:can_sharpen(slot: i32): bool
     if slot < 0 or slot >= #self.spells then return false end
     return self.spells[slot].cost > MIN_SPELL_COST
 end
 
-function State:sharpen(slot: i32): bool
+function State:upgrade(slot: i32): bool
     if not self:can_sharpen(slot) then return false end
     self.spells[slot].cost -= 1
     return true
@@ -294,8 +294,8 @@ end
 
 function snapshot(state: State): string
     local parts: {string} = { SNAPSHOT_SCHEMA }
-    snapshot_data.append_i32(parts, state.vault)
-    snapshot_data.append_i32(parts, state.mana)
+    snapshot_data.append_i32(parts, state.duel)
+    snapshot_data.append_i32(parts, state.gold)
     snapshot_data.append_i32(parts, state.cleared)
     snapshot_data.append_i32(parts, #state.spells)
     for spell in state.spells do
@@ -311,8 +311,8 @@ function restore(snapshot_value: string): State?
     local reader: snapshot_data.Reader = snapshot_data.reader(
         snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
     if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
-    local vault: i32 = reader:next_i32()
-    local mana: i32 = reader:next_i32()
+    local duel: i32 = reader:next_i32()
+    local gold: i32 = reader:next_i32()
     local cleared: i32 = reader:next_i32()
     local spells: {game.Spell} = {}
     local spell_count: i32 = reader:next_length()
@@ -324,19 +324,19 @@ function restore(snapshot_value: string): State?
     local start_spell: i32 = reader:next_i32()
     local rush: bool = reader:next_bool()
     local restored: State = {
-        vault = vault,
-        mana = mana,
+        duel = duel,
+        gold = gold,
         cleared = cleared,
         spells = spells,
         start_spell = start_spell,
         rush = rush,
     }
     if not reader:complete() then return nil end
-    -- No upper bound on the vault: a run past the end of its table is a run
+    -- No upper selected on the duel: a run past the end of its table is a run
     -- that won and kept walking, not a payload from another build.
-    if vault < 1 then return nil end
+    if duel < 1 then return nil end
     -- A run always carries at least the spell it set out with, and never more
-    -- than the two the robbers can hold ready.
+    -- than the two the player can hold ready.
     if #spells < 1 or #spells > MAX_SPELLS then return nil end
     return restored
 end
@@ -345,7 +345,7 @@ return {
     new = new,
     view = view,
     boss_at = boss_at,
-    ante_at = ante_at,
+    target_at = target_at,
     run_length = run_length,
     outcome_of = outcome_of,
     snapshot = snapshot,
@@ -355,7 +355,7 @@ return {
     min_spell_cost = MIN_SPELL_COST,
     outcome_none = OUTCOME_NONE,
     outcome_lost_vault = OUTCOME_LOST_VAULT,
-    outcome_lost_ante = OUTCOME_LOST_ANTE,
+    outcome_lost_target = OUTCOME_LOST_TARGET,
     outcome_advance = OUTCOME_ADVANCE,
     outcome_won = OUTCOME_WON,
 }

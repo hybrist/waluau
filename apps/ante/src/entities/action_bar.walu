@@ -1,4 +1,4 @@
--- The band under the wards where the vault asks for a decision: a centred row
+-- The band under the table cards where the duel asks for a decision: a centred row
 -- of capsules while there is something to commit, and a line of type when the
 -- board is still waiting for binds.
 --

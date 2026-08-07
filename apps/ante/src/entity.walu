@@ -1,11 +1,11 @@
--- The boundary every visible thing on Ante Magic's board shares. An entity
+-- The boundary every visible thing on Duel Magic's board shares. An entity
 -- answers two questions and nothing else: how large would you like to be, and
 -- draw yourself into this rectangle. It never reads a screen coordinate, a
 -- viewport scale, or where its neighbours ended up — the rectangle it is
 -- handed is the whole of what layout decided for it.
 --
 -- That is what makes an entity a file rather than a paragraph inside one. A
--- deck, a pile, a capsule, and a whole ward band all satisfy the same two
+-- deck, a pile, a capsule, and a whole table_card band all satisfy the same two
 -- questions, so they compose: `flow` turns a list of entities into a single
 -- entity that measures like the box layout of its children and paints by
 -- handing each child its solved rectangle. Composition bottoms out at leaves
@@ -261,7 +261,7 @@ function flow(children: {Node}, flow_style: box.Style): Node
 end
 
 -- Entities drawn one on top of the next in the same rectangle: a panel under
--- its contents, a halo under the formation it lights. Every child is given the
+-- its contents, a halo under the hand it lights. Every child is given the
 -- whole of the bounds, and the stack measures as the largest of them.
 function layer(children: {Node}): Node
     return {

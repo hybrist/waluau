@@ -1,5 +1,5 @@
 -- Visual laboratory for the intrinsic box solver. These stories deliberately
--- use synthetic leaves instead of Ante cards, menus, or shop rows: the layout
+-- use synthetic leaves instead of game cards, menus, or shop rows: the layout
 -- system can be tuned and understood before any live game code adopts it.
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")

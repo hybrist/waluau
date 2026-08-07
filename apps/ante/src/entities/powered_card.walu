@@ -1,10 +1,10 @@
--- A ward standing under a spell. Four conditions can be on it, and each one
--- replaces the ordinary card with its own rendering of the same relic:
+-- A table_card standing under a spell. Four conditions can be on it, and each one
+-- replaces the ordinary card with its own rendering of the same card:
 -- Firebolt burns it away, Freeze Ray seals it under ice, Raise Card brings it
 -- back out of a grave, and Growth divides it in two.
 --
--- It is the same entity as an ordinary ward — same box, same rectangle — which
--- is what lets the ward row hold a powered slot without knowing anything about
+-- It is the same entity as an ordinary table_card — same box, same rectangle — which
+-- is what lets the table_card row hold a powered slot without knowing anything about
 -- spells. What a condition changes is what gets drawn in the box, never how
 -- much of the board it takes.
 
@@ -31,18 +31,18 @@ const FREEZE_MARGIN_X: f64 = 10.0
 const FREEZE_MARGIN_TOP: f64 = 12.0
 const FREEZE_MARGIN_BOTTOM: f64 = 10.0
 
--- Grave dust, in motes per second: thrown while the raised ward is still
+-- Grave dust, in motes per second: thrown while the raised table_card is still
 -- climbing out, then a trickle for as long as it stands. A raise is a
 -- persistent condition, so the aperture keeps breathing rather than leaving a
 -- ring of motes hanging in the air where the climb happened to stop.
 const GRAVE_DUST_RISING_RATE: f64 = 72.0
 const GRAVE_DUST_IDLE_RATE: f64 = 13.0
--- A formation reading below zero means no ward is raised: the aperture is shut
+-- A hand reading below zero means no table_card is raised: the aperture is shut
 -- and whatever it last threw finishes settling.
 const NO_GRAVE: f64 = -1.0
 
 -- How far a condition has formed, and how far Fireball's slower burn has got.
-function formation(clock: f64): f64
+function hand(clock: f64): f64
     return easing.clamp01((clock - spell_cast.travel_seconds) / FORM_SECONDS)
 end
 
@@ -58,7 +58,7 @@ function firebolt_burn_finished(clock: f64): bool
 end
 
 -- The clock reading at which every spell has finished arriving: the carrier
--- has landed, the impact rays are spent, the formation is full, and the last
+-- has landed, the impact rays are spent, the hand is full, and the last
 -- of Fireball's ash has fallen. Fireball is the slowest of the four, so its
 -- end is the settled reading for all of them. Past this point the clock only
 -- feeds the endless idle motions — breathing membranes, circling grave-flies —
@@ -138,22 +138,22 @@ function draw_fireball(
     progress: f64, ash: card_burn.CardAsh
 ): unit
     local lift: f64 = 0.0
-    if value.selected then lift = -card.bind_lift end
+    if value.selected then lift = -card.select_lift end
     local top: f64 = y + lift
     local seed: i32 = card_burn.seed_of(value.card, 191)
     local target: graphics_module.RenderTarget? = card.capture_face(surface, value)
     if target == nil then
         if progress < 0.86 then card.draw_at(surface, value, x, y) end
-        card_burn.draw_ash(surface, ash.ward_sheet, x, top, seed + 401)
+        card_burn.draw_ash(surface, ash.table_card_sheet, x, top, seed + 401)
     else
         local captured: graphics_module.RenderTarget =
             target::graphics_module.RenderTarget
         card_burn.draw_captured(
             surface, captured, x, top, progress, seed, value.card.suit,
-            ash.ward_sheet)
+            ash.table_card_sheet)
         surface.graphics:release_render_target(captured)
     end
-    card_burn.draw_ash(surface, ash.ward_fall, x, top, seed + 607)
+    card_burn.draw_ash(surface, ash.table_card_fall, x, top, seed + 607)
 end
 
 -- Freeze Ray leaves the card readable under a translucent shell. The ice
@@ -168,10 +168,10 @@ function draw_freeze(
     local graphics = surface.graphics
     card.draw_at(surface, value, x, y)
     local ice: f64 = easing.out_quint(progress)
-    -- Track the lift a bound card applies so the shell stays glued to the face
+    -- Track the lift a selected card applies so the shell stays glued to the face
     -- it freezes.
     local top: f64 = y
-    if value.selected then top -= card.bind_lift end
+    if value.selected then top -= card.select_lift end
     local maybe_noise: graphics_module.Texture? = surface.effects.noise_texture
     if maybe_noise ~= nil then
         local noise: graphics_module.Texture = maybe_noise::graphics_module.Texture
@@ -280,7 +280,7 @@ function draw_zombie_overlay(
     end
 end
 
--- Raise Card replaces the ward at impact with a second rendering that climbs
+-- Raise Card replaces the table_card at impact with a second rendering that climbs
 -- out of a black ground aperture. Its healed pose keeps holes, torn stock,
 -- sutures, corpse tint, and circling grave-flies as the persistent condition.
 function draw_raise(
@@ -306,12 +306,12 @@ function draw_raise(
     graphics:pop()
     -- The dust is drawn where the aperture is, but it is not a function of the
     -- climb: the eight motes this replaced were a pure function of progress,
-    -- so they stopped dead the moment the ward finished rising and the ring
-    -- they froze in hung there for the rest of the heist.
+    -- so they stopped dead the moment the table_card finished rising and the ring
+    -- they froze in hung there for the rest of the duel.
     dust:draw(graphics, center_x, y + card.height - 2.0)
 end
 
--- Growth is literal cell division: the one full-size ward pinches into two
+-- Growth is literal cell division: the one full-size table_card pinches into two
 -- smaller copies while a shared membrane swells around them. Individual
 -- daughter-cell rings and drifting organelles keep the settled pair alive.
 function draw_growth(
@@ -353,7 +353,7 @@ function draw_growth(
     end
 end
 
--- Dry earth off the mouth the raised ward climbs out of. Motes are born across
+-- Dry earth off the mouth the raised table_card climbs out of. Motes are born across
 -- the aperture, lift on the draught coming up out of it, wander, and settle
 -- out. Emitter coordinates are local to the aperture, so the same emitter draws
 -- correctly at whichever slot is raised.
@@ -383,7 +383,7 @@ function new_grave_dust(): particles.ParticleSystem
     return system
 end
 
--- One tick of the grave. The climb throws dust; a standing ward only trickles.
+-- One tick of the grave. The climb throws dust; a standing table_card only trickles.
 function step_grave_dust(
     system: particles.ParticleSystem, progress: f64, dt: f64
 ): unit
@@ -400,7 +400,7 @@ end
 -- How far the grave a spell opened has got, or NO_GRAVE when the spell is not
 -- the one that opens graves.
 function grave_progress(kind: i32, clock: f64): f64
-    if kind == game.spell_raise_card then return formation(clock) end
+    if kind == game.spell_raise_card then return hand(clock) end
     return NO_GRAVE
 end
 
@@ -408,7 +408,7 @@ function draw_at(
     surface: entity.Surface, value: card.Look, x: f64, y: f64,
     kind: i32, clock: f64, ash: card_burn.CardAsh, dust: particles.ParticleSystem
 ): unit
-    local progress: f64 = formation(clock)
+    local progress: f64 = hand(clock)
     if kind == game.spell_firebolt then progress = fireball_formation(clock) end
     if kind == 0 or value.hidden or progress <= 0.0 then
         card.draw_at(surface, value, x, y)
@@ -425,7 +425,7 @@ function draw_at(
     end
 end
 
--- The powered ward as an entity: a card's box, whatever is standing on it.
+-- The powered table_card as an entity: a card's box, whatever is standing on it.
 function node(
     value: card.Look, kind: i32, clock: f64,
     ash: card_burn.CardAsh, dust: particles.ParticleSystem
@@ -442,7 +442,7 @@ end
 return {
     node = node,
     draw_at = draw_at,
-    formation = formation,
+    hand = hand,
     fireball_formation = fireball_formation,
     firebolt_burn_finished = firebolt_burn_finished,
     settled_clock = settled_clock,

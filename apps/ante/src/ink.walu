@@ -1,4 +1,4 @@
--- The drawing vocabulary every entity shares: type, panels, the school inks,
+-- The drawing vocabulary every entity shares: type, panels, the color inks,
 -- and the one fade an entire screen can be taken down by. These are
 -- primitives, not entities — they put ink at coordinates the caller already
 -- has, which is what an entity's paint uses once layout has told it where it
@@ -50,13 +50,13 @@ function panel(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill
 end
 
 -- Back to the default program. Every effect binding is a borrow, and this is
--- the return: an entity that leaves a shader bound has painted over whatever
+-- the return: an entity that leaves a shader selected has painted over whatever
 -- the next one draws.
 function stop_effect(graphics: Graphics): unit
     graphics:use_default_shader()
 end
 
-function school_color(suit: i32): string
+function color_ink(suit: i32): string
     if suit == 0 then return "#ef4444" end
     if suit == 1 then return "#38bdf8" end
     if suit == 2 then return "#a855f7" end
@@ -90,6 +90,6 @@ return {
     text_width = text_width,
     panel = panel,
     stop_effect = stop_effect,
-    school_color = school_color,
+    color_ink = color_ink,
     fade = fade,
 }

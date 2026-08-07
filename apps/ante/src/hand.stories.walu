@@ -1,4 +1,4 @@
--- The player's relic hand as a layout laboratory. Unlike a card story, this
+-- The player's card hand as a layout laboratory. Unlike a card story, this
 -- is about the relationship between several cards: their shared centre,
 -- overlap, arc, tilt, parting, and stacking states.
 local storybook = require("waluau:engine/storybook")
@@ -65,7 +65,7 @@ local function draw_hand(graphics: engine.Graphics, alpha: f64): unit
     presentation_resources.prepare(assets, graphics)
     -- The dials below are this laboratory's own, not the fan entity's: the
     -- point of the story is to tune the arithmetic before it is settled, so it
-    -- places the relics itself and only borrows the card to draw them.
+    -- places the cards itself and only borrows the card to draw them.
     local surface = presentation_resources.surface(assets, graphics)
 
     local count: i32 = storybook.arg_i32("count")

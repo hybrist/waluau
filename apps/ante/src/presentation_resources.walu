@@ -1,4 +1,4 @@
--- Resource lifetime and failure policy for Ante Magic presentation assets.
+-- Resource lifetime and failure policy for Duel Magic presentation assets.
 -- Engine callbacks ask this module to load, prepare, unlock, play, diagnose,
 -- and dispose; source/GPU ownership no longer leaks across the entry module.
 
@@ -95,7 +95,7 @@ function load_async(state: State): i32
         append_warning(state, noise_result.error.code .. ": " .. noise_result.error.message)
     end
 
-    local font_result: resources.LoadResult = resources.await_font(FONT_PATH, "Arcane Vault")
+    local font_result: resources.LoadResult = resources.await_font(FONT_PATH, "Arcane Duel")
     if font_result.ok then state.font_source = font_result.resource
     else
         state.font_finished = true
@@ -118,7 +118,7 @@ function prepare(state: State, graphics: engine.Graphics): unit
     if shader_diagnostics.warnings ~= state.shader_warnings then
         state.shader_warnings = shader_diagnostics.warnings
         if #state.shader_warnings > 0 then
-            print("ante: optional shader warning: " .. state.shader_warnings)
+            print("target: optional shader warning: " .. state.shader_warnings)
         end
     end
     if not state.image_finished and state.image_source.handle ~= 0 then
@@ -174,7 +174,7 @@ function play_flip(state: State): unit
         return
     end
     if not audio.play(state.flip_sound, false, FLIP_SOUND_VOLUME) then
-        print("ante: the audio host refused to start decoded sound playback")
+        print("target: the audio host refused to start decoded sound playback")
     end
 end
 
