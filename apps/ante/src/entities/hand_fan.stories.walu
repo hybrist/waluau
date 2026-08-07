@@ -2,11 +2,11 @@
 -- is about the relationship between several cards: their shared centre,
 -- overlap, arc, tilt, parting, and stacking states.
 local storybook = require("waluau:engine/storybook")
-local game = require("./game")
-local entity = require("./entity")
-local entity_story = require("./entity_story")
-local card = require("./entities/card")
-local hand_fan = require("./entities/hand_fan")
+local game = require("../game")
+local entity = require("../entity")
+local entity_story = require("../entity_story")
+local card = require("./card")
+local hand_fan = require("./hand_fan")
 
 const WIDTH: u32 = 900
 const HEIGHT: u32 = 420
