@@ -8,13 +8,6 @@
 -- conformance: error=whether a present 'false' takes the fallback is ambiguous
 -- conformance: error=Write 'flag == true' for set-and-true
 
-function maybe_flag(present: bool, value: bool): bool?
-    if present then
-        return value
-    end
-    return nil
-end
-
-local stored: bool? = maybe_flag(true, false)
+local stored: bool? = false
 local enabled: bool = stored or true
 assert(enabled == false)

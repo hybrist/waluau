@@ -5838,6 +5838,13 @@ impl Builder<'_> {
                 // coerce_value box it.
                 let array_ty = if array_ty.is_array() {
                     array_ty
+                } else if let Some(inner) =
+                    array_ty.nullable_inner().filter(Type::is_array)
+                {
+                    // A `{T}?` expectation coerces the inferred array into the
+                    // nullable. The literal itself is still the inner array;
+                    // the final coerce_value widens it back.
+                    inner
                 } else {
                     self.infer_array_literal_type(elements, types, None)?
                 };

@@ -34,16 +34,9 @@ assert(widened == 97.0)
 -- `false` and nil would read the same way at the call site. What that call
 -- site usually means is "set and true", and equality already spells it: a
 -- nullable compared against a plain value is false when it is nil.
-function maybe_flag(present_flag: bool, value: bool): bool?
-    if present_flag then
-        return value
-    end
-    return nil
-end
-
-local set_true: bool? = maybe_flag(true, true)
-local set_false: bool? = maybe_flag(true, false)
-local unset: bool? = maybe_flag(false, true)
+local set_true: bool? = true
+local set_false: bool? = false
+local unset: bool? = nil
 
 assert((set_true == true) == true)
 assert((set_false == true) == false)
@@ -77,19 +70,13 @@ local fell_back: Point = maybe_point(false) or origin
 assert(fell_back.x == 0.0)
 
 -- Arrays.
-function maybe_values(present_values: bool): {i32}?
-    if present_values then
-        local values: {i32} = {9}
-        return values
-    end
-    return nil
-end
-
+local some_values: {i32}? = {9}
+local no_values: {i32}? = nil
 local defaults: {i32} = {1, 2}
-local chosen: {i32} = maybe_values(true) or defaults
+local chosen: {i32} = some_values or defaults
 assert(#chosen == 1)
 assert(chosen[0] == 9)
-local chosen_default: {i32} = maybe_values(false) or defaults
+local chosen_default: {i32} = no_values or defaults
 assert(#chosen_default == 2)
 assert(chosen_default[0] == 1)
 
