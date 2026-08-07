@@ -101,7 +101,7 @@ export function countCardBackInk(canvas) {
 
 export async function openGame(page) {
   await page.goto('/');
-  await expect(page.locator('h1')).toHaveText('Ante Magic', { timeout: GAME_READY_TIMEOUT });
+  await expect(page.locator('h1')).toHaveText('Duel Magic', { timeout: GAME_READY_TIMEOUT });
   return page.locator('canvas#walua-game-canvas');
 }
 
