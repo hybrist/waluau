@@ -128,7 +128,7 @@ end
 -- spell was picked at, so the map is put back at the mouth of the route instead
 -- of walking the whole city back to it.
 function open_route(city: city_map.State): unit
-    city_map.warp(city, city_map.fence_stop(1))
+    city_map.warp(city, city_map.shop_stop(1))
 end
 
 -- Start a run at its first duel. `rush` is the boss-rush run and `spell` the
@@ -179,14 +179,14 @@ end
 -- written for. The route runs past it — a run that takes it walks on into the
 -- endless city — so this names a landmark, not an end.
 function landmark_stop(state: State): i32
-    return city_map.vault_stop(run_module.run_length(state.run.rush))
+    return city_map.duel_stop(run_module.run_length(state.run.rush))
 end
 
 -- Which stop of the route the run stands on: the vendor before the live duel
 -- while the intermission is up, and the duel's own house otherwise.
 function city_stop(state: State): i32
-    if on_map(state) then return city_map.fence_stop(state.run.duel) end
-    return city_map.vault_stop(state.run.duel)
+    if on_map(state) then return city_map.shop_stop(state.run.duel) end
+    return city_map.duel_stop(state.run.duel)
 end
 
 -- How much of the offer list is on the screen. Leaving a shop takes it down
@@ -347,7 +347,7 @@ end
 
 function submit_swap(state: State): unit
     local ui: flow.State = state.ui
-    local outcome: game.FeintOutcome?
+    local outcome: game.SwapOutcome?
     if #ui.swap_hand == 0 and #ui.swap_table_cards == 0 then
         outcome = state.rules:resolve_swap({}, {})
     elseif #ui.swap_hand ~= #ui.swap_table_cards or #ui.swap_hand > state.rules:gold() then
@@ -361,7 +361,7 @@ function submit_swap(state: State): unit
         -- board loses its condition with it. Which spell is standing there is
         -- the presentation's own reading, not a question for the loadout.
         choreography.clear_freeze(state.presentation)
-        choreography.swap(outcome::game.FeintOutcome, state.presentation)
+        choreography.swap(outcome::game.SwapOutcome, state.presentation)
     end
 end
 
@@ -376,7 +376,7 @@ function confirm_cast(state: State, slot: i32, table_card: i32): unit
     state.ui.casting = false
 end
 
-function submit_breach(state: State): unit
+function submit_round(state: State): unit
     local ui: flow.State = state.ui
     if #ui.play_picks ~= 2 then return end
     local trick: game.Trick? = state.rules:play(ui.play_picks[0], ui.play_picks[1])
@@ -528,11 +528,11 @@ function keypressed(state: State, city: city_map.State, key: string): i32
             ui.table_card_cursor = (ui.table_card_cursor + 1) % 3
         end
     case Key.up then
-        if rules:feint_open() then ui.cursor_area = 1 - ui.cursor_area end
+        if rules:swap_open() then ui.cursor_area = 1 - ui.cursor_area end
     case Key.down then
-        if rules:feint_open() then ui.cursor_area = 1 - ui.cursor_area end
+        if rules:swap_open() then ui.cursor_area = 1 - ui.cursor_area end
     case Key.select then
-        if rules:feint_open() then
+        if rules:swap_open() then
             if ui.cursor_area == flow.cursor_hand then
                 flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
             elseif not rules:is_frozen(ui.table_card_cursor) then
@@ -550,13 +550,13 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         flow.apply_hand_order(ui, order)
         choreography.apply_hand_order(presentation, order)
     case Key.pass then
-        if rules:feint_open() then
+        if rules:swap_open() then
             ui.swap_hand = {}
             ui.swap_table_cards = {}
             submit_swap(state)
         end
     case Key.confirm then
-        if rules:feint_open() then submit_swap(state) else submit_breach(state) end
+        if rules:swap_open() then submit_swap(state) else submit_round(state) end
     case Key.exit then
     case Key.restart then
     case Key.history then
@@ -596,7 +596,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
         ui.hand_cursor = hand
         return
     end
-    if state.rules:feint_open() then
+    if state.rules:swap_open() then
         local table_card: i32 = render.hit_table_card(viewport, at)
         if table_card >= 0 then
             ui.cursor_area = flow.cursor_table_cards
@@ -648,11 +648,11 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     if hand >= 0 then
         ui.cursor_area = flow.cursor_hand
         ui.hand_cursor = hand
-        if rules:feint_open() then flow.toggle(ui.swap_hand, hand, 3)
+        if rules:swap_open() then flow.toggle(ui.swap_hand, hand, 3)
         else flow.toggle(ui.play_picks, hand, 2) end
         return
     end
-    if rules:feint_open() then
+    if rules:swap_open() then
         local table_card: i32 = render.hit_table_card(viewport, at)
         if table_card >= 0 then
             ui.cursor_area = flow.cursor_table_cards
@@ -668,7 +668,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         end
     end
     if render.hit_commit(at) then
-        if rules:feint_open() then submit_swap(state) else submit_breach(state) end
+        if rules:swap_open() then submit_swap(state) else submit_round(state) end
     end
 end
 

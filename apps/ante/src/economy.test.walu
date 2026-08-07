@@ -26,9 +26,9 @@ local run = require("./run")
 -- One duel fought to a verdict.
 type Trial = {
     cleared: bool,
-    exit_mana: i32,
+    exit_gold: i32,
     income: i32,
-    breaches_won: i32
+    rounds_won: i32
 }
 
 -- What a batch of trials came to. `income` is exit gold less what the duel
@@ -50,7 +50,7 @@ end
 -- The strongest swap this hand can propose, or nothing when the purse will not
 -- cover it. Table cards are never frozen here — the reference player casts no spells,
 -- so `best_swap` sees the whole board.
-local function reference_feint(state: game.State): unit
+local function reference_swap(state: game.State): unit
     local choice: game.SwapChoice = game.best_swap(
         game.hand_cards(game.view(state).player_hand), game.view(state).middle)
     if #choice.hand_indices > state:gold() then
@@ -69,22 +69,22 @@ end
 local function autopilot(state: game.State): unit
     for _ = 1, 5 do
         if state:is_finished() then return end
-        if state:feint_open() then reference_feint(state) end
+        if state:swap_open() then reference_swap(state) end
         local pair: game.PairChoice = game.best_pair(
             game.hand_cards(game.view(state).player_hand), game.view(state).middle)
         state:play(pair.first, pair.second)
     end
 end
 
-local function play_vault(boss: bool, gold: i32, seed: i32): Trial
+local function play_duel(boss: bool, gold: i32, seed: i32): Trial
     math.randomseed(seed)
     local state: game.State = game.new(boss, starter_loadout(), gold)
     autopilot(state)
     return {
         cleared = state:is_victory(),
-        exit_mana = game.view(state).player_points,
+        exit_gold = game.view(state).player_points,
         income = game.view(state).player_points - gold,
-        breaches_won = game.view(state).player_tricks,
+        rounds_won = game.view(state).player_tricks,
     }
 end
 
@@ -98,7 +98,7 @@ local function measure(boss: bool, gold: i32, trials: i32): Sample
         cleared_income_sum = 0,
     }
     for seed = 1::i32, trials do
-        local trial: Trial = play_vault(boss, gold, seed)
+        local trial: Trial = play_duel(boss, gold, seed)
         sample.income_sum += trial.income
         if trial.income < sample.income_low then sample.income_low = trial.income end
         if trial.income > sample.income_high then sample.income_high = trial.income end
@@ -138,7 +138,7 @@ const BOSS_TRIALS: i32 = 25
 -- under to leave a run alive across nine of them.
 describe("Duel Magic duel economy", function()
     it("makes a standard duel close to a coin flip and pays the winner", function()
-        local sample: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
+        local sample: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
         -- A mirror match, so a band reaching 100 would mean the Opponent never
         -- wins one and a band reaching 0 would mean the duel is not winnable.
         expect(clear_percent(sample)):toBeGreaterThanOrEqual(40)
@@ -155,7 +155,7 @@ describe("Duel Magic duel economy", function()
     end)
 
     it("pays a boss duel on the same order as a standard one", function()
-        local sample: Sample = measure(true, game.starting_mana, BOSS_TRIALS)
+        local sample: Sample = measure(true, game.starting_gold, BOSS_TRIALS)
         expect(clear_percent(sample)):toBeGreaterThanOrEqual(30)
         expect(clear_percent(sample)):toBeLessThanOrEqual(65)
         expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(7)
@@ -169,7 +169,7 @@ describe("Duel Magic duel economy", function()
         -- cannot outrun a rising target by hoarding. The samples are identical
         -- rather than merely close: same seeds, same deals, and a purse this
         -- size never once failed to cover the swap the policy wanted.
-        local lean: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
+        local lean: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
         local flush: Sample = measure(false, 40, STANDARD_TRIALS)
         expect(mean_income(flush)):toBe(mean_income(lean))
         expect(clear_percent(flush)):toBe(clear_percent(lean))
@@ -193,7 +193,7 @@ describe("Duel Magic duel economy", function()
         -- separately; the target only has to be designed knowing it is true, since
         -- charging for gold gives a player one more reason to never wager.
         local broke: Sample = measure(false, 0, STANDARD_TRIALS)
-        local funded: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
+        local funded: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
         expect(clear_percent(broke)):toBe(clear_percent(funded))
         expect(mean_income(broke)):toBeGreaterThan(mean_income(funded))
     end)
@@ -218,7 +218,7 @@ local function play_run(seed: i32): RunTrial
         autopilot(duel)
         local reached: i32 = state.duel
         local outcome: i32 = state:settle(duel:is_victory(), duel:gold())
-        if outcome == run.outcome_lost_vault or outcome == run.outcome_lost_ante then
+        if outcome == run.outcome_lost_vault or outcome == run.outcome_lost_target then
             return { duels = reached - 1, ended_by = outcome, purse = duel:gold() }
         end
     end
@@ -250,7 +250,7 @@ describe("Duel Magic run economy", function()
         for seed = 1::i32, RUN_TRIALS do
             local trial: RunTrial = play_run(seed)
             if trial.ended_by == run.outcome_lost_vault then held += 1
-            elseif trial.ended_by == run.outcome_lost_ante then short += 1
+            elseif trial.ended_by == run.outcome_lost_target then short += 1
             else unfinished += 1 end
             total += trial.duels
             if trial.duels > deepest then deepest = trial.duels end
@@ -280,11 +280,11 @@ describe("Duel Magic run economy", function()
         -- three. A statistical version of this would need runs to reach duel
         -- nine, and a coin-flip duel means almost none do.
         local income: i32 = 16
-        local purse: i32 = game.starting_mana
+        local purse: i32 = game.starting_gold
         local peak: i32 = purse
         local peak_vault: i32 = 0
         for duel = 1::i32, run.run_length(false) do
-            purse = purse + income - run.ante_at(duel, false)
+            purse = purse + income - run.target_at(duel, false)
             if purse > peak then
                 peak = purse
                 peak_vault = duel
@@ -299,11 +299,11 @@ describe("Duel Magic run economy", function()
         expect(purse):toBeGreaterThanOrEqual(0)
         expect(purse):toBeLessThan(income)
         -- At the pay of an ordinary rather than a lucky run, the table wins.
-        local lean: i32 = game.starting_mana
+        local lean: i32 = game.starting_gold
         local died_at: i32 = 0
         for duel = 1::i32, run.run_length(false) do
             if died_at == 0 then
-                lean = lean + 11 - run.ante_at(duel, false)
+                lean = lean + 11 - run.target_at(duel, false)
                 if lean < 0 then died_at = duel end
             end
         end

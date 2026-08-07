@@ -675,7 +675,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
     begin_anims(state, anims, finish, ANIM_DEAL)
 end
 
-function swap(outcome: game.FeintOutcome, state: State): unit
+function swap(outcome: game.SwapOutcome, state: State): unit
     local count: i32 = #outcome.hand_indices
     if outcome.winner == 0 or count == 0 then return end
     local player_won: bool = outcome.winner > 0

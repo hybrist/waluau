@@ -10,7 +10,7 @@ function arrange_breach(
     player_hand: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    game.test_arrange_breach(state, middle, player_hand, computer_hand)
+    game.test_arrange_round(state, middle, player_hand, computer_hand)
 end
 
 function arrange_arch_mage(
@@ -18,7 +18,7 @@ function arrange_arch_mage(
     middle: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    game.test_arrange_arch_mage(state, middle, computer_hand)
+    game.test_arrange_opponent(state, middle, computer_hand)
 end
 
 function arrange_player(

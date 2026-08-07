@@ -45,9 +45,9 @@ const SHEET_ASH_END: f64 = 0.95
 const SHEET_ASH_RATE: f64 = 50.0
 -- The departing table_card's own, larger flakes: released later, from a front that
 -- is already past the card's edges, and falling further.
-const WARD_ASH_START: f64 = 0.64
-const WARD_ASH_END: f64 = 0.97
-const WARD_ASH_RATE: f64 = 44.0
+const TABLE_CARD_ASH_START: f64 = 0.64
+const TABLE_CARD_ASH_END: f64 = 0.97
+const TABLE_CARD_ASH_RATE: f64 = 44.0
 -- A burn reading below zero means nothing is burning at all.
 const NOT_BURNING: f64 = -1.0
 -- Past this much of a burn there is no legible sheet left, which is the cutoff
@@ -211,7 +211,7 @@ function step_sheet_ash(system: particles.ParticleSystem, progress: f64, dt: f64
 end
 
 function step_table_card_ash(system: particles.ParticleSystem, progress: f64, dt: f64): unit
-    step_ash(system, progress, WARD_ASH_START, WARD_ASH_END, WARD_ASH_RATE, dt)
+    step_ash(system, progress, TABLE_CARD_ASH_START, TABLE_CARD_ASH_END, TABLE_CARD_ASH_RATE, dt)
 end
 
 -- Particle quads are only carriers for the burn shader: its noisy alpha mask

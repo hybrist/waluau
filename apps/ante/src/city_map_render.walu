@@ -238,7 +238,7 @@ end
 -- the city goes on and so does a run that took it — so it is drawn as a landmark
 -- walked past rather than as a terminus: a second roof over the first, and a
 -- label that says which duel it is the last of.
-function draw_vault_stop(
+function draw_duel_stop(
     graphics: Graphics,
     stop: city_map.Stop,
     label: string,
@@ -327,13 +327,13 @@ function draw_stops(
             local reached: bool = (index::f64) <= state.travel + 0.001
             local final: bool = index == landmark
             if index == entered then
-                draw_vault_stop(
-                    graphics, stop, tostring(city_map.stop_vault(index)),
+                draw_duel_stop(
+                    graphics, stop, tostring(city_map.stop_duel(index)),
                     reached, final, alpha, furniture)
             elseif furniture > 0.0 then
                 if stop.duel then
-                    draw_vault_stop(
-                        graphics, stop, tostring(city_map.stop_vault(index)),
+                    draw_duel_stop(
+                        graphics, stop, tostring(city_map.stop_duel(index)),
                         reached, final, furniture, furniture)
                 else
                     draw_vendor_stop(graphics, stop, reached, furniture)

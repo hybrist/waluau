@@ -7,7 +7,7 @@ local snapshot_data = require("./snapshot")
 type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
-type FeintOutcome = {
+type SwapOutcome = {
     winner: i32,
     hand_indices: {i32},
     middle_indices: {i32},
@@ -77,12 +77,12 @@ const ZERO: i32 = 0
 const ONE: i32 = 1
 const TWO: i32 = 2
 const MAX_ROUNDS: i32 = 5
-const ARCH_MAGE_WINS_TO_END: i32 = 3
+const OPPONENT_WINS_TO_END: i32 = 3
 const HAND_SIZE: i32 = 5
 const BOSS_HAND_SIZE: i32 = 11
 -- The gold a duel is fought with when nothing carried into it. A run hands
 -- the next duel whatever the last one left standing instead.
-const STARTING_MANA: i32 = 10
+const STARTING_GOLD: i32 = 10
 -- The four starting spells, in menu order. Presentation owns their launch and
 -- card treatments; rules own gameplay state such as frozen table cards and Firebolt
 -- replacing a destroyed table_card.
@@ -503,7 +503,7 @@ function State:divine_intervention(target: i32): bool
     return false
 end
 
-function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): FeintOutcome?
+function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOutcome?
     if self.finished or not self.swap_open then return nil end
     local player_wager: i32 = #hand_indices
     local valid_player_swap: bool = player_wager <= 3
@@ -628,7 +628,7 @@ function State:play(first: i32, second: i32): Trick?
         end
     end
 
-    if self.computer_tricks >= ARCH_MAGE_WINS_TO_END or self.round >= MAX_ROUNDS then
+    if self.computer_tricks >= OPPONENT_WINS_TO_END or self.round >= MAX_ROUNDS then
         self.middle = {}
         self.finished = true
     else
@@ -956,7 +956,7 @@ function test_fresh_slots(cards: {Card}): {HandSlot}
     return slots
 end
 
-function test_arrange_breach(
+function test_arrange_round(
     state: State,
     middle: {Card},
     player_hand: {Card},
@@ -967,7 +967,7 @@ function test_arrange_breach(
     state.computer_hand = test_fresh_slots(computer_hand)
 end
 
-function test_arrange_arch_mage(
+function test_arrange_opponent(
     state: State,
     middle: {Card},
     computer_hand: {Card}
@@ -1016,7 +1016,7 @@ end
 -- board view: the Opponent ends the duel by holding three table cards, and any
 -- other finish means the duel opened.
 function held_by_arch_mage(computer_tricks: i32): bool
-    return computer_tricks >= ARCH_MAGE_WINS_TO_END
+    return computer_tricks >= OPPONENT_WINS_TO_END
 end
 
 function State:is_victory(): bool
@@ -1035,7 +1035,7 @@ function State:hand_size(): i32
     return #self.player_hand
 end
 
-function State:feint_open(): bool
+function State:swap_open(): bool
     return self.swap_open
 end
 
@@ -1306,8 +1306,8 @@ return {
     restore = restore,
     new_spell = new_spell,
     clone_spells = clone_spells,
-    test_arrange_breach = test_arrange_breach,
-    test_arrange_arch_mage = test_arrange_arch_mage,
+    test_arrange_round = test_arrange_round,
+    test_arrange_opponent = test_arrange_opponent,
     test_arrange_player = test_arrange_player,
     test_set_player_points = test_set_player_points,
     test_finish = test_finish,
@@ -1319,5 +1319,5 @@ return {
     spell_clone = SPELL_CLONE,
     spell_kind_count = SPELL_KIND_COUNT,
     spell_cost = SPELL_COST,
-    starting_mana = STARTING_MANA,
+    starting_gold = STARTING_GOLD,
 }

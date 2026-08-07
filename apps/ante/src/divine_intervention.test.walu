@@ -51,7 +51,7 @@ describe("Konami divine intervention", function()
 
     it("turns the five touched cards into a red royal flush", function()
         local rules: game.State = game.new(
-            false, { game.new_spell(game.spell_firebolt) }, game.starting_mana)
+            false, { game.new_spell(game.spell_firebolt) }, game.starting_gold)
         for target = 0::i32, divine.target_count - 1 do
             expect(rules:divine_intervention(target)):toBe(true)
         end

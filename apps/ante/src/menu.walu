@@ -92,7 +92,7 @@ function update(state: State, city: city_map.State, dt: f64): unit
     state.clock += dt
     city_map.show(city)
     if state.stage == STAGE_SPELL then
-        city_map.follow(city, city_map.fence_stop(1))
+        city_map.follow(city, city_map.shop_stop(1))
     else
         city_map.drift(city)
     end

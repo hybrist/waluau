@@ -128,7 +128,7 @@ end)
 describe("Duel Magic swaps", function()
     it("exchanges a winning proposal once without consuming the deck", function()
         math.randomseed(7)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -139,9 +139,9 @@ describe("Duel Magic swaps", function()
         local old_hand = game.view(state).player_hand[0].card
         local old_middle = game.view(state).middle[0]
         local old_deck_size: i32 = game.view(state).deck_count
-        local outcome: game.FeintOutcome? = state:resolve_swap({ 0 }, { 0 })
+        local outcome: game.SwapOutcome? = state:resolve_swap({ 0 }, { 0 })
         assert(outcome ~= nil)
-        local won_feint: game.FeintOutcome = outcome::game.FeintOutcome
+        local won_feint: game.SwapOutcome = outcome::game.SwapOutcome
         local outcome_winner: i32 = won_feint.winner
         local outcome_hand_count: i32 = #won_feint.hand_indices
         local outcome_hand_index: i32 = won_feint.hand_indices[0]
@@ -187,7 +187,7 @@ describe("Duel Magic swaps", function()
 
     it("re-packs watched marks with the hand after a trick", function()
         math.randomseed(46)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -220,7 +220,7 @@ describe("Duel Magic swaps", function()
 
     it("sorts cards and watched marks without mutating the deal", function()
         math.randomseed(48)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_player(
             state,
             { card(3, 2), card(14, 1), card(3, 1), card(9, 2), card(14, 3) },
@@ -275,7 +275,7 @@ describe("Duel Magic swaps", function()
     end)
 
     it("uses proposed cards as the wager and rejects unaffordable proposals", function()
-        local two_card_state = game.new(false, starter_loadout(), game.starting_mana)
+        local two_card_state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             two_card_state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -286,7 +286,7 @@ describe("Duel Magic swaps", function()
         expect(game.view(two_card_state).player_points):toBe(8)
         expect(game.view(two_card_state).pot):toBe(2)
 
-        local unaffordable_state = game.new(false, starter_loadout(), game.starting_mana)
+        local unaffordable_state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.set_player_points(unaffordable_state, 1)
         unaffordable_state:resolve_swap({ 0, 1 }, { 0, 1 })
         expect(game.view(unaffordable_state).swap_open):toBe(true)
@@ -294,7 +294,7 @@ describe("Duel Magic swaps", function()
     end)
 
     it("lets the Opponent make an unrestricted three-card swap", function()
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -331,7 +331,7 @@ end)
 describe("Duel Magic development snapshots", function()
     it("round-trips the complete rules state and rejects incompatible data", function()
         math.randomseed(49)
-        local state: game.State = game.new(false, starter_loadout(), game.starting_mana)
+        local state: game.State = game.new(false, starter_loadout(), game.starting_gold)
         state:resolve_swap({ 0 }, { 1 })
         force_player_win(state)
         state:play(0, 1)
@@ -357,7 +357,7 @@ describe("Duel Magic development snapshots", function()
 
     it("frames screen, run, rules, flow, and presentation payloads atomically", function()
         local run_state: run.State = run.new(game.spell_clone, false)
-        local rules: game.State = game.new(false, starter_loadout(), game.starting_mana)
+        local rules: game.State = game.new(false, starter_loadout(), game.starting_gold)
         local ui: flow.State = flow.new()
         ui.modal = flow.modal_help
 
@@ -428,7 +428,7 @@ end)
 describe("Duel Magic game flow", function()
     it("plays all five rounds after three player wins", function()
         math.randomseed(42)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         expect(game.view(state).deck_count):toBe(39)
         expect(#game.view(state).middle):toBe(3)
         expect(game.view(state).player_points):toBe(10)
@@ -481,7 +481,7 @@ describe("Duel Magic game flow", function()
 
     it("ends immediately on the Opponent's third win", function()
         math.randomseed(43)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         for expected_round = FIRST_ROUND, 3 do
             state:resolve_swap({}, {})
             force_computer_win(state)
@@ -501,7 +501,7 @@ describe("Duel Magic game flow", function()
 
     it("keeps a stalemate open and refunds its wager", function()
         math.randomseed(44)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         state:resolve_swap({}, {})
         force_stalemate(state)
         local points: i32 = game.view(state).player_points
@@ -518,7 +518,7 @@ describe("Duel Magic game flow", function()
 
     it("does not count a stalemate as a third Opponent hold", function()
         math.randomseed(45)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         for _ = 1, 2 do
             state:resolve_swap({}, {})
             force_computer_win(state)
@@ -553,7 +553,7 @@ end
 describe("Duel Magic boss battle", function()
     it("deals eleven cards and never replaces a spent one", function()
         math.randomseed(50)
-        local state = game.new(true, starter_loadout(), game.starting_mana)
+        local state = game.new(true, starter_loadout(), game.starting_gold)
         expect(state:is_boss()):toBe(true)
         expect(game.view(state).deck_count):toBe(27)
         expect(#game.view(state).player_hand):toBe(11)
@@ -595,7 +595,7 @@ describe("Duel Magic boss battle", function()
 
     it("keeps the standard game's five-card deal and replacements", function()
         math.randomseed(52)
-        local state = game.new(false, starter_loadout(), game.starting_mana)
+        local state = game.new(false, starter_loadout(), game.starting_gold)
         expect(state:is_boss()):toBe(false)
         state:resolve_swap({}, {})
         force_player_win(state)
@@ -625,7 +625,7 @@ describe("Duel Magic boss battle", function()
 
     it("round-trips the variant through development snapshots", function()
         math.randomseed(51)
-        local state = game.new(true, starter_loadout(), game.starting_mana)
+        local state = game.new(true, starter_loadout(), game.starting_gold)
         local encoded: string = game.snapshot(state)
         local restored: game.State? = game.restore(encoded)
         expect(restored == nil):toBe(false)
@@ -635,7 +635,7 @@ describe("Duel Magic boss battle", function()
             expect(game.snapshot(restored)):toBe(encoded)
         end
 
-        local standard: game.State = game.new(false, starter_loadout(), game.starting_mana)
+        local standard: game.State = game.new(false, starter_loadout(), game.starting_gold)
         local restored_standard: game.State? = game.restore(game.snapshot(standard))
         expect(restored_standard == nil):toBe(false)
         if restored_standard ~= nil then
@@ -645,7 +645,7 @@ describe("Duel Magic boss battle", function()
 
     it("restarts as the variant, loadout, and gold the reset asks for", function()
         math.randomseed(53)
-        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_mana)
+        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_gold)
         state:reset(true, loadout_of(game.spell_clone), 23)
         expect(state:is_boss()):toBe(true)
         expect(state:hand_size()):toBe(11)
@@ -656,7 +656,7 @@ describe("Duel Magic boss battle", function()
         state:reset(false, {
             game.new_spell(game.spell_freeze_ray),
             { kind = game.spell_clone, cost = 3 },
-        }, game.starting_mana)
+        }, game.starting_gold)
         expect(state:is_boss()):toBe(false)
         expect(state:hand_size()):toBe(5)
         expect(state:spell_count()):toBe(2)
@@ -664,14 +664,14 @@ describe("Duel Magic boss battle", function()
         expect(state:spell_cost(0)):toBe(game.spell_cost)
         expect(state:spell_kind(1)):toBe(game.spell_clone)
         expect(state:spell_cost(1)):toBe(3)
-        expect(state:gold()):toBe(game.starting_mana)
+        expect(state:gold()):toBe(game.starting_gold)
     end)
 end)
 
 describe("Duel Magic spell casting", function()
     it("charges each spell its own price and refuses the rest", function()
         math.randomseed(57)
-        local state = game.new(false, loadout_of(game.spell_raise_card), game.starting_mana)
+        local state = game.new(false, loadout_of(game.spell_raise_card), game.starting_gold)
         expect(state:spell_count()):toBe(1)
         expect(state:spell_kind(0)):toBe(game.spell_raise_card)
         expect(state:spell_cost(0)):toBe(game.spell_cost)
@@ -720,7 +720,7 @@ describe("Duel Magic spell casting", function()
         local state = game.new(false, {
             game.new_spell(game.spell_freeze_ray),
             { kind = game.spell_firebolt, cost = 3 },
-        }, game.starting_mana)
+        }, game.starting_gold)
         state:cast_spell(0, 2)
         local restored: game.State? = game.restore(game.snapshot(state))
         expect(restored == nil):toBe(false)
@@ -737,7 +737,7 @@ describe("Duel Magic spell casting", function()
     end)
 
     it("keeps frozen table cards out of both sides' feints and thaws after resolution", function()
-        local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_mana)
+        local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -749,21 +749,21 @@ describe("Duel Magic spell casting", function()
         -- A player proposal that names the frozen table_card does not resolve the
         -- swap or clear the condition.
         expect(state:resolve_swap({ 0 }, { 0 }) == nil):toBe(true)
-        expect(state:feint_open()):toBe(true)
+        expect(state:swap_open()):toBe(true)
         expect(state:is_frozen(0)):toBe(true)
 
-        local outcome: game.FeintOutcome? = state:resolve_swap({}, {})
+        local outcome: game.SwapOutcome? = state:resolve_swap({}, {})
         assert(outcome ~= nil)
-        local resolved: game.FeintOutcome = outcome::game.FeintOutcome
+        local resolved: game.SwapOutcome = outcome::game.SwapOutcome
         expect(#resolved.middle_indices):toBe(2)
         for table_card in resolved.middle_indices do expect(table_card == 0):toBe(false) end
         expect(state:is_frozen(0)):toBe(false)
-        expect(state:feint_open()):toBe(false)
+        expect(state:swap_open()):toBe(false)
     end)
 
     it("retains a table_card frozen after the swap for exactly one more round", function()
         math.randomseed(61)
-        local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_mana)
+        local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_gold)
         state:resolve_swap({}, {})
         local retained = game.view(state).middle[1]
         local replaced_left = game.view(state).middle[0]
@@ -788,7 +788,7 @@ describe("Duel Magic spell casting", function()
 
     it("replaces a Firebolt target from the deck and returns the burned card", function()
         math.randomseed(61)
-        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_mana)
+        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_gold)
         expect(state:cast_spell(0, 1)):toBe(true)
         local deck_before: i32 = game.view(state).deck_count
         local burned: game.Card = game.view(state).middle[1]
@@ -808,7 +808,7 @@ describe("Duel Magic spell casting", function()
 
     it("leaves the board unchanged for invalid Firebolt targets", function()
         math.randomseed(63)
-        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_mana)
+        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_gold)
         expect(state:cast_spell(0, 1)):toBe(true)
         local before: string = game.snapshot(state)
 
@@ -822,7 +822,7 @@ describe("Duel Magic spell casting", function()
         local state = game.new(false, {
             game.new_spell(game.spell_freeze_ray),
             game.new_spell(game.spell_firebolt),
-        }, game.starting_mana)
+        }, game.starting_gold)
         -- Carrying Firebolt is not casting it: nothing burns until the gold for
         -- one has changed hands.
         expect(state:resolve_firebolt(1) == nil):toBe(true)

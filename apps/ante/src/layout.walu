@@ -38,11 +38,11 @@ const CARD_HEIGHT: f64 = 128.0
 -- Across, at its tightest: a margin and one card column on each flank — the
 -- sealed deck on the left, the three piles on the right — a seam between
 -- each column and the play area, and the fixed three-table_card row.
--- WARD_ROW_SPAN mirrors render.walu's table_card row: three cards on a 116-unit
+-- TABLE_CARD_ROW_SPAN mirrors render.walu's table_card row: three cards on a 116-unit
 -- pitch (2 * 116 + 104).
 const BOARD_MARGIN: f64 = 56.0
 const COLUMN_SEAM: f64 = 22.0
-const WARD_ROW_SPAN: f64 = 336.0
+const TABLE_CARD_ROW_SPAN: f64 = 336.0
 
 -- Down, at its tightest: the title band over the Opponent's sealed row,
 -- three card rows, the packed clearances between the rows (the table_card prompt
@@ -61,7 +61,7 @@ const EXTRA_BELOW: f64 = 0.2
 
 -- The table_card row rides just below the midpoint between the sealed row and the
 -- fan, leaving the lower clearance for the action capsules.
-const WARD_BIAS: f64 = 12.0
+const TABLE_CARD_BIAS: f64 = 12.0
 
 -- The hand rows may spread at most five card widths — wider stops reading
 -- as one hand — and keep a wide seam to the side columns so a parting fan
@@ -69,7 +69,7 @@ const WARD_BIAS: f64 = 12.0
 const HAND_SEAM: f64 = 60.0
 
 function min_board_width(): f64
-    return (BOARD_MARGIN + CARD_WIDTH + COLUMN_SEAM) * 2.0 + WARD_ROW_SPAN
+    return (BOARD_MARGIN + CARD_WIDTH + COLUMN_SEAM) * 2.0 + TABLE_CARD_ROW_SPAN
 end
 
 function min_board_height(): f64
@@ -95,7 +95,7 @@ function calculate(canvas_width: f64, canvas_height: f64): State
     -- player_y is the fan's centre line: half a card plus the footer strip
     -- off the bottom edge, lifted by its share of any extra height.
     local player_y: f64 = height - FOOTER_BAND - CARD_HEIGHT * 0.5 - extra * EXTRA_BELOW
-    local table_card_center_y: f64 = (computer_y + CARD_HEIGHT * 0.5 + player_y) * 0.5 + WARD_BIAS
+    local table_card_center_y: f64 = (computer_y + CARD_HEIGHT * 0.5 + player_y) * 0.5 + TABLE_CARD_BIAS
     local table_card_y: f64 = table_card_center_y - CARD_HEIGHT * 0.5
 
     local hand_span: f64 = width - (BOARD_MARGIN + CARD_WIDTH + HAND_SEAM) * 2.0

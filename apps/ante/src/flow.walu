@@ -46,7 +46,7 @@ const RESULT_FINISH_REVEAL: i32 = 5
 const RESULT_ADVANCE: i32 = 6
 
 const CURSOR_HAND: i32 = 0
-const CURSOR_WARDS: i32 = 1
+const CURSOR_TABLE_CARDS: i32 = 1
 const FAN_CLOSED: i32 = -1
 const UI_SNAPSHOT_SCHEMA: string = "duel-flow-v4"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
@@ -259,7 +259,7 @@ return {
     result_finish_reveal = RESULT_FINISH_REVEAL,
     result_advance = RESULT_ADVANCE,
     cursor_hand = CURSOR_HAND,
-    cursor_table_cards = CURSOR_WARDS,
+    cursor_table_cards = CURSOR_TABLE_CARDS,
     modal_none = MODAL_NONE,
     modal_history = MODAL_HISTORY,
     modal_help = MODAL_HELP,

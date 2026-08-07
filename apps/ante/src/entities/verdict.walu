@@ -40,7 +40,7 @@ end
 
 function title_of(run: run_module.View): string
     if run.outcome == run_module.outcome_lost_vault then return "THE RUN ENDS" end
-    if run.outcome == run_module.outcome_lost_ante then return "THE RUN ENDS" end
+    if run.outcome == run_module.outcome_lost_target then return "THE RUN ENDS" end
     if run.outcome == run_module.outcome_won then return "THE DUEL IS DONE" end
     return "DUEL " .. tostring(run.duel) .. " IS YOURS"
 end
@@ -51,7 +51,7 @@ function subtitle_of(run: run_module.View): string
             .. ". YOUR GOLD IS LOST"
     end
     -- The duel opened and the player still could not afford to leave it.
-    if run.outcome == run_module.outcome_lost_ante then
+    if run.outcome == run_module.outcome_lost_target then
         return "DUEL " .. tostring(run.duel) .. " WON, BUT THE GOLD TARGET WAS MISSED"
     end
     if run.outcome == run_module.outcome_won then
@@ -96,7 +96,7 @@ function tally(state: game.View, run: run_module.View): entity.Node
             "DUELS WON", HEADLINE_INK, tostring(run.cleared), FIGURE_INK,
             HEADLINE_SIZE, FIGURE_SIZE)
     end
-    if run.outcome == run_module.outcome_lost_ante then
+    if run.outcome == run_module.outcome_lost_target then
         return ledger("GOLD HELD", state.player_points, "TARGET", run.target)
     end
     if run.outcome == run_module.outcome_won then
