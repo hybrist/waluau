@@ -1,0 +1,20 @@
+-- A fail test: this file must NOT compile. `or` supplies a default for a
+-- nullable left operand, and only nil takes the fallback. For every other
+-- inner type that reads the same as Lua's truthiness `or`, because Lua has no
+-- other falsy value a `T?` can hold. `bool?` is the exception: Lua would fall
+-- through on a present `false` and this rule would not, so a reader cannot
+-- tell which one a `bool?` left operand means. `stored == true` already spells
+-- "set and true" -- see nullable_or_default.walu.
+-- conformance: error=whether a present 'false' takes the fallback is ambiguous
+-- conformance: error=Write 'flag == true' for set-and-true
+
+function maybe_flag(present: bool, value: bool): bool?
+    if present then
+        return value
+    end
+    return nil
+end
+
+local stored: bool? = maybe_flag(true, false)
+local enabled: bool = stored or true
+assert(enabled == false)

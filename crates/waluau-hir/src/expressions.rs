@@ -1614,6 +1614,42 @@ fn infer_expr_inner(
                 Ok(Type::Bool)
             }
             BinaryOp::And | BinaryOp::Or => {
+                if matches!(op, BinaryOp::Or) {
+                    // `a or b` where `a: T?` supplies a default rather than
+                    // testing truthiness. Probe the left operand without an
+                    // expectation so a nullable does not collapse to bool.
+                    let probe = infer_expr(left, vars, fn_signatures, active_type_params, None)
+                        .map(first_of_multi)
+                        .ok();
+                    if let Some(nullable_ty @ Type::Nullable(_)) = probe {
+                        let inner = nullable_ty
+                            .nullable_inner()
+                            .expect("matched Type::Nullable");
+                        reject_ambiguous_nullable_or(&inner)?;
+                        let fallback_ty = nullable_or_fallback_type(
+                            right,
+                            &nullable_ty,
+                            &inner,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                        );
+                        infer_expr(
+                            right,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(fallback_ty.clone()),
+                        )
+                        .map_err(|_| {
+                            Diagnostic::new(format!(
+                                "the fallback of 'or' must be {inner} or {nullable_ty} \
+                                 to match the nullable left operand"
+                            ))
+                        })?;
+                        return coerce_type(fallback_ty, expected);
+                    }
+                }
                 let left_ty = infer_expr(
                     left,
                     vars,
@@ -1818,6 +1854,47 @@ pub(super) fn first_of_multi(ty: Type) -> Type {
     match ty {
         Type::Multi(mut parts) if !parts.is_empty() => parts.remove(0),
         other => other,
+    }
+}
+
+/// `bool?` is the one nullable type whose inner values include the value a
+/// reader expects `or` to fall through on. `flag or true` cannot be read
+/// without knowing whether the rule is Lua's truthiness or this one, so it is
+/// rejected rather than silently resolved either way. `flag == true` already
+/// means "set and true", which is what most of these call sites want.
+pub(super) fn reject_ambiguous_nullable_or(inner: &Type) -> Result<(), Diagnostic> {
+    if *inner == Type::Bool {
+        return Err(Diagnostic::new(
+            "'or' does not apply to a bool? left operand: whether a present \
+             'false' takes the fallback is ambiguous. Write 'flag == true' for \
+             set-and-true, or compare against nil explicitly",
+        ));
+    }
+    Ok(())
+}
+
+/// The type the fallback of `a or b` is checked against, given that `a` has
+/// type `T?` (`nullable_ty`) with inner type `T`.
+///
+/// A plain `T` fallback makes the whole expression `T` -- that is the point of
+/// the rule. A fallback that is itself nullable keeps the result `T?` so
+/// `a or b or c` chains; the fallback's own type has to decide which, because
+/// a `T?` fallback does not satisfy an expected `T` and checking against `T`
+/// first would report a mismatch instead of chaining.
+fn nullable_or_fallback_type(
+    fallback: &Expr,
+    nullable_ty: &Type,
+    inner: &Type,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Type {
+    let probe = infer_expr(fallback, vars, fn_signatures, active_type_params, None)
+        .map(first_of_multi)
+        .ok();
+    match probe {
+        Some(Type::Nullable(_) | Type::Nil) => nullable_ty.clone(),
+        _ => inner.clone(),
     }
 }
 
