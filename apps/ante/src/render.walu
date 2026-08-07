@@ -458,24 +458,21 @@ function hit_table_card(viewport: layout.State, at: Point): i32
     return -1
 end
 
--- The rectangles the last painted frame put its type-sized controls in. Where
--- a capsule or the help caption ends up is a measurement — of a string,
--- against whichever font has actually loaded — so the pointer answers from
--- what was drawn rather than from a second description of it. A control the
--- frame did not draw keeps the empty rectangle, which no point is inside, so
--- it is not there to click either.
-type Targets = { help: box.Rect, commit: box.Rect, pass: box.Rect }
+-- The rectangles the last painted frame put its type-sized controls in. A
+-- control the frame did not draw keeps the empty rectangle, which no point is
+-- inside, so it is not there to click either.
+type Targets = { commit: box.Rect, pass: box.Rect }
 
 function nowhere(): box.Rect
     return entity.rect(0.0, 0.0, -1.0, -1.0)
 end
 
 local targets: Targets = {
-    help = nowhere(), commit = nowhere(), pass = nowhere(),
+    commit = nowhere(), pass = nowhere(),
 }
 
 function clear_targets(): unit
-    targets = { help = nowhere(), commit = nowhere(), pass = nowhere() }
+    targets = { commit = nowhere(), pass = nowhere() }
 end
 
 function hit_commit(at: Point): bool
@@ -484,10 +481,6 @@ end
 
 function hit_pass(at: Point): bool
     return entity.contains(targets.pass, at.x, at.y)
-end
-
-function hit_help(at: Point): bool
-    return entity.contains(targets.help, at.x, at.y)
 end
 
 -- ---------------------------------------------------------------------------
@@ -908,7 +901,6 @@ function draw_footer(surface: entity.Surface, viewport: layout.State, state: gam
     local strip: entity.Node = footer.node(state)
     local bounds: box.Rect = footer_band(metrics, strip, viewport)
     strip.paint(surface, bounds)
-    targets.help = footer.help_rect(metrics, state, bounds)
 end
 
 function draw_deck(surface: entity.Surface, viewport: layout.State, count: i32): unit
@@ -1467,7 +1459,6 @@ return {
     hit_table_card = hit_table_card,
     hit_commit = hit_commit,
     hit_pass = hit_pass,
-    hit_help = hit_help,
     -- The board anchor, face-mode, and easing vocabulary Anim records use.
     -- Declared once here so choreography builds animations against the same
     -- ids this module interprets, instead of mirroring the integers.
