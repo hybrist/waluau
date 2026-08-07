@@ -118,7 +118,7 @@ function prepare(state: State, graphics: engine.Graphics): unit
     if shader_diagnostics.warnings ~= state.shader_warnings then
         state.shader_warnings = shader_diagnostics.warnings
         if #state.shader_warnings > 0 then
-            print("target: optional shader warning: " .. state.shader_warnings)
+            print("ante: optional shader warning: " .. state.shader_warnings)
         end
     end
     if not state.image_finished and state.image_source.handle ~= 0 then
@@ -174,7 +174,7 @@ function play_flip(state: State): unit
         return
     end
     if not audio.play(state.flip_sound, false, FLIP_SOUND_VOLUME) then
-        print("target: the audio host refused to start decoded sound playback")
+        print("ante: the audio host refused to start decoded sound playback")
     end
 end
 
