@@ -172,3 +172,121 @@ describe("type-sized entities", function(): unit
         expect(wide.preferred_width > short.preferred_width):toBe(true)
     end)
 end)
+
+-- The modifiers. A modified entity answers the same two questions as the one it
+-- wraps, so what is asserted here is what layout above it will read. Where the
+-- content lands inside a padded box is a paint-time question, and paint needs a
+-- surface, so that is covered by the browser suite rather than here.
+describe("modifiers", function(): unit
+    it("grows an entity by the room around it", function(): unit
+        local padded: box.Intrinsic =
+            blank(40.0, 20.0):padded(4.0, 3.0).measure(metrics())
+
+        expect(padded.preferred_width):toBe(48.0)
+        expect(padded.preferred_height):toBe(26.0)
+        expect(padded.min_width):toBe(48.0)
+        expect(padded.min_height):toBe(26.0)
+    end)
+
+    it("carries a line's baseline down with its padding", function(): unit
+        local line: entity.Node = label.left("AB", 10.0, "#ffffff")
+        expect(line.measure(metrics()).baseline):toBe(10.0)
+
+        local boxed: box.Intrinsic =
+            line:padding(entity.edges(2.0, 3.0, 4.0, 5.0)).measure(metrics())
+
+        -- Down by the top inset only, and wider by both horizontal insets.
+        expect(boxed.baseline):toBe(13.0)
+        expect(boxed.preferred_width):toBe(21.0)
+        expect(boxed.preferred_height):toBe(18.0)
+    end)
+
+    it("leaves an entity with no baseline without one", function(): unit
+        local padded: box.Intrinsic =
+            blank(10.0, 10.0):padded(4.0, 4.0).measure(metrics())
+        expect(padded.baseline):toBe(-1.0)
+    end)
+
+    it("holds a floor under a width without shrinking a wider entity", function(): unit
+        local floored: box.Intrinsic = blank(40.0, 20.0):min_width(90.0).measure(metrics())
+        expect(floored.preferred_width):toBe(90.0)
+        expect(floored.min_width):toBe(90.0)
+        -- The floor is a floor, not a size: height is untouched.
+        expect(floored.preferred_height):toBe(20.0)
+
+        local already: box.Intrinsic = blank(120.0, 20.0):min_width(90.0).measure(metrics())
+        expect(already.preferred_width):toBe(120.0)
+    end)
+
+    it("lines a table's columns up whatever its cells measure", function(): unit
+        -- This is the guarantee the breach ledger's columns rest on: two cells
+        -- holding type of very different widths start the next column in the
+        -- same place.
+        local narrow: entity.Node = label.left("A", 13.0, "#ffffff"):min_width(120.0)
+        local broad: entity.Node =
+            label.left("ROBBERS +12", 13.0, "#ffffff"):min_width(120.0)
+
+        expect(broad.measure(metrics()).preferred_width)
+            :toBe(narrow.measure(metrics()).preferred_width)
+    end)
+
+    it("holds a floor under a height", function(): unit
+        local floored: box.Intrinsic = blank(40.0, 20.0):min_height(50.0).measure(metrics())
+        expect(floored.preferred_height):toBe(50.0)
+        expect(floored.preferred_width):toBe(40.0)
+    end)
+
+    it("chains", function(): unit
+        local stacked: box.Intrinsic =
+            blank(40.0, 20.0):padded(5.0, 5.0):min_width(100.0).measure(metrics())
+        expect(stacked.preferred_width):toBe(100.0)
+        expect(stacked.preferred_height):toBe(30.0)
+    end)
+end)
+
+describe("named flow options", function(): unit
+    it("stacks children down a column", function(): unit
+        local size: box.Intrinsic = entity.down(
+            { gap = 6.0 }, { blank(40.0, 20.0), blank(60.0, 30.0) }
+        ).measure(metrics())
+
+        expect(size.preferred_width):toBe(60.0)
+        expect(size.preferred_height):toBe(56.0)
+    end)
+
+    it("lays children across a row", function(): unit
+        local size: box.Intrinsic = entity.across(
+            { gap = 10.0 }, { blank(40.0, 20.0), blank(60.0, 30.0) }
+        ).measure(metrics())
+
+        expect(size.preferred_width):toBe(110.0)
+        expect(size.preferred_height):toBe(30.0)
+    end)
+
+    it("means the same thing as the style it names", function(): unit
+        local children: {entity.Node} = { blank(40.0, 20.0), blank(60.0, 30.0) }
+        local named: box.Intrinsic = entity.across(
+            { gap = 10.0, justify = box.justify_center, align = box.align_end },
+            children).measure(metrics())
+        local spelled: box.Intrinsic = entity.flow(
+            children,
+            entity.row(10.0, box.justify_center, box.align_end)).measure(metrics())
+
+        expect(named.preferred_width):toBe(spelled.preferred_width)
+        expect(named.preferred_height):toBe(spelled.preferred_height)
+    end)
+
+    it("takes options it is not given as they come", function(): unit
+        -- Only the gap is named, so the row keeps a start justify and a start
+        -- align, which is what an unnamed option means.
+        local children: {entity.Node} = { blank(40.0, 20.0), blank(60.0, 30.0) }
+        local rects: {box.Rect} = entity.place(
+            metrics(), children, entity.row(0.0, box.justify_start, box.align_start),
+            entity.rect(0.0, 0.0, 200.0, 40.0))
+        local defaulted: box.Intrinsic =
+            entity.across({ gap = 0.0 }, children).measure(metrics())
+
+        expect(rects[0].x):toBe(0.0)
+        expect(defaulted.preferred_width):toBe(100.0)
+    end)
+end)

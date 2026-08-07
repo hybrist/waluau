@@ -54,10 +54,10 @@ function marker_ink(run: run_module.View): string
 end
 
 function title_block(run: run_module.View): entity.Node
-    return entity.flow({
+    return entity.down({ gap = STACK_GAP }, {
         label.left("ANTE MAGIC", TITLE_SIZE, TITLE_INK),
         label.left(marker_text(run), CAPTION_SIZE, marker_ink(run)),
-    }, entity.column(STACK_GAP, box.justify_start, box.align_start))
+    })
 end
 
 -- The mana on hand against the ante it owes, and the one glance that says
@@ -66,22 +66,25 @@ end
 function mana_block(state: game.View, run: run_module.View): entity.Node
     local tone: string = MANA_INK
     if state.player_points < run.ante then tone = SHORT_INK end
-    return entity.flow({
+    return entity.down({ gap = STACK_GAP, align = box.align_end }, {
         label.right(tostring(state.player_points), TITLE_SIZE, tone),
         label.right(
             "MANA   ANTE " .. tostring(run.ante), CAPTION_SIZE, CAPTION_INK),
-    }, entity.column(STACK_GAP, box.justify_start, box.align_end))
+    })
 end
 
 -- The orbs sit on the caption's bottom edge rather than the middle of the
 -- band, which is what keeps the tally reading as part of the header line
 -- instead of floating between the two rows of type.
 function node(state: game.View, run: run_module.View): entity.Node
-    return entity.flow({
+    return entity.across({
+        justify = box.justify_space_between,
+        align = box.align_end,
+    }, {
         title_block(run),
         orb_track.node(state),
         mana_block(state, run),
-    }, entity.row(0.0, box.justify_space_between, box.align_end))
+    })
 end
 
 return {
