@@ -208,6 +208,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
 | `box_layout.walu` | DOM-free intrinsic box layout: rows, columns, gaps, padding, alignment, flex, and paint-order hit testing. |
 | `entity.walu` | The boundary every visible thing shares: measure yourself, draw yourself into this rectangle, compose into flows. |
+| `entity_story.walu` | The entity-story boundary: load the presentation surface and place one entity at the centre of a flex stage, preserving its intrinsic and grow/shrink layout. |
 | `entities/` | One file per thing on the board — see the entity table below. |
 | `ink.walu` | The drawing vocabulary entities share: type, panels, school colours, and the one fade a screen is taken down by. |
 | `easing.walu` | The four curves the board moves on. |
@@ -230,6 +231,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
 | `entity.test.walu` | Headless assertions for the boundary: flow measurement, solved rectangles, bands, and the type-sized entities. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |
+| `hand.stories.walu` | Storybook controls for the live hand-fan entity across card counts, selections, and focus positions. |
 | `box_layout.stories.walu` | Storybook stories for the layout solver itself, on synthetic leaves. |
 | `.storybook/main.js` | Storybook configuration: the story glob and the compiler options stories are built with. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
@@ -333,13 +335,19 @@ The deployed game carries its storybook with it, at `/storybook`:
 Vercel build runs it after the game's own `vite build` so one deployment serves
 both.
 
-The relic's states — face up, sealed, bound, focused, watched, mid-turn, one per
-school, and in the fan — are stories in
-[`src/card.stories.walu`](src/card.stories.walu), drawn by the same
-`render.walu` the board draws them with and loading the same packaged card back,
-font, and school shaders. Looking at one is therefore looking at the game's own
-presentation, not a mock of it. `@waluau/storybook` is the framework; see its
-README for how a story file is written.
+Every Ante story supplies an `entity.Node` to
+[`src/entity_story.walu`](src/entity_story.walu). The adapter loads the
+same presentation surface as the game and makes the Storybook canvas a centred
+flex stage. It does not author the subject's rectangle: the entity's intrinsic
+measurement and grow/shrink factors decide how it uses the available canvas.
+
+The relic's states — face up, sealed, selected, focused, watched, mid-turn, one
+per color, and in the fan — therefore render the real card, card-row, and
+hand-fan entities from [`src/card.stories.walu`](src/card.stories.walu) and
+[`src/hand.stories.walu`](src/hand.stories.walu), with the same packaged card
+back, font, and color shaders as the board. Looking at one is looking at the
+game's presentation, not a mock of it. `@waluau/storybook` is the framework;
+see its README for the host-side story declaration contract.
 
 ## Building
 
