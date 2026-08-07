@@ -4,6 +4,8 @@
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
 local layout = require("./box_layout")
+local entity = require("./entity")
+local entity_story = require("./entity_story")
 
 const WIDTH: u32 = 820
 const HEIGHT: u32 = 500
@@ -11,6 +13,7 @@ const BACKGROUND: string = "#09090b"
 const ROOT_KEY: i32 = 9000
 const LABEL_KEY: i32 = 1000
 const BUTTON_KEY: i32 = 2000
+local book = entity_story.new()
 
 local COLORS: {string} = {
     "#38bdf8",
@@ -137,7 +140,7 @@ function row_leaf(index: i32): layout.Tree
     return layout.flex(layout.leaf(index, intrinsic), 1.0 + ((index % 3)::f64), 1.0)
 end
 
-function draw_intrinsic_row(graphics: engine.Graphics, alpha: f64): unit
+function draw_intrinsic_row(graphics: engine.Graphics): unit
     local count: i32 = storybook.arg_i32("count")
     local children: {layout.Tree} = {}
     for index = 0::i32, count - 1 do
@@ -200,7 +203,7 @@ function menu_button(index: i32, padding_x: f64, padding_y: f64): layout.Tree
     )
 end
 
-function draw_nested_menu(graphics: engine.Graphics, alpha: f64): unit
+function draw_nested_menu(graphics: engine.Graphics): unit
     local count: i32 = storybook.arg_i32("count")
     local padding_x: f64 = storybook.arg_i32("padding_x")::f64
     local padding_y: f64 = storybook.arg_i32("padding_y")::f64
@@ -239,7 +242,7 @@ function draw_nested_menu(graphics: engine.Graphics, alpha: f64): unit
     )
 end
 
-function draw_flex_pressure(graphics: engine.Graphics, alpha: f64): unit
+function draw_flex_pressure(graphics: engine.Graphics): unit
     local first: layout.Tree = layout.leaf(0, measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
     layout.flex(first, storybook.arg_i32("grow_a")::f64, 1.0)
     local second: layout.Tree = layout.leaf(1, measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
@@ -275,11 +278,54 @@ function draw_flex_pressure(graphics: engine.Graphics, alpha: f64): unit
     )
 end
 
+-- Even the layout laboratory enters Storybook as an entity. Its fixed canvas
+-- is intentional: the controls vary the solver's available rectangle inside
+-- that canvas, while the outer Storybook stage still measures and centres the
+-- laboratory like every game entity.
+function laboratory(draw: (engine.Graphics) -> unit): entity.Node
+    return entity.sized(
+        WIDTH::f64,
+        HEIGHT::f64,
+        function(surface: entity.Surface, bounds: layout.Rect): unit
+            local graphics = surface.graphics
+            graphics:push()
+            graphics:translate(bounds.x, bounds.y)
+            draw(graphics)
+            graphics:pop()
+        end
+    )
+end
+
+function intrinsic_row(): entity.Node
+    return laboratory(draw_intrinsic_row)
+end
+
+function nested_menu(): entity.Node
+    return laboratory(draw_nested_menu)
+end
+
+function flex_pressure(): entity.Node
+    return laboratory(draw_flex_pressure)
+end
+
+function scene(node: () -> entity.Node): storybook.Scene
+    return entity_story.scene(
+        book,
+        {
+            node = node,
+            width = WIDTH::f64,
+            height = HEIGHT::f64,
+            scale = 1.0,
+            background = BACKGROUND
+        }
+    )
+end
+
 storybook.publish(
     {
         storybook.story(
             "Intrinsic row",
-            { draw = draw_intrinsic_row, width = WIDTH, height = HEIGHT, background = BACKGROUND },
+            scene(intrinsic_row),
             {
                 storybook.range("count", 5, 1, 8, 1),
                 storybook.range("width", 600, 180, 760, 10),
@@ -292,7 +338,7 @@ storybook.publish(
         ),
         storybook.story(
             "Nested menu",
-            { draw = draw_nested_menu, width = WIDTH, height = HEIGHT, background = BACKGROUND },
+            scene(nested_menu),
             {
                 storybook.range("count", 4, 1, 6, 1),
                 storybook.range("width", 430, 180, 720, 10),
@@ -305,7 +351,7 @@ storybook.publish(
         ),
         storybook.story(
             "Flex pressure",
-            { draw = draw_flex_pressure, width = WIDTH, height = HEIGHT, background = BACKGROUND },
+            scene(flex_pressure),
             {
                 storybook.range("width", 420, 100, 760, 10),
                 storybook.range("gap", 16, -40, 64, 2),

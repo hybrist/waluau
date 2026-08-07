@@ -2,22 +2,23 @@
 -- rank, a color, and four flags — sealed, selected, focused, watched — and the
 -- combinations are what these stories pin down, one per state, without having
 -- to deal a duel that happens to produce them.
-
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
+local box = require("./box_layout")
 local game = require("./game")
 local render = require("./render")
 local entity = require("./entity")
+local entity_story = require("./entity_story")
 local ink = require("./ink")
 local card_entity = require("./entities/card")
+local card_row = require("./entities/card_row")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
-local presentation_resources = require("./presentation_resources")
 
 const WIDTH = 420.0
 const HEIGHT = 280.0
-const SCHOOLS_WIDTH = 560.0
+const COLORS_WIDTH = 560.0
 const BACKGROUND = "#0b0b12"
 
 -- Every story here draws under the same kind of uniform viewport scale the
@@ -29,86 +30,41 @@ const BACKGROUND = "#0b0b12"
 -- render target can have.
 const STAGE_SCALE = 1.2
 
-local function staged(draw: (engine.Graphics, f64) -> unit): (engine.Graphics, f64) -> unit
-    return function(graphics: engine.Graphics, alpha: f64): unit
-        graphics:push()
-        graphics:scale(STAGE_SCALE, STAGE_SCALE)
-        draw(graphics, alpha)
-        graphics:pop()
-    end
-end
-
-local function staged_size(size: f64): u32
-    return (size * STAGE_SCALE)::u32
-end
-
 -- The card back, the display font, and the color shaders every story here
 -- draws with. One set is loaded for the whole file: Storybook moves between
 -- these stories constantly, and the assets do not change between them.
-local assets = presentation_resources.new()
+local book = entity_story.new()
 -- Loading is asynchronous and happens once, however many times a story is
 -- mounted. The clock is a story's own and restarts with it.
-local shared = { started = false, clock = 0.0 }
-
-local function load_assets(): i32
-    return presentation_resources.load_async(assets)
-end
+local shared = { clock = 0.0 }
 
 local function load(): unit
     shared.clock = 0.0
-    if shared.started then return end
-    shared.started = true
-    local loader = coroutine.create(load_assets)
-    coroutine.resume(loader)
 end
 
 local function tick(dt: f64, input: engine.Input): unit
     shared.clock += dt
 end
 
--- Decoded images and fonts become GPU resources on the frame after they
--- arrive, so every story asks for that before it draws anything, and takes
--- back the same surface the game draws its entities on.
-local function ready(graphics: engine.Graphics): entity.Surface
-    presentation_resources.prepare(assets, graphics)
-    return presentation_resources.surface(assets, graphics)
-end
-
 local function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
 end
 
-local function centered_x(width: f64): f64
-    return (width - card_entity.width) * 0.5
-end
-
-local function centered_y(): f64
-    return (HEIGHT - card_entity.height) * 0.5
-end
-
 -- Every flag of the board's card renderer, named once so a story reads as the
 -- state it is showing rather than as five booleans.
-local function draw_state(
-    graphics: engine.Graphics,
+local function state(
     subject: game.Card,
     selected: bool,
     focused: bool,
     hidden: bool,
     colored: bool,
     known: bool
-): unit
-    local surface = ready(graphics)
-    card_entity.draw_at(
-        surface,
-        card_entity.look(subject, selected, focused, hidden, colored, known),
-        centered_x(WIDTH),
-        centered_y()
-    )
+): entity.Node
+    return card_entity.node(card_entity.look(subject, selected, focused, hidden, colored, known))
 end
 
-local function draw_face_up(graphics: engine.Graphics, alpha: f64): unit
-    draw_state(
-        graphics,
+local function face_up(): entity.Node
+    return state(
         card(storybook.arg_i32("rank"), storybook.arg_i32("suit")),
         false,
         false,
@@ -118,64 +74,55 @@ local function draw_face_up(graphics: engine.Graphics, alpha: f64): unit
     )
 end
 
-local function draw_face_down(graphics: engine.Graphics, alpha: f64): unit
-    draw_state(graphics, card(13, 0), false, false, true, false, false)
+local function face_down(): entity.Node
+    return state(card(13, 0), false, false, true, false, false)
 end
 
 -- Selected: the card is committed to the hand being built. It lifts, takes
 -- its color's edge, and runs that color's pattern.
-local function draw_bound(graphics: engine.Graphics, alpha: f64): unit
-    draw_state(graphics, card(14, 1), true, false, false, false, false)
+local function selected(): entity.Node
+    return state(card(14, 1), true, false, false, false, false)
 end
 
 -- Focused is where the cursor is, which is amber and independent of binding.
-local function draw_focused(graphics: engine.Graphics, alpha: f64): unit
-    draw_state(graphics, card(7, 3), false, true, false, false, false)
+local function focused(): entity.Node
+    return state(card(7, 3), false, true, false, false, false)
 end
 
 -- A contributing card in a finished hand, in full color.
-local function draw_contributing(graphics: engine.Graphics, alpha: f64): unit
-    draw_state(graphics, card(12, 2), false, false, false, true, false)
+local function contributing(): entity.Node
+    return state(card(12, 2), false, false, false, true, false)
 end
 
 -- Watched: the Opponent has seen this card. Sealed and watched at once is
 -- the state the player reads through the back.
-local function draw_watched(graphics: engine.Graphics, alpha: f64): unit
-    draw_state(graphics, card(10, 2), false, false, true, false, true)
+local function watched(): entity.Node
+    return state(card(10, 2), false, false, true, false, true)
 end
 
 -- The four colors side by side, in the colored state that makes each one's
 -- pattern legible. Nothing else on the board shows them together.
-local function draw_colors(graphics: engine.Graphics, alpha: f64): unit
-    local surface = ready(graphics)
+local function colors(): entity.Node
     const GAP = 12.0
-    local span = card_entity.width * 4.0 + GAP * 3.0
-    local x = (SCHOOLS_WIDTH - span) * 0.5
+    local cards: {entity.Node} = {}
     for suit = 0::i32, 3::i32 do
-        card_entity.draw_at(
-            surface,
-            card_entity.look(card(11 + suit, suit), false, false, false, true, false),
-            x + (suit::f64) * (card_entity.width + GAP),
-            centered_y()
-        )
+        table.insert(cards, state(card(11 + suit, suit), false, false, false, true, false))
     end
+    return card_row.node(cards, card_entity.width + GAP)
 end
 
 -- The turn itself, looping: the same flip the board plays when a card is
 -- revealed, off a clock this story owns.
 const FLIP_PERIOD = 1.7
 
-local function draw_turning(graphics: engine.Graphics, alpha: f64): unit
-    local surface = ready(graphics)
-    local clock = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
-    render.draw_flipping_card(
-        surface,
-        card(14, 0),
-        centered_x(WIDTH),
-        centered_y(),
-        clock,
-        0.35,
-        false
+local function turning(): entity.Node
+    return entity.sized(
+        card_entity.width,
+        card_entity.height,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local clock = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
+            render.draw_flipping_card(surface, card(14, 0), bounds.x, bounds.y, clock, 0.35, false)
+        end
     )
 end
 
@@ -209,12 +156,7 @@ local sheet: {
     back: graphics_module.RenderTarget?,
     face: graphics_module.RenderTarget?,
     captured: bool
-} = {
-    mesh = card_warp.new_mesh(DRAW_COLUMNS, DRAW_ROWS),
-    back = nil,
-    face = nil,
-    captured = false
-}
+} = { mesh = card_warp.new_mesh(DRAW_COLUMNS, DRAW_ROWS), back = nil, face = nil, captured = false }
 
 local function drawn_card(): game.Card
     return card(DRAWN_RANK, DRAWN_SUIT)
@@ -222,15 +164,25 @@ end
 
 -- Both faces of the card, captured once. Until the packaged card back has
 -- arrived there is nothing worth capturing, so this simply waits.
-local function capture(graphics: engine.Graphics): bool
-    if sheet.captured then return true end
-    local surface = presentation_resources.surface(assets, graphics)
-    if assets.texture == nil then return false end
+local function capture(surface: entity.Surface): bool
+    if sheet.captured then
+        return true
+    end
+    local card_back: graphics_module.Texture? = surface.card_back
+    if card_back == nil then
+        return false
+    end
     local back = card_entity.capture(
-        surface, card_entity.look(drawn_card(), false, false, true, false, false))
+        surface,
+        card_entity.look(drawn_card(), false, false, true, false, false)
+    )
     local face = card_entity.capture(
-        surface, card_entity.look(drawn_card(), false, false, false, false, false))
-    if back == nil or face == nil then return false end
+        surface,
+        card_entity.look(drawn_card(), false, false, false, false, false)
+    )
+    if back == nil or face == nil then
+        return false
+    end
     sheet.back = back
     sheet.face = face
     sheet.captured = true
@@ -245,10 +197,13 @@ local function draw_pose(
 ): unit
     card_warp.build(sheet.mesh, pose)
     local target = sheet.back
-    if face_up then target = sheet.face end
-    if target == nil then return end
-    local texture: graphics_module.Texture = graphics:texture_from_render_target(
-        target)
+    if face_up then
+        target = sheet.face
+    end
+    if target == nil then
+        return
+    end
+    local texture: graphics_module.Texture = graphics:texture_from_render_target(target)
     -- Seen from behind, a card's face reads the wrong way round unless its
     -- source region is taken right to left.
     local source_x = 0.0
@@ -274,12 +229,28 @@ end
 
 -- The stack the card comes out of. A pull needs something to be pulled from,
 -- and the thinning silhouette is the same one the board's draw pile uses.
-local function draw_deck(graphics: engine.Graphics): unit
-    local surface = presentation_resources.surface(assets, graphics)
+local function draw_deck(surface: entity.Surface): unit
+    local graphics = surface.graphics
     local x = DECK_X - card_entity.width * 0.5
     local y = DECK_Y - card_entity.height * 0.5
-    ink.panel(graphics, x + 6.0, y + 6.0, card_entity.width, card_entity.height, "#17171c", "#3f3f46")
-    ink.panel(graphics, x + 3.0, y + 3.0, card_entity.width, card_entity.height, "#17171c", "#3f3f46")
+    ink.panel(
+        graphics,
+        x + 6.0,
+        y + 6.0,
+        card_entity.width,
+        card_entity.height,
+        "#17171c",
+        "#3f3f46"
+    )
+    ink.panel(
+        graphics,
+        x + 3.0,
+        y + 3.0,
+        card_entity.width,
+        card_entity.height,
+        "#17171c",
+        "#3f3f46"
+    )
     ink.panel(graphics, x, y, card_entity.width, card_entity.height, "#17171c", "#52525b")
     card_entity.draw_back(surface, x, y, false)
 end
@@ -288,7 +259,9 @@ end
 -- arrives with the catch, which is the moment the card stops being thrown and
 -- starts being held.
 local function draw_hold(graphics: engine.Graphics, pose: card_warp.Pose, strength: f64): unit
-    if strength <= 0.0 then return end
+    if strength <= 0.0 then
+        return
+    end
     -- Enough rings, faint enough, that the falloff is a glow rather than the
     -- set of circles it is made of.
     graphics:set_blend_mode("add")
@@ -329,10 +302,8 @@ end
 local function card_clock(index: i32, count: i32): f64
     local stagger = stagger_seconds()
     if storybook.arg_i32("playback") == 1 then
-        local scrubbed = ((count - 1)::f64) * stagger
-            + card_draw.land_end + SCRUB_TAIL
-        return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0
-            - (index::f64) * stagger
+        local scrubbed = ((count - 1)::f64) * stagger + card_draw.land_end + SCRUB_TAIL
+        return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0 - (index::f64) * stagger
     end
     local rate = playback_rate()
     local stagger_real = stagger / rate
@@ -341,7 +312,9 @@ local function card_clock(index: i32, count: i32): f64
     local total = ((count - 1)::f64) * stagger_real + throw_real + hover
     local looped = shared.clock - math.floor(shared.clock / total) * total
     local elapsed = looped - (index::f64) * stagger_real
-    if elapsed < throw_real then return elapsed * rate end
+    if elapsed < throw_real then
+        return elapsed * rate
+    end
     return card_draw.land_end + (elapsed - throw_real)
 end
 
@@ -352,7 +325,9 @@ end
 -- edges touching and negative is a row that overlaps like a loose hand.
 local function drawing(index: i32, count: i32): card_draw.Draw
     local filled = index
-    if storybook.arg_i32("order") == 1 then filled = count - 1 - index end
+    if storybook.arg_i32("order") == 1 then
+        filled = count - 1 - index
+    end
     local spacing = card_entity.width + (storybook.arg_i32("gap")::f64)
     local slot = ((filled::f64) - ((count - 1)::f64) * 0.5) * spacing
     return {
@@ -369,117 +344,154 @@ local function drawing(index: i32, count: i32): card_draw.Draw
     }
 end
 
-local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
-    ready(graphics)
-    draw_deck(graphics)
-    if not capture(graphics) then return end
-    local count = storybook.arg_i32("count")
-    for index = 0, count - 1 do
-        local clock = card_clock(index, count)
-        if clock >= 0.0 then
-            local draw = drawing(index, count)
+local function drawing_cards(): entity.Node
+    return entity.sized(
+        DRAW_WIDTH,
+        DRAW_HEIGHT,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local graphics = surface.graphics
+            graphics:push()
+            graphics:translate(bounds.x, bounds.y)
+            draw_deck(surface)
+            if capture(surface) then
+                local count = storybook.arg_i32("count")
+                for index = 0, count - 1 do
+                    local clock = card_clock(index, count)
+                    if clock >= 0.0 then
+                        local draw = drawing(index, count)
 
-            -- The heart of the flight is the only stretch fast enough to
-            -- leave anything behind it, and the ghosts are earlier states of
-            -- the same sheet rather than smears of the last frame — a
-            -- stretched card trailing an unstretched copy of itself is what
-            -- gives the deformation away.
-            if card_draw.trails(clock) then
-                -- The offsets are frames of real time behind the card, so a
-                -- faster playback spaces the same ghosts further apart in
-                -- animation time — which is exactly how a faster throw would
-                -- leave longer trails.
-                local offsets = card_draw.ghost_offsets()
-                for ghost = 0, #offsets - 1 do
-                    local past = clock - offsets[ghost] * playback_rate()
-                    if card_draw.ghost_visible(past) then
-                        draw_pose(
-                            graphics,
-                            card_draw.pose_at(draw, past),
-                            card_draw.shows_face(draw, past),
-                            0.16 + 0.1 * (ghost::f64)
-                        )
+                        -- The heart of the flight is the only stretch fast enough to
+                        -- leave anything behind it, and the ghosts are earlier states of
+                        -- the same sheet rather than smears of the last frame — a
+                        -- stretched card trailing an unstretched copy of itself is what
+                        -- gives the deformation away.
+                        if card_draw.trails(clock) then
+                            -- The offsets are frames of real time behind the card, so a
+                            -- faster playback spaces the same ghosts further apart in
+                            -- animation time — which is exactly how a faster throw would
+                            -- leave longer trails.
+                            local offsets = card_draw.ghost_offsets()
+                            for ghost = 0, #offsets - 1 do
+                                local past = clock - offsets[ghost] * playback_rate()
+                                if card_draw.ghost_visible(past) then
+                                    draw_pose(
+                                        graphics,
+                                        card_draw.pose_at(draw, past),
+                                        card_draw.shows_face(draw, past),
+                                        0.16 + 0.1 * (ghost::f64)
+                                    )
+                                end
+                            end
+                        end
+
+                        local pose = card_draw.pose_at(draw, clock)
+                        local hold = 0.0
+                        if clock >= card_draw.flight_end then
+                            hold = 1.0
+                        end
+                        draw_hold(graphics, pose, hold)
+                        draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
                     end
                 end
             end
-
-            local pose = card_draw.pose_at(draw, clock)
-            local hold = 0.0
-            if clock >= card_draw.flight_end then hold = 1.0 end
-            draw_hold(graphics, pose, hold)
-            draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
+            graphics:pop()
         end
-    end
+    )
 end
 
--- A card story is one card on one small canvas; only the fan needs the board's
--- own geometry, because that is the space its slots are laid out in.
-local function card_scene(draw: (engine.Graphics, f64) -> unit): storybook.Scene
-    return {
-        draw = staged(draw),
-        load = load,
-        update = tick,
-        width = staged_size(WIDTH),
-        height = staged_size(HEIGHT),
-        background = BACKGROUND
+-- A card story is one card entity on a small flex stage. The stage does not
+-- know a card's dimensions; it reads them from the entity on every frame.
+local function card_scene(node: () -> entity.Node): storybook.Scene
+    return entity_story.scene(
+        book,
+        {
+            node = node,
+            load = load,
+            update = tick,
+            width = WIDTH,
+            height = HEIGHT,
+            scale = STAGE_SCALE,
+            background = BACKGROUND
+        }
+    )
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Face up",
+            card_scene(face_up),
+            {
+                storybook.select("suit", 0, {"Red", "Blue", "Black", "Green"}),
+                storybook.range("rank", 13, 2, 14, 1)
+            }
+        ),
+        storybook.story("Face down", card_scene(face_down)),
+        storybook.story("Selected", card_scene(selected)),
+        storybook.story("Focused", card_scene(focused)),
+        storybook.story("Contributing", card_scene(contributing)),
+        storybook.story("Watched", card_scene(watched)),
+        storybook.story("Turning over", card_scene(turning)),
+        storybook.story(
+            "Every color",
+            entity_story.scene(
+                book,
+                {
+                    node = colors,
+                    load = load,
+                    update = tick,
+                    width = COLORS_WIDTH,
+                    height = HEIGHT,
+                    scale = STAGE_SCALE,
+                    background = BACKGROUND
+                }
+            )
+        ),
+        storybook.story(
+            "Drawn from the deck",
+            entity_story.scene(
+                book,
+                {
+                    node = drawing_cards,
+                    load = load,
+                    update = tick,
+                    width = DRAW_WIDTH,
+                    height = DRAW_HEIGHT,
+                    scale = STAGE_SCALE,
+                    background = BACKGROUND
+                }
+            ),
+            {
+                storybook.select("playback", 0, {"Loop", "Scrub"}),
+                storybook.range("phase", 0, 0, 100, 1),
+                -- How fast the throw plays, in hundredths of the authored clock.
+                -- The hover is untouched; only the draw itself quickens.
+                storybook.range("speed", 130, 25, 300, 5),
+                -- How many cards the deck gives up, into a row that keeps its
+                -- centre however many there are.
+                storybook.range("count", 3, 1, 5, 1),
+                -- Which end of the row the deal fills first.
+                storybook.select("order", 0, {"Left first", "Right first"}),
+                -- The daylight between neighbouring landed cards, in logical pixels.
+                -- Zero is edges touching; negative overlaps the row.
+                storybook.range("gap", -5, -60, 40, 1),
+                -- The pause between one card leaving and the next, in hundredths of
+                -- a second of the animation's clock. Small values overlap the
+                -- throws; past the length of a whole throw the deal turns single
+                -- file.
+                storybook.range("stagger", 15, 0, 100, 5),
+                -- The one number that decides whether this reads as a card with
+                -- weight or as a rubber toy.
+                storybook.range("stretch", 160, 100, 200, 1),
+                -- How far past its spot the throw carries the card, in hundredths of
+                -- the whole journey. Zero pulls up exactly on the mark.
+                storybook.range("overshoot", 30, 0, 40, 1),
+                -- The top of the arc, in logical pixels of depth toward the viewer.
+                storybook.range("rise", 270, 0, 400, 10),
+                -- When that top comes. The options are card_draw's arc shapes, in
+                -- the same order it declares them.
+                storybook.select("arc", 2, {"Even", "Late", "Very late", "Early"})
+            }
+        )
     }
-end
-
-storybook.publish({
-    storybook.story("Face up", card_scene(draw_face_up), {
-        storybook.select("suit", 0, { "Red", "Blue", "Black", "Green" }),
-        storybook.range("rank", 13, 2, 14, 1),
-    }),
-    storybook.story("Face down", card_scene(draw_face_down)),
-    storybook.story("Selected", card_scene(draw_bound)),
-    storybook.story("Focused", card_scene(draw_focused)),
-    storybook.story("Contributing", card_scene(draw_contributing)),
-    storybook.story("Watched", card_scene(draw_watched)),
-    storybook.story("Turning over", card_scene(draw_turning)),
-    storybook.story("Every color", {
-        draw = staged(draw_colors),
-        load = load,
-        update = tick,
-        width = staged_size(SCHOOLS_WIDTH),
-        height = staged_size(HEIGHT),
-        background = BACKGROUND
-    }),
-    storybook.story("Drawn from the deck", {
-        draw = staged(draw_drawing),
-        load = load,
-        update = tick,
-        width = staged_size(DRAW_WIDTH),
-        height = staged_size(DRAW_HEIGHT),
-        background = BACKGROUND
-    }, {
-        storybook.select("playback", 0, { "Loop", "Scrub" }),
-        storybook.range("phase", 0, 0, 100, 1),
-        -- How fast the throw plays, in hundredths of the authored clock.
-        -- The hover is untouched; only the draw itself quickens.
-        storybook.range("speed", 130, 25, 300, 5),
-        -- How many cards the deck gives up, into a row that keeps its
-        -- centre however many there are.
-        storybook.range("count", 3, 1, 5, 1),
-        -- Which end of the row the deal fills first.
-        storybook.select("order", 0, { "Left first", "Right first" }),
-        -- The daylight between neighbouring landed cards, in logical pixels.
-        -- Zero is edges touching; negative overlaps the row.
-        storybook.range("gap", -5, -60, 40, 1),
-        -- The pause between one card leaving and the next, in hundredths of
-        -- a second of the animation's clock. Small values overlap the
-        -- throws; past the length of a whole throw the deal turns single
-        -- file.
-        storybook.range("stagger", 15, 0, 100, 5),
-        -- The one number that decides whether this reads as a card with
-        -- weight or as a rubber toy.
-        storybook.range("stretch", 160, 100, 200, 1),
-        -- How far past its spot the throw carries the card, in hundredths of
-        -- the whole journey. Zero pulls up exactly on the mark.
-        storybook.range("overshoot", 30, 0, 40, 1),
-        -- The top of the arc, in logical pixels of depth toward the viewer.
-        storybook.range("rise", 270, 0, 400, 10),
-        -- When that top comes. The options are card_draw's arc shapes, in
-        -- the same order it declares them.
-        storybook.select("arc", 2, { "Even", "Late", "Very late", "Early" }),
-    }),
-})
+)

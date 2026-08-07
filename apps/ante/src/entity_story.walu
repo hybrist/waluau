@@ -1,0 +1,98 @@
+-- Ante's entity-story boundary. A story supplies one entity; this module owns the
+-- canvas, presentation resources, and the flex stage that places that entity.
+-- The stage authors no size for its child. It gives the entity the whole
+-- logical canvas as available space and lets the entity's intrinsic
+-- measurement plus grow/shrink factors decide the rectangle it receives.
+local engine = require("waluau:engine")
+local storybook = require("waluau:engine/storybook")
+local box = require("./box_layout")
+local entity = require("./entity")
+local presentation_resources = require("./presentation_resources")
+
+type Book = { assets: presentation_resources.State, started: bool }
+
+type Scene = {
+    node: () -> entity.Node,
+    width: f64,
+    height: f64,
+    scale: f64,
+    background: string,
+    load: (() -> unit)?,
+    update: ((f64, engine.Input) -> unit)?,
+    keypressed: ((string) -> unit)?,
+    keyreleased: ((string) -> unit)?,
+    mousepressed: ((f64, f64, i32) -> unit)?,
+    mousereleased: ((f64, f64, i32) -> unit)?,
+    mousemoved: ((f64, f64, f64, f64) -> unit)?
+}
+
+function new(): Book
+    return { assets = presentation_resources.new(), started = false }
+end
+
+function load_assets(book: Book): i32
+    return presentation_resources.load_async(book.assets)
+end
+
+function prepare(book: Book): unit
+    if book.started then
+        return
+    end
+    book.started = true
+    local loader: thread = coroutine.create(
+        function(): i32
+            return load_assets(book)
+        end
+    )
+    coroutine.resume(loader)
+end
+
+-- A one-child row is the story's flex container. With centre justification
+-- and alignment, unused room surrounds the subject. The direct child keeps
+-- its own flex factors, so available width is distributed through the same
+-- layout path the entity uses on the live board.
+function stage(node: entity.Node): entity.Node
+    return entity.across({ justify = box.justify_center, align = box.align_center }, {node})
+end
+
+function scene(book: Book, spec: Scene): storybook.Scene
+    assert(spec.width > 0.0 and spec.height > 0.0 and spec.scale > 0.0)
+
+    local function load(): unit
+        prepare(book)
+        local hook: (() -> unit)? = spec.load
+        if hook ~= nil then
+            hook()
+        end
+    end
+
+    local function draw(graphics: engine.Graphics, alpha: f64): unit
+        presentation_resources.prepare(book.assets, graphics)
+        local surface: entity.Surface = presentation_resources.surface(book.assets, graphics)
+        graphics:push()
+        graphics:scale(spec.scale, spec.scale)
+        stage(
+            spec.node()
+        ).paint(
+            surface,
+            entity.rect(0.0, 0.0, graphics.width / spec.scale, graphics.height / spec.scale)
+        )
+        graphics:pop()
+    end
+
+    return {
+        draw = draw,
+        load = load,
+        update = spec.update,
+        keypressed = spec.keypressed,
+        keyreleased = spec.keyreleased,
+        mousepressed = spec.mousepressed,
+        mousereleased = spec.mousereleased,
+        mousemoved = spec.mousemoved,
+        width = (spec.width * spec.scale)::u32,
+        height = (spec.height * spec.scale)::u32,
+        background = spec.background
+    }
+end
+
+return { new = new, stage = stage, scene = scene }
