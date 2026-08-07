@@ -1430,7 +1430,7 @@ function draw_audio_error(
     centered_line(
         surface, viewport, "REQUIRED SOUND EFFECT FAILED", top + 70.0, 21, "#fb7185")
     centered_line(
-        surface, viewport, "TARGET MAGIC HAS STOPPED", top + 113.0, 13, "#f8fafc")
+        surface, viewport, "ANTE MAGIC HAS STOPPED", top + 113.0, 13, "#f8fafc")
     ink.text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
     ink.text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
     ink.text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")

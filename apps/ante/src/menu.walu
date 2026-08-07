@@ -210,7 +210,7 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
         draw_spell_stage(state, viewport, graphics)
         return
     end
-    ink.text_centered(graphics, "TARGET MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
+    ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
     ink.text_centered(
         graphics, "DUEL AFTER DUEL ON ONE POOL OF GOLD. FIVE ROUNDS EACH",
         viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")

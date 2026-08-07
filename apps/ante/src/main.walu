@@ -1,4 +1,4 @@
--- Duel Magic hosted by the 2D engine. This entry module is intentionally an
+-- Ante Magic hosted by the 2D engine. This entry module is intentionally an
 -- adapter: it owns the engine session, the shared presentation resources, the
 -- city map every screen stands on, and which screen is live. The menu and the
 -- duel board each live behind their own screen module; neither knows the other
@@ -168,7 +168,7 @@ function install_ante_magic(): unit
     -- layout module derives everything from whatever size that turns out to
     -- be, frame by frame.
     local session: engine.Session? = engine.start({
-        title = "Duel Magic",
+        title = "Ante Magic",
         update_hz = 60.0,
         max_frame_seconds = 0.25,
         background = "#09090b",

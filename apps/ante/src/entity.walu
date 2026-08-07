@@ -1,4 +1,4 @@
--- The boundary every visible thing on Duel Magic's board shares. An entity
+-- The boundary every visible thing on Ante Magic's board shares. An entity
 -- answers two questions and nothing else: how large would you like to be, and
 -- draw yourself into this rectangle. It never reads a screen coordinate, a
 -- viewport scale, or where its neighbours ended up — the rectangle it is

@@ -55,7 +55,7 @@ end
 
 function title_block(run: run_module.View): entity.Node
     return entity.down({ gap = STACK_GAP }, {
-        label.left("DUEL MAGIC", TITLE_SIZE, TITLE_INK),
+        label.left("ANTE MAGIC", TITLE_SIZE, TITLE_INK),
         label.left(marker_text(run), CAPTION_SIZE, marker_ink(run)),
     })
 end
