@@ -1,0 +1,28 @@
+-- DOM-free checks for the four fixed positions of the ready-ability HUD.
+
+require("waluau:vitest")
+
+local game = require("./game")
+local entity = require("./entity")
+local ability_diamond = require("./entities/ability_diamond")
+
+describe("ability diamond", function(): unit
+    it("places loadout order at South, West, North, then East", function(): unit
+        expect(ability_diamond.slot_count):toBe(4)
+
+        expect(ability_diamond.slot_x(0)):toBe(ability_diamond.slot_x(2))
+        expect(ability_diamond.slot_y(0)):toBeGreaterThan(ability_diamond.slot_y(2))
+        expect(ability_diamond.slot_y(1)):toBe(ability_diamond.slot_y(3))
+        expect(ability_diamond.slot_x(1)):toBeLessThan(ability_diamond.slot_x(3))
+    end)
+
+    it("keeps all four sockets in the HUD with one carried spell", function(): unit
+        local state: game.State = game.new(
+            false, { game.new_spell(game.spell_firebolt) }, game.starting_gold)
+        local size = ability_diamond.node(game.view(state)).measure(entity.headless())
+
+        expect(size.preferred_width):toBe(ability_diamond.width)
+        expect(size.preferred_height):toBe(ability_diamond.height)
+        expect(ability_diamond.short_name(game.spell_firebolt)):toBe("FIRE")
+    end)
+end)

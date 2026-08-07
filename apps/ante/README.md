@@ -189,8 +189,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 - On-screen capsules commit a breach or feint or pass the feint; the commit
   capsule only lights up while the pending binds would be accepted.
 - A click advances or skips reveals and animations, closes the ledger and
-  help, enters the next vault from the verdict screen, and the footer's
-  "? HELP" opens help.
+  help, and enters the next vault from the verdict screen.
 
 | File | Purpose |
 | --- | --- |
@@ -278,7 +277,8 @@ frames the row will paint into.
 | `entities/pile.walu` | One of the three right-edge piles, face up on its last card. |
 | `entities/hud.walu` | The header band: the title block, the breach orbs, the mana on hand. |
 | `entities/orb_track.walu` | The five breaches of a vault as five orbs, and the three outcome colours. |
-| `entities/footer.walu` | The cast hints, the way back to the menu, and the help target. |
+| `entities/footer.walu` | The centred way back to the menu and the lower-right ability diamond. |
+| `entities/ability_diamond.walu` | Four ready-ability sockets in South, West, North, East face-button order. |
 | `entities/capsule.walu` | A clickable control, as wide as its own label. |
 | `entities/action_bar.walu` | The band that asks for a decision, and the hit test for the controls it asked with. |
 | `entities/label.walu` | A line of type that measures itself against the font that is loaded. |

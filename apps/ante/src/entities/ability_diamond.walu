@@ -1,0 +1,156 @@
+-- The player's ready abilities in the same diamond their face buttons make:
+-- the first ability at South, then West, North, and East. The keyboard still
+-- casts them with 1-4, so each circle carries its number while its position
+-- teaches the controller-shaped layout the game can grow into.
+--
+-- Every position is always present. A run that only carries its starting
+-- spell therefore reads as one ready ability and three empty sockets instead
+-- of a text hint whose width changes with the chosen spell.
+
+local game = require("../game")
+local spell_launch = require("../spell_launch")
+local box = require("../box_layout")
+local entity = require("../entity")
+local ink = require("../ink")
+
+const SLOT_COUNT: i32 = 4
+const WIDTH: f64 = 124.0
+const HEIGHT: f64 = 116.0
+-- Top-level constants are literal-only in the compiler, so these spell out
+-- the halves of WIDTH and HEIGHT rather than deriving them here.
+const CENTER_X: f64 = 62.0
+const CENTER_Y: f64 = 58.0
+const PITCH_X: f64 = 39.0
+const PITCH_Y: f64 = 37.0
+const SLOT_RADIUS: f64 = 20.0
+const SLOT_INSET: f64 = 3.0
+const KEY_RADIUS: f64 = 7.0
+const KEY_OFFSET: f64 = 14.0
+
+const KEY_SIZE: f64 = 7.0
+const NAME_SIZE: f64 = 7.0
+const COST_SIZE: f64 = 6.0
+
+const SLOT_FILL: string = "#17171c"
+const EMPTY_EDGE: string = "#3f3f46"
+const EMPTY_INK: string = "#52525b"
+const SPENT_EDGE: string = "#52525b"
+const SPENT_INK: string = "#8a8a92"
+const KEY_FILL: string = "#09090b"
+const KEY_INK: string = "#e4e4e7"
+const CONNECTOR_INK: string = "#27272a"
+
+-- Loadout order follows the comfortable face-button order: primary at South,
+-- then West, North, and East. Keeping this mapping here makes the visual
+-- arrangement independent from the order it happens to be painted in.
+function slot_x(slot: i32): f64
+    if slot == 1 then return CENTER_X - PITCH_X end
+    if slot == 3 then return CENTER_X + PITCH_X end
+    return CENTER_X
+end
+
+function slot_y(slot: i32): f64
+    if slot == 0 then return CENTER_Y + PITCH_Y end
+    if slot == 2 then return CENTER_Y - PITCH_Y end
+    return CENTER_Y
+end
+
+function short_name(kind: i32): string
+    if kind == game.spell_firebolt then return "FIRE" end
+    if kind == game.spell_freeze_ray then return "FROST" end
+    if kind == game.spell_raise_card then return "RAISE" end
+    if kind == game.spell_clone then return "CLONE" end
+    return ""
+end
+
+function draw_connector(surface: entity.Surface, bounds: box.Rect): unit
+    local graphics = surface.graphics
+    graphics:set_color(CONNECTOR_INK)
+    graphics:set_line_width(2.0)
+    local north_x: f64 = bounds.x + slot_x(2)
+    local north_y: f64 = bounds.y + slot_y(2)
+    local west_x: f64 = bounds.x + slot_x(1)
+    local west_y: f64 = bounds.y + slot_y(1)
+    local south_x: f64 = bounds.x + slot_x(0)
+    local south_y: f64 = bounds.y + slot_y(0)
+    local east_x: f64 = bounds.x + slot_x(3)
+    local east_y: f64 = bounds.y + slot_y(3)
+    graphics:line(north_x, north_y, west_x, west_y)
+    graphics:line(west_x, west_y, south_x, south_y)
+    graphics:line(south_x, south_y, east_x, east_y)
+    graphics:line(east_x, east_y, north_x, north_y)
+end
+
+function draw_slot(
+    surface: entity.Surface, state: game.View, bounds: box.Rect, slot: i32
+): unit
+    local graphics = surface.graphics
+    local x: f64 = bounds.x + slot_x(slot)
+    local y: f64 = bounds.y + slot_y(slot)
+    local occupied: bool = slot < #state.spells
+    local edge: string = EMPTY_EDGE
+    local caption: string = EMPTY_INK
+    if occupied then
+        local spell: game.Spell = state.spells[slot]
+        edge = spell_launch.color(spell.kind)
+        caption = edge
+        if state.player_points < spell.cost then
+            edge = SPENT_EDGE
+            caption = SPENT_INK
+        end
+    end
+
+    -- A filled outer circle plus an inset circle gives a reliable ring with
+    -- the same WebGL2 primitives the rest of the HUD uses.
+    graphics:set_color(edge)
+    graphics:fill_circle(x, y, SLOT_RADIUS)
+    graphics:set_color(SLOT_FILL)
+    graphics:fill_circle(x, y, SLOT_RADIUS - SLOT_INSET)
+
+    if occupied then
+        local spell: game.Spell = state.spells[slot]
+        ink.text_centered(
+            graphics, short_name(spell.kind), x,
+            y + NAME_SIZE * 0.5 - 3.0, NAME_SIZE, caption)
+        ink.text_centered(
+            graphics, tostring(spell.cost) .. "G", x,
+            y + COST_SIZE + 7.0, COST_SIZE, caption)
+    else
+        ink.text_centered(
+            graphics, "+", x, y + NAME_SIZE * 0.5,
+            NAME_SIZE, EMPTY_INK)
+    end
+
+    -- The key badge overlaps the socket like a controller-button legend, so
+    -- the numeral stays legible without displacing the ability identity.
+    local key_x: f64 = x - KEY_OFFSET
+    local key_y: f64 = y - KEY_OFFSET
+    graphics:set_color(edge)
+    graphics:fill_circle(key_x, key_y, KEY_RADIUS)
+    graphics:set_color(KEY_FILL)
+    graphics:fill_circle(key_x, key_y, KEY_RADIUS - 1.5)
+    ink.text_centered(
+        graphics, tostring(slot + 1), key_x,
+        key_y + KEY_SIZE * 0.5, KEY_SIZE, KEY_INK)
+end
+
+function node(state: game.View): entity.Node
+    return entity.sized(
+        WIDTH, HEIGHT,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            draw_connector(surface, bounds)
+            for slot = 0::i32, SLOT_COUNT - 1 do
+                draw_slot(surface, state, bounds, slot)
+            end
+        end)
+end
+
+return {
+    node = node,
+    slot_x = slot_x,
+    slot_y = slot_y,
+    short_name = short_name,
+    slot_count = SLOT_COUNT,
+    width = WIDTH,
+    height = HEIGHT,
+}
