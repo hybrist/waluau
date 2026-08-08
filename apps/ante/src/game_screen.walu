@@ -638,12 +638,6 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         end
         return
     end
-    if render.hit_help(at) then
-        flow.gate(
-            ui, rules:is_finished(), false,
-            choreography.reveal_finished(state.presentation), flow.command_help)
-        return
-    end
     local hand: i32 = choreography.hit_hand(state.presentation, at)
     if hand >= 0 then
         ui.cursor_area = flow.cursor_hand

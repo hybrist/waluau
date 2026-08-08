@@ -1,104 +1,41 @@
--- The strip along the bottom of the duel: one cast hint per spell the player
--- carry, each on the key that casts it and in its own ink, greying out on its
--- own as the gold on hand stops covering its price; then the way back to the
--- menu, and the way into help.
---
--- The help caption is a click target as well as a caption, so it is a padded
--- box around its type rather than a bare line with a hand-written hit
--- rectangle beside it. The rectangle it is clicked in is the rectangle layout
--- gave it, which is the point of putting it here: the two cannot drift.
---
--- Every line in the strip shares one baseline. That is the row's own
--- alignment, not four y coordinates that happen to agree.
+-- The strip along the bottom of the duel: the way back to the menu stays
+-- centred while the player's four ready-ability sockets occupy the lower
+-- right. The diamond owns spell identity, affordability, and key hints; this
+-- strip only places it against the same board edge on every viewport.
 
 local game = require("../game")
-local spell_launch = require("../spell_launch")
 local box = require("../box_layout")
 local entity = require("../entity")
 local label = require("./label")
+local ability_diamond = require("./ability_diamond")
 
 const HINT_SIZE: f64 = 9.0
-const HELP_SIZE: f64 = 10.0
-const HINT_GAP: f64 = 22.0
--- The padding that turns a caption into something comfortable to hit.
-const TARGET_PAD_X: f64 = 8.0
-const TARGET_PAD_Y: f64 = 7.0
+const CAPTION_PAD_X: f64 = 8.0
+const CAPTION_PAD_Y: f64 = 7.0
 
 const QUIET_INK: string = "#8a8a92"
-const SPENT_INK: string = "#52525b"
 
--- Which child of the strip's outer row is which. The hit test and the paint
--- read the same solve, so these are the only two places a position is named.
-const SLOT_HINTS: i32 = 0
-const SLOT_HELP: i32 = 1
-
-function hint(state: game.View, slot: i32): entity.Node
-    local spell: game.Spell = state.spells[slot]
-    local ink: string = spell_launch.color(spell.kind)
-    if state.player_points < spell.cost then ink = SPENT_INK end
-    return label.left(
-        tostring(slot + 1) .. " " .. spell_launch.name(spell.kind)
-            .. " " .. tostring(spell.cost) .. " GOLD",
-        HINT_SIZE, ink)
-end
-
-function hints(state: game.View): entity.Node
-    local lines: {entity.Node} = {}
-    for slot = 0::i32, #state.spells - 1 do
-        table.insert(lines, hint(state, slot))
-    end
-    return entity.across({ gap = HINT_GAP, align = box.align_baseline }, lines)
-end
-
--- A caption inside a target: the padding is what makes the box worth clicking,
--- and it carries the type's baseline down with it so the whole strip still
--- reads as one line.
---
--- The caption is given the padded box whole, so where the line sits inside it
--- is the line's own alignment. That is why this no longer takes a justify: a
--- single child at its preferred size has nothing to be justified against, so
--- the argument never moved anything.
-function target(caption: entity.Node): entity.Node
-    return caption:padded(TARGET_PAD_X, TARGET_PAD_Y)
-end
-
-function help(): entity.Node
-    return target(label.right("? HELP", HELP_SIZE, QUIET_INK))
+-- Keep the keyboard reminder off the canvas edge and carry its baseline down
+-- with the padding so it remains stable inside the taller diamond band.
+function padded_caption(caption: entity.Node): entity.Node
+    return caption:padded(CAPTION_PAD_X, CAPTION_PAD_Y)
 end
 
 function menu(): entity.Node
-    return target(label.centered("M MENU", HINT_SIZE, QUIET_INK))
-end
-
-function outer_style(): box.Style
-    return entity.row(0.0, box.justify_space_between, box.align_baseline)
-end
-
-function outer(state: game.View): {entity.Node}
-    return { hints(state), help() }
+    return padded_caption(label.centered("M MENU", HINT_SIZE, QUIET_INK))
 end
 
 function node(state: game.View): entity.Node
     return entity.layer({
-        entity.flow(outer(state), outer_style()),
         entity.across(
-            { justify = box.justify_center, align = box.align_baseline },
+            { justify = box.justify_end, align = box.align_end },
+            { ability_diamond.node(state) }),
+        entity.across(
+            { justify = box.justify_center, align = box.align_end },
             { menu() }),
     })
 end
 
--- Where the help target actually landed, for the pointer. Solved from the same
--- entities against the same bounds the frame painted, so a click can only miss
--- what a player can see.
-function help_rect(
-    metrics: entity.Metrics, state: game.View, bounds: box.Rect
-): box.Rect
-    local rects: {box.Rect} = entity.place(
-        metrics, outer(state), outer_style(), bounds)
-    return rects[SLOT_HELP]
-end
-
 return {
     node = node,
-    help_rect = help_rect,
 }
