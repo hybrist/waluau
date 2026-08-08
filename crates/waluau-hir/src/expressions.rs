@@ -14,7 +14,7 @@ use super::builtins::{
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
-    require_bool_pair, require_numeric_cast, resolve_number_literal,
+    require_bool_pair, require_number_union_member, require_numeric_cast, resolve_number_literal,
 };
 use super::signatures::{
     FnSignature, OverloadVariant, call_arity_matches, generic_diagnostic, infer_generic_call,
@@ -155,6 +155,12 @@ fn unary_operator_method(op: &UnaryOp) -> Option<&'static str> {
 }
 
 fn overload_eligible_type(ty: &Type) -> bool {
+    // A nominal alias of a number literal union reads as its numeric
+    // representation in operator positions; failing to resolve an overload
+    // for it must fall through to numeric inference, not error.
+    if ty.number_literal_union().is_some() {
+        return false;
+    }
     match ty {
         Type::Opaque { .. } | Type::Extern | Type::ExternSubtype(_) => true,
         Type::Nullable(inner) => overload_eligible_type(inner),
@@ -536,7 +542,22 @@ fn infer_expr_inner(
             }
             Ok(Type::Bool)
         }
-        Expr::String(..) => coerce_type(Type::String, expected),
+        // A member literal is the only expression form that produces a string
+        // literal union value; anything else stays a plain `string` and lets
+        // coercion report the mismatch.
+        Expr::String(value, _) => {
+            if let Some(expected_ty) = &expected {
+                let union_inner = match expected_ty {
+                    Type::Nullable(inner) => inner.string_literal_union(),
+                    other => other.string_literal_union(),
+                };
+                if let Some(members) = union_inner {
+                    require_string_union_member(value, members)?;
+                    return Ok(expected_ty.clone());
+                }
+            }
+            coerce_type(Type::String, expected)
+        }
         Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
         Expr::Vararg(..) => coerce_type(Type::Variadic(Box::new(Type::Unknown)), expected),
         Expr::Require(path, _) => Err(Diagnostic::new(format!(
@@ -587,6 +608,15 @@ fn infer_expr_inner(
         }
         Expr::Unary { op, expr, .. } => match op {
             UnaryOp::Neg => {
+                // A negated number literal names a union member by its
+                // negated value (`-1` in `-1 | 1`); the bare literal under
+                // the minus would otherwise be checked un-negated.
+                if let (Some(expected_ty), Expr::Number(literal, _)) = (&expected, expr.as_ref()) {
+                    if let Some(union) = expected_ty.number_literal_union() {
+                        require_number_union_member(literal, true, union)?;
+                        return Ok(expected_ty.clone());
+                    }
+                }
                 // A nullable numeric expectation (e.g. comparing against a
                 // `tonumber` result) applies to the negation's result; the
                 // operand itself is inferred against the inner numeric type.
@@ -615,8 +645,19 @@ fn infer_expr_inner(
                         "unary '-' is not defined for {actual}"
                     )));
                 }
+                // Negating a constrained numeric value yields a plain number;
+                // membership does not survive arithmetic.
+                if let Some(union) = actual.number_literal_union() {
+                    return coerce_type(Type::Numeric(union.numeric), expected);
+                }
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
+                    Type::NumberLiteralUnion(_) => {
+                        unreachable!("handled by number_literal_union above")
+                    }
+                    Type::StringLiteralUnion(_) => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
@@ -1790,7 +1831,7 @@ fn infer_expr_inner(
                             "== requires both enum operands to have the same nominal type",
                         ));
                     }
-                } else if left_ty.is_numeric() {
+                } else if left_ty.is_numeric() || left_ty.number_literal_union().is_some() {
                     let _ = infer_numeric_common_type(
                         left,
                         right,
@@ -1799,7 +1840,39 @@ fn infer_expr_inner(
                         active_type_params,
                         None,
                     )?;
+                } else if left_ty.string_literal_union().is_some() {
+                    // The right side must be a member literal or a value of a
+                    // compatible union; plain strings never compare against a
+                    // string literal union.
+                    let right_ty = first_of_multi(infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(left_ty.clone()),
+                    )?);
+                    let _ = coerce_type(right_ty, Some(left_ty))?;
                 } else if left_ty == Type::String {
+                    // `"red" == color` puts the member literal on the left;
+                    // probe the right side so the literal is re-checked
+                    // against the union instead of demanding a plain string.
+                    let right_probe =
+                        infer_expr(right, vars, fn_signatures, active_type_params, None)
+                            .map(first_of_multi)
+                            .ok();
+                    if let (Some(union_ty), Expr::String(..)) = (
+                        right_probe.filter(|ty| ty.string_literal_union().is_some()),
+                        left.as_ref(),
+                    ) {
+                        let _ = infer_expr(
+                            left,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(union_ty),
+                        )?;
+                        return Ok(Type::Bool);
+                    }
                     let right_ty = infer_expr(
                         right,
                         vars,
@@ -1859,6 +1932,17 @@ fn infer_expr_inner(
                 Ok(Type::Bool)
             }
         },
+    }
+}
+
+fn require_string_union_member(value: &str, members: &[String]) -> Result<(), Diagnostic> {
+    if members.iter().any(|member| member == value) {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(format!(
+            "\"{value}\" is not a member of {}",
+            Type::StringLiteralUnion(members.to_vec())
+        )))
     }
 }
 

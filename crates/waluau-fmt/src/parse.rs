@@ -1051,6 +1051,23 @@ impl Parser {
             }
             return Ok(Self::tree(SyntaxKind::PrimitiveType, c));
         }
+        // Literal union members: a string literal, a number literal, or a
+        // negated number literal in type position.
+        if matches!(self.peek(), Some(TokenKind::Str(_) | TokenKind::Number(_))) {
+            let mut c = Vec::new();
+            self.bump(&mut c);
+            return Ok(Self::tree(SyntaxKind::LiteralType, c));
+        }
+        if self.at(&TokenKind::Minus) {
+            let mut c = Vec::new();
+            self.bump(&mut c); // `-`
+            self.expect(
+                &TokenKind::Number(String::new()),
+                &mut c,
+                "expected a number literal after '-' in type position",
+            )?;
+            return Ok(Self::tree(SyntaxKind::LiteralType, c));
+        }
         if self.at(&ident()) {
             // Tagged variant `Tag(T)`.
             if self.at_n(1, &TokenKind::LParen) {

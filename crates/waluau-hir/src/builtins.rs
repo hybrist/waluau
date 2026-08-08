@@ -524,6 +524,10 @@ pub(super) fn infer_tostring_builtin_call(
 /// and nullable/unknown values dispatch at runtime.
 fn tostring_supported_type(ty: &Type) -> bool {
     ty.is_numeric()
+        // Literal union values stringify by their runtime representation:
+        // the member string, or the member number.
+        || ty.string_literal_union().is_some()
+        || ty.number_literal_union().is_some()
         || matches!(
             ty,
             Type::Bool

@@ -1737,7 +1737,9 @@ impl Rewriter<'_> {
             | Type::Nil
             | Type::TypeParam(_)
             | Type::TypedArray(_)
-            | Type::Thread => {}
+            | Type::Thread
+            | Type::StringLiteralUnion(_)
+            | Type::NumberLiteralUnion(_) => {}
         }
     }
 

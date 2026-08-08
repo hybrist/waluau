@@ -1,0 +1,5 @@
+-- conformance: error=cannot implicitly convert string to CardColor
+type CardColor = "red" | "black"
+
+local name: string = "red"
+local color: CardColor = (name :: CardColor)

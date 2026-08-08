@@ -169,6 +169,58 @@ pub struct TaggedVariant {
     pub payload: Box<Type>,
 }
 
+/// One value of a number literal union. Integer members keep their exact
+/// value; float members store the f64 bit pattern so the type can stay
+/// `Eq`/`Hash` while comparing member values exactly.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NumberUnionMember {
+    Int(i64),
+    FloatBits(u64),
+}
+
+impl NumberUnionMember {
+    pub fn float(value: f64) -> Self {
+        Self::FloatBits(value.to_bits())
+    }
+}
+
+impl std::fmt::Display for NumberUnionMember {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(value) => write!(f, "{value}"),
+            Self::FloatBits(bits) => write!(f, "{:?}", f64::from_bits(*bits)),
+        }
+    }
+}
+
+/// A numeric type constrained to a closed set of literal values
+/// (`type Volume = 0 | 1 | 2`). Members are homogeneous: all integers or all
+/// floats, never mixed. A value reads as its underlying numeric type, but only
+/// member literals (or an explicit cast from the underlying type) produce one.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct NumberLiteralUnion {
+    pub numeric: NumericType,
+    pub members: Vec<NumberUnionMember>,
+}
+
+impl NumberLiteralUnion {
+    pub fn contains(&self, member: NumberUnionMember) -> bool {
+        self.members.contains(&member)
+    }
+}
+
+impl std::fmt::Display for NumberLiteralUnion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (index, member) in self.members.iter().enumerate() {
+            if index > 0 {
+                write!(f, " | ")?;
+            }
+            write!(f, "{member}")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MethodCallOrigin {
     /// The original receiver expression from the method call
@@ -278,6 +330,15 @@ pub enum Type {
     Nullable(Box<Type>),
     TaggedVariant(TaggedVariant),
     TaggedUnion(Vec<TaggedVariant>),
+    /// A closed set of string constants (`type CardColor = "red" | "black"`).
+    /// Semantically an enum whose spelling happens to be string literals:
+    /// values exist only where a member literal meets the union type, and the
+    /// type never converts to or from plain `string`, even with a cast. The
+    /// runtime representation is the member string itself.
+    StringLiteralUnion(Vec<String>),
+    /// A constrained numeric alias (`type Volume = 0 | 1 | 2`); see
+    /// [`NumberLiteralUnion`].
+    NumberLiteralUnion(NumberLiteralUnion),
     Named {
         name: String,
         type_args: Vec<Type>,
@@ -363,6 +424,27 @@ impl Type {
     /// wrap/unwrap the box.
     pub fn is_boxed_nullable(&self) -> bool {
         matches!(self, Self::Nullable(inner) if matches!(**inner, Self::Numeric(_) | Self::Bool))
+    }
+
+    /// The string literal union this type represents, seen through nominal
+    /// alias wrappers (`type CardColor = "red" | "black"` resolves to an
+    /// `Opaque` around the union).
+    pub fn string_literal_union(&self) -> Option<&[String]> {
+        match self {
+            Self::StringLiteralUnion(members) => Some(members),
+            Self::Opaque { ty, .. } => ty.string_literal_union(),
+            _ => None,
+        }
+    }
+
+    /// The number literal union this type represents, seen through nominal
+    /// alias wrappers.
+    pub fn number_literal_union(&self) -> Option<&NumberLiteralUnion> {
+        match self {
+            Self::NumberLiteralUnion(union) => Some(union),
+            Self::Opaque { ty, .. } => ty.number_literal_union(),
+            _ => None,
+        }
     }
 
     pub fn tagged_variant(&self, tag: &str) -> Option<TaggedVariant> {
@@ -476,6 +558,16 @@ impl std::fmt::Display for Type {
                 }
                 Ok(())
             }
+            Self::StringLiteralUnion(members) => {
+                for (index, member) in members.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "\"{member}\"")?;
+                }
+                Ok(())
+            }
+            Self::NumberLiteralUnion(union) => union.fmt(f),
             Self::Named { name, type_args } => {
                 f.write_str(name)?;
                 if !type_args.is_empty() {
@@ -764,6 +856,29 @@ impl Expr {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NumberLiteral {
     pub raw: String,
+}
+
+impl NumberLiteral {
+    /// The literal's value when written in integer form (decimal or hex,
+    /// no fraction or exponent). `None` for float-form or malformed literals.
+    pub fn int_value(&self) -> Option<i128> {
+        let raw = self.raw.replace('_', "");
+        if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+            return u128::from_str_radix(hex, 16)
+                .ok()
+                .map(|value| value as i128);
+        }
+        raw.parse::<i128>().ok()
+    }
+
+    /// The literal's value as an f64. `None` for malformed literals.
+    pub fn float_value(&self) -> Option<f64> {
+        let raw = self.raw.replace('_', "");
+        if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+            return u128::from_str_radix(hex, 16).ok().map(|value| value as f64);
+        }
+        raw.parse::<f64>().ok()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

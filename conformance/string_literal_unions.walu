@@ -1,0 +1,38 @@
+type CardColor = "red" | "black"
+
+function flip(color: CardColor): CardColor
+    if color == "red" then
+        return "black"
+    end
+    return "red"
+end
+
+function describe(side: "left" | "right"): i32
+    if side == "left" then
+        return 1
+    end
+    return 2
+end
+
+local color: CardColor = "red"
+assert(color == "red")
+assert("red" == color)
+assert(color ~= "black")
+assert(flip(color) == "black")
+assert(flip("black") == "red")
+assert(tostring(color) == "red")
+
+local maybe: CardColor? = nil
+assert(maybe == nil)
+maybe = "black"
+assert(maybe ~= nil)
+
+local colors: {CardColor} = {"red", "black", "red"}
+assert(#colors == 3)
+assert(colors[1] == "black")
+
+assert(describe("left") == 1)
+assert(describe("right") == 2)
+
+local picked: CardColor = if color == "red" then "black" else "red"
+assert(picked == "black")

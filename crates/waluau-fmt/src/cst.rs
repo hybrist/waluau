@@ -92,6 +92,9 @@ pub enum SyntaxKind {
     TaggedUnionType,
     ParenType,
     PrimitiveType,
+    /// A string or number literal in type position (`"red"`, `0`, `-1`),
+    /// including the member atoms of literal unions.
+    LiteralType,
 }
 
 /// A comment attached to a token as leading or trailing trivia.
