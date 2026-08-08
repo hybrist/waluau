@@ -285,6 +285,21 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Nullable(actual_inner) if actual_inner == expected_inner => {
                 Ok(Type::Nullable(expected_inner))
             }
+            // Same-name nominal aliases identify regardless of how deep the
+            // resolver expanded each side — a recursion-edge anchor
+            // (`Opaque { ty: Unknown }`) and the full alias share a runtime
+            // representation, so the nullable wrapper follows the name.
+            Type::Nullable(ref actual_inner)
+                if matches!(
+                    (actual_inner.as_ref(), expected_inner.as_ref()),
+                    (
+                        Type::Opaque { name: actual_name, .. },
+                        Type::Opaque { name: expected_name, .. },
+                    ) if actual_name == expected_name
+                ) =>
+            {
+                Ok(Type::Nullable(expected_inner))
+            }
             other if is_extern_subtype_of(&other, &expected_inner) => {
                 Ok(Type::Nullable(expected_inner))
             }
