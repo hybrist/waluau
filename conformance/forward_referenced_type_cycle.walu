@@ -1,0 +1,3 @@
+-- conformance: error=cyclic type declaration
+type First = Second?
+type Second = First?

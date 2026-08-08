@@ -1039,6 +1039,12 @@ fn is_nullable_inner_type(ty: &Type) -> bool {
         Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => true,
         Type::Opaque { ty, .. } => {
             matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
+                // The finite opaque anchor at a guarded recursion edge
+                // (`type Child = { parent: Parent? }` back into a record
+                // being resolved) stands for the full record alias, which is
+                // nullable; the anchor's `unknown` interior is not the same
+                // as a bare `unknown?`.
+                || ty.as_ref() == &Type::Unknown
                 || is_nullable_inner_type(ty)
         }
         _ => false,
@@ -1269,8 +1275,8 @@ fn resolve_type_refs_allowing_forward_refs(
                     "non-generic type declaration '{name}' does not accept type arguments"
                 )));
             }
-            // For forward references, return the current opaque type from cache
-            // But first check if this is a direct self-reference in the resolution stack
+            // Check whether this is a reference back into the declaration
+            // currently being resolved before consulting the cache.
             if stack.iter().any(|entry| entry == name) {
                 if guarded {
                     // Rust's owned Type tree cannot contain a literal cycle.
@@ -1294,13 +1300,24 @@ fn resolve_type_refs_allowing_forward_refs(
                 )));
             }
 
-            Ok(opaque_cache
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| Type::Opaque {
-                    name: name.to_string(),
-                    ty: Box::new(Type::Unit),
-                }))
+            if let Some(resolved) = opaque_cache.get(name) {
+                return Ok(resolved.clone());
+            }
+            // A reference to a declaration that has not been resolved yet —
+            // usually one that appears later in the file. Resolve it on
+            // demand (memoized through `opaque_cache`) so declaration order
+            // never decides what a name means; baking a placeholder here
+            // instead used to leave stale `Opaque { ty: Unit }` anchors
+            // inside every earlier declaration that mentioned a later one.
+            let resolved = resolve_decl_type_allowing_forward_refs(
+                name,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+            )?;
+            opaque_cache.insert(name.to_string(), resolved.clone());
+            Ok(resolved)
         }
         Type::Opaque { name, ty } => Ok(Type::Opaque {
             name: name.clone(),
@@ -1452,20 +1469,16 @@ fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
         }
     }
 
-    // Initialize opaque cache with all declared types to enable forward references
+    // Resolve every declaration, in declaration order but following
+    // references on demand: a declaration that mentions a later one resolves
+    // that one first (memoized through `opaque_cache`), so the cache never
+    // holds a placeholder and declaration order never changes what a name
+    // means. Recursion through a record/array boundary still terminates at a
+    // guarded opaque anchor; unguarded reference cycles are reported.
     let mut opaque_cache = HashMap::new();
-    for name in raw_opaque.keys() {
-        let placeholder = Type::Opaque {
-            name: name.clone(),
-            ty: Box::new(Type::Unit), // Will be replaced
-        };
-        opaque_cache.insert(name.clone(), placeholder);
-    }
-
-    // Resolve all types allowing forward references
     let mut stack = Vec::new();
     for decl in &program.type_declarations {
-        if decl.type_params.is_empty() {
+        if decl.type_params.is_empty() && !opaque_cache.contains_key(&decl.name) {
             let resolved_ty = resolve_decl_type_allowing_forward_refs(
                 &decl.name,
                 &raw_opaque,

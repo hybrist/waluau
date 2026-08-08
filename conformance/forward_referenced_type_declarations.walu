@@ -1,0 +1,44 @@
+-- Declaration order must not change what a type name means: a declaration may
+-- reference an alias, enum, or literal union that appears later in the file.
+
+type Beat = { index: BeatIndex, part: f64 }
+type BeatIndex = "flight" | "land"
+
+function beat_at(clock: f64): Beat
+    if clock < 1.0 then
+        return { index = "flight", part = clock }
+    end
+    return { index = "land", part = clock - 1.0 }
+end
+
+assert(beat_at(0.5).index == "flight")
+assert(beat_at(1.5).index == "land")
+
+type Wrap = { color: CardColor }
+enum CardColor { red, black }
+
+local wrapped: Wrap = { color = CardColor.red }
+assert(wrapped.color == CardColor.red)
+assert((wrapped.color::i32) == 0)
+
+type Outer = { middle: Middle }
+type Middle = { kind: Kind }
+type Kind = "on" | "off"
+
+local outer: Outer = { middle = { kind = "on" } }
+assert(outer.middle.kind == "on")
+
+-- Mutual recursion through a record boundary: Parent forward-references Child,
+-- and Child's back-reference resolves to a nominal anchor that coerces to the
+-- full Parent by name.
+type Parent = { children: {Child} }
+type Child = { name: string, parent: Parent? }
+
+local child: Child = { name = "leaf", parent = nil }
+local parent: Parent = { children = {child} }
+assert(#parent.children == 1)
+assert(parent.children[0].name == "leaf")
+-- The back edge exists and null-checks. Writing a non-nil value through the
+-- recursion anchor is still a lowering gap (the anchored field erases to
+-- `unknown?`), the same limit self-recursive aliases have.
+assert(child.parent == nil)

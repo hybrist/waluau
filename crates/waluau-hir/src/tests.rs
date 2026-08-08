@@ -4250,3 +4250,89 @@ fn nullable_literal_union_takes_member_literals() {
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("type check should succeed");
 }
+
+#[test]
+fn type_declarations_resolve_independently_of_declaration_order() {
+    // A record may reference an alias declared after it; the reference must
+    // resolve to the real type, not a stale placeholder anchor.
+    let union_after_use = r#"
+        type Beat = { index: BeatIndex, part: f64 }
+        type BeatIndex = "flight" | "land"
+
+        function entry(clock: f64): bool
+            local beat: Beat = { index = "flight", part = clock }
+            return beat.index == "flight"
+        end
+    "#;
+    let program = parse(union_after_use).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+
+    let enum_after_use = r#"
+        type Wrap = { color: CardColor }
+        enum CardColor { red, black }
+
+        function entry(): bool
+            local wrapped: Wrap = { color = CardColor.red }
+            return wrapped.color == CardColor.red
+        end
+    "#;
+    let program = parse(enum_after_use).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+
+    // A chain of forward references resolves all the way down.
+    let chain = r#"
+        type Outer = { middle: Middle }
+        type Middle = { kind: Kind }
+        type Kind = "on" | "off"
+
+        function entry(): bool
+            local outer: Outer = { middle = { kind = "on" } }
+            return outer.middle.kind == "on"
+        end
+    "#;
+    let program = parse(chain).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn mutually_recursive_records_resolve_in_either_declaration_order() {
+    for source in [
+        r#"
+        type Parent = { children: {Child} }
+        type Child = { parent: Parent? }
+
+        function entry(): i32
+            local parent: Parent = { children = {} }
+            return #parent.children
+        end
+        "#,
+        r#"
+        type Child = { parent: Parent? }
+        type Parent = { children: {Child} }
+
+        function entry(): i32
+            local parent: Parent = { children = {} }
+            return #parent.children
+        end
+        "#,
+    ] {
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+}
+
+#[test]
+fn unguarded_forward_reference_cycle_is_rejected() {
+    // A cycle with no record/array boundary has no finite anchor; resolving
+    // on demand must report it rather than silently accepting a placeholder.
+    let source = r#"
+        type First = Second?
+        type Second = First?
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error.to_string().contains("cyclic type declaration"),
+        "{error}"
+    );
+}
