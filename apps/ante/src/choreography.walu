@@ -11,12 +11,14 @@ local snapshot_data = require("./snapshot")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
 
+type AnimKind = "none" | "deal" | "swap" | "firebolt-replace"
+
 type State = {
     fan_parts: {f64},
     anims: {render.Anim},
     anim_clock: f64,
     anim_total: f64,
-    anim_kind: i32,
+    anim_kind: AnimKind,
     reveal_clock: f64,
     -- Whether this reveal has a losing pair to burn at all. A stalemate leaves
     -- both pairs standing, so the ash emitters stay shut rather than shedding
@@ -46,20 +48,16 @@ type State = {
 type Interaction = {
     hand_focus: i32,
     table_card_cursor: i32,
-    cursor_area: i32,
+    cursor_area: "hand" | "table-cards",
     play_picks: {i32},
     swap_hand: {i32},
     swap_table_cards: {i32},
-    modal: i32,
+    modal: "none" | "history" | "help" | "final",
     revealing: bool,
     casting: bool,
     cast_slot: i32
 }
 
-const ANIM_NONE: i32 = 0
-const ANIM_DEAL: i32 = 1
-const ANIM_SWAP: i32 = 2
-const ANIM_FIREBOLT_REPLACE: i32 = 3
 
 const FAN_EASE_RESPONSE: f64 = 14.0
 const FAN_EASE_SNAP: f64 = 0.001
@@ -107,7 +105,7 @@ function new(): State
         anims = {},
         anim_clock = 0.0,
         anim_total = 0.0,
-        anim_kind = ANIM_NONE,
+        anim_kind = "none",
         reveal_clock = 0.0,
         reveal_burns = false,
         power_kind = 0,
@@ -122,7 +120,7 @@ function new(): State
     }
 end
 
-function begin_anims(state: State, anims: {render.Anim}, total: f64, kind: i32): unit
+function begin_anims(state: State, anims: {render.Anim}, total: f64, kind: AnimKind): unit
     state.anims = anims
     state.anim_clock = 0.0
     state.anim_total = total
@@ -133,11 +131,11 @@ function skip(state: State): unit
     state.anims = {}
     state.anim_clock = 0.0
     state.anim_total = 0.0
-    state.anim_kind = ANIM_NONE
+    state.anim_kind = "none"
 end
 
 function is_animating(state: State): bool
-    return state.anim_kind ~= ANIM_NONE
+    return state.anim_kind ~= "none"
 end
 
 function reset(state: State): unit
@@ -231,7 +229,7 @@ end
 
 function firebolt_pending(state: State): bool
     return state.power_kind == game.spell_firebolt
-        or state.anim_kind == ANIM_FIREBOLT_REPLACE
+        or state.anim_kind == "firebolt-replace"
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -285,7 +283,7 @@ end
 -- cue crossed this frame. The engine adapter decides how the sound is played,
 -- but it no longer knows face modes or timing implementation.
 function update(state: State, dt: f64): i32
-    if state.anim_kind == ANIM_NONE then return 0 end
+    if state.anim_kind == "none" then return 0 end
     local previous: f64 = state.anim_clock
     state.anim_clock += dt
     local cues: i32 = 0
@@ -450,7 +448,7 @@ function firebolt_resolved(
         live_hand_count(state), render.faces_flip_up, 0.0)
     local ash_finish: f64 = push_ash_reappearance(layout.current(), anims, discarded, 0.0)
     if ash_finish > finish then finish = ash_finish end
-    begin_anims(state, anims, finish, ANIM_FIREBOLT_REPLACE)
+    begin_anims(state, anims, finish, "firebolt-replace")
 end
 
 function opening_deal(view: game.View, state: State): unit
@@ -469,7 +467,7 @@ function opening_deal(view: game.View, state: State): unit
         finish = push_deal(layout.current(), anims, view.middle[i], render.slot_middle, i, count, render.faces_flip_up, start)
         start += DEAL_STEP
     end
-    begin_anims(state, anims, finish, ANIM_DEAL)
+    begin_anims(state, anims, finish, "deal")
 end
 
 function push_scoop(viewport: layout.State, anims: {render.Anim}, card: game.Card, from: render.Point, gather: render.Point, dest_kind: render.Slot): unit
@@ -672,7 +670,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
             start += DEAL_STEP
         end
     end
-    begin_anims(state, anims, finish, ANIM_DEAL)
+    begin_anims(state, anims, finish, "deal")
 end
 
 function swap(outcome: game.SwapOutcome, state: State): unit
@@ -779,7 +777,7 @@ function swap(outcome: game.SwapOutcome, state: State): unit
             dest_index = hand_index,
         })
     end
-    begin_anims(state, anims, total, ANIM_SWAP)
+    begin_anims(state, anims, total, "swap")
 end
 
 function append_cards(parts: {string}, cards: {game.Card}): unit

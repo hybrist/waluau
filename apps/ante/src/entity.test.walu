@@ -25,7 +25,7 @@ describe("entity boundary", function(): unit
     it("measures a flow as the box layout of its children", function(): unit
         local band: entity.Node = entity.flow(
             { blank(40.0, 20.0), blank(60.0, 30.0), blank(50.0, 24.0) },
-            entity.row(10.0, box.justify_start, box.align_start))
+            entity.row(10.0, "start", "start"))
 
         local size: box.Intrinsic = band.measure(metrics())
         expect(size.preferred_width):toBe(170.0)
@@ -38,7 +38,7 @@ describe("entity boundary", function(): unit
         }
         local rects: {box.Rect} = entity.place(
             metrics(), children,
-            entity.row(10.0, box.justify_start, box.align_start),
+            entity.row(10.0, "start", "start"),
             entity.rect(0.0, 0.0, 200.0, 40.0))
 
         expect(#rects):toBe(3)
@@ -54,7 +54,7 @@ describe("entity boundary", function(): unit
         }
         local rects: {box.Rect} = entity.place(
             metrics(), children,
-            entity.row(0.0, box.justify_start, box.align_start),
+            entity.row(0.0, "start", "start"),
             entity.rect(0.0, 0.0, 200.0, 20.0))
 
         expect(rects[1].width):toBe(110.0)
@@ -74,7 +74,7 @@ describe("entity boundary", function(): unit
     it("takes a band's height from the entity rather than the caller", function(): unit
         local stack: entity.Node = entity.flow(
             { blank(40.0, 20.0), blank(40.0, 30.0) },
-            entity.column(5.0, box.justify_start, box.align_start))
+            entity.column(5.0, "start", "start"))
 
         local band: box.Rect = entity.band(metrics(), stack, 10.0, 5.0, 300.0)
         expect(band.x):toBe(10.0)
@@ -139,7 +139,7 @@ describe("type-sized entities", function(): unit
 
         local placed: {box.Rect} = entity.place(
             metrics(), { pair },
-            entity.row(0.0, box.justify_center, box.align_start),
+            entity.row(0.0, "center", "start"),
             page)
         expect(placed[0].x + placed[0].width * 0.5):toBe(300.0)
     end)
@@ -266,11 +266,11 @@ describe("named flow options", function(): unit
     it("means the same thing as the style it names", function(): unit
         local children: {entity.Node} = { blank(40.0, 20.0), blank(60.0, 30.0) }
         local named: box.Intrinsic = entity.across(
-            { gap = 10.0, justify = box.justify_center, align = box.align_end },
+            { gap = 10.0, justify = "center", align = "end" },
             children).measure(metrics())
         local spelled: box.Intrinsic = entity.flow(
             children,
-            entity.row(10.0, box.justify_center, box.align_end)).measure(metrics())
+            entity.row(10.0, "center", "end")).measure(metrics())
 
         expect(named.preferred_width):toBe(spelled.preferred_width)
         expect(named.preferred_height):toBe(spelled.preferred_height)
@@ -281,7 +281,7 @@ describe("named flow options", function(): unit
         -- align, which is what an unnamed option means.
         local children: {entity.Node} = { blank(40.0, 20.0), blank(60.0, 30.0) }
         local rects: {box.Rect} = entity.place(
-            metrics(), children, entity.row(0.0, box.justify_start, box.align_start),
+            metrics(), children, entity.row(0.0, "start", "start"),
             entity.rect(0.0, 0.0, 200.0, 40.0))
         local defaulted: box.Intrinsic =
             entity.across({ gap = 0.0 }, children).measure(metrics())

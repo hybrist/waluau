@@ -63,9 +63,6 @@ function top_left(rect: box.Rect): Point
     return point(rect.x, rect.y)
 end
 
-const MODAL_HISTORY: i32 = 1
-const MODAL_HELP: i32 = 2
-const MODAL_FINAL: i32 = 4
 const FLIP_SECONDS: f64 = 0.55
 
 -- Where the board's own bands sit inside the live viewport. Each band says
@@ -192,11 +189,11 @@ type Anim = {
 type Interaction = {
     hand_focus: i32,
     table_card_cursor: i32,
-    cursor_area: i32,
+    cursor_area: "hand" | "table-cards",
     play_picks: {i32},
     swap_hand: {i32},
     swap_table_cards: {i32},
-    modal: i32,
+    modal: "none" | "history" | "help" | "final",
     revealing: bool,
     casting: bool,
     -- The loadout slot being aimed while `casting` holds: which spell the aim
@@ -586,7 +583,7 @@ function draw_throw_card(
         stretch_limit = THROW_STRETCH,
         overshoot = THROW_OVERSHOOT,
         rise = THROW_RISE,
-        arc = card_draw.arc_very_late
+        arc = "very-late"
     }
     local pose: card_warp.Pose = card_draw.pose_at(throw, clock)
     local face_up: bool = card_draw.shows_face(throw, clock)
@@ -1346,7 +1343,7 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
             -- Targeting a cast borrows the table_card focus ring for its aim cursor,
             -- whichever phase the board is in.
             local focused: bool = (state.swap_open
-                and frame.interaction.cursor_area == 1
+                and frame.interaction.cursor_area == "table-cards"
                 and frame.interaction.table_card_cursor == i)
                 or (frame.interaction.casting and frame.interaction.table_card_cursor == i)
             table.insert(
@@ -1382,7 +1379,7 @@ end
 function draw(surface: entity.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
-    local modal_kind: i32 = frame.interaction.modal
+    local modal_kind: "none" | "history" | "help" | "final" = frame.interaction.modal
     -- Every control the pointer can reach is recorded by the paint that draws
     -- it, so a frame starts with nothing clickable on it.
     clear_targets()
@@ -1394,9 +1391,9 @@ function draw(surface: entity.Surface, frame: Frame): unit
     else
         draw_hud(surface, viewport, state, frame.run)
     end
-    if modal_kind == MODAL_HISTORY then draw_history(surface, viewport, state)
-    elseif modal_kind == MODAL_HELP then draw_help(surface, viewport)
-    elseif modal_kind == MODAL_FINAL then draw_final(surface, viewport, state, frame.run) end
+    if modal_kind == "history" then draw_history(surface, viewport, state)
+    elseif modal_kind == "help" then draw_help(surface, viewport)
+    elseif modal_kind == "final" then draw_final(surface, viewport, state, frame.run) end
 end
 
 function draw_shader_error(surface: entity.Surface, viewport: layout.State, detail: string): unit

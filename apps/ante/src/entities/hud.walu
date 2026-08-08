@@ -66,7 +66,7 @@ end
 function gold_block(state: game.View, run: run_module.View): entity.Node
     local tone: string = GOLD_INK
     if state.player_points < run.target then tone = SHORT_INK end
-    return entity.down({ gap = STACK_GAP, align = box.align_end }, {
+    return entity.down({ gap = STACK_GAP, align = "end" }, {
         label.right(tostring(state.player_points), TITLE_SIZE, tone),
         label.right(
             "GOLD   TARGET " .. tostring(run.target), CAPTION_SIZE, CAPTION_INK),
@@ -78,8 +78,8 @@ end
 -- instead of floating between the two rows of type.
 function node(state: game.View, run: run_module.View): entity.Node
     return entity.across({
-        justify = box.justify_space_between,
-        align = box.align_end,
+        justify = "space-between",
+        align = "end",
     }, {
         title_block(run),
         orb_track.node(state),

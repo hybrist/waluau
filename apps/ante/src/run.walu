@@ -136,24 +136,20 @@ end
 -- applying any of them — one classifier, so the screen showing a verdict and
 -- the settle that acts on it can never disagree about what happened.
 --
--- `OUTCOME_WON` is a milestone rather than a stop: the last duel of the table
+-- "won" is a milestone rather than a stop: the last duel of the table
 -- is cleared exactly the way any other is, and the run walks on into the
 -- endless city. Only the two losses end a run.
-const OUTCOME_NONE: i32 = 0
-const OUTCOME_LOST_VAULT: i32 = 1
-const OUTCOME_LOST_TARGET: i32 = 2
-const OUTCOME_ADVANCE: i32 = 3
-const OUTCOME_WON: i32 = 4
+type Outcome = "none" | "lost-vault" | "lost-target" | "advance" | "won"
 
 function outcome_of(
     duel: i32, rush: bool, cleared: bool, carried_gold: i32
-): i32
-    if not cleared then return OUTCOME_LOST_VAULT end
-    if carried_gold < target_at(duel, rush) then return OUTCOME_LOST_TARGET end
+): Outcome
+    if not cleared then return "lost-vault" end
+    if carried_gold < target_at(duel, rush) then return "lost-target" end
     -- The finish line is a moment the run passes through once, not a state it
     -- stays in, so this is the duel the table ends on and no duel after it.
-    if duel == run_length(rush) then return OUTCOME_WON end
-    return OUTCOME_ADVANCE
+    if duel == run_length(rush) then return "won" end
+    return "advance"
 end
 
 -- The run as the board reads it: which duel of the sequence this is, how many
@@ -165,7 +161,7 @@ end
 --
 -- `outcome` is the rules module's answer about a duel this module has not
 -- settled yet, so it arrives rather than being re-derived here; a live duel
--- passes OUTCOME_NONE.
+-- passes "none".
 type View = {
     duel: i32,
     cleared: i32,
@@ -175,10 +171,10 @@ type View = {
     target: i32,
     ante_ahead: i32,
     run_length: i32,
-    outcome: i32
+    outcome: Outcome
 }
 
-function view(state: State, outcome: i32): View
+function view(state: State, outcome: Outcome): View
     return {
         duel = state.duel,
         cleared = state.cleared,
@@ -200,10 +196,10 @@ end
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished duel decided is not this module's to decide again.
-function State:settle(cleared: bool, carried_gold: i32): i32
-    local outcome: i32 = outcome_of(
+function State:settle(cleared: bool, carried_gold: i32): Outcome
+    local outcome: Outcome = outcome_of(
         self.duel, self.rush, cleared, carried_gold)
-    if outcome == OUTCOME_LOST_VAULT or outcome == OUTCOME_LOST_TARGET then
+    if outcome == "lost-vault" or outcome == "lost-target" then
         self:restart(self.start_spell, self.rush)
         return outcome
     end
@@ -353,9 +349,4 @@ return {
     boss_every = BOSS_EVERY,
     max_spells = MAX_SPELLS,
     min_spell_cost = MIN_SPELL_COST,
-    outcome_none = OUTCOME_NONE,
-    outcome_lost_vault = OUTCOME_LOST_VAULT,
-    outcome_lost_target = OUTCOME_LOST_TARGET,
-    outcome_advance = OUTCOME_ADVANCE,
-    outcome_won = OUTCOME_WON,
 }

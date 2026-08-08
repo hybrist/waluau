@@ -204,7 +204,7 @@ end)
 -- swaps and targets — which is the comparison this is here to make.
 type RunTrial = {
     duels: i32,
-    ended_by: i32,
+    ended_by: run.Outcome,
     purse: i32
 }
 
@@ -217,12 +217,12 @@ local function play_run(seed: i32): RunTrial
         local duel: game.State = game.new(state:boss(), state.spells, state.gold)
         autopilot(duel)
         local reached: i32 = state.duel
-        local outcome: i32 = state:settle(duel:is_victory(), duel:gold())
-        if outcome == run.outcome_lost_vault or outcome == run.outcome_lost_target then
+        local outcome: run.Outcome = state:settle(duel:is_victory(), duel:gold())
+        if outcome == "lost-vault" or outcome == "lost-target" then
             return { duels = reached - 1, ended_by = outcome, purse = duel:gold() }
         end
     end
-    return { duels = 40, ended_by = run.outcome_none, purse = state.gold }
+    return { duels = 40, ended_by = "none", purse = state.gold }
 end
 
 -- Enough runs to see the tail of the depth distribution without the suite
@@ -249,8 +249,8 @@ describe("Ante Magic run economy", function()
         local total: i32 = 0
         for seed = 1::i32, RUN_TRIALS do
             local trial: RunTrial = play_run(seed)
-            if trial.ended_by == run.outcome_lost_vault then held += 1
-            elseif trial.ended_by == run.outcome_lost_target then short += 1
+            if trial.ended_by == "lost-vault" then held += 1
+            elseif trial.ended_by == "lost-target" then short += 1
             else unfinished += 1 end
             total += trial.duels
             if trial.duels > deepest then deepest = trial.duels end

@@ -28,10 +28,10 @@ end
 function node(state: game.View): entity.Node
     return entity.layer({
         entity.across(
-            { justify = box.justify_end, align = box.align_end },
+            { justify = "end", align = "end" },
             { ability_diamond.node(state) }),
         entity.across(
-            { justify = box.justify_center, align = box.align_end },
+            { justify = "center", align = "end" },
             { menu() }),
     })
 end

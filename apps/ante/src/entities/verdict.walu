@@ -34,27 +34,27 @@ const FIGURE_GAP: f64 = 18.0
 const LEDGER_GAP: f64 = 64.0
 
 function walks_on(run: run_module.View): bool
-    return run.outcome == run_module.outcome_advance
-        or run.outcome == run_module.outcome_won
+    return run.outcome == "advance"
+        or run.outcome == "won"
 end
 
 function title_of(run: run_module.View): string
-    if run.outcome == run_module.outcome_lost_vault then return "THE RUN ENDS" end
-    if run.outcome == run_module.outcome_lost_target then return "THE RUN ENDS" end
-    if run.outcome == run_module.outcome_won then return "THE DUEL IS DONE" end
+    if run.outcome == "lost-vault" then return "THE RUN ENDS" end
+    if run.outcome == "lost-target" then return "THE RUN ENDS" end
+    if run.outcome == "won" then return "THE DUEL IS DONE" end
     return "DUEL " .. tostring(run.duel) .. " IS YOURS"
 end
 
 function subtitle_of(run: run_module.View): string
-    if run.outcome == run_module.outcome_lost_vault then
+    if run.outcome == "lost-vault" then
         return "THE OPPONENT WON DUEL " .. tostring(run.duel)
             .. ". YOUR GOLD IS LOST"
     end
     -- The duel opened and the player still could not afford to leave it.
-    if run.outcome == run_module.outcome_lost_target then
+    if run.outcome == "lost-target" then
         return "DUEL " .. tostring(run.duel) .. " WON, BUT THE GOLD TARGET WAS MISSED"
     end
-    if run.outcome == run_module.outcome_won then
+    if run.outcome == "won" then
         return "ALL " .. tostring(run.run_length)
             .. " DUELS WON. THE CITY GOES ON PAST THEM"
     end
@@ -85,21 +85,21 @@ function ledger(
         figure(
             right_label, OWED_INK, tostring(right_value), OWED_INK,
             LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
-    }, entity.row(LEDGER_GAP, box.justify_center, box.align_start)))
+    }, entity.row(LEDGER_GAP, "center", "start")))
 end
 
 -- What the run walks away with. A lost duel has only what it took; the other
 -- three are all comparisons against the target, so they are two figures.
 function tally(state: game.View, run: run_module.View): entity.Node
-    if run.outcome == run_module.outcome_lost_vault then
+    if run.outcome == "lost-vault" then
         return figure(
             "DUELS WON", HEADLINE_INK, tostring(run.cleared), FIGURE_INK,
             HEADLINE_SIZE, FIGURE_SIZE)
     end
-    if run.outcome == run_module.outcome_lost_target then
+    if run.outcome == "lost-target" then
         return ledger("GOLD HELD", state.player_points, "TARGET", run.target)
     end
-    if run.outcome == run_module.outcome_won then
+    if run.outcome == "won" then
         return figure(
             "GOLD CARRIED ON", HEADLINE_INK,
             tostring(state.player_points - run.target), WON_INK,
@@ -127,7 +127,7 @@ function onward(run: run_module.View): {entity.Node}
         }
     end
     local prompt: string = "ENTER OR CLICK VISITS THE SHOP   H OPENS THE HISTORY"
-    if run.outcome == run_module.outcome_won then
+    if run.outcome == "won" then
         prompt = "ENTER OR CLICK WALKS ON INTO THE ENDLESS CITY"
     end
     return {
@@ -150,7 +150,7 @@ function body(state: game.View, run: run_module.View): entity.Node
     table.insert(lines, label.middle(
         "R RESTARTS THE RUN   M RETURNS TO MENU", KEYS_SIZE, QUIET_INK))
     return entity.flow(
-        lines, entity.column(BLOCK_GAP * 0.5, box.justify_start, box.align_stretch))
+        lines, entity.column(BLOCK_GAP * 0.5, "start", "stretch"))
 end
 
 function node(state: game.View, run: run_module.View): entity.Node

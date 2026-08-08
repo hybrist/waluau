@@ -25,21 +25,18 @@ local spell_launch = require("./spell_launch")
 local city_map = require("./city_map")
 local layout = require("./layout")
 
+type MenuAction = "none" | "start" | "start-rush"
+
+type Stage = "main" | "spell"
+
 type State = {
     clock: f64,
     cursor: i32,
     help_open: bool,
-    stage: i32,
+    stage: Stage,
     rush_choice: bool,
     spell_cursor: i32
 }
-
-const ACTION_NONE: i32 = 0
-const ACTION_START: i32 = 1
-const ACTION_START_RUSH: i32 = 2
-
-const STAGE_MAIN: i32 = 0
-const STAGE_SPELL: i32 = 1
 
 const ITEM_NEW_RUN: i32 = 0
 const ITEM_BOSS_RUSH: i32 = 1
@@ -67,7 +64,7 @@ function new(): State
         clock = 0.0,
         cursor = ITEM_NEW_RUN,
         help_open = false,
-        stage = STAGE_MAIN,
+        stage = "main",
         rush_choice = false,
         spell_cursor = 0,
     }
@@ -79,7 +76,7 @@ function reset(state: State, city: city_map.State): unit
     state.clock = 0.0
     state.cursor = ITEM_NEW_RUN
     state.help_open = false
-    state.stage = STAGE_MAIN
+    state.stage = "main"
     state.rush_choice = false
     state.spell_cursor = 0
     city_map.regenerate(city)
@@ -91,7 +88,7 @@ end
 function update(state: State, city: city_map.State, dt: f64): unit
     state.clock += dt
     city_map.show(city)
-    if state.stage == STAGE_SPELL then
+    if state.stage == "spell" then
         city_map.follow(city, city_map.shop_stop(1))
     else
         city_map.drift(city)
@@ -119,29 +116,29 @@ function item_at(viewport: layout.State, x: f64, y: f64, count: i32): i32
 end
 
 function stage_item_count(state: State): i32
-    if state.stage == STAGE_SPELL then return SPELL_COUNT end
+    if state.stage == "spell" then return SPELL_COUNT end
     return ITEM_COUNT
 end
 
 -- Starting a run — standard cadence or boss rush — first routes through the
 -- spell list; HOW TO PLAY is presentation the menu can satisfy itself with
 -- the shared help modal.
-function activate(state: State, item: i32): i32
+function activate(state: State, item: i32): MenuAction
     if item == ITEM_NEW_RUN or item == ITEM_BOSS_RUSH then
-        state.stage = STAGE_SPELL
+        state.stage = "spell"
         state.rush_choice = item == ITEM_BOSS_RUSH
         -- The shared cursor now points into the spell list; keep it on the
         -- remembered spell so the halo and the eventual pick agree.
         state.cursor = state.spell_cursor
-        return ACTION_NONE
+        return "none"
     end
     state.help_open = true
-    return ACTION_NONE
+    return "none"
 end
 
-function start_action(state: State): i32
-    if state.rush_choice then return ACTION_START_RUSH end
-    return ACTION_START
+function start_action(state: State): MenuAction
+    if state.rush_choice then return "start-rush" end
+    return "start"
 end
 
 function draw_item(state: State, viewport: layout.State, graphics: engine.Graphics, index: i32, label: string, idle_ink: string): unit
@@ -206,7 +203,7 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
             { graphics = graphics, effects = effects, card_back = nil }, viewport)
         return
     end
-    if state.stage == STAGE_SPELL then
+    if state.stage == "spell" then
         draw_spell_stage(state, viewport, graphics)
         return
     end
@@ -248,53 +245,53 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
         viewport.center_x, viewport.height - 52.0, 10, "#8a8a92")
 end
 
-function keypressed(state: State, key: string): i32
+function keypressed(state: State, key: string): MenuAction
     if state.help_open then
         if key == "Enter" or key == " " or key == "Escape" or key == "?" or key == "/" then
             state.help_open = false
         end
-        return ACTION_NONE
+        return "none"
     end
-    if state.stage == STAGE_SPELL then
+    if state.stage == "spell" then
         if key == "Escape" then
-            state.stage = STAGE_MAIN
+            state.stage = "main"
             state.cursor = ITEM_NEW_RUN
             if state.rush_choice then state.cursor = ITEM_BOSS_RUSH end
-            return ACTION_NONE
+            return "none"
         end
         if key == "ArrowUp" or key == "w" or key == "W" then
             state.spell_cursor -= 1
             if state.spell_cursor < 0 then state.spell_cursor = SPELL_COUNT - 1 end
             state.cursor = state.spell_cursor
-            return ACTION_NONE
+            return "none"
         end
         if key == "ArrowDown" or key == "s" or key == "S" then
             state.spell_cursor = (state.spell_cursor + 1) % SPELL_COUNT
             state.cursor = state.spell_cursor
-            return ACTION_NONE
+            return "none"
         end
         if key == "Enter" or key == " " then
             return start_action(state)
         end
-        return ACTION_NONE
+        return "none"
     end
     if key == "ArrowUp" or key == "w" or key == "W" then
         state.cursor -= 1
         if state.cursor < 0 then state.cursor = ITEM_COUNT - 1 end
-        return ACTION_NONE
+        return "none"
     end
     if key == "ArrowDown" or key == "s" or key == "S" then
         state.cursor = (state.cursor + 1) % ITEM_COUNT
-        return ACTION_NONE
+        return "none"
     end
     if key == "?" or key == "/" then
         state.help_open = true
-        return ACTION_NONE
+        return "none"
     end
     if key == "Enter" or key == " " then
         return activate(state, state.cursor)
     end
-    return ACTION_NONE
+    return "none"
 end
 
 function mousemoved(state: State, viewport: layout.State, x: f64, y: f64): unit
@@ -302,19 +299,19 @@ function mousemoved(state: State, viewport: layout.State, x: f64, y: f64): unit
     local item: i32 = item_at(viewport, x, y, stage_item_count(state))
     if item < 0 then return end
     state.cursor = item
-    if state.stage == STAGE_SPELL then state.spell_cursor = item end
+    if state.stage == "spell" then state.spell_cursor = item end
 end
 
-function mousepressed(state: State, viewport: layout.State, x: f64, y: f64, button: i32): i32
-    if button ~= 1 then return ACTION_NONE end
+function mousepressed(state: State, viewport: layout.State, x: f64, y: f64, button: i32): MenuAction
+    if button ~= 1 then return "none" end
     if state.help_open then
         state.help_open = false
-        return ACTION_NONE
+        return "none"
     end
     local item: i32 = item_at(viewport, x, y, stage_item_count(state))
-    if item < 0 then return ACTION_NONE end
+    if item < 0 then return "none" end
     state.cursor = item
-    if state.stage == STAGE_SPELL then
+    if state.stage == "spell" then
         state.spell_cursor = item
         return start_action(state)
     end
@@ -330,7 +327,4 @@ return {
     mousemoved = mousemoved,
     mousepressed = mousepressed,
     selected_spell = selected_spell,
-    action_none = ACTION_NONE,
-    action_start = ACTION_START,
-    action_boss_rush = ACTION_START_RUSH,
 }

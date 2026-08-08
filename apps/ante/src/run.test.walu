@@ -296,23 +296,23 @@ end)
 describe("Ante Magic run outcomes", function()
     it("names the four things a fought duel can turn out to be", function()
         local target: i32 = run.target_at(1, false)
-        expect(run.outcome_of(1, false, false, 99)):toBe(run.outcome_lost_vault)
+        expect(tostring(run.outcome_of(1, false, false, 99))):toBe("lost-vault")
         -- Holding exactly the target clears; a single gold short does not.
-        expect(run.outcome_of(1, false, true, target)):toBe(run.outcome_advance)
-        expect(run.outcome_of(1, false, true, target - 1)):toBe(run.outcome_lost_target)
+        expect(tostring(run.outcome_of(1, false, true, target))):toBe("advance")
+        expect(tostring(run.outcome_of(1, false, true, target - 1))):toBe("lost-target")
         -- The Opponent holding the duel outranks the purse: a run that lost
         -- the run is over for that reason, whatever it was carrying.
-        expect(run.outcome_of(1, false, false, 0)):toBe(run.outcome_lost_vault)
+        expect(tostring(run.outcome_of(1, false, false, 0))):toBe("lost-vault")
     end)
 
     it("passes through the finish line once and walks on", function()
         local finish: i32 = run.run_length(false)
-        expect(run.outcome_of(finish, false, true, 999)):toBe(run.outcome_won)
-        expect(run.outcome_of(finish - 1, false, true, 999)):toBe(run.outcome_advance)
+        expect(tostring(run.outcome_of(finish, false, true, 999))):toBe("won")
+        expect(tostring(run.outcome_of(finish - 1, false, true, 999))):toBe("advance")
         -- Not a state the run stays in: the duel after the finish is an
         -- ordinary one again, however far past the table it is.
-        expect(run.outcome_of(finish + 1, false, true, 999)):toBe(run.outcome_advance)
-        expect(run.outcome_of(finish + 7, false, true, 999)):toBe(run.outcome_advance)
+        expect(tostring(run.outcome_of(finish + 1, false, true, 999))):toBe("advance")
+        expect(tostring(run.outcome_of(finish + 7, false, true, 999))):toBe("advance")
     end)
 
     it("takes the last duel of the table and keeps the run going", function()
@@ -320,14 +320,14 @@ describe("Ante Magic run outcomes", function()
         local finish: i32 = run.run_length(false)
         state.duel = finish
         state.cleared = finish - 1
-        expect(state:settle(true, 200)):toBe(run.outcome_won)
+        expect(tostring(state:settle(true, 200))):toBe("won")
         -- Won, and still standing in the city: the next duel is dealt, the
         -- purse survived, and the loadout was never reset.
         expect(state.duel):toBe(finish + 1)
         expect(state.cleared):toBe(finish)
         expect(state.gold):toBe(200 - run.target_at(finish, false))
         expect(state:endless()):toBe(true)
-        expect(state:settle(true, 200)):toBe(run.outcome_advance)
+        expect(tostring(state:settle(true, 200))):toBe("advance")
         expect(state.duel):toBe(finish + 2)
     end)
 
@@ -335,7 +335,7 @@ describe("Ante Magic run outcomes", function()
         local state: run.State = run.new(game.spell_freeze_ray, false)
         state:settle(true, 40)
         local short: i32 = run.target_at(state.duel, false) - 1
-        expect(state:settle(true, short)):toBe(run.outcome_lost_target)
+        expect(tostring(state:settle(true, short))):toBe("lost-target")
         -- The same ending as the Opponent taking it: a fresh first duel, the
         -- starting spell back at full price, and the purse gone.
         expect(state.duel):toBe(1)
@@ -349,7 +349,7 @@ describe("Ante Magic run outcomes", function()
         state.duel = run.run_length(false) + 3
         state.cleared = run.run_length(false) + 2
         local target: i32 = state:target()
-        expect(state:settle(true, target - 1)):toBe(run.outcome_lost_target)
+        expect(tostring(state:settle(true, target - 1))):toBe("lost-target")
         expect(state.duel):toBe(1)
         expect(state:endless()):toBe(false)
     end)
@@ -394,31 +394,31 @@ describe("Ante Magic duel verdicts", function()
     it("asks the run for what follows a verdict", function()
         local keyboard: flow.State = flow.new()
         local mouse: flow.State = flow.new()
-        keyboard.modal = flow.modal_final
-        mouse.modal = flow.modal_final
-        expect(flow.gate(keyboard, true, false, true, flow.command_advance))
-            :toBe(flow.result_advance)
-        expect(flow.gate(mouse, true, false, true, flow.command_primary))
-            :toBe(flow.result_advance)
+        keyboard.modal = "final"
+        mouse.modal = "final"
+        expect(tostring(flow.gate(keyboard, true, false, true, "advance")))
+            :toBe("advance")
+        expect(tostring(flow.gate(mouse, true, false, true, "primary")))
+            :toBe("advance")
         -- The verdict stays up until the screen deals whatever comes next.
-        expect(keyboard.modal):toBe(flow.modal_final)
+        expect(tostring(keyboard.modal)):toBe("final")
         -- Restart is still its own answer: the whole run over again, rather
         -- than whatever duel the run would have moved to.
-        expect(flow.gate(keyboard, true, false, true, flow.command_restart))
-            :toBe(flow.result_reset)
+        expect(tostring(flow.gate(keyboard, true, false, true, "restart")))
+            :toBe("reset")
         -- The ledger opens over the verdict, and closing it puts the verdict
         -- back: a settled board is not somewhere a run can be left standing.
-        expect(flow.gate(mouse, true, false, true, flow.command_history))
-            :toBe(flow.result_consumed)
-        expect(mouse.modal):toBe(flow.modal_history)
-        expect(flow.gate(mouse, true, false, true, flow.command_history))
-            :toBe(flow.result_consumed)
-        expect(mouse.modal):toBe(flow.modal_final)
-        expect(flow.gate(mouse, true, false, true, flow.command_help))
-            :toBe(flow.result_consumed)
-        expect(flow.gate(mouse, true, false, true, flow.command_advance))
-            :toBe(flow.result_consumed)
-        expect(mouse.modal):toBe(flow.modal_final)
+        expect(tostring(flow.gate(mouse, true, false, true, "history")))
+            :toBe("consumed")
+        expect(tostring(mouse.modal)):toBe("history")
+        expect(tostring(flow.gate(mouse, true, false, true, "history")))
+            :toBe("consumed")
+        expect(tostring(mouse.modal)):toBe("final")
+        expect(tostring(flow.gate(mouse, true, false, true, "help")))
+            :toBe("consumed")
+        expect(tostring(flow.gate(mouse, true, false, true, "advance")))
+            :toBe("consumed")
+        expect(tostring(mouse.modal)):toBe("final")
     end)
 end)
 

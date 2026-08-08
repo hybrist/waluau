@@ -26,6 +26,23 @@ local COLORS: {string} = {
     "#f97316"
 }
 
+-- Story controls are numeric sliders; map them onto the style unions in the
+-- order the controls documented (0 = start).
+function justify_arg(value: i32): layout.Justify
+    if value == 1 then return "center" end
+    if value == 2 then return "end" end
+    if value == 3 then return "space-between" end
+    return "start"
+end
+
+function align_arg(value: i32): layout.Align
+    if value == 1 then return "center" end
+    if value == 2 then return "end" end
+    if value == 3 then return "stretch" end
+    if value == 4 then return "baseline" end
+    return "start"
+end
+
 function padding(horizontal: f64, vertical: f64): layout.Edges
     return { left = horizontal, top = vertical, right = horizontal, bottom = vertical }
 end
@@ -150,10 +167,10 @@ function draw_intrinsic_row(graphics: engine.Graphics): unit
         ROOT_KEY,
         children,
         {
-            axis = layout.axis_row,
+            axis = "row",
             gap = storybook.arg_i32("gap")::f64,
-            justify = storybook.arg_i32("justify"),
-            align = storybook.arg_i32("align"),
+            justify = justify_arg(storybook.arg_i32("justify")),
+            align = align_arg(storybook.arg_i32("align")),
             padding = padding(
                 storybook.arg_i32("padding_x")::f64,
                 storybook.arg_i32("padding_y")::f64
@@ -194,10 +211,10 @@ function menu_button(index: i32, padding_x: f64, padding_y: f64): layout.Tree
         BUTTON_KEY + index,
         {label},
         {
-            axis = layout.axis_row,
+            axis = "row",
             gap = 0.0,
-            justify = layout.justify_center,
-            align = layout.align_baseline,
+            justify = "center",
+            align = "baseline",
             padding = padding(padding_x, padding_y)
         }
     )
@@ -215,10 +232,10 @@ function draw_nested_menu(graphics: engine.Graphics): unit
         ROOT_KEY,
         buttons,
         {
-            axis = layout.axis_column,
+            axis = "column",
             gap = storybook.arg_i32("gap")::f64,
-            justify = storybook.arg_i32("justify"),
-            align = storybook.arg_i32("align"),
+            justify = justify_arg(storybook.arg_i32("justify")),
+            align = align_arg(storybook.arg_i32("align")),
             padding = padding(18.0, 18.0)
         }
     )
@@ -251,10 +268,10 @@ function draw_flex_pressure(graphics: engine.Graphics): unit
         ROOT_KEY,
         {first, second},
         {
-            axis = layout.axis_row,
+            axis = "row",
             gap = storybook.arg_i32("gap")::f64,
-            justify = layout.justify_center,
-            align = layout.align_center,
+            justify = "center",
+            align = "center",
             padding = padding(
                 storybook.arg_i32("padding_x")::f64,
                 storybook.arg_i32("padding_y")::f64

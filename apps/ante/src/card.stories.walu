@@ -38,6 +38,15 @@ local book = entity_story.new()
 -- mounted. The clock is a story's own and restarts with it.
 local shared = { clock = 0.0 }
 
+-- The arc control is a numeric slider; map it onto the arc union in the
+-- order the constants used to count (0 = even).
+local function arc_arg(value: i32): card_draw.Arc
+    if value == 1 then return "late" end
+    if value == 2 then return "very-late" end
+    if value == 3 then return "early" end
+    return "even"
+end
+
 local function load(): unit
     shared.clock = 0.0
 end
@@ -340,7 +349,7 @@ local function drawing(index: i32, count: i32): card_draw.Draw
         stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0,
         overshoot = (storybook.arg_i32("overshoot")::f64) / 100.0,
         rise = storybook.arg_i32("rise")::f64,
-        arc = storybook.arg_i32("arc")
+        arc = arc_arg(storybook.arg_i32("arc"))
     }
 end
 

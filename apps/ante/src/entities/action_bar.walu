@@ -25,7 +25,7 @@ function action(text: string, active: bool): Action
 end
 
 function bar_style(): box.Style
-    return entity.row(GAP, box.justify_center, box.align_start)
+    return entity.row(GAP, "center", "start")
 end
 
 function capsules(actions: {Action}): {entity.Node}
@@ -46,7 +46,7 @@ end
 function prompt(text: string): entity.Node
     return entity.flow(
         { label.centered(text, PROMPT_SIZE, PROMPT_INK) },
-        entity.row(0.0, box.justify_center, box.align_center))
+        entity.row(0.0, "center", "center"))
 end
 
 -- Which control a point is inside, or -1. Solved from the same actions and

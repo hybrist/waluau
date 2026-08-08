@@ -81,7 +81,7 @@ function node(state: game.View): entity.Node
         table.insert(orbs, orb(state, round))
     end
     return entity.flow(
-        orbs, entity.row(ORB_GAP, box.justify_center, box.align_center))
+        orbs, entity.row(ORB_GAP, "center", "center"))
 end
 
 return {

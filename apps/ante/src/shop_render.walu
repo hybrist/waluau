@@ -57,7 +57,7 @@ end
 -- here repeats them. A spent line drops the detail it used to carry: the numbers
 -- it quoted were the ones it has already changed.
 function row_label(row: shop.Row, run: run_module.State, offer: i32): string
-    if row.action == shop.action_sharpen then
+    if row.action == "sharpen" then
         local name: string = spell_launch.name(row.kind)
         if row.sold then return "UPGRADED " .. name end
         -- The spell an offer named can leave the loadout: the other offer of the
@@ -71,7 +71,7 @@ function row_label(row: shop.Row, run: run_module.State, offer: i32): string
             .. "   USE " .. tostring(spell.cost)
             .. " TO " .. tostring(spell.cost - 1) .. " GOLD"
     end
-    if row.action == shop.action_learn then
+    if row.action == "learn" then
         local name: string = spell_launch.name(row.kind)
         if row.sold then
             return "LEARNED " .. name
@@ -82,11 +82,11 @@ function row_label(row: shop.Row, run: run_module.State, offer: i32): string
         end
         return "LEARN " .. name .. "   KEY " .. tostring(row.slot + 1)
     end
-    if row.action == shop.action_replace then
+    if row.action == "replace" then
         return "TRADE " .. spell_launch.name(row.kind)
             .. " FOR " .. spell_launch.name(offer)
     end
-    if row.action == shop.action_cancel then return "KEEP BOTH SPELLS" end
+    if row.action == "cancel" then return "KEEP BOTH SPELLS" end
     local duel: string = "ENTER DUEL " .. tostring(run.duel)
     if run:boss() then duel = duel .. "   CHALLENGE" end
     return duel .. "   TARGET " .. tostring(run:target())

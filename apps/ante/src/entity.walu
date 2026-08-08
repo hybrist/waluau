@@ -89,7 +89,9 @@ function no_padding(): box.Edges
 end
 
 -- A row or column style spelled as the four things a flow actually decides.
-function style(axis: i32, gap: f64, justify: i32, align: i32, padding: box.Edges): box.Style
+function style(
+    axis: box.Axis, gap: f64, justify: box.Justify, align: box.Align, padding: box.Edges
+): box.Style
     return {
         axis = axis,
         gap = gap,
@@ -99,12 +101,12 @@ function style(axis: i32, gap: f64, justify: i32, align: i32, padding: box.Edges
     }
 end
 
-function row(gap: f64, justify: i32, align: i32): box.Style
-    return style(box.axis_row, gap, justify, align, no_padding())
+function row(gap: f64, justify: box.Justify, align: box.Align): box.Style
+    return style("row", gap, justify, align, no_padding())
 end
 
-function column(gap: f64, justify: i32, align: i32): box.Style
-    return style(box.axis_column, gap, justify, align, no_padding())
+function column(gap: f64, justify: box.Justify, align: box.Align): box.Style
+    return style("column", gap, justify, align, no_padding())
 end
 
 -- An entity whose size does not depend on anything but itself, which is most
@@ -436,7 +438,7 @@ function Node:flex(node_grow: f64, node_shrink: f64): Node
 end
 
 -- A row or column with its options named rather than counted:
--- `entity.down({ gap = 8.0, align = box.align_center }, children)` says only
+-- `entity.down({ gap = 8.0, align = "center" }, children)` says only
 -- the two things it cares about and takes the rest as it finds them.
 --
 -- Two Waluau limits show through here.
@@ -452,21 +454,21 @@ end
 -- emits invalid wasm (waluau-v7z1).
 type FlowSpec = {
     gap: f64?,
-    justify: i32?,
-    align: i32?,
+    justify: box.Justify?,
+    align: box.Align?,
     padding: box.Edges?
 }
 
-function spec_style(axis: i32, spec: FlowSpec): box.Style
+function spec_style(axis: box.Axis, spec: FlowSpec): box.Style
     local flow_gap: f64 = 0.0
     local maybe_gap: f64? = spec.gap
     if maybe_gap ~= nil then flow_gap = maybe_gap::f64 end
-    local flow_justify: i32 = box.justify_start
-    local maybe_justify: i32? = spec.justify
-    if maybe_justify ~= nil then flow_justify = maybe_justify::i32 end
-    local flow_align: i32 = box.align_start
-    local maybe_align: i32? = spec.align
-    if maybe_align ~= nil then flow_align = maybe_align::i32 end
+    local flow_justify: box.Justify = "start"
+    local maybe_justify: box.Justify? = spec.justify
+    if maybe_justify ~= nil then flow_justify = maybe_justify::box.Justify end
+    local flow_align: box.Align = "start"
+    local maybe_align: box.Align? = spec.align
+    if maybe_align ~= nil then flow_align = maybe_align::box.Align end
     local flow_padding: box.Edges = no_padding()
     local maybe_padding: box.Edges? = spec.padding
     if maybe_padding ~= nil then flow_padding = maybe_padding::box.Edges end
@@ -475,12 +477,12 @@ end
 
 -- Children stacked down the board.
 function down(spec: FlowSpec, children: {Node}): Node
-    return flow(children, spec_style(box.axis_column, spec))
+    return flow(children, spec_style("column", spec))
 end
 
 -- Children laid across it.
 function across(spec: FlowSpec, children: {Node}): Node
-    return flow(children, spec_style(box.axis_row, spec))
+    return flow(children, spec_style("row", spec))
 end
 
 return {

@@ -22,7 +22,11 @@ local snapshot_data = require("./snapshot")
 -- because a trade can move a spell off the key it was rolled against and an
 -- offer must not follow it. `sold` is what stops a bought offer from being
 -- bought twice; the line stays on the screen, spent.
-type Offer = { action: i32, kind: i32, sold: bool }
+type Action = "sharpen" | "learn" | "replace" | "cancel" | "leave"
+
+type ShopResult = "stay" | "leave"
+
+type Offer = { action: Action, kind: i32, sold: bool }
 -- `pending` is the offer being asked about while a full loadout decides which
 -- spell a new one trades away — the one stage where gold has not changed hands
 -- yet. It is -1 the rest of the time.
@@ -31,16 +35,7 @@ type State = { open: bool, offers: {Offer}, cursor: i32, pending: i32 }
 -- the spell ink it wears, its price, whether it has already been bought, and
 -- whether the purse and the loadout allow it at all. Input and drawing read the
 -- same list, so a greyed-out line and a refused press can never disagree.
-type Row = { action: i32, slot: i32, kind: i32, price: i32, sold: bool, available: bool }
-
-const ACTION_SHARPEN: i32 = 1
-const ACTION_LEARN: i32 = 2
-const ACTION_REPLACE: i32 = 3
-const ACTION_CANCEL: i32 = 4
-const ACTION_LEAVE: i32 = 5
-
-const RESULT_STAY: i32 = 0
-const RESULT_LEAVE: i32 = 1
+type Row = { action: Action, slot: i32, kind: i32, price: i32, sold: bool, available: bool }
 
 -- Two lines of stock per visit, however many things the run could in principle
 -- be sold.
@@ -68,13 +63,13 @@ function stock(run: run_module.State): {Offer}
     for slot = 0::i32, #run.spells - 1 do
         if run:can_sharpen(slot) then
             table.insert(pool, {
-                action = ACTION_SHARPEN, kind = run.spells[slot].kind, sold = false,
+                action = "sharpen", kind = run.spells[slot].kind, sold = false,
             })
         end
     end
     for kind = 1::i32, game.spell_kind_count do
         if not run:carries(kind) then
-            table.insert(pool, { action = ACTION_LEARN, kind = kind, sold = false })
+            table.insert(pool, { action = "learn", kind = kind, sold = false })
         end
     end
     return pool
@@ -129,11 +124,11 @@ end
 -- A sold line is never available, and neither is one whose spell has been traded
 -- away since the roll.
 function offer_row(offer: Offer, run: run_module.State): Row
-    if offer.action == ACTION_SHARPEN then
+    if offer.action == "sharpen" then
         local slot: i32 = run:slot_of(offer.kind)
         local price: i32 = sharpen_price(run, slot)
         return {
-            action = ACTION_SHARPEN,
+            action = "sharpen",
             slot = slot,
             kind = offer.kind,
             price = price,
@@ -142,7 +137,7 @@ function offer_row(offer: Offer, run: run_module.State): Row
         }
     end
     return {
-        action = ACTION_LEARN,
+        action = "learn",
         slot = run:open_slot(),
         kind = offer.kind,
         price = LEARN_PRICE,
@@ -162,7 +157,7 @@ function rows(state: State, run: run_module.State): {Row}
         local offered: i32 = state.offers[state.pending].kind
         for slot = 0::i32, #run.spells - 1 do
             table.insert(list, {
-                action = ACTION_REPLACE,
+                action = "replace",
                 slot = slot,
                 kind = run.spells[slot].kind,
                 price = LEARN_PRICE,
@@ -171,7 +166,7 @@ function rows(state: State, run: run_module.State): {Row}
             })
         end
         table.insert(list, {
-            action = ACTION_CANCEL,
+            action = "cancel",
             slot = -1,
             kind = 0,
             price = 0,
@@ -182,7 +177,7 @@ function rows(state: State, run: run_module.State): {Row}
     end
     for offer in state.offers do table.insert(list, offer_row(offer, run)) end
     table.insert(list, {
-        action = ACTION_LEAVE,
+        action = "leave",
         slot = -1,
         kind = 0,
         price = 0,
@@ -223,28 +218,28 @@ end
 -- Buy, or start being asked which spell to trade away, or leave. A line the
 -- purse cannot cover — or one already bought — is simply not bought: the cursor
 -- stays on it rather than the press falling through to something else.
-function activate(state: State, run: run_module.State): i32
+function activate(state: State, run: run_module.State): ShopResult
     local list: {Row} = rows(state, run)
-    if state.cursor < 0 or state.cursor >= #list then return RESULT_STAY end
+    if state.cursor < 0 or state.cursor >= #list then return "stay" end
     local row: Row = list[state.cursor]
-    if row.action == ACTION_LEAVE then return RESULT_LEAVE end
-    if row.action == ACTION_CANCEL then
+    if row.action == "leave" then return "leave" end
+    if row.action == "cancel" then
         local asked: i32 = state.pending
         state.pending = NOTHING_PENDING
         state.cursor = asked
-        return RESULT_STAY
+        return "stay"
     end
-    if not row.available then return RESULT_STAY end
-    if row.action == ACTION_REPLACE then
+    if not row.available then return "stay" end
+    if row.action == "replace" then
         commit_learn(state, run, state.pending, row.slot)
-        return RESULT_STAY
+        return "stay"
     end
-    if row.action == ACTION_SHARPEN then
+    if row.action == "sharpen" then
         if run:can_sharpen(row.slot) and run:spend(row.price) then
             run:upgrade(row.slot)
             state.offers[state.cursor].sold = true
         end
-        return RESULT_STAY
+        return "stay"
     end
     -- Learning: a loadout with room gives the spell the next key by itself, and
     -- a full one has to be asked which of the two it replaces.
@@ -254,17 +249,17 @@ function activate(state: State, run: run_module.State): i32
         state.pending = state.cursor
         state.cursor = 0
     end
-    return RESULT_STAY
+    return "stay"
 end
 
-function keypressed(state: State, run: run_module.State, key: string): i32
+function keypressed(state: State, run: run_module.State, key: string): ShopResult
     if key == "ArrowUp" or key == "w" or key == "W" then
         move(state, run, -1)
-        return RESULT_STAY
+        return "stay"
     end
     if key == "ArrowDown" or key == "s" or key == "S" then
         move(state, run, 1)
-        return RESULT_STAY
+        return "stay"
     end
     if key == "Enter" or key == " " then return activate(state, run) end
     -- Escape backs out of the replacement question, and otherwise out of the
@@ -274,11 +269,11 @@ function keypressed(state: State, run: run_module.State, key: string): i32
             local asked: i32 = state.pending
             state.pending = NOTHING_PENDING
             state.cursor = asked
-            return RESULT_STAY
+            return "stay"
         end
-        return RESULT_LEAVE
+        return "leave"
     end
-    return RESULT_STAY
+    return "stay"
 end
 
 function snapshot(state: State): string
@@ -286,13 +281,21 @@ function snapshot(state: State): string
     snapshot_data.append_bool(parts, state.open)
     snapshot_data.append_i32(parts, #state.offers)
     for offer in state.offers do
-        snapshot_data.append_i32(parts, offer.action)
+        snapshot_data.append_enum(parts, offer.action)
         snapshot_data.append_i32(parts, offer.kind)
         snapshot_data.append_bool(parts, offer.sold)
     end
     snapshot_data.append_i32(parts, state.cursor)
     snapshot_data.append_i32(parts, state.pending)
     return table.concat(parts, ",")
+end
+
+-- Only the two offer-shaped actions can appear in a snapshot; the fixed rows
+-- (cancel, leave) are rebuilt every visit.
+function action_from(token: string): Action?
+    if token == "sharpen" then return "sharpen" end
+    if token == "learn" then return "learn" end
+    return nil
 end
 
 function restore(snapshot_value: string): State?
@@ -303,8 +306,10 @@ function restore(snapshot_value: string): State?
     local offers: {Offer} = {}
     local offer_count: i32 = reader:next_length()
     for _ = 1, offer_count do
+        local action: Action? = action_from(reader:next_string())
+        if action == nil then return nil end
         table.insert(offers, {
-            action = reader:next_i32(),
+            action = action::Action,
             kind = reader:next_i32(),
             sold = reader:next_bool(),
         })
@@ -320,7 +325,7 @@ function restore(snapshot_value: string): State?
     if not reader:complete() then return nil end
     if #offers > MAX_OFFERS then return nil end
     for offer in offers do
-        if offer.action ~= ACTION_SHARPEN and offer.action ~= ACTION_LEARN then
+        if offer.action ~= "sharpen" and offer.action ~= "learn" then
             return nil
         end
         if offer.kind < 1 or offer.kind > game.spell_kind_count then return nil end
@@ -348,12 +353,5 @@ return {
     learn_price = learn_price,
     snapshot = snapshot,
     restore = restore,
-    action_sharpen = ACTION_SHARPEN,
-    action_learn = ACTION_LEARN,
-    action_replace = ACTION_REPLACE,
-    action_cancel = ACTION_CANCEL,
-    action_leave = ACTION_LEAVE,
-    result_stay = RESULT_STAY,
-    result_leave = RESULT_LEAVE,
     max_offers = MAX_OFFERS,
 }

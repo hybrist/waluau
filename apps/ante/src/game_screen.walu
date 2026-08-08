@@ -43,8 +43,7 @@ type State = {
     fence_fade: f64
 }
 
-const ACTION_NONE: i32 = 0
-const ACTION_EXIT: i32 = 1
+type ScreenAction = "none" | "exit"
 
 -- Browser key strings are open-ended. Decode that host boundary once into the
 -- closed set the game understands; `other` is the deliberate fallback for
@@ -152,10 +151,10 @@ end
 -- run has nothing to spend and no loadout to spend it on, so its fresh first
 -- duel is dealt straight away.
 function advance_run(state: State, city: city_map.State): unit
-    local outcome: i32 = state.run:settle(
+    local outcome: run_module.Outcome = state.run:settle(
         state.rules:is_victory(), state.rules:gold())
-    if outcome == run_module.outcome_advance
-        or outcome == run_module.outcome_won
+    if outcome == "advance"
+        or outcome == "won"
     then
         shop.open_for(state.shop, state.run)
         state.leaving_fence = false
@@ -242,30 +241,30 @@ end
 -- settling only happens once the player asks for what comes next. Reading it
 -- from the same classifier the settle uses is what keeps the screen and the
 -- movement it announces in agreement. A live duel has no verdict yet.
-function run_outcome(state: State): i32
-    if not state.rules:is_finished() then return run_module.outcome_none end
+function run_outcome(state: State): run_module.Outcome
+    if not state.rules:is_finished() then return "none" end
     local run: run_module.State = state.run
     return run_module.outcome_of(
         run.duel, run.rush, state.rules:is_victory(), state.rules:gold())
 end
 
-function key_command(key: Key): i32
+function key_command(key: Key): flow.Command
     match key do
-    case Key.exit then return flow.command_none
-    case Key.restart then return flow.command_restart
-    case Key.history then return flow.command_history
-    case Key.help then return flow.command_help
-    case Key.confirm then return flow.command_advance
-    case Key.select then return flow.command_advance
-    case Key.cancel then return flow.command_advance
-    case Key.left then return flow.command_none
-    case Key.right then return flow.command_none
-    case Key.up then return flow.command_none
-    case Key.down then return flow.command_none
-    case Key.sort_ascending then return flow.command_none
-    case Key.sort_descending then return flow.command_none
-    case Key.pass then return flow.command_none
-    case Key.other then return flow.command_none
+    case Key.exit then return "none"
+    case Key.restart then return "restart"
+    case Key.history then return "history"
+    case Key.help then return "help"
+    case Key.confirm then return "advance"
+    case Key.select then return "advance"
+    case Key.cancel then return "advance"
+    case Key.left then return "none"
+    case Key.right then return "none"
+    case Key.up then return "none"
+    case Key.down then return "none"
+    case Key.sort_ascending then return "none"
+    case Key.sort_descending then return "none"
+    case Key.pass then return "none"
+    case Key.other then return "none"
     end
 end
 
@@ -304,7 +303,7 @@ function update(state: State, city: city_map.State, dt: f64): i32
     if ui.revealing then
         return choreography.update_reveal(presentation, dt)
     end
-    if ui.modal == flow.modal_none then
+    if ui.modal == "none" then
         return choreography.update(presentation, dt)
     end
     return 0
@@ -389,27 +388,37 @@ function submit_round(state: State): unit
     choreography.begin_reveal(state.presentation, resolved.winner ~= 0)
 end
 
-function consume_gate(state: State, city: city_map.State, command: i32): bool
-    local result: i32 = flow.gate(
+-- The swap prompt has exactly two rows, so up and down both mean "the other
+-- one".
+function toggle_cursor_area(ui: flow.State): unit
+    if ui.cursor_area == "hand" then
+        ui.cursor_area = "table-cards"
+    else
+        ui.cursor_area = "hand"
+    end
+end
+
+function consume_gate(state: State, city: city_map.State, command: flow.Command): bool
+    local result: flow.GateResult = flow.gate(
         state.ui, state.rules:is_finished(),
         choreography.is_animating(state.presentation),
         choreography.reveal_finished(state.presentation), command)
-    if result == flow.result_live then return false end
+    if result == "live" then return false end
     -- Restart is a run restart, not a redeal of the live duel: a duel the
     -- run already paid gold into cannot be fought a second time.
-    if result == flow.result_reset then
+    if result == "reset" then
         reset(state, city, state.run.rush, state.run.start_spell)
-    elseif result == flow.result_advance then
+    elseif result == "advance" then
         advance_run(state, city)
-    elseif result == flow.result_refill then
+    elseif result == "refill" then
         local trick: game.Trick? = state.rules:last_trick()
         if trick ~= nil then
             choreography.resolved_breach_cleanup(
                 game.view(state.rules), trick::game.Trick, state.presentation)
         end
-    elseif result == flow.result_skip then
+    elseif result == "skip" then
         choreography.skip(state.presentation)
-    elseif result == flow.result_finish_reveal then
+    elseif result == "finish-reveal" then
         choreography.finish_reveal(state.presentation)
     end
     return true
@@ -424,12 +433,12 @@ function cast_slot_for(key: string, slots: i32): i32
     return -1
 end
 
-function keypressed(state: State, city: city_map.State, key: string): i32
+function keypressed(state: State, city: city_map.State, key: string): ScreenAction
     local ui: flow.State = state.ui
     local rules: game.State = state.rules
     local presentation: choreography.State = state.presentation
     local control: Key = decode_key(key)
-    if control == Key.exit then return ACTION_EXIT end
+    if control == Key.exit then return "exit" end
     -- The shop answers its own list; nothing on the settled board behind it is
     -- reachable until the next duel is dealt. Restarting the run is the one
     -- gesture that still works everywhere, the shop included. A shop already
@@ -438,43 +447,43 @@ function keypressed(state: State, city: city_map.State, key: string): i32
     if on_map(state) then
         if control == Key.restart then
             reset(state, city, state.run.rush, state.run.start_spell)
-        elseif shop.keypressed(state.shop, state.run, key) == shop.result_leave then
+        elseif shop.keypressed(state.shop, state.run, key) == "leave" then
             leave_shop(state)
         end
-        return ACTION_NONE
+        return "none"
     end
     -- Recognition sits ahead of ordinary board controls so the completing A
     -- belongs to the invocation, not to one last cursor movement. Earlier
     -- arrows remain normal play until the full hidden sequence is known.
-    if state.intervention.active then return ACTION_NONE end
+    if state.intervention.active then return "none" end
     if not rules:is_finished()
         and not ui.revealing
-        and ui.modal == flow.modal_none
+        and ui.modal == "none"
         and not choreography.firebolt_pending(presentation)
         and divine_intervention.keypressed(state.intervention, key)
     then
         choreography.skip(presentation)
         flow.clear_picks(ui)
         ui.casting = false
-        return ACTION_NONE
+        return "none"
     end
     -- Keep the struck table_card stable until Firebolt's burn commits its discard
     -- and replacement. Other spell conditions are persistent and do not lock
     -- the board, but advancing the turn during this one-shot effect could make
     -- its target name a newly dealt table_card instead of the card the bolt hit.
-    if choreography.firebolt_pending(presentation) then return ACTION_NONE end
+    if choreography.firebolt_pending(presentation) then return "none" end
     local cast_slot: i32 = cast_slot_for(key, rules:spell_count())
     if cast_slot >= 0 then
-        if ui.modal ~= flow.modal_none or ui.revealing or rules:is_finished() then
-            return ACTION_NONE
+        if ui.modal ~= "none" or ui.revealing or rules:is_finished() then
+            return "none"
         end
         -- A cast key toggles: pressing the aimed spell's own key again calls it
         -- off, while the other spell's key swings the aim over to that one.
         if ui.casting and ui.cast_slot == cast_slot then
             ui.casting = false
-            return ACTION_NONE
+            return "none"
         end
-        if not rules:can_cast(cast_slot) then return ACTION_NONE end
+        if not rules:can_cast(cast_slot) then return "none" end
         -- The cast should respond on the first gesture. If the opening deal
         -- is still running, settle it before targeting begins so the table cards
         -- are visibly present for the aim cursor.
@@ -483,7 +492,7 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         end
         ui.casting = true
         ui.cast_slot = cast_slot
-        return ACTION_NONE
+        return "none"
     end
     if ui.casting then
         match control do
@@ -508,13 +517,13 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         case Key.pass then
         case Key.other then
         end
-        return ACTION_NONE
+        return "none"
     end
-    if consume_gate(state, city, key_command(control)) then return ACTION_NONE end
+    if consume_gate(state, city, key_command(control)) then return "none" end
 
     match control do
     case Key.left then
-        if ui.cursor_area == flow.cursor_hand then
+        if ui.cursor_area == "hand" then
             ui.hand_cursor -= 1
             if ui.hand_cursor < 0 then ui.hand_cursor = rules:hand_size() - 1 end
         else
@@ -522,18 +531,18 @@ function keypressed(state: State, city: city_map.State, key: string): i32
             if ui.table_card_cursor < 0 then ui.table_card_cursor = 2 end
         end
     case Key.right then
-        if ui.cursor_area == flow.cursor_hand then
+        if ui.cursor_area == "hand" then
             ui.hand_cursor = (ui.hand_cursor + 1) % rules:hand_size()
         else
             ui.table_card_cursor = (ui.table_card_cursor + 1) % 3
         end
     case Key.up then
-        if rules:swap_open() then ui.cursor_area = 1 - ui.cursor_area end
+        if rules:swap_open() then toggle_cursor_area(ui) end
     case Key.down then
-        if rules:swap_open() then ui.cursor_area = 1 - ui.cursor_area end
+        if rules:swap_open() then toggle_cursor_area(ui) end
     case Key.select then
         if rules:swap_open() then
-            if ui.cursor_area == flow.cursor_hand then
+            if ui.cursor_area == "hand" then
                 flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
             elseif not rules:is_frozen(ui.table_card_cursor) then
                 flow.toggle(ui.swap_table_cards, ui.table_card_cursor, 3)
@@ -564,7 +573,7 @@ function keypressed(state: State, city: city_map.State, key: string): i32
     case Key.cancel then
     case Key.other then
     end
-    return ACTION_NONE
+    return "none"
 end
 
 function mousemoved(state: State, x: f64, y: f64): unit
@@ -580,8 +589,8 @@ function mousemoved(state: State, x: f64, y: f64): unit
     if flow.gate(
         ui, state.rules:is_finished(),
         choreography.is_animating(state.presentation),
-        choreography.reveal_finished(state.presentation), flow.command_none
-    ) ~= flow.result_live then return end
+        choreography.reveal_finished(state.presentation), "none"
+    ) ~= "live" then return end
     local at: render.Point = render.point(x, y)
     -- While aiming a cast, the pointer only steers the table_card the spell would
     -- hit; the fan below stays folded and unfocused.
@@ -592,14 +601,14 @@ function mousemoved(state: State, x: f64, y: f64): unit
     end
     local hand: i32 = choreography.hit_hand(state.presentation, at)
     if hand >= 0 then
-        ui.cursor_area = flow.cursor_hand
+        ui.cursor_area = "hand"
         ui.hand_cursor = hand
         return
     end
     if state.rules:swap_open() then
         local table_card: i32 = render.hit_table_card(viewport, at)
         if table_card >= 0 then
-            ui.cursor_area = flow.cursor_table_cards
+            ui.cursor_area = "table-cards"
             ui.table_card_cursor = table_card
         end
     end
@@ -616,14 +625,14 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
             viewport, x, y, shop.row_count(state.shop, state.run))
         if row < 0 then return end
         shop.focus(state.shop, state.run, row)
-        if shop.activate(state.shop, state.run) == shop.result_leave then
+        if shop.activate(state.shop, state.run) == "leave" then
             leave_shop(state)
         end
         return
     end
     if state.intervention.active then return end
     if choreography.firebolt_pending(state.presentation) then return end
-    if consume_gate(state, city, flow.command_primary) then return end
+    if consume_gate(state, city, "primary") then return end
 
     local ui: flow.State = state.ui
     local rules: game.State = state.rules
@@ -640,7 +649,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     end
     local hand: i32 = choreography.hit_hand(state.presentation, at)
     if hand >= 0 then
-        ui.cursor_area = flow.cursor_hand
+        ui.cursor_area = "hand"
         ui.hand_cursor = hand
         if rules:swap_open() then flow.toggle(ui.swap_hand, hand, 3)
         else flow.toggle(ui.play_picks, hand, 2) end
@@ -649,7 +658,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     if rules:swap_open() then
         local table_card: i32 = render.hit_table_card(viewport, at)
         if table_card >= 0 then
-            ui.cursor_area = flow.cursor_table_cards
+            ui.cursor_area = "table-cards"
             ui.table_card_cursor = table_card
             if not rules:is_frozen(table_card) then flow.toggle(ui.swap_table_cards, table_card, 3) end
             return
@@ -736,6 +745,4 @@ return {
     snapshot = snapshot,
     restore = restore,
     landmark_stop = landmark_stop,
-    action_none = ACTION_NONE,
-    action_exit = ACTION_EXIT,
 }

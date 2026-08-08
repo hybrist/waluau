@@ -20,7 +20,7 @@ function colors(): entity.Node
     local tiles: {entity.Node} = {}
     for suit = 0::i32, 3::i32 do table.insert(tiles, color_tile.node(suit)) end
     return entity.wide(entity.flow(
-        tiles, entity.row(TILE_GAP, box.justify_center, box.align_start)))
+        tiles, entity.row(TILE_GAP, "center", "start")))
 end
 
 -- One outcome of a resolved round beside the orb that stands for it, so the
@@ -37,7 +37,7 @@ function legend_entry(edge: string, fill: string, caption: string): entity.Node
                     edge, fill, true)
             end),
         label.left(caption, modal.body_size, modal.body_ink),
-    }, entity.row(6.0, box.justify_start, box.align_center))
+    }, entity.row(6.0, "start", "center"))
 end
 
 function legend(): entity.Node
@@ -45,7 +45,7 @@ function legend(): entity.Node
         legend_entry(orb_track.robbers_edge, orb_track.robbers_fill, "WIN"),
         legend_entry(orb_track.arch_mage_edge, orb_track.arch_mage_fill, "LOSS"),
         legend_entry(orb_track.stalemate_edge, orb_track.stalemate_fill, "TIE"),
-    }, entity.row(LEGEND_GAP, box.justify_start, box.align_center))
+    }, entity.row(LEGEND_GAP, "start", "center"))
 end
 
 function body(): entity.Node
