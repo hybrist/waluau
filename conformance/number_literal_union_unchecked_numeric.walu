@@ -1,0 +1,5 @@
+-- conformance: error=cannot implicitly convert i32 to Volume
+type Volume = 0 | 1 | 2
+
+local level: i32 = 3
+local volume: Volume = level

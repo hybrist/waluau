@@ -90,6 +90,7 @@ fn tree(t: &Tree) -> Doc {
         K::RecordType => delimited("{", "}", t, true),
         K::FunctionType => function_type(t),
         K::TaggedVariantType => node_join_tight(t),
+        K::LiteralType => node_join_tight(t),
         K::TaggedUnionType => join(text(" | "), t.children.iter().map(node)),
         K::ParenType => paren_type(t),
         K::PrimitiveType => join(text(" "), t.children.iter().map(node)),

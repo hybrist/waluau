@@ -3997,3 +3997,256 @@ fn missing_return_points_at_the_last_statement() {
     assert!(errors[0].to_string().contains("missing a return"));
     assert!(errors[0].span().is_some(), "{:?}", errors[0]);
 }
+
+#[test]
+fn string_literal_union_accepts_member_literals() {
+    let source = r#"
+        type CardColor = "red" | "black"
+
+        function flip(color: CardColor): CardColor
+            if color == "red" then
+                return "black"
+            end
+            return "red"
+        end
+
+        function entry(): bool
+            local color: CardColor = "red"
+            return flip(color) == "black"
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn string_literal_union_rejects_non_member_literals() {
+    let source = r#"
+        type CardColor = "red" | "black"
+
+        function entry(): CardColor
+            return "banana"
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("\"banana\" is not a member of \"red\" | \"black\""),
+        "{error}"
+    );
+}
+
+#[test]
+fn string_literal_union_never_converts_to_or_from_string() {
+    let assignment = r#"
+        type CardColor = "red" | "black"
+
+        function entry(name: string): CardColor
+            return name
+        end
+    "#;
+    let program = parse(assignment).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert string to CardColor"),
+        "{error}"
+    );
+
+    let cast_in = r#"
+        type CardColor = "red" | "black"
+
+        function entry(name: string): CardColor
+            return (name :: CardColor)
+        end
+    "#;
+    let program = parse(cast_in).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert string to CardColor"),
+        "{error}"
+    );
+
+    let cast_out = r#"
+        type CardColor = "red" | "black"
+
+        function entry(color: CardColor): string
+            return (color :: string)
+        end
+    "#;
+    let program = parse(cast_out).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert CardColor to string"),
+        "{error}"
+    );
+}
+
+#[test]
+fn string_literal_union_equality_rejects_plain_strings_and_non_members() {
+    let plain = r#"
+        type CardColor = "red" | "black"
+
+        function entry(color: CardColor, name: string): bool
+            return color == name
+        end
+    "#;
+    let program = parse(plain).expect("parse should succeed");
+    super::type_check(&program).expect_err("comparing a union to a plain string should fail");
+
+    let non_member = r#"
+        type CardColor = "red" | "black"
+
+        function entry(color: CardColor): bool
+            return color == "banana"
+        end
+    "#;
+    let program = parse(non_member).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("\"banana\" is not a member of \"red\" | \"black\""),
+        "{error}"
+    );
+}
+
+#[test]
+fn literal_union_aliases_are_nominal() {
+    let source = r#"
+        type A = "x" | "y"
+        type B = "x" | "y"
+
+        function entry(a: A): B
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert A to B"),
+        "{error}"
+    );
+}
+
+#[test]
+fn number_literal_union_checks_membership_and_reads_as_numeric() {
+    let source = r#"
+        type Volume = 0 | 1 | 2
+
+        function louder(volume: Volume): Volume
+            if volume < 2 then
+                return ((volume + 1) :: Volume)
+            end
+            return volume
+        end
+
+        function entry(): bool
+            local volume: Volume = 1
+            local as_number: f64 = volume
+            return louder(volume) == 2 and as_number == 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn number_literal_union_rejects_non_members_and_unchecked_numerics() {
+    let non_member = r#"
+        type Volume = 0 | 1 | 2
+
+        function entry(): Volume
+            return 5
+        end
+    "#;
+    let program = parse(non_member).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error.to_string().contains("5 is not a member of 0 | 1 | 2"),
+        "{error}"
+    );
+
+    let implicit = r#"
+        type Volume = 0 | 1 | 2
+
+        function entry(volume: i32): Volume
+            return volume
+        end
+    "#;
+    let program = parse(implicit).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert i32 to Volume"),
+        "{error}"
+    );
+}
+
+#[test]
+fn negated_number_literal_names_a_union_member() {
+    let source = r#"
+        type Direction = -1 | 1
+
+        function entry(): Direction
+            local direction: Direction = -1
+            return direction
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+
+    let non_member = r#"
+        type Direction = -1 | 1
+
+        function entry(): Direction
+            return -2
+        end
+    "#;
+    let program = parse(non_member).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error.to_string().contains("-2 is not a member of -1 | 1"),
+        "{error}"
+    );
+}
+
+#[test]
+fn float_literal_union_members_compare_by_value() {
+    let source = r#"
+        type Speed = 0.5 | 1.0 | 2.0
+
+        function entry(): bool
+            local speed: Speed = 0.5
+            local doubled: f64 = speed * 2
+            return doubled == 1.0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn nullable_literal_union_takes_member_literals() {
+    let source = r#"
+        type CardColor = "red" | "black"
+
+        function entry(): bool
+            local maybe: CardColor? = nil
+            maybe = "red"
+            return maybe ~= nil
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}

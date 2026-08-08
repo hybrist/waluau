@@ -940,7 +940,9 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         | Type::Unknown
         | Type::Thread
         | Type::TypedArray(_)
-        | Type::TypeParam(_) => {}
+        | Type::TypeParam(_)
+        | Type::StringLiteralUnion(_)
+        | Type::NumberLiteralUnion(_) => {}
     }
 }
 
@@ -1507,6 +1509,11 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         Type::Opaque { name, ty } if nested && type_contains_opaque_name(ty, name) => Type::Unknown,
         Type::Opaque { ty, .. } => erase_type_opaque_types_at(ty, nested),
         Type::ExternSubtype(_) => Type::Extern,
+        // Literal unions are a type-checking construct; at runtime a string
+        // literal union value is its member string and a number literal
+        // union value is its underlying numeric type.
+        Type::StringLiteralUnion(_) => Type::String,
+        Type::NumberLiteralUnion(union) => Type::Numeric(union.numeric),
         Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types_at(inner, true))),
         Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types_at(inner, true))),
         Type::Variadic(inner) => Type::Variadic(Box::new(erase_type_opaque_types_at(inner, true))),
@@ -4922,6 +4929,14 @@ impl Builder<'_> {
                             "numeric literal is not assignable to tagged union type",
                         ));
                     }
+                    // Literal unions are erased before lowering; if one leaks
+                    // through, lower at its runtime representation.
+                    Type::NumberLiteralUnion(union) => union.numeric,
+                    Type::StringLiteralUnion(_) => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to string",
+                        ));
+                    }
                     Type::Unknown => {
                         // Boxing a bare literal into `unknown`: lower it at its
                         // default numeric type, then box the result into anyref.
@@ -5204,6 +5219,12 @@ impl Builder<'_> {
                         let actual = self.infer_expr_type(expr, types, expected.clone())?;
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
+                            Type::NumberLiteralUnion(union) => union.numeric,
+                            Type::StringLiteralUnion(_) => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
                             Type::Bool => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
@@ -6552,6 +6573,12 @@ impl Builder<'_> {
                 Some(Type::TaggedVariant(_)) | Some(Type::TaggedUnion(_)) => Err(
                     Diagnostic::new("numeric literal is not assignable to tagged union type"),
                 ),
+                // Literal unions are erased before lowering; if one leaks
+                // through, use its runtime representation.
+                Some(Type::NumberLiteralUnion(union)) => Ok(Type::Numeric(union.numeric)),
+                Some(Type::StringLiteralUnion(_)) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to string",
+                )),
                 // A literal coerced to `unknown` is boxed; report `unknown` as its type.
                 Some(Type::Unknown) => Ok(Type::Unknown),
                 None => Ok(Type::number()),
@@ -6727,10 +6754,14 @@ impl Builder<'_> {
                         Type::TypeParam(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
+                        Type::NumberLiteralUnion(union) => {
+                            coerce_type(Type::Numeric(union.numeric), expected)
+                        }
                         Type::Thread
                         | Type::Unknown
                         | Type::TaggedVariant(_)
-                        | Type::TaggedUnion(_) => {
+                        | Type::TaggedUnion(_)
+                        | Type::StringLiteralUnion(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }
@@ -11911,8 +11942,8 @@ fn lua_type_name(ty: &Type) -> Option<&'static str> {
         Type::Nil => "nil",
         Type::Unit => "nil",
         Type::Bool => "boolean",
-        Type::Numeric(_) => "number",
-        Type::String | Type::Bytes => "string",
+        Type::Numeric(_) | Type::NumberLiteralUnion(_) => "number",
+        Type::String | Type::Bytes | Type::StringLiteralUnion(_) => "string",
         Type::Array(_)
         | Type::Variadic(_)
         | Type::Record(_)
@@ -12030,6 +12061,18 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             }
             Type::Numeric(actual_numeric) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {actual_numeric} to {expected_numeric}",
+            ))),
+            Type::NumberLiteralUnion(union)
+                if union.numeric.can_implicitly_widen_to(expected_numeric) =>
+            {
+                Ok(Type::Numeric(expected_numeric))
+            }
+            Type::NumberLiteralUnion(union) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {} to {expected_numeric}",
+                union.numeric,
+            ))),
+            Type::StringLiteralUnion(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert string literal union to {expected_numeric}",
             ))),
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",

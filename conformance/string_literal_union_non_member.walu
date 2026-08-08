@@ -1,0 +1,4 @@
+-- conformance: error=is not a member of "red" | "black"
+type CardColor = "red" | "black"
+
+local color: CardColor = "banana"

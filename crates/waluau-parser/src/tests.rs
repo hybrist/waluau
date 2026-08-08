@@ -1,7 +1,7 @@
 use super::{parse, parse_with_path};
 use waluau_ast::{
-    AssignOp, BinaryOp, FunctionName, NumberLiteral, NumericType, Rebindability, Stmt, Type,
-    UnaryOp,
+    AssignOp, BinaryOp, FunctionName, NumberLiteral, NumberLiteralUnion, NumberUnionMember,
+    NumericType, Rebindability, Stmt, Type, UnaryOp,
 };
 
 #[test]
@@ -78,6 +78,102 @@ fn rejects_non_exhaustive_and_duplicate_enum_matches() {
         duplicate
             .to_string()
             .contains("duplicate/unreachable match case 'Direction.north'")
+    );
+}
+
+#[test]
+fn parses_string_literal_union_type_declaration() {
+    let program = parse("type CardColor = \"red\" | \"black\"\n").expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 1);
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::StringLiteralUnion(vec!["red".to_string(), "black".to_string()])
+    );
+}
+
+#[test]
+fn parses_number_literal_union_type_declarations() {
+    let program = parse("type Volume = 0 | 1 | 2\n").expect("parse should succeed");
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::NumberLiteralUnion(NumberLiteralUnion {
+            numeric: NumericType::I32,
+            members: vec![
+                NumberUnionMember::Int(0),
+                NumberUnionMember::Int(1),
+                NumberUnionMember::Int(2),
+            ],
+        })
+    );
+
+    let program = parse("type Direction = -1 | 1\n").expect("parse should succeed");
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::NumberLiteralUnion(NumberLiteralUnion {
+            numeric: NumericType::I32,
+            members: vec![NumberUnionMember::Int(-1), NumberUnionMember::Int(1)],
+        })
+    );
+
+    // A member outside i32 widens the whole union to i64.
+    let program = parse("type BigId = 1 | 5000000000\n").expect("parse should succeed");
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::NumberLiteralUnion(NumberLiteralUnion {
+            numeric: NumericType::I64,
+            members: vec![
+                NumberUnionMember::Int(1),
+                NumberUnionMember::Int(5_000_000_000),
+            ],
+        })
+    );
+
+    let program = parse("type Speed = 0.5 | 2.0\n").expect("parse should succeed");
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::NumberLiteralUnion(NumberLiteralUnion {
+            numeric: NumericType::F64,
+            members: vec![NumberUnionMember::float(0.5), NumberUnionMember::float(2.0),],
+        })
+    );
+}
+
+#[test]
+fn rejects_invalid_literal_union_declarations() {
+    let mixed_kind = parse("type Bad = \"red\" | 1\n").expect_err("mixed union should fail");
+    assert!(
+        mixed_kind
+            .to_string()
+            .contains("string literal union member must be a string literal, got 1")
+    );
+
+    let mixed_numeric = parse("type Bad = 1 | 2.5\n").expect_err("mixed numerics should fail");
+    assert!(
+        mixed_numeric.to_string().contains(
+            "number literal union members must all be integers or all be floats, not a mix"
+        )
+    );
+
+    let duplicate = parse("type Bad = \"red\" | \"red\"\n").expect_err("duplicate should fail");
+    assert!(
+        duplicate
+            .to_string()
+            .contains("duplicate string literal union member \"red\"")
+    );
+
+    let duplicate_number = parse("type Bad = 1 | 0x1\n").expect_err("duplicate should fail");
+    assert!(
+        duplicate_number
+            .to_string()
+            .contains("duplicate number literal union member 1")
+    );
+
+    let tagged_mix =
+        parse("type Bad = Blue(f64) | \"red\"\n").expect_err("tagged/literal mix should fail");
+    assert!(
+        tagged_mix
+            .to_string()
+            .contains("tagged union member must be a tagged variant")
     );
 }
 

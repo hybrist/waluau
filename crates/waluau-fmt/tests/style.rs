@@ -100,3 +100,17 @@ fn formats_nominal_enums_and_matches() {
         "enum Direction { north, east, south }\nfunction score(d: Direction): i32\n    match d do\n    case Direction.north then\n        return 1\n    case Direction.east then\n        return 2\n    case Direction.south then\n        return 3\n    end\nend\n"
     );
 }
+
+#[test]
+fn formats_literal_union_type_declarations() {
+    assert_eq!(
+        fmt("type CardColor=\"red\"|\"black\"\n"),
+        "type CardColor = \"red\" | \"black\"\n"
+    );
+    assert_eq!(fmt("type Volume=0|1|2\n"), "type Volume = 0 | 1 | 2\n");
+    assert_eq!(fmt("type Direction=-1|1\n"), "type Direction = -1 | 1\n");
+    assert_eq!(
+        fmt("type Speed=0.5|1.0|2.0\n"),
+        "type Speed = 0.5 | 1.0 | 2.0\n"
+    );
+}
