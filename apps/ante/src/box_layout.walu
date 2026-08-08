@@ -20,9 +20,12 @@ type Intrinsic = {
     -- no meaningful text baseline.
     baseline: f64
 }
-type Style = { axis: i32, gap: f64, justify: i32, align: i32, padding: Edges }
+type Axis = "row" | "column"
+type Justify = "start" | "center" | "end" | "space-between"
+type Align = "start" | "center" | "end" | "stretch" | "baseline"
+type Style = { axis: Axis, gap: f64, justify: Justify, align: Align, padding: Edges }
 type Tree = {
-    kind: i32,
+    kind: "leaf" | "flow",
     key: i32,
     intrinsic: Intrinsic,
     children: {Tree},
@@ -33,23 +36,6 @@ type Tree = {
 type Frame = { key: i32, rect: Rect, baseline: f64 }
 type Result = { frames: {Frame}, content: Rect, overflow_x: f64, overflow_y: f64, overflowed: bool }
 type Extents = { set: bool, left: f64, top: f64, right: f64, bottom: f64 }
-
-const LEAF: i32 = 0
-const FLOW: i32 = 1
-
-const AXIS_ROW: i32 = 0
-const AXIS_COLUMN: i32 = 1
-
-const JUSTIFY_START: i32 = 0
-const JUSTIFY_CENTER: i32 = 1
-const JUSTIFY_END: i32 = 2
-const JUSTIFY_SPACE_BETWEEN: i32 = 3
-
-const ALIGN_START: i32 = 0
-const ALIGN_CENTER: i32 = 1
-const ALIGN_END: i32 = 2
-const ALIGN_STRETCH: i32 = 3
-const ALIGN_BASELINE: i32 = 4
 
 -- Large enough to mean "no authored cap" for game-space geometry without
 -- allowing infinities into distribution arithmetic.
@@ -67,10 +53,10 @@ const ZERO_INTRINSIC: Intrinsic = {
 }
 
 const LEAF_STYLE: Style = {
-    axis = AXIS_ROW,
+    axis = "row",
     gap = 0.0,
-    justify = JUSTIFY_START,
-    align = ALIGN_START,
+    justify = "start",
+    align = "start",
     padding = { left = 0.0, top = 0.0, right = 0.0, bottom = 0.0 }
 }
 
@@ -97,13 +83,10 @@ function validate_edges(value: Edges): unit
 end
 
 function validate_style(value: Style): unit
-    assert(value.axis == AXIS_ROW or value.axis == AXIS_COLUMN)
     -- Negative gaps intentionally express overlap; flex pressure changes item
     -- sizes without silently changing that authored relationship.
     assert(valid_number(value.gap))
-    assert(value.justify >= JUSTIFY_START and value.justify <= JUSTIFY_SPACE_BETWEEN)
-    assert(value.align >= ALIGN_START and value.align <= ALIGN_BASELINE)
-    assert(value.axis == AXIS_ROW or value.align ~= ALIGN_BASELINE)
+    assert(value.axis == "row" or value.align ~= "baseline")
     validate_edges(value.padding)
 end
 
@@ -124,7 +107,7 @@ end
 function leaf(key: i32, intrinsic: Intrinsic): Tree
     validate_intrinsic(intrinsic)
     return {
-        kind = LEAF,
+        kind = "leaf",
         key = key,
         intrinsic = intrinsic,
         children = {},
@@ -141,7 +124,7 @@ function flow(key: i32, children: {Tree}, style: Style): Tree
         table.insert(owned, child)
     end
     return {
-        kind = FLOW,
+        kind = "flow",
         key = key,
         intrinsic = ZERO_INTRINSIC,
         children = owned,
@@ -192,11 +175,11 @@ end
 -- Bottom-up intrinsic measurement. A subtree is itself measurable content,
 -- useful both to its parent flow and to callers choosing an available region.
 function measure(node: Tree): Intrinsic
-    if node.kind == LEAF then
+    if node.kind == "leaf" then
         return node.intrinsic
     end
 
-    local horizontal: bool = node.style.axis == AXIS_ROW
+    local horizontal: bool = node.style.axis == "row"
     local min_main: f64 = 0.0
     local preferred_main: f64 = 0.0
     local max_main: f64 = 0.0
@@ -221,7 +204,7 @@ function measure(node: Tree): Intrinsic
             preferred_cross = math.max(preferred_cross, value.preferred_height)
             max_cross = math.max(max_cross, value.max_height)
             baseline = math.max(baseline, child_baseline(value))
-            if node.style.align == ALIGN_BASELINE then
+            if node.style.align == "baseline" then
                 local min_child_baseline: f64 = baseline_at_height(value, value.min_height)
                 local preferred_child_baseline: f64 = child_baseline(value)
                 local max_child_baseline: f64 = baseline_at_height(value, value.max_height)
@@ -248,7 +231,7 @@ function measure(node: Tree): Intrinsic
         end
     end
 
-    if horizontal and node.style.align == ALIGN_BASELINE then
+    if horizontal and node.style.align == "baseline" then
         min_cross = min_ascent + min_descent
         preferred_cross = preferred_ascent + preferred_descent
         max_cross = cap(max_ascent + max_descent)
@@ -484,11 +467,11 @@ function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extent
         absolute_baseline = bounds.y + own_measure.baseline
     end
     append_frame(frames, node.key, bounds, absolute_baseline)
-    if node.kind == LEAF or #node.children == 0 then
+    if node.kind == "leaf" or #node.children == 0 then
         return
     end
 
-    local horizontal: bool = node.style.axis == AXIS_ROW
+    local horizontal: bool = node.style.axis == "row"
     local padding: Edges = node.style.padding
     local inner: Rect = {
         x = bounds.x + padding.left,
@@ -535,17 +518,17 @@ function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extent
     end
 
     local offset: f64 = 0.0
-    if node.style.justify == JUSTIFY_CENTER then
+    if node.style.justify == "center" then
         offset = free * 0.5
-    elseif node.style.justify == JUSTIFY_END then
+    elseif node.style.justify == "end" then
         offset = free
-    elseif node.style.justify == JUSTIFY_SPACE_BETWEEN and free > 0.0 and #node.children > 1 then
+    elseif node.style.justify == "space-between" and free > 0.0 and #node.children > 1 then
         gap += free / ((#node.children - 1)::f64)
         free = 0.0
     end
 
     local row_baseline: f64 = 0.0
-    if horizontal and node.style.align == ALIGN_BASELINE then
+    if horizontal and node.style.align == "baseline" then
         for value in measurements do
             row_baseline = math.max(row_baseline, child_baseline(value))
         end
@@ -556,7 +539,7 @@ function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extent
         local child: Tree = node.children[index]
         local value: Intrinsic = measurements[index]
         local child_cross: f64 = cross_preferred(value, horizontal)
-        if node.style.align == ALIGN_STRETCH then
+        if node.style.align == "stretch" then
             child_cross = clamp(
                 available_cross,
                 cross_min(value, horizontal),
@@ -564,11 +547,11 @@ function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extent
             )
         end
         local cross_offset: f64 = 0.0
-        if node.style.align == ALIGN_CENTER then
+        if node.style.align == "center" then
             cross_offset = (available_cross - child_cross) * 0.5
-        elseif node.style.align == ALIGN_END then
+        elseif node.style.align == "end" then
             cross_offset = available_cross - child_cross
-        elseif horizontal and node.style.align == ALIGN_BASELINE then
+        elseif horizontal and node.style.align == "baseline" then
             cross_offset = row_baseline - child_baseline(value)
         end
 
@@ -655,16 +638,5 @@ return {
     fixed = fixed,
     frame = frame,
     hit = hit,
-    axis_row = AXIS_ROW,
-    axis_column = AXIS_COLUMN,
-    justify_start = JUSTIFY_START,
-    justify_center = JUSTIFY_CENTER,
-    justify_end = JUSTIFY_END,
-    justify_space_between = JUSTIFY_SPACE_BETWEEN,
-    align_start = ALIGN_START,
-    align_center = ALIGN_CENTER,
-    align_end = ALIGN_END,
-    align_stretch = ALIGN_STRETCH,
-    align_baseline = ALIGN_BASELINE,
     unbounded = UNBOUNDED
 }

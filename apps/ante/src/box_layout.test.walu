@@ -8,12 +8,18 @@ function edges(value: f64): layout.Edges
     return { left = value, top = value, right = value, bottom = value }
 end
 
-function row(children: {layout.Tree}, gap: f64, justify: i32, align: i32, padding: f64): layout.Tree
+function row(
+    children: {layout.Tree},
+    gap: f64,
+    justify: layout.Justify,
+    align: layout.Align,
+    padding: f64
+): layout.Tree
     return layout.flow(
         NONE,
         children,
         {
-            axis = layout.axis_row,
+            axis = "row",
             gap = gap,
             justify = justify,
             align = align,
@@ -61,8 +67,8 @@ describe(
                         layout.leaf(3, layout.fixed(50.0, 24.0))
                     },
                     10.0,
-                    layout.justify_start,
-                    layout.align_start,
+                    "start",
+                    "start",
                     8.0
                 )
 
@@ -83,8 +89,8 @@ describe(
                         layout.leaf(2, layout.fixed(40.0, 20.0))
                     },
                     10.0,
-                    layout.justify_center,
-                    layout.align_center,
+                    "center",
+                    "center",
                     0.0
                 )
                 local result: layout.Result = layout.solve(
@@ -111,8 +117,8 @@ describe(
                 local root: layout.Tree = row(
                     {first, second},
                     0.0,
-                    layout.justify_start,
-                    layout.align_start,
+                    "start",
+                    "start",
                     0.0
                 )
                 local result: layout.Result = layout.solve(
@@ -132,8 +138,8 @@ describe(
                 local root: layout.Tree = row(
                     {layout.leaf(1, measure), layout.leaf(2, measure)},
                     0.0,
-                    layout.justify_start,
-                    layout.align_start,
+                    "start",
+                    "start",
                     0.0
                 )
 
@@ -164,10 +170,10 @@ describe(
                     10,
                     {label},
                     {
-                        axis = layout.axis_row,
+                        axis = "row",
                         gap = 0.0,
-                        justify = layout.justify_center,
-                        align = layout.align_center,
+                        justify = "center",
+                        align = "center",
                         padding = { left = 14.0, top = 9.0, right = 14.0, bottom = 9.0 }
                     }
                 )
@@ -176,10 +182,10 @@ describe(
                     12,
                     {second_label},
                     {
-                        axis = layout.axis_row,
+                        axis = "row",
                         gap = 0.0,
-                        justify = layout.justify_center,
-                        align = layout.align_center,
+                        justify = "center",
+                        align = "center",
                         padding = { left = 14.0, top = 9.0, right = 14.0, bottom = 9.0 }
                     }
                 )
@@ -187,10 +193,10 @@ describe(
                     NONE,
                     {button, second_button},
                     {
-                        axis = layout.axis_column,
+                        axis = "column",
                         gap = 6.0,
-                        justify = layout.justify_start,
-                        align = layout.align_start,
+                        justify = "start",
+                        align = "start",
                         padding = edges(4.0)
                     }
                 )
@@ -209,8 +215,8 @@ describe(
                 local root: layout.Tree = row(
                     {layout.leaf(1, small), layout.leaf(2, large)},
                     4.0,
-                    layout.justify_start,
-                    layout.align_baseline,
+                    "start",
+                    "baseline",
                     0.0
                 )
                 local result: layout.Result = layout.solve(
@@ -250,8 +256,8 @@ describe(
                 local root: layout.Tree = row(
                     {layout.leaf(1, high_baseline), layout.leaf(2, low_baseline)},
                     0.0,
-                    layout.justify_start,
-                    layout.align_baseline,
+                    "start",
+                    "baseline",
                     0.0
                 )
 
@@ -278,8 +284,8 @@ describe(
                         layout.leaf(2, layout.fixed(50.0, 30.0))
                     },
                     -20.0,
-                    layout.justify_start,
-                    layout.align_start,
+                    "start",
+                    "start",
                     0.0
                 )
                 local result: layout.Result = layout.solve(

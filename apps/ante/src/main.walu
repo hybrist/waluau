@@ -26,15 +26,20 @@ const HOT_SNAPSHOT_SCHEMA: string = "duel-hmr-v4"
 -- The live screen marker plus the duel screen's five sections.
 const HOT_SNAPSHOT_SECTIONS: i32 = 6
 
-const SCREEN_MENU: i32 = 0
-const SCREEN_GAME: i32 = 1
+type ActiveScreen = "menu" | "game"
+
+function screen_from(token: string): ActiveScreen?
+    if token == "menu" then return "menu" end
+    if token == "game" then return "game" end
+    return nil
+end
 
 function play_flip_cues(assets: presentation_resources.State, count: i32): unit
     for _ = 1, count do presentation_resources.play_flip(assets) end
 end
 
 function install_ante_magic(): unit
-    local screen: i32 = SCREEN_MENU
+    local screen: ActiveScreen = "menu"
     local menu_state: menu.State = menu.new()
     local duel: game_screen.State = game_screen.new()
     local city: city_map.State = city_map.new(math.random(2147483646))
@@ -57,12 +62,12 @@ function install_ante_magic(): unit
     local function begin_run(rush: bool, spell: i32): unit
         if not presentation_resources.unlock_audio(assets) then return end
         game_screen.reset(duel, city, rush, spell)
-        screen = SCREEN_GAME
+        screen = "game"
     end
 
     local function leave_run(): unit
         menu.reset(menu_state, city)
-        screen = SCREEN_MENU
+        screen = "menu"
     end
 
     local function update(dt: f64, input: engine.Input): unit
@@ -70,7 +75,7 @@ function install_ante_magic(): unit
         -- once afterwards. A duel whose resources are still loading still gets
         -- to aim, so its walk between two stops keeps time with the run rather
         -- than with the asset loader.
-        if screen == SCREEN_MENU then
+        if screen == "menu" then
             menu.update(menu_state, city, dt)
         else
             game_screen.steer_city(duel, city, dt)
@@ -105,14 +110,14 @@ function install_ante_magic(): unit
                 -- The menu's map is a drifting view of a city nobody is running,
                 -- so it has no last duel to mark.
                 local landmark: i32 = -1
-                if screen ~= SCREEN_MENU then
+                if screen ~= "menu" then
                     landmark = game_screen.landmark_stop(duel)
                 end
                 city_map_render.draw(
                     city, graphics, ink.color_ink(city.streak_suit),
                     city.cover, landmark)
             end
-            if screen == SCREEN_MENU then
+            if screen == "menu" then
                 menu.draw(menu_state, canvas, graphics, assets.effects, assets.sound_finished)
             elseif game_screen.fence_open(duel) then
                 game_screen.draw_fence(duel, city, canvas, graphics)
@@ -121,21 +126,21 @@ function install_ante_magic(): unit
         graphics:pop()
     end
 
-    local function menu_action(action: i32): unit
-        if action == menu.action_start then
+    local function menu_action(action: menu.MenuAction): unit
+        if action == "start" then
             begin_run(false, menu.selected_spell(menu_state))
-        elseif action == menu.action_boss_rush then
+        elseif action == "start-rush" then
             begin_run(true, menu.selected_spell(menu_state))
         end
     end
 
     local function keypressed(key: string): unit
         if #assets.fatal_audio_code > 0 then return end
-        if screen == SCREEN_MENU then
+        if screen == "menu" then
             menu_action(menu.keypressed(menu_state, key))
             return
         end
-        if game_screen.keypressed(duel, city, key) == game_screen.action_exit then
+        if game_screen.keypressed(duel, city, key) == "exit" then
             leave_run()
         end
     end
@@ -145,7 +150,7 @@ function install_ante_magic(): unit
         local canvas: layout.State = layout.current()
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
-        if screen == SCREEN_MENU then
+        if screen == "menu" then
             menu.mousemoved(menu_state, canvas, x, y)
             return
         end
@@ -157,7 +162,7 @@ function install_ante_magic(): unit
         local canvas: layout.State = layout.current()
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
-        if screen == SCREEN_MENU then
+        if screen == "menu" then
             menu_action(menu.mousepressed(menu_state, canvas, x, y, button))
             return
         end
@@ -197,22 +202,18 @@ function install_ante_magic(): unit
                 snapshot_value, HOT_SNAPSHOT_SCHEMA, HOT_SNAPSHOT_SECTIONS)
             if sections == nil then return false end
             local payloads: {string} = sections::{string}
-            local screen_token: f64? = tonumber(payloads[0])
-            if screen_token == nil then return false end
-            local restored_screen: i32 = (screen_token::f64)::i32
-            if restored_screen ~= SCREEN_MENU and restored_screen ~= SCREEN_GAME then
-                return false
-            end
+            local restored_screen: ActiveScreen? = screen_from(payloads[0])
+            if restored_screen == nil then return false end
             local restored: game_screen.State? = game_screen.restore(
                 payloads[1], payloads[2], payloads[3], payloads[4], payloads[5])
             if restored == nil then return false end
             duel = restored::game_screen.State
             menu.reset(menu_state, city)
-            screen = restored_screen
+            screen = restored_screen::ActiveScreen
             -- A restored run is set down where it stands rather than played
             -- back to it: the map takes the duel's stop with no walk and no
             -- dissolve left to run.
-            if restored_screen == SCREEN_GAME then
+            if restored_screen == "game" then
                 game_screen.place_city(duel, city)
             end
             return true

@@ -80,14 +80,12 @@ const HOVER_TILT: f64 = 0.085
 const HOVER_FLIP: f64 = 0.11
 const HOVER_RISE: f64 = 2.6
 
-type Beat = { index: i32, part: f64 }
-
 -- Which beat a clock is in, and how far through it. Past the end everything
 -- reads as the hover, because the hover is where the animation lives once it
 -- has finished happening.
-const BEAT_FLIGHT: i32 = 0
-const BEAT_LAND: i32 = 1
-const BEAT_HOVER: i32 = 2
+type BeatIndex = "flight" | "land" | "hover"
+
+type Beat = { index: BeatIndex, part: f64 }
 
 function span(clock: f64, from: f64, to: f64): f64
     local part: f64 = (clock - from) / (to - from)
@@ -98,12 +96,12 @@ end
 
 function beat_at(clock: f64): Beat
     if clock < FLIGHT_END then
-        return { index = BEAT_FLIGHT, part = span(clock, 0.0, FLIGHT_END) }
+        return { index = "flight", part = span(clock, 0.0, FLIGHT_END) }
     end
     if clock < LAND_END then
-        return { index = BEAT_LAND, part = span(clock, FLIGHT_END, LAND_END) }
+        return { index = "land", part = span(clock, FLIGHT_END, LAND_END) }
     end
-    return { index = BEAT_HOVER, part = clock - LAND_END }
+    return { index = "hover", part = clock - LAND_END }
 end
 
 function total_seconds(): f64
@@ -159,6 +157,8 @@ end
 -- Where the deck sits and where the card lands, both as the card's centre —
 -- and the dials of the throw itself, carried with it so a story can put
 -- sliders on them.
+type Arc = "even" | "late" | "very-late" | "early"
+
 type Draw = {
     from_x: f64,
     from_y: f64,
@@ -179,7 +179,7 @@ type Draw = {
     -- descent.
     rise: f64,
     -- When the top of the arc comes: one of the arc_* shapes below.
-    arc: i32
+    arc: Arc
 }
 
 -- The shapes the arc can take. The height is always a half sine — off the
@@ -190,15 +190,10 @@ type Draw = {
 -- turn — the rise easing in — and pay for the late apex with a steeper
 -- drop, which is where the slam lives. Early throws the card high at once
 -- and lets it drift down.
-const ARC_EVEN: i32 = 0
-const ARC_LATE: i32 = 1
-const ARC_VERY_LATE: i32 = 2
-const ARC_EARLY: i32 = 3
-
-function arc_warp(arc: i32, part: f64): f64
-    if arc == ARC_LATE then return part * part end
-    if arc == ARC_VERY_LATE then return part * part * part end
-    if arc == ARC_EARLY then
+function arc_warp(arc: Arc, part: f64): f64
+    if arc == "late" then return part * part end
+    if arc == "very-late" then return part * part * part end
+    if arc == "early" then
         local inverse: f64 = 1.0 - part
         return 1.0 - inverse * inverse
     end
@@ -261,7 +256,7 @@ function pose_at(draw: Draw, clock: f64): card_warp.Pose
     pose.grab_v = GRAB_V
     pose.stretch_limit = draw.stretch_limit
 
-    if beat.index == BEAT_FLIGHT then
+    if beat.index == "flight" then
         local here: Point3 = flight_at(draw, beat.part)
         pose.center_x = here.x
         pose.center_y = here.y
@@ -304,7 +299,7 @@ function pose_at(draw: Draw, clock: f64): card_warp.Pose
         local lean: f64 = reach / PULL_REACH
         pose.roll = 0.14 * lean
         pose.tilt = -0.2 * lean
-    elseif beat.index == BEAT_LAND then
+    elseif beat.index == "land" then
         pose.flip = -math.pi
         local hit: f64 = ease_arc(beat.part)
         pose.axis_x = draw.to_x - draw.from_x
@@ -362,12 +357,5 @@ return {
     ghost_visible = ghost_visible,
     total_seconds = total_seconds,
     flight_end = FLIGHT_END,
-    land_end = LAND_END,
-    arc_even = ARC_EVEN,
-    arc_late = ARC_LATE,
-    arc_very_late = ARC_VERY_LATE,
-    arc_early = ARC_EARLY,
-    beat_flight = BEAT_FLIGHT,
-    beat_land = BEAT_LAND,
-    beat_hover = BEAT_HOVER
+    land_end = LAND_END
 }

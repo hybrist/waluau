@@ -8,6 +8,17 @@ function append_i32(parts: {string}, value: i32): unit
     table.insert(parts, tostring(value))
 end
 
+-- An enum-like field: a literal union member (or nominal enum) boxed into
+-- `unknown`. How such a value is spelled in the token stream is this module's
+-- business, not the serializing module's. Tokens are comma-joined, so the
+-- rendered member must not contain the separator — member spellings satisfy
+-- this by construction.
+function append_enum(parts: {string}, value: unknown): unit
+    local token: string = tostring(value)
+    assert(string.find(token, ",") == nil)
+    table.insert(parts, token)
+end
+
 function append_bool(parts: {string}, value: bool): unit
     if value then table.insert(parts, "1") else table.insert(parts, "0") end
 end
@@ -121,6 +132,7 @@ end
 
 return {
     append_i32 = append_i32,
+    append_enum = append_enum,
     append_bool = append_bool,
     append_f64 = append_f64,
     append_indices = append_indices,

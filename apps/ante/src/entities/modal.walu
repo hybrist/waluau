@@ -61,7 +61,7 @@ function node(title: string, subtitle: string, body: entity.Node): entity.Node
         entity.gap(0.0, HEAD_GAP - TITLE_GAP),
         body,
     }, entity.style(
-        box.axis_column, TITLE_GAP, box.justify_start, box.align_stretch,
+        "column", TITLE_GAP, "start", "stretch",
         entity.edges(PAD_X, PAD_TOP, PAD_X, PAD_BOTTOM)))
     return entity.layer({
         shell(), entity.gap(FLOOR_WIDTH, FLOOR_HEIGHT), content,
@@ -114,7 +114,7 @@ end
 
 function column(children: {entity.Node}, gap: f64): entity.Node
     return entity.flow(
-        children, entity.column(gap, box.justify_start, box.align_stretch))
+        children, entity.column(gap, "start", "stretch"))
 end
 
 return {

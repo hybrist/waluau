@@ -9,57 +9,43 @@ local snapshot_data = require("./snapshot")
 -- cancels. While it holds, ordinary binding input is suspended. `cast_slot` is
 -- which loadout slot is being aimed — one cast key per slot — and only means
 -- anything while `casting` holds.
+type Modal = "none" | "history" | "help" | "final"
+type Command = "none" | "advance" | "restart" | "history" | "help" | "primary"
+-- What `gate` decided about an input. "live" is the only result that permits
+-- an adapter to interpret board-specific input. "advance" means the verdict
+-- is up and the player asked for what comes next; which duel that is — the
+-- next duel of the run, or the first duel of a fresh one — is the run's
+-- decision, not this module's.
+type GateResult =
+    "live" | "consumed" | "reset" | "refill" | "skip" | "finish-reveal" | "advance"
+type CursorArea = "hand" | "table-cards"
+
 type State = {
     hand_cursor: i32,
     table_card_cursor: i32,
-    cursor_area: i32,
+    cursor_area: CursorArea,
     play_picks: {i32},
     swap_hand: {i32},
     swap_table_cards: {i32},
-    modal: i32,
+    modal: Modal,
     revealing: bool,
     casting: bool,
     cast_slot: i32
 }
 
-const MODAL_NONE: i32 = 0
-const MODAL_HISTORY: i32 = 1
-const MODAL_HELP: i32 = 2
-const MODAL_FINAL: i32 = 4
-
-const COMMAND_NONE: i32 = 0
-const COMMAND_ADVANCE: i32 = 1
-const COMMAND_RESTART: i32 = 2
-const COMMAND_HISTORY: i32 = 3
-const COMMAND_HELP: i32 = 4
-const COMMAND_PRIMARY: i32 = 5
-
-const RESULT_LIVE: i32 = 0
-const RESULT_CONSUMED: i32 = 1
-const RESULT_RESET: i32 = 2
-const RESULT_REFILL: i32 = 3
-const RESULT_SKIP: i32 = 4
-const RESULT_FINISH_REVEAL: i32 = 5
--- The verdict is up and the player asked for what comes next. Which duel that
--- is — the next duel of the run, or the first duel of a fresh one — is the
--- run's decision, not this module's.
-const RESULT_ADVANCE: i32 = 6
-
-const CURSOR_HAND: i32 = 0
-const CURSOR_TABLE_CARDS: i32 = 1
 const FAN_CLOSED: i32 = -1
-const UI_SNAPSHOT_SCHEMA: string = "duel-flow-v4"
+const UI_SNAPSHOT_SCHEMA: string = "duel-flow-v5"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
     return {
         hand_cursor = 0,
         table_card_cursor = 0,
-        cursor_area = CURSOR_HAND,
+        cursor_area = "hand",
         play_picks = {},
         swap_hand = {},
         swap_table_cards = {},
-        modal = MODAL_NONE,
+        modal = "none",
         revealing = false,
         casting = false,
         cast_slot = 0,
@@ -80,7 +66,7 @@ function clear_picks(state: State): unit
     state.play_picks = {}
     state.swap_hand = {}
     state.swap_table_cards = {}
-    state.cursor_area = CURSOR_HAND
+    state.cursor_area = "hand"
     state.hand_cursor = 0
     state.table_card_cursor = 0
 end
@@ -101,7 +87,7 @@ end
 
 function begin_reveal(state: State): unit
     clear_picks(state)
-    state.modal = MODAL_NONE
+    state.modal = "none"
     state.revealing = true
     state.casting = false
 end
@@ -120,7 +106,7 @@ function fan_focus(state: State, animating: bool): i32
     -- Targeting a spell points at the table cards, so the fan folds shut the same
     -- way it does when the cursor crosses up to the table_card row.
     if state.casting then return FAN_CLOSED end
-    if state.cursor_area ~= CURSOR_HAND then return FAN_CLOSED end
+    if state.cursor_area ~= "hand" then return FAN_CLOSED end
     return state.hand_cursor
 end
 
@@ -129,79 +115,92 @@ end
 -- verdict must not close onto a finished board, which has no way on.
 function close_modal(state: State, finished: bool): unit
     if finished then
-        state.modal = MODAL_FINAL
+        state.modal = "final"
     else
-        state.modal = MODAL_NONE
+        state.modal = "none"
     end
 end
 
--- Enforce the same phase ordering for every input adapter. RESULT_LIVE is the
--- only result that permits an adapter to interpret board-specific input.
+-- Enforce the same phase ordering for every input adapter.
 function gate(
     state: State,
     finished: bool,
     animating: bool,
     reveal_finished: bool,
-    command: i32
-): i32
+    command: Command
+): GateResult
     if state.revealing then
-        if command == COMMAND_RESTART then return RESULT_RESET end
-        if command == COMMAND_ADVANCE or command == COMMAND_PRIMARY then
-            if not reveal_finished then return RESULT_FINISH_REVEAL end
+        if command == "restart" then return "reset" end
+        if command == "advance" or command == "primary" then
+            if not reveal_finished then return "finish-reveal" end
             state.revealing = false
-            if finished then state.modal = MODAL_FINAL
-            else return RESULT_REFILL end
+            if finished then state.modal = "final"
+            else return "refill" end
         end
-        return RESULT_CONSUMED
+        return "consumed"
     end
 
-    if command == COMMAND_RESTART then return RESULT_RESET end
-    if command == COMMAND_HISTORY then
-        if state.modal == MODAL_HISTORY then close_modal(state, finished)
-        else state.modal = MODAL_HISTORY end
-        return RESULT_CONSUMED
+    if command == "restart" then return "reset" end
+    if command == "history" then
+        if state.modal == "history" then close_modal(state, finished)
+        else state.modal = "history" end
+        return "consumed"
     end
-    if command == COMMAND_HELP then
-        if state.modal == MODAL_HELP then close_modal(state, finished)
-        else state.modal = MODAL_HELP end
-        return RESULT_CONSUMED
+    if command == "help" then
+        if state.modal == "help" then close_modal(state, finished)
+        else state.modal = "help" end
+        return "consumed"
     end
 
     -- The verdict is the one modal that does not simply close: dismissing it
     -- is asking for the next duel, so it answers to the same advance gesture
     -- every other screen uses as well as to a click.
-    if state.modal == MODAL_FINAL then
-        if command == COMMAND_ADVANCE or command == COMMAND_PRIMARY then
-            return RESULT_ADVANCE
+    if state.modal == "final" then
+        if command == "advance" or command == "primary" then
+            return "advance"
         end
-        return RESULT_CONSUMED
+        return "consumed"
     end
-    if state.modal ~= MODAL_NONE then
-        if command == COMMAND_ADVANCE or command == COMMAND_PRIMARY then
+    if state.modal ~= "none" then
+        if command == "advance" or command == "primary" then
             close_modal(state, finished)
         end
-        return RESULT_CONSUMED
+        return "consumed"
     end
     if animating then
-        if command == COMMAND_ADVANCE or command == COMMAND_PRIMARY then return RESULT_SKIP end
-        return RESULT_CONSUMED
+        if command == "advance" or command == "primary" then return "skip" end
+        return "consumed"
     end
-    return RESULT_LIVE
+    return "live"
 end
 
 function snapshot(state: State): string
     local parts: {string} = { UI_SNAPSHOT_SCHEMA }
     snapshot_data.append_i32(parts, state.hand_cursor)
     snapshot_data.append_i32(parts, state.table_card_cursor)
-    snapshot_data.append_i32(parts, state.cursor_area)
+    snapshot_data.append_enum(parts, state.cursor_area)
     snapshot_data.append_indices(parts, state.play_picks)
     snapshot_data.append_indices(parts, state.swap_hand)
     snapshot_data.append_indices(parts, state.swap_table_cards)
-    snapshot_data.append_i32(parts, state.modal)
+    snapshot_data.append_enum(parts, state.modal)
     snapshot_data.append_bool(parts, state.revealing)
     snapshot_data.append_bool(parts, state.casting)
     snapshot_data.append_i32(parts, state.cast_slot)
     return table.concat(parts, ",")
+end
+
+function cursor_area_from(token: string): CursorArea?
+    if token == "hand" then return "hand" end
+    if token == "table-cards" then return "table-cards" end
+    return nil
+end
+
+function modal_from(token: string): Modal?
+    if token == "none" then return "none" end
+    if token == "history" then return "history" end
+    if token == "help" then return "help" end
+    if token == "final" then return "final" end
+    return nil
 end
 
 function restore(snapshot_value: string): State?
@@ -210,22 +209,24 @@ function restore(snapshot_value: string): State?
     if reader:next_string() ~= UI_SNAPSHOT_SCHEMA then return nil end
     local hand_cursor: i32 = reader:next_i32()
     local table_card_cursor: i32 = reader:next_i32()
-    local cursor_area: i32 = reader:next_i32()
+    local cursor_area: CursorArea? = cursor_area_from(reader:next_string())
+    if cursor_area == nil then return nil end
     local play_picks: {i32} = reader:next_indices()
     local swap_hand: {i32} = reader:next_indices()
     local swap_table_cards: {i32} = reader:next_indices()
-    local modal: i32 = reader:next_i32()
+    local modal: Modal? = modal_from(reader:next_string())
+    if modal == nil then return nil end
     local revealing: bool = reader:next_bool()
     local casting: bool = reader:next_bool()
     local cast_slot: i32 = reader:next_i32()
     local restored: State = {
         hand_cursor = hand_cursor,
         table_card_cursor = table_card_cursor,
-        cursor_area = cursor_area,
+        cursor_area = cursor_area::CursorArea,
         play_picks = play_picks,
         swap_hand = swap_hand,
         swap_table_cards = swap_table_cards,
-        modal = modal,
+        modal = modal::Modal,
         revealing = revealing,
         casting = casting,
         cast_slot = cast_slot,
@@ -245,23 +246,4 @@ return {
     gate = gate,
     snapshot = snapshot,
     restore = restore,
-    command_none = COMMAND_NONE,
-    command_advance = COMMAND_ADVANCE,
-    command_restart = COMMAND_RESTART,
-    command_history = COMMAND_HISTORY,
-    command_help = COMMAND_HELP,
-    command_primary = COMMAND_PRIMARY,
-    result_live = RESULT_LIVE,
-    result_consumed = RESULT_CONSUMED,
-    result_reset = RESULT_RESET,
-    result_refill = RESULT_REFILL,
-    result_skip = RESULT_SKIP,
-    result_finish_reveal = RESULT_FINISH_REVEAL,
-    result_advance = RESULT_ADVANCE,
-    cursor_hand = CURSOR_HAND,
-    cursor_table_cards = CURSOR_TABLE_CARDS,
-    modal_none = MODAL_NONE,
-    modal_history = MODAL_HISTORY,
-    modal_help = MODAL_HELP,
-    modal_final = MODAL_FINAL,
 }

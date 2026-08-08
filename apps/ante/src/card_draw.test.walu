@@ -33,7 +33,7 @@ function thrown(overshoot: f64, rise: f64): card_draw.Draw
         stretch_limit = 1.26,
         overshoot = overshoot,
         rise = rise,
-        arc = card_draw.arc_very_late
+        arc = "very-late"
     }
 end
 
@@ -177,7 +177,7 @@ describe("the card's arc off the surface", function(): unit
     -- the exact middle of the flight, where the unwarped half sine tops out.
     it("tops out at exactly the height it is asked for", function(): unit
         local high: card_draw.Draw = thrown(0.05, 320.0)
-        high.arc = card_draw.arc_even
+        high.arc = "even"
         local apex: f64 = card_draw.pose_at(high, card_draw.flight_end * 0.5).rise
         expect(apex):toBeCloseTo(320.0, 6)
         local flat: card_draw.Draw = thrown(0.05, 0.0)
@@ -189,11 +189,11 @@ describe("the card's arc off the surface", function(): unit
     -- one has already been up and is on its way down by the middle.
     it("puts the top of the arc where the dial asks", function(): unit
         local late: card_draw.Draw = thrown(0.05, 270.0)
-        late.arc = card_draw.arc_late
+        late.arc = "late"
         expect(card_draw.pose_at(late, card_draw.flight_end * 0.7).rise)
             :toBeGreaterThan(card_draw.pose_at(late, card_draw.flight_end * 0.5).rise)
         local early: card_draw.Draw = thrown(0.05, 270.0)
-        early.arc = card_draw.arc_early
+        early.arc = "early"
         expect(card_draw.pose_at(early, card_draw.flight_end * 0.3).rise)
             :toBeGreaterThan(card_draw.pose_at(early, card_draw.flight_end * 0.5).rise)
     end)

@@ -39,7 +39,7 @@ function pitch_in(bounds: box.Rect, count: i32, preferred: f64): f64
 end
 
 function row_style(pitch: f64): box.Style
-    return entity.row(pitch - card.width, box.justify_center, box.align_start)
+    return entity.row(pitch - card.width, "center", "start")
 end
 
 function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
