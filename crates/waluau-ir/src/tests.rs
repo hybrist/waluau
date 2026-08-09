@@ -2724,6 +2724,114 @@ fn verifies_function_with_tagged_union_return_type() {
 }
 
 #[test]
+fn lowers_alias_cast_over_tagged_union_field_in_runtime_representation() {
+    // Both halves of a cast describe runtime values, but they reach lowering by
+    // different routes — one from an inferred expression type, the other from a
+    // declared one — and only one of those spells a nested tagged union as the
+    // canonical `{ tag, value }` record. Emitting either half in its source
+    // spelling makes the verifier read a conversion into what converts nothing.
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 })
+        type Offer = { goods: Goods, price: i32 }
+
+        function entry(): i32
+            local pending: Offer? = { goods = Upgrade({ kind = 1 }), price = 4 }
+            if pending ~= nil then
+                local sale: Offer = pending :: Offer
+                return sale.price
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("casting a record alias holding a tagged union should verify");
+
+    let casts = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| &block.instructions)
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::Cast { from, to, .. } => Some((from, to)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !casts.is_empty(),
+        "expected the nullable narrowing to emit a cast"
+    );
+    for (from, to) in casts {
+        assert_eq!(
+            from,
+            &from.runtime_representation(),
+            "cast source should be annotated in its runtime representation"
+        );
+        assert_eq!(
+            to,
+            &to.runtime_representation(),
+            "cast target should be annotated in its runtime representation"
+        );
+    }
+}
+
+#[test]
+fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
+    // The value is a record whose field is already the canonical record; the
+    // annotation names the same field by the union it came from. Those are one
+    // runtime value under two names, and the verifier only ever asks about the
+    // runtime value.
+    let goods = Type::TaggedVariant(waluau_ast::TaggedVariant {
+        tag: "Upgrade".into(),
+        payload: Box::new(Type::Record(BTreeMap::from([(
+            "kind".to_string(),
+            Type::Numeric(NumericType::I32),
+        )]))),
+    });
+    let declared = Type::Record(BTreeMap::from([("goods".to_string(), goods)]));
+    let represented = Type::Record(BTreeMap::from([(
+        "goods".to_string(),
+        Type::canonical_tagged_union_record(),
+    )]));
+    let function = Function {
+        name: "entry".into(),
+        params: vec![("offer".into(), Type::Nullable(Box::new(represented)))],
+        return_type: Type::Bool,
+        entry: BlockId(0),
+        next_value: 2,
+        capture_count: 0,
+        value_symbols: BTreeMap::new(),
+        symbol_id: None,
+        blocks: BTreeMap::from([(
+            BlockId(0),
+            BasicBlock {
+                id: BlockId(0),
+                instructions: vec![
+                    (ValueId(0), Instruction::Param(0)),
+                    (
+                        ValueId(1),
+                        Instruction::IsNull {
+                            value: ValueId(0),
+                            ty: declared,
+                        },
+                    ),
+                ],
+                terminator: Terminator::Return(ValueId(1)),
+            },
+        )]),
+    };
+    verify(&Module {
+        globals: Vec::new(),
+        functions: vec![function],
+        declared_imports: Vec::new(),
+        start: None,
+        tag_ids: std::collections::BTreeMap::new(),
+    })
+    .expect("a nullable record and its inner record should match through the union naming");
+}
+
+#[test]
 fn rejects_error_variant_value_access_for_string_payload() {
     let source = r#"
         function run(): i32
