@@ -2061,6 +2061,7 @@ fn monomorphizes_top_level_generic_calls_with_nested_generic_arguments() {
             return choices[0]
         end
 
+        local typed = {1, 2, 3}::Float32Array
         local selected_value = selected("red", {identity("red"), identity("blue")})
 
         function main(): string
