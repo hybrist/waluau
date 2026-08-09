@@ -313,6 +313,7 @@ end
 -- map is not the whole picture, so a dissolve always has a duel to arrive at.
 function draw_vault(state: State, surface: entity.Surface): unit
     local ui: flow.State = state.ui
+    local aimed_slot: i32? = ui.cast_slot
     choreography.draw(
         surface,
         game.view(state.rules),
@@ -328,8 +329,8 @@ function draw_vault(state: State, surface: entity.Surface): unit
             swap_table_cards = ui.swap_table_cards,
             modal = ui.modal,
             revealing = ui.revealing,
-            casting = ui.casting,
-            cast_slot = ui.cast_slot,
+            casting = aimed_slot ~= nil,
+            cast_slot = aimed_slot or 0,
         })
     render.draw_divine_intervention(
         surface, state.intervention.clock, state.intervention.active,
@@ -369,10 +370,12 @@ end
 -- unaffordable attempt costs nothing; targeting mode ends either way.
 function confirm_cast(state: State, slot: i32, table_card: i32): unit
     if state.rules:cast_spell(slot, table_card) then
-        choreography.apply_power(
-            state.presentation, state.rules:spell_kind(slot), table_card)
+        local kind: game.SpellKind? = state.rules:spell_kind(slot)
+        if kind ~= nil then
+            choreography.apply_power(state.presentation, kind::game.SpellKind, table_card)
+        end
     end
-    state.ui.casting = false
+    state.ui.cast_slot = nil
 end
 
 function submit_round(state: State): unit
@@ -464,7 +467,7 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
     then
         choreography.skip(presentation)
         flow.clear_picks(ui)
-        ui.casting = false
+        ui.cast_slot = nil
         return "none"
     end
     -- Keep the struck table_card stable until Firebolt's burn commits its discard
@@ -479,8 +482,8 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
         end
         -- A cast key toggles: pressing the aimed spell's own key again calls it
         -- off, while the other spell's key swings the aim over to that one.
-        if ui.casting and ui.cast_slot == cast_slot then
-            ui.casting = false
+        if ui.cast_slot == cast_slot then
+            ui.cast_slot = nil
             return "none"
         end
         if not rules:can_cast(cast_slot) then return "none" end
@@ -490,22 +493,22 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
         if choreography.is_animating(presentation) then
             choreography.skip(presentation)
         end
-        ui.casting = true
         ui.cast_slot = cast_slot
         return "none"
     end
-    if ui.casting then
+    local aimed_slot: i32? = ui.cast_slot
+    if aimed_slot ~= nil then
         match control do
-        case Key.cancel then ui.casting = false
+        case Key.cancel then ui.cast_slot = nil
         case Key.left then
             ui.table_card_cursor -= 1
             if ui.table_card_cursor < 0 then ui.table_card_cursor = 2 end
         case Key.right then
             ui.table_card_cursor = (ui.table_card_cursor + 1) % 3
         case Key.confirm then
-            confirm_cast(state, ui.cast_slot, ui.table_card_cursor)
+            confirm_cast(state, aimed_slot::i32, ui.table_card_cursor)
         case Key.select then
-            confirm_cast(state, ui.cast_slot, ui.table_card_cursor)
+            confirm_cast(state, aimed_slot::i32, ui.table_card_cursor)
         case Key.exit then
         case Key.restart then
         case Key.history then
@@ -594,7 +597,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
     local at: render.Point = render.point(x, y)
     -- While aiming a cast, the pointer only steers the table_card the spell would
     -- hit; the fan below stays folded and unfocused.
-    if ui.casting then
+    if ui.cast_slot ~= nil then
         local target: i32 = render.hit_table_card(viewport, at)
         if target >= 0 then ui.table_card_cursor = target end
         return
@@ -639,11 +642,12 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     local at: render.Point = render.point(x, y)
     -- Clicking a table_card while aiming confirms the cast on it; anywhere else
     -- keeps targeting open for the keyboard to finish or cancel.
-    if ui.casting then
+    local aimed_slot: i32? = ui.cast_slot
+    if aimed_slot ~= nil then
         local target: i32 = render.hit_table_card(viewport, at)
         if target >= 0 then
             ui.table_card_cursor = target
-            confirm_cast(state, ui.cast_slot, target)
+            confirm_cast(state, aimed_slot::i32, target)
         end
         return
     end
@@ -710,9 +714,11 @@ function restore(
     -- both halves of it: a cast_slot the restored loadout has no spell in names
     -- nothing, so the aim settles as cancelled rather than coming back pointing
     -- at a spell that is not there.
-    if restored_ui.cast_slot >= restored_rules:spell_count() then
-        restored_ui.casting = false
-        restored_ui.cast_slot = 0
+    local restored_cast_slot: i32? = restored_ui.cast_slot
+    if restored_cast_slot ~= nil
+        and (restored_cast_slot or 0) >= restored_rules:spell_count()
+    then
+        restored_ui.cast_slot = nil
     end
     return {
         run = run::run_module.State,

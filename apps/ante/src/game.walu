@@ -4,14 +4,16 @@
 
 local snapshot_data = require("./snapshot")
 
--- TODO(waluau-6lc5.6): Replace raw suit, spell-kind, winner, and side integers
--- with nominal domain types so constructors and state transitions reject
--- values outside their closed sets.
-type Card = { rank: i32, suit: i32 }
+type Suit = 0 | 1 | 2 | 3
+type SpellKind = 1 | 2 | 3 | 4
+type Winner = -1 | 0 | 1
+type Side = -1 | 1
+
+type Card = { rank: i32, suit: Suit }
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
 type SwapOutcome = {
-    winner: i32,
+    winner: Winner,
     hand_indices: {i32},
     middle_indices: {i32},
     outgoing: {Card},
@@ -28,8 +30,8 @@ type HandSlot = { card: Card, known: bool }
 -- cost travels with the spell rather than being a constant of the kind: a run
 -- can upgrade the same spell between duels, and two player carrying Firebolt
 -- do not necessarily pay the same for it.
-type Spell = { kind: i32, cost: i32 }
-type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
+type Spell = { kind: SpellKind, cost: i32 }
+type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
 -- `boss` selects the boss battle variant: both sides start with eleven cards
 -- instead of five and never draw replacements, so the hands shrink by two each
 -- round and the fifth round is fought from a three-card hand.
@@ -40,7 +42,7 @@ type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {
 -- their gold, both the wager stake and the resource each cast burns. Both the
 -- loadout and the gold are dealt in rather than fixed, so a run can hand one
 -- duel what the previous one left standing and whatever it bought since.
-opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: i32 }
+opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: Winner, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: SpellKind? }
 -- TODO(waluau-6lc5.2): Stop exposing the State-owned mutable arrays below;
 -- provide a statically read-only view or defensive accessors/copies.
 type View = {
@@ -58,7 +60,7 @@ type View = {
     pot: i32,
     player_wager: i32,
     computer_wager: i32,
-    swap_winner: i32,
+    swap_winner: Winner,
     swap_count: i32,
     swap_hand_indices: {i32},
     swap_middle_indices: {i32},
@@ -104,8 +106,18 @@ const SNAPSHOT_SCHEMA: string = "duel-state-v6"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 -- A spell as it is first learned: full price until something reduces it.
+function spell_kind_from(value: i32): SpellKind?
+    if value == 1 then return 1 end
+    if value == 2 then return 2 end
+    if value == 3 then return 3 end
+    if value == 4 then return 4 end
+    return nil
+end
+
 function new_spell(kind: i32): Spell
-    return { kind = kind, cost = SPELL_COST }
+    local checked: SpellKind? = spell_kind_from(kind)
+    assert(checked ~= nil)
+    return { kind = checked::SpellKind, cost = SPELL_COST }
 end
 
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
@@ -123,7 +135,7 @@ function make_deck(): {Card}
     local deck: {Card} = {}
     for suit = MIN_SUIT, MAX_SUIT do
         for rank = MIN_RANK, MAX_RANK do
-            table.insert(deck, { rank = rank, suit = suit })
+            table.insert(deck, { rank = rank, suit = suit::Suit })
         end
     end
     return deck
@@ -336,7 +348,7 @@ function rank_three(cards: {Card}): i32
     return pack(0, ranks[0], ranks[1], ranks[2], 0, 0)
 end
 
-function swap_priority(player_wager: i32, player_community: i32, computer_wager: i32, computer_community: i32): i32
+function swap_priority(player_wager: i32, player_community: i32, computer_wager: i32, computer_community: i32): Winner
     if player_wager <= 0 and computer_wager <= 0 then return 0 end
     if player_wager > computer_wager then return 1 end
     if computer_wager > player_wager then return -1 end
@@ -738,7 +750,8 @@ function snapshot(state: State): string
     snapshot_data.append_bool(parts, state.finished)
     snapshot_data.append_bool(parts, state.boss)
     append_spells(parts, state.spells)
-    snapshot_data.append_i32(parts, state.cast_kind)
+    snapshot_data.append_i32(
+        parts, if state.cast_kind == nil then 0 else (state.cast_kind or 1)::i32)
     return table.concat(parts, ",")
 end
 
@@ -746,7 +759,7 @@ function next_cards(reader: snapshot_data.Reader): {Card}
     local cards: {Card} = {}
     local length: i32 = reader:next_length()
     for _ = 1, length do
-        table.insert(cards, { rank = reader:next_i32(), suit = reader:next_i32() })
+        table.insert(cards, { rank = reader:next_i32(), suit = reader:next_i32()::Suit })
     end
     return cards
 end
@@ -756,7 +769,7 @@ function next_slots(reader: snapshot_data.Reader): {HandSlot}
     local length: i32 = reader:next_length()
     for _ = 1, length do
         table.insert(slots, {
-            card = { rank = reader:next_i32(), suit = reader:next_i32() },
+            card = { rank = reader:next_i32(), suit = reader:next_i32()::Suit },
             known = reader:next_bool(),
         })
     end
@@ -768,7 +781,7 @@ function next_spells(reader: snapshot_data.Reader): {Spell}
     local length: i32 = reader:next_length()
     for _ = 1, length do
         table.insert(spells, {
-            kind = reader:next_i32(), cost = reader:next_i32(),
+            kind = reader:next_i32()::SpellKind, cost = reader:next_i32(),
         })
     end
     return spells
@@ -816,18 +829,88 @@ function next_trick(reader: snapshot_data.Reader): Trick
         computer_second = computer_second,
         player_value = player_value,
         computer_value = computer_value,
-        winner = winner,
+        winner = winner::Winner,
         points = points,
         pot = pot,
         player_wager = player_wager,
         computer_wager = computer_wager,
-        swap_winner = swap_winner,
+        swap_winner = swap_winner::Winner,
         swap_count = swap_count,
     }
 end
 
--- TODO(waluau-6lc5.6): Validate decoded domain values and cross-field
--- invariants here as part of the nominal state-model migration.
+function valid_winner(value: i32): bool
+    return value == -1 or value == 0 or value == 1
+end
+
+function valid_card(card: Card): bool
+    return card.rank >= MIN_RANK and card.rank <= MAX_RANK
+        and (card.suit::i32) >= MIN_SUIT and (card.suit::i32) <= MAX_SUIT
+end
+
+function valid_cards(cards: {Card}): bool
+    for card in cards do
+        if not valid_card(card) then return false end
+    end
+    return true
+end
+
+function valid_slots(slots: {HandSlot}): bool
+    for slot in slots do
+        if not valid_card(slot.card) then return false end
+    end
+    return true
+end
+
+function valid_indices(indices: {i32}, count: i32): bool
+    for index in indices do
+        if index < 0 or index >= count then return false end
+    end
+    return true
+end
+
+function valid_trick(trick: Trick): bool
+    if trick.round < 1 or trick.round > MAX_ROUNDS then return false end
+    if #trick.middle ~= 3 or #trick.frozen_middle ~= 3 then return false end
+    if #trick.player_cards ~= 2 or #trick.computer_cards ~= 2 then return false end
+    if not valid_cards(trick.middle)
+        or not valid_cards(trick.player_cards)
+        or not valid_cards(trick.computer_cards)
+        or not valid_slots(trick.player_hand)
+        or not valid_slots(trick.computer_hand)
+    then
+        return false
+    end
+    if trick.player_first < 0 or trick.player_first >= #trick.player_hand
+        or trick.player_second < 0 or trick.player_second >= #trick.player_hand
+        or trick.computer_first < 0 or trick.computer_first >= #trick.computer_hand
+        or trick.computer_second < 0 or trick.computer_second >= #trick.computer_hand
+    then
+        return false
+    end
+    if trick.player_first == trick.player_second
+        or trick.computer_first == trick.computer_second
+    then
+        return false
+    end
+    if not valid_winner(trick.winner::i32)
+        or not valid_winner(trick.swap_winner::i32)
+    then
+        return false
+    end
+    if trick.winner == 1 and trick.player_value <= trick.computer_value then return false end
+    if trick.winner == -1 and trick.computer_value <= trick.player_value then return false end
+    if trick.winner == 0 and trick.player_value ~= trick.computer_value then return false end
+    if trick.points < 0 or trick.pot < 0
+        or trick.player_wager < 0 or trick.computer_wager < 0
+    then
+        return false
+    end
+    if trick.pot ~= trick.player_wager + trick.computer_wager then return false end
+    if trick.swap_count < 0 or trick.swap_count > 3 then return false end
+    return true
+end
+
 function restore(snapshot_value: string): State?
     local reader: snapshot_data.Reader = snapshot_data.reader(snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
     if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
@@ -859,6 +942,46 @@ function restore(snapshot_value: string): State?
     local spells: {Spell} = next_spells(reader)
     local cast_kind: i32 = reader:next_i32()
     if not reader:complete() then return nil end
+    if not valid_cards(deck) or not valid_slots(player_hand)
+        or not valid_slots(computer_hand) or not valid_cards(middle)
+    then
+        return nil
+    end
+    if #frozen_middle ~= 3 then return nil end
+    if finished then
+        if #middle ~= 0 or swap_open then return nil end
+    elseif #middle ~= 3 then
+        return nil
+    end
+    if #history > MAX_ROUNDS or round < 1 or round > MAX_ROUNDS then return nil end
+    for trick in history do
+        if not valid_trick(trick) then return nil end
+    end
+    if player_points < 0 or player_tricks < 0 or computer_tricks < 0 then return nil end
+    if not valid_winner(last_winner) or not valid_winner(swap_winner) then return nil end
+    if pot < 0 or player_wager < 0 or computer_wager < 0
+        or pot ~= player_wager + computer_wager
+    then
+        return nil
+    end
+    if swap_count < 0 or swap_count > 3
+        or #swap_hand_indices ~= swap_count
+        or #swap_middle_indices ~= swap_count
+        or not valid_indices(swap_hand_indices, BOSS_HAND_SIZE)
+        or not valid_indices(swap_middle_indices, 3)
+    then
+        return nil
+    end
+    if swap_open and (pot ~= 0 or player_wager ~= 0 or computer_wager ~= 0
+        or swap_winner ~= 0 or swap_count ~= 0)
+    then
+        return nil
+    end
+    for spell in spells do
+        if spell_kind_from(spell.kind::i32) == nil or spell.cost < 0 then return nil end
+    end
+    if cast_kind ~= 0 and spell_kind_from(cast_kind) == nil then return nil end
+    local restored_cast_kind: SpellKind? = spell_kind_from(cast_kind)
     local restored: State = {
         deck = deck,
         player_hand = player_hand,
@@ -872,19 +995,19 @@ function restore(snapshot_value: string): State?
         computer_tricks = computer_tricks,
         last_player_value = last_player_value,
         last_computer_value = last_computer_value,
-        last_winner = last_winner,
+        last_winner = last_winner::Winner,
         swap_open = swap_open,
         pot = pot,
         player_wager = player_wager,
         computer_wager = computer_wager,
-        swap_winner = swap_winner,
+        swap_winner = swap_winner::Winner,
         swap_count = swap_count,
         swap_hand_indices = swap_hand_indices,
         swap_middle_indices = swap_middle_indices,
         finished = finished,
         boss = boss,
         spells = spells,
-        cast_kind = cast_kind,
+        cast_kind = restored_cast_kind,
     }
     return restored
 end
@@ -917,7 +1040,7 @@ function new(boss: bool, spells: {Spell}, gold: i32): State
         finished = false,
         boss = boss,
         spells = clone_spells(spells),
-        cast_kind = 0,
+        cast_kind = nil,
     }
     local hand_size: i32 = HAND_SIZE
     if boss then hand_size = BOSS_HAND_SIZE end
@@ -1009,6 +1132,8 @@ function test_set_swap_trace(
     hand_indices: {i32},
     middle_indices: {i32}
 ): unit
+    assert(#hand_indices == #middle_indices)
+    state.swap_count = #hand_indices
     state.swap_hand_indices = hand_indices
     state.swap_middle_indices = middle_indices
 end
@@ -1057,11 +1182,11 @@ function State:spell_count(): i32
 end
 
 -- The kind and price of one loadout slot. A slot the loadout does not have
--- answers kind zero and a price of zero, which `can_cast` refuses either way:
+-- answers nil and a price of zero, which `can_cast` refuses either way:
 -- the input layer binds a fixed key per slot, so asking about an empty one is
 -- ordinary rather than a caller error.
-function State:spell_kind(slot: i32): i32
-    if slot < 0 or slot >= #self.spells then return 0 end
+function State:spell_kind(slot: i32): SpellKind?
+    if slot < 0 or slot >= #self.spells then return nil end
     return self.spells[slot].kind
 end
 
@@ -1079,7 +1204,7 @@ end
 -- turn a cast is allowed is the input layer's decision; affordability is the
 -- rule this module owns.
 function State:can_cast(slot: i32): bool
-    if self.finished or self:spell_kind(slot) == 0 then return false end
+    if self.finished or slot < 0 or slot >= #self.spells then return false end
     return self.player_points >= self.spells[slot].cost
 end
 
@@ -1102,7 +1227,11 @@ end
 -- Only a Firebolt these rules charged for can burn a table_card away, whichever
 -- loadout slot it was cast from.
 function State:resolve_firebolt(target: i32): Card?
-    if self.finished or self.cast_kind ~= SPELL_FIREBOLT then return nil end
+    if self.finished or self.cast_kind == nil
+        or ((self.cast_kind or 1)::i32) ~= SPELL_FIREBOLT
+    then
+        return nil
+    end
     if target < 0 or target >= #self.middle or #self.deck == 0 then return nil end
     local discarded: Card = self.middle[target]
     self.middle[target] = draw(self.deck)
@@ -1119,8 +1248,7 @@ end
 -- side of a decisive trick. Consumers resolve "the winner's pair" or "the
 -- loser's slots" once instead of re-selecting player_/computer_ fields at
 -- every use. owner 0 names no side and is a caller error.
-function trick_side(trick: Trick, owner: i32): TrickSide
-    assert(owner ~= 0)
+function trick_side(trick: Trick, owner: Side): TrickSide
     if owner > 0 then
         return {
             cards = trick.player_cards,
@@ -1139,10 +1267,14 @@ function trick_side(trick: Trick, owner: i32): TrickSide
     }
 end
 
+function opposite_side(owner: Side): Side
+    if owner == 1 then return -1 end
+    return 1
+end
+
 -- The same owner selection over a live board view: the side's current hand,
 -- each slot carrying its own watched mark.
-function view_side(view: View, owner: i32): {HandSlot}
-    assert(owner ~= 0)
+function view_side(view: View, owner: Side): {HandSlot}
     if owner > 0 then return view.player_hand end
     return view.computer_hand
 end
@@ -1297,6 +1429,7 @@ return {
     view_cleared = view_cleared,
     view_side = view_side,
     trick_side = trick_side,
+    opposite_side = opposite_side,
     hand_cards = hand_cards,
     make_deck = make_deck,
     rank_five = rank_five,
@@ -1314,6 +1447,8 @@ return {
     snapshot = snapshot,
     restore = restore,
     new_spell = new_spell,
+    spell_kind_from = spell_kind_from,
+    valid_card = valid_card,
     clone_spells = clone_spells,
     test_arrange_round = test_arrange_round,
     test_arrange_opponent = test_arrange_opponent,

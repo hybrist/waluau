@@ -313,8 +313,10 @@ function restore(snapshot_value: string): State?
     local spells: {game.Spell} = {}
     local spell_count: i32 = reader:next_length()
     for _ = 1, spell_count do
+        local kind: game.SpellKind? = game.spell_kind_from(reader:next_i32())
+        if kind == nil then return nil end
         table.insert(spells, {
-            kind = reader:next_i32(), cost = reader:next_i32(),
+            kind = kind::game.SpellKind, cost = reader:next_i32(),
         })
     end
     local start_spell: i32 = reader:next_i32()

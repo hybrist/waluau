@@ -4,11 +4,10 @@
 
 local snapshot_data = require("./snapshot")
 
--- `casting` is the spell-targeting mode: entered by a cast key, it points
+-- A non-nil `cast_slot` is the spell-targeting mode: entered by a cast key, it points
 -- table_card_cursor at the table_card the spell would hit until the player confirms or
--- cancels. While it holds, ordinary binding input is suspended. `cast_slot` is
--- which loadout slot is being aimed — one cast key per slot — and only means
--- anything while `casting` holds.
+-- cancels. While it holds, ordinary binding input is suspended. Its value is
+-- the loadout slot being aimed — one cast key per slot.
 type Modal = "none" | "history" | "help" | "final"
 type Command = "none" | "advance" | "restart" | "history" | "help" | "primary"
 -- What `gate` decided about an input. "live" is the only result that permits
@@ -29,10 +28,7 @@ type State = {
     swap_table_cards: {i32},
     modal: Modal,
     revealing: bool,
-    -- TODO(waluau-6lc5.6): Model spell targeting as a nullable or tagged value
-    -- instead of a boolean paired with a slot that is otherwise meaningless.
-    casting: bool,
-    cast_slot: i32
+    cast_slot: i32?
 }
 
 const FAN_CLOSED: i32 = -1
@@ -49,8 +45,7 @@ function new(): State
         swap_table_cards = {},
         modal = "none",
         revealing = false,
-        casting = false,
-        cast_slot = 0,
+        cast_slot = nil,
     }
 end
 
@@ -83,7 +78,6 @@ function reset(state: State): unit
     state.swap_table_cards = fresh.swap_table_cards
     state.modal = fresh.modal
     state.revealing = fresh.revealing
-    state.casting = fresh.casting
     state.cast_slot = fresh.cast_slot
 end
 
@@ -91,7 +85,7 @@ function begin_reveal(state: State): unit
     clear_picks(state)
     state.modal = "none"
     state.revealing = true
-    state.casting = false
+    state.cast_slot = nil
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -107,7 +101,7 @@ function fan_focus(state: State, animating: bool): i32
     if state.revealing or animating then return FAN_CLOSED end
     -- Targeting a spell points at the table cards, so the fan folds shut the same
     -- way it does when the cursor crosses up to the table_card row.
-    if state.casting then return FAN_CLOSED end
+    if state.cast_slot ~= nil then return FAN_CLOSED end
     if state.cursor_area ~= "hand" then return FAN_CLOSED end
     return state.hand_cursor
 end
@@ -186,8 +180,8 @@ function snapshot(state: State): string
     snapshot_data.append_indices(parts, state.swap_table_cards)
     snapshot_data.append_enum(parts, state.modal)
     snapshot_data.append_bool(parts, state.revealing)
-    snapshot_data.append_bool(parts, state.casting)
-    snapshot_data.append_i32(parts, state.cast_slot)
+    snapshot_data.append_bool(parts, state.cast_slot ~= nil)
+    snapshot_data.append_i32(parts, state.cast_slot or 0)
     return table.concat(parts, ",")
 end
 
@@ -221,6 +215,10 @@ function restore(snapshot_value: string): State?
     local revealing: bool = reader:next_bool()
     local casting: bool = reader:next_bool()
     local cast_slot: i32 = reader:next_i32()
+    if casting and cast_slot < 0 then return nil end
+    if not casting and cast_slot ~= 0 then return nil end
+    local restored_cast_slot: i32? = nil
+    if casting then restored_cast_slot = cast_slot end
     local restored: State = {
         hand_cursor = hand_cursor,
         table_card_cursor = table_card_cursor,
@@ -230,8 +228,7 @@ function restore(snapshot_value: string): State?
         swap_table_cards = swap_table_cards,
         modal = modal::Modal,
         revealing = revealing,
-        casting = casting,
-        cast_slot = cast_slot,
+        cast_slot = restored_cast_slot,
     }
     if not reader:complete() then return nil end
     return restored
