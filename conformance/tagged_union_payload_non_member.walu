@@ -1,0 +1,7 @@
+-- conformance: error="nope" is not a member of "leave" | "cancel"
+-- Checking the payload is what makes the check bite: a string that is not a
+-- member of the field's union is rejected in constructor position too.
+type Control = "leave" | "cancel"
+type Line = Exit({ control: Control }) | Sale({ slot: i32 })
+
+local bad: Line = Exit({ control = "nope" })
