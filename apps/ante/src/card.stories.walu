@@ -80,7 +80,7 @@ local function tick(dt: f64, input: engine.Input): unit
 end
 
 local function card(rank: i32, suit: i32): game.Card
-    return { rank = rank, suit = suit }
+    return { rank = rank, suit = suit::game.Suit }
 end
 
 -- Every flag of the board's card renderer, named once so a story reads as the
