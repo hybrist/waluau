@@ -1769,7 +1769,9 @@ mod type_tests {
             ty: Box::new(Type::Nullable(Box::new(Type::Opaque {
                 name: "Goods".to_string(),
                 ty: Box::new(goods()),
+                generic_extern: None,
             }))),
+            generic_extern: None,
         };
         assert_eq!(
             aliased
