@@ -2294,6 +2294,7 @@ impl Builder<'_> {
 
     fn emit(&mut self, mut instruction: Instruction) -> ValueId {
         sort_phi_incoming(&mut instruction);
+        canonicalize_cast_types(&mut instruction);
         let value = self.function.next_value();
         block_mut(&mut self.function, self.current_block)
             .instructions
@@ -2384,6 +2385,7 @@ impl Builder<'_> {
     /// which are created before the exit block becomes the current block).
     fn emit_in(&mut self, block: BlockId, mut instruction: Instruction) -> ValueId {
         sort_phi_incoming(&mut instruction);
+        canonicalize_cast_types(&mut instruction);
         let value = self.function.next_value();
         block_mut(&mut self.function, block)
             .instructions
@@ -12313,6 +12315,22 @@ fn block_mut(function: &mut Function, block: BlockId) -> &mut BasicBlock {
 fn sort_phi_incoming(instruction: &mut Instruction) {
     if let Instruction::Phi(incoming) = instruction {
         incoming.sort_by_key(|(predecessor, _)| *predecessor);
+    }
+}
+
+/// A cast names the type it converts from and the type it converts to, and both
+/// annotations describe runtime values, so both have to be written in the
+/// runtime representation. Source-level annotations reach the two sides through
+/// different routes — one from an inferred expression type, the other from a
+/// declared one — and a tagged union nested in an aggregate is spelled by its
+/// source type on one route and by the canonical `{ tag, value }` record on the
+/// other. Normalizing at the emission boundary, the way phi inputs are sorted
+/// there, means no lowering path can emit the two halves in different spellings
+/// and leave the verifier to read a conversion into what converts nothing.
+fn canonicalize_cast_types(instruction: &mut Instruction) {
+    if let Instruction::Cast { from, to, .. } = instruction {
+        *from = to_runtime_type(from);
+        *to = to_runtime_type(to);
     }
 }
 

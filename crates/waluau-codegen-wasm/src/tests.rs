@@ -2086,6 +2086,20 @@ fn emits_valid_wasm_for_tagged_union_constructor() {
 }
 
 #[test]
+fn emits_valid_wasm_for_tagged_union_alias_cast() {
+    let source = include_str!("../../../conformance/tagged_union_alias_cast.walu");
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn emits_valid_wasm_for_tagged_union_pattern_match_binding() {
     let source = include_str!("../../../conformance/tagged_union_pattern_match_binding.walu");
     let program = waluau_parser::parse(source).expect("parse should succeed");

@@ -1,0 +1,93 @@
+-- A record alias whose field holds a tagged union. The alias, the structure it
+-- names, and the nullable wrapped around either are all the same runtime value:
+-- the union field is the canonical `{ tag, value }` record whichever annotation
+-- is in scope. So casting between them, and narrowing a nullable to it, has to
+-- convert nothing rather than be read as a conversion the compiler cannot make.
+
+type Goods =
+      Upgrade({ kind: i32 })
+    | Charm({ id: i32, charges: i32 })
+
+type Offer = { goods: Goods, price: i32 }
+
+function price_of(goods: Goods): i32
+    if Upgrade(u) = goods then
+        return 4 + u.kind
+    end
+    if Charm(c) = goods then
+        return c.id * c.charges
+    end
+    return 0
+end
+
+-- Narrowing `Offer?` to `Offer` keeps the union field readable through the
+-- alias on the other side of the unwrap.
+local pending: Offer? = { goods = Upgrade({ kind = 1 }), price = 4 }
+if pending ~= nil then
+    local sale: Offer = pending :: Offer
+    assert(sale.price == 4)
+    assert(sale.goods is Upgrade)
+    assert(price_of(sale.goods) == 5)
+else
+    assert(false)
+end
+
+-- The alias casts to the structure it names and back again.
+local offer: Offer = { goods = Charm({ id = 3, charges = 2 }), price = 6 }
+local structure: { goods: Goods, price: i32 } = offer :: { goods: Goods, price: i32 }
+assert(structure.price == 6)
+assert(price_of(structure.goods) == 6)
+
+local restored: Offer = structure :: Offer
+assert(restored.price == 6)
+assert(restored.goods is Charm)
+assert(price_of(restored.goods) == 6)
+
+-- Mutating through one name is visible through the other: the cast handed back
+-- the same record rather than a copy.
+restored.price = 11
+assert(structure.price == 11)
+restored.goods = Upgrade({ kind = 2 })
+assert(structure.goods is Upgrade)
+assert(price_of(structure.goods) == 6)
+
+-- The same round trip through a nullable of the structure rather than of the
+-- alias.
+local slot: { goods: Goods, price: i32 }? = restored :: { goods: Goods, price: i32 }
+if slot ~= nil then
+    local unwrapped: Offer = slot :: Offer
+    assert(unwrapped.price == 11)
+    assert(price_of(unwrapped.goods) == 6)
+else
+    assert(false)
+end
+
+-- The equivalence survives the call boundary, in both argument and return
+-- position, and inside an array of the alias.
+function total(offers: {Offer}): i32
+    local sum: i32 = 0
+    for entry in offers do
+        sum = sum + entry.price + price_of(entry.goods)
+    end
+    return sum
+end
+
+function first_or(offers: {Offer}, fallback: Offer): Offer
+    if #offers == 0 then
+        return fallback
+    end
+    return offers[0]
+end
+
+local book: {Offer} = {
+    { goods = Upgrade({ kind = 3 }), price = 1 },
+    restored :: Offer,
+}
+assert(total(book) == 1 + 7 + 11 + 6)
+
+local head: Offer = first_or(book, offer)
+assert(head.price == 1)
+assert(price_of(head.goods) == 7)
+
+local fallback: Offer = first_or({}, restored :: Offer)
+assert(fallback.price == 11)
