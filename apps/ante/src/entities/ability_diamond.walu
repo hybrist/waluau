@@ -16,12 +16,8 @@ local ink = require("../ink")
 const SLOT_COUNT: i32 = 4
 const WIDTH: f64 = 124.0
 const HEIGHT: f64 = 116.0
--- Top-level constants are literal-only in the compiler, so these spell out
--- the halves of WIDTH and HEIGHT rather than deriving them here.
--- TODO(waluau-6lc5.1): Derive the centres from WIDTH and HEIGHT once computed
--- top-level constant initializers are supported.
-const CENTER_X: f64 = 62.0
-const CENTER_Y: f64 = 58.0
+const CENTER_X: f64 = WIDTH / 2.0
+const CENTER_Y: f64 = HEIGHT / 2.0
 const PITCH_X: f64 = 39.0
 const PITCH_Y: f64 = 37.0
 const SLOT_RADIUS: f64 = 20.0

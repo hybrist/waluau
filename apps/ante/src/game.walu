@@ -183,12 +183,9 @@ end
 
 -- Scores are packed as base-SCORE_RADIX digits: the category occupies the
 -- most significant digit, five kicker components the rest. CATEGORY_DIVISOR
--- is SCORE_RADIX^5, spelled out because top-level constants require literal
--- initializers; category_of and score_component are the pack inverses.
--- TODO(waluau-6lc5.1): Derive CATEGORY_DIVISOR from SCORE_RADIX once computed
--- top-level constant initializers are supported.
+-- is SCORE_RADIX^5; category_of and score_component are the pack inverses.
 const SCORE_RADIX: i32 = 15
-const CATEGORY_DIVISOR: i32 = 759375
+const CATEGORY_DIVISOR: i32 = SCORE_RADIX ^ 5
 
 function pack(category: i32, a: i32, b: i32, c: i32, d: i32, e: i32): i32
     local value: i32 = category

@@ -1071,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_multi_rejects_non_literal_module_constant_at_declaration() {
+    fn compile_multi_rejects_effectful_module_constant_at_declaration() {
         let files = std::collections::HashMap::from([(
             "main.walu".to_string(),
             r#"
@@ -1089,10 +1089,52 @@ mod tests {
         )]);
 
         let error = super::compile_sources(&files, "main.walu")
-            .expect_err("non-literal module constant should fail");
+            .expect_err("effectful module constant should fail");
         assert_eq!(
             error,
-            "top-level const 'SIZE' initializer must be an inlinable literal"
+            "top-level const 'SIZE' initializer must be a side-effect-free expression over literals and earlier constants"
+        );
+    }
+
+    #[test]
+    fn compile_multi_supports_computed_module_constants() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            r#"
+                const BASE: i32 = 3
+                const SQUARED: i32 = BASE ^ 2
+                const RESULT: i32 = -(SQUARED * 5 + BASE) // 2
+
+                function result(): i32
+                    return RESULT
+                end
+
+                assert(result() == -24)
+            "#
+            .to_string(),
+        )]);
+
+        let result =
+            super::compile_sources(&files, "main.walu").expect("computed constants should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
+    fn compile_multi_rejects_module_constant_cycles() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            r#"
+                const FIRST: i32 = SECOND + 1
+                const SECOND: i32 = FIRST + 1
+            "#
+            .to_string(),
+        )]);
+
+        let error =
+            super::compile_sources(&files, "main.walu").expect_err("constant cycle should fail");
+        assert_eq!(
+            error,
+            "top-level const cycle detected: 'FIRST' -> 'SECOND' -> 'FIRST'"
         );
     }
 

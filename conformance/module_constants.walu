@@ -1,11 +1,21 @@
--- A top-level `local NAME <const> = <literal>` is a module constant: unlike
+-- A top-level `local NAME <const> = <expression>` is a module constant: unlike
 -- plain top-level locals, it is also visible inside function bodies (the
--- linker inlines the literal at each use).
+-- linker inlines the expression at each use).
 
 local CELL_SIZE <const>: f64 = 16.0
 local COLS <const>: i32 = 21
 local TITLE <const> = "snake"
 local WRAP <const> = false
+
+-- Numeric arithmetic over earlier constants is side-effect-free and can be
+-- inlined into functions along with literal constants.
+local DOUBLE_COLS <const>: i32 = COLS * 2
+local OFFSET_COLS <const>: i32 = DOUBLE_COLS + 3 - 1
+local HALF_CELL <const>: f64 = CELL_SIZE / 2.0
+local FLOORED <const>: i32 = OFFSET_COLS // 4
+local REMAINDER <const>: i32 = OFFSET_COLS % 4
+local SQUARED <const>: i32 = REMAINDER ^ 2
+local NEGATED <const>: i32 = -SQUARED
 
 function cell_px(v: i32): f64
     return v::f64 * CELL_SIZE
@@ -13,6 +23,11 @@ end
 
 function board_width(): f64
     return cell_px(COLS)
+end
+
+function computed_constants(): f64
+    return DOUBLE_COLS::f64 + OFFSET_COLS::f64 + HALF_CELL
+        + FLOORED::f64 + REMAINDER::f64 + SQUARED::f64 + NEGATED::f64
 end
 
 -- Lexical shadowing still applies: params and locals win over the constant.
@@ -28,6 +43,7 @@ end
 assert(CELL_SIZE == 16.0)
 assert(cell_px(2) == 32.0)
 assert(board_width() == 336.0)
+assert(computed_constants() == 105.0)
 assert(shadowed(5.0) == 10.0)
 assert(shadowed_local() == 3.0)
 assert(TITLE == "snake")
