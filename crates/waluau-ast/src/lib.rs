@@ -401,6 +401,13 @@ impl Type {
             Self::Record(fields) => fields.get(name).cloned(),
             Self::Opaque { ty, .. } => ty.record_field(name),
             Self::TaggedVariant(variant) if name == "value" => Some((*variant.payload).clone()),
+            // Both are the canonical `{ tag, value }` record at runtime, so the
+            // discriminant reads off either one. A variant answers its own payload
+            // type for `value` above, because which variant it is is already known.
+            Self::TaggedVariant(_) | Self::TaggedUnion(_) if name == "tag" => {
+                Some(Self::Numeric(NumericType::I32))
+            }
+            Self::TaggedUnion(_) if name == "value" => Some(Self::Unknown),
             _ => None,
         }
     }
@@ -466,6 +473,31 @@ impl Type {
         fields.insert("tag".to_string(), Type::Numeric(NumericType::I32));
         fields.insert("value".to_string(), Type::Unknown);
         Type::Record(fields)
+    }
+
+    /// This type as the runtime represents it: every tagged union and variant,
+    /// however deeply nested, replaced by the canonical `{ tag, value }` record
+    /// it is stored as. Source-level types and the annotations on IR
+    /// instructions disagree about which name to use for the same value —
+    /// `{Goods}` against `{{tag, value}}` — so both sides normalize through this
+    /// before being compared. Nothing but tagged types is rewritten, which is
+    /// what makes agreement here mean "the same value, named differently".
+    pub fn runtime_representation(&self) -> Type {
+        match self {
+            Self::TaggedUnion(_) | Self::TaggedVariant(_) => Self::canonical_tagged_union_record(),
+            Self::Record(fields) => Self::Record(
+                fields
+                    .iter()
+                    .map(|(name, field_ty)| (name.clone(), field_ty.runtime_representation()))
+                    .collect(),
+            ),
+            Self::Array(element_ty) => Self::Array(Box::new(element_ty.runtime_representation())),
+            Self::Variadic(element_ty) => {
+                Self::Variadic(Box::new(element_ty.runtime_representation()))
+            }
+            Self::Nullable(inner) => Self::Nullable(Box::new(inner.runtime_representation())),
+            other => other.clone(),
+        }
     }
 
     pub fn remove_tagged_variant(&self, tag: &str) -> Option<Type> {

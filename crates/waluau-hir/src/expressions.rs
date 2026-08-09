@@ -2172,10 +2172,13 @@ fn infer_array_literal(
         }
     }
     let expected_element = expected.as_ref().and_then(Type::element_type);
-    let trailing_ty = elements
-        .last()
-        .map(|element| infer_expr(element, vars, fn_signatures, active_type_params, None))
-        .transpose()?;
+    // Whether the last element splats. It is typed without an expectation, which
+    // some elements cannot be — a tagged-union constructor names a variant of the
+    // type it is being checked against — so a failure here only means "not a
+    // pack". The real diagnostic comes from the typed pass below.
+    let trailing_ty = elements.last().and_then(|element| {
+        infer_expr(element, vars, fn_signatures, active_type_params, None).ok()
+    });
     let trailing_pack = trailing_ty.as_ref().is_some_and(|ty| match ty {
         Type::Variadic(_) => true,
         Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
@@ -2209,6 +2212,25 @@ fn infer_array_literal(
         }
         _ => actual,
     };
+    // A tagged union stays the element type of the whole literal. Inferring it
+    // element by element would narrow to the first element's variant, and every
+    // later element would then be held to a union of one — which is how
+    // `{ Spell(1), Item(2) }` came to report `Item` as an unknown name.
+    if let Some(union_ty) = expected_element.as_ref().filter(|ty| {
+        matches!(ty, Type::TaggedUnion(_))
+            || matches!(ty, Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::TaggedUnion(_)))
+    }) {
+        for element in elements {
+            let _ = infer_expr(
+                element,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(union_ty.clone()),
+            )?;
+        }
+        return coerce_type(Type::Array(Box::new(union_ty.clone())), expected);
+    }
     let mut iter = elements.iter();
     let first = iter.next().expect("non-empty array literal");
     let mut element_ty = coerce_expected_element(infer_expr(
