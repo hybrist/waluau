@@ -406,6 +406,7 @@ impl<'a> Monomorphizer<'a> {
             .filter(|function| function.type_params.is_empty())
             .map(|function| self.rewrite_function(function, &HashMap::new(), None))
             .collect::<Result<Vec<_>, _>>()?;
+        let top_level = self.rewrite_top_level_stmts(&program.top_level)?;
 
         while let Some(key) = self.pending.pop() {
             let template = self
@@ -446,7 +447,7 @@ impl<'a> Monomorphizer<'a> {
             declared_imports: program.declared_imports.clone(),
             declared_constants: program.declared_constants.clone(),
             type_declarations: program.type_declarations.clone(),
-            top_level: program.top_level.clone(),
+            top_level,
             top_level_file_paths: program.top_level_file_paths.clone(),
             export: program.export.clone(),
             sources: program.sources.clone(),
@@ -455,6 +456,58 @@ impl<'a> Monomorphizer<'a> {
 
         waluau_ast::resolve_symbols(&mut specialized_program)?;
         Ok(specialized_program)
+    }
+
+    fn rewrite_top_level_stmts(&mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, Diagnostic> {
+        let subst = HashMap::new();
+        let mut types = HashMap::new();
+        let mut rewritten = Vec::with_capacity(stmts.len());
+        for stmt in stmts {
+            if matches!(
+                stmt,
+                Stmt::FieldAssign {
+                    value: Expr::Function(function),
+                    ..
+                } if !function.type_params.is_empty()
+            ) {
+                continue;
+            }
+            if let Stmt::Let {
+                name,
+                symbol_id,
+                rebindability,
+                ty,
+                value,
+            } = stmt
+            {
+                let rewritten_value = self.rewrite_expr(value, &subst, None, &types)?;
+                let inferred_ty = ty
+                    .clone()
+                    .or_else(|| self.infer_expr_type(value, &subst, &types).ok());
+                if let (Some(symbol_id), Some(inferred_ty)) = (symbol_id, &inferred_ty) {
+                    types.insert(*symbol_id, inferred_ty.clone());
+                }
+                if rewritten_value != *value {
+                    let inferred_ty = inferred_ty.ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "cannot infer top-level generic result type for '{name}'"
+                        ))
+                    })?;
+                    rewritten.push(Stmt::Let {
+                        name: name.clone(),
+                        symbol_id: *symbol_id,
+                        rebindability: *rebindability,
+                        ty: Some(inferred_ty),
+                        value: rewritten_value,
+                    });
+                } else {
+                    rewritten.push(stmt.clone());
+                }
+                continue;
+            }
+            rewritten.push(self.rewrite_stmt(stmt, &subst, None, &mut types)?);
+        }
+        Ok(rewritten)
     }
 
     /// Rewrite one non-generic function and any generic specializations that
@@ -988,6 +1041,7 @@ impl<'a> Monomorphizer<'a> {
         active: Option<&ActiveSpecialization>,
         types: &HashMap<SymbolId, Type>,
     ) -> Result<Expr, Diagnostic> {
+        let original_args = args;
         let args = args
             .iter()
             .map(|expr| self.rewrite_expr(expr, subst, active, types))
@@ -1004,7 +1058,7 @@ impl<'a> Monomorphizer<'a> {
                         &template.type_params,
                         &params,
                         &ret,
-                        &args,
+                        original_args,
                         subst,
                         types,
                     )?;
@@ -1435,9 +1489,11 @@ impl<'a> Monomorphizer<'a> {
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),
             Expr::Require(..) => Ok(Type::Unknown),
-            Expr::Name(_, symbol_id, _) => {
+            Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.ok_or_else(|| {
-                    Diagnostic::new("symbol_id should be resolved during monomorphization")
+                    Diagnostic::new(format!(
+                        "symbol_id for '{name}' should be resolved during monomorphization"
+                    ))
                 })?;
                 if let Some(ty) = types.get(&symbol_id) {
                     Ok(ty.clone())
@@ -1445,8 +1501,8 @@ impl<'a> Monomorphizer<'a> {
                     Ok(ty.clone())
                 } else {
                     Err(Diagnostic::new(format!(
-                        "unknown symbol ID {:?} during type inference in monomorphization",
-                        symbol_id
+                        "unknown symbol '{name}' with ID {:?} during type inference in monomorphization",
+                        symbol_id,
                     )))
                 }
             }

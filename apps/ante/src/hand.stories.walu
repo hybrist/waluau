@@ -13,6 +13,25 @@ const HEIGHT: u32 = 420
 const BACKGROUND: string = "#0b0b12"
 local book = entity_story.new()
 
+type Position = "none" | "first" | "left-middle" | "middle" | "right-middle" | "last"
+local hand_count = storybook.range("count", 5, 1, 11, 1)
+local hand_selected = storybook.select("selected", "none"::Position, {
+    storybook.choice("None", "none"::Position),
+    storybook.choice("First", "first"::Position),
+    storybook.choice("Left of middle", "left-middle"::Position),
+    storybook.choice("Middle", "middle"::Position),
+    storybook.choice("Right of middle", "right-middle"::Position),
+    storybook.choice("Last", "last"::Position)
+})
+local hand_focused = storybook.select("focused", "none"::Position, {
+    storybook.choice("None", "none"::Position),
+    storybook.choice("First", "first"::Position),
+    storybook.choice("Left of middle", "left-middle"::Position),
+    storybook.choice("Middle", "middle"::Position),
+    storybook.choice("Right of middle", "right-middle"::Position),
+    storybook.choice("Last", "last"::Position)
+})
+
 local function card_at(index: i32): game.Card
     return { rank = 14 - index, suit = index % 4 }
 end
@@ -20,25 +39,23 @@ end
 -- State controls name useful positions instead of raw indices, so they keep
 -- meaning as the count changes. For an even hand, Middle is the left of the
 -- two central cards.
--- TODO(waluau-6lc5.5): Read a typed Storybook position choice instead of magic
--- `arg_i32` values; the count-relative index calculation can remain here.
-local function controlled_index(choice: i32, count: i32): i32
-    if choice == 0 then
+local function controlled_index(choice: Position, count: i32): i32
+    if choice == "none" then
         return -1
     end
-    if choice == 1 then
+    if choice == "first" then
         return 0
     end
-    if choice == 5 then
+    if choice == "last" then
         return count - 1
     end
     local middle: i32 = math.floor(((count - 1)::f64) * 0.5)::i32
-    if choice == 2 then
+    if choice == "left-middle" then
         middle -= 1
         if middle < 0 then
             middle = 0
         end
-    elseif choice == 4 then
+    elseif choice == "right-middle" then
         middle += 1
         if middle >= count then
             middle = count - 1
@@ -48,9 +65,9 @@ local function controlled_index(choice: i32, count: i32): i32
 end
 
 local function hand(): entity.Node
-    local count: i32 = storybook.arg_i32("count")
-    local selected: i32 = controlled_index(storybook.arg_i32("selected"), count)
-    local focused: i32 = controlled_index(storybook.arg_i32("focused"), count)
+    local count: i32 = hand_count.value()
+    local selected: i32 = controlled_index(storybook.selected<Position>(hand_selected), count)
+    local focused: i32 = controlled_index(storybook.selected<Position>(hand_focused), count)
     local looks: {card.Look} = {}
     local parts: {f64} = {}
     local hidden: {bool} = {}
@@ -79,19 +96,7 @@ storybook.publish(
                     background = BACKGROUND
                 }
             ),
-            {
-                storybook.range("count", 5, 1, 11, 1),
-                storybook.select(
-                    "selected",
-                    0,
-                    {"None", "First", "Left of middle", "Middle", "Right of middle", "Last"}
-                ),
-                storybook.select(
-                    "focused",
-                    0,
-                    {"None", "First", "Left of middle", "Middle", "Right of middle", "Last"}
-                )
-            }
+            {hand_count.declaration, hand_selected.declaration, hand_focused.declaration}
         )
     }
 )
