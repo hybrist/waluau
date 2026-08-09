@@ -1,0 +1,79 @@
+-- Tagged unions inside aggregates: an array of variants, a record field holding
+-- one, and an array of those records. All three are the canonical
+-- `{ tag, value }` record at runtime, so the value moves between an annotation
+-- naming the union and one naming the record without a conversion.
+
+type Goods =
+      Upgrade({ kind: i32 })
+    | Spell({ kind: i32 })
+    | Charm({ id: i32, charges: i32 })
+
+type Offer = { goods: Goods, price: i32, sold: bool }
+
+function price_of(goods: Goods): i32
+    if Upgrade(u) = goods then
+        return 4 + u.kind
+    end
+    if Spell(s) = goods then
+        return 7 + s.kind
+    end
+    if Charm(c) = goods then
+        return c.id * c.charges
+    end
+    return 0
+end
+
+-- A constructor widens to the union wherever the union is the expected type,
+-- not only at an annotated local.
+local single: Offer = { goods = Spell({ kind = 3 }), price = 10, sold = false }
+assert(price_of(single.goods) == 10)
+assert(single.goods is Spell)
+
+-- An array literal holds several different variants: the element type stays the
+-- union rather than narrowing to whichever variant came first.
+local direct: {Goods} = {
+    Upgrade({ kind = 1 }),
+    Spell({ kind = 2 }),
+    Charm({ id = 5, charges = 3 }),
+}
+assert(#direct == 3)
+assert(price_of(direct[0]) == 5)
+assert(price_of(direct[1]) == 9)
+assert(price_of(direct[2]) == 15)
+
+-- The same array built by insertion rather than as a literal.
+local grown: {Goods} = {}
+table.insert(grown, Charm({ id = 2, charges = 4 }))
+table.insert(grown, Upgrade({ kind = 6 }))
+assert(#grown == 2)
+assert(price_of(grown[0]) == 8)
+assert(price_of(grown[1]) == 10)
+assert(grown[0] is Charm)
+assert(grown[1] is Upgrade)
+
+-- An array of records each holding a union, read back and mutated in place.
+local stock: {Offer} = {}
+table.insert(stock, { goods = Upgrade({ kind = 1 }), price = 0, sold = false })
+table.insert(stock, { goods = Charm({ id = 3, charges = 2 }), price = 0, sold = false })
+for offer in stock do
+    offer.price = price_of(offer.goods)
+end
+assert(stock[0].price == 5)
+assert(stock[1].price == 6)
+
+stock[1].sold = true
+assert(stock[1].sold)
+assert(not stock[0].sold)
+
+-- Reassigning the variant a record field holds keeps both the tag and the
+-- payload honest.
+stock[0].goods = Spell({ kind = 4 })
+assert(stock[0].goods is Spell)
+assert(price_of(stock[0].goods) == 11)
+
+-- A pattern-match binding reaches the payload of a variant read out of a
+-- collection, not only one held in a local.
+if Charm(c) = stock[1].goods then
+    assert(c.id == 3)
+    assert(c.charges == 2)
+end

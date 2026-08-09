@@ -5279,6 +5279,7 @@ fn emit_block_instructions(
                 let base_ty = value_types.get(base).ok_or_else(|| {
                     Diagnostic::new(format!("missing type for struct.get base {:?}", base))
                 })?;
+                let base_ty = &struct_base_type(base_ty);
                 let Type::Record(_) = base_ty else {
                     return Err(Diagnostic::new(format!(
                         "struct.get base must be a record type, got {}",
@@ -5302,6 +5303,7 @@ fn emit_block_instructions(
                 let base_ty = value_types.get(base).ok_or_else(|| {
                     Diagnostic::new(format!("missing type for struct.set base {:?}", base))
                 })?;
+                let base_ty = &struct_base_type(base_ty);
                 let Type::Record(_) = base_ty else {
                     return Err(Diagnostic::new(format!(
                         "struct.set base must be a record type, got {}",
@@ -5349,6 +5351,13 @@ fn emit_block_instructions(
     }
 
     Ok(())
+}
+
+/// The struct a field access actually reads from. A tagged union and its
+/// variants are the canonical `{ tag, value }` record at this level, so a value
+/// still carrying its source-level union type names that record here.
+fn struct_base_type(ty: &Type) -> Type {
+    ty.runtime_representation()
 }
 
 fn emit_ref_null(
