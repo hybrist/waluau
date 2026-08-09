@@ -47,15 +47,13 @@ type Scene = {
 }
 
 type Story = { name: string, scene: Scene }
-type Control = {
-    name: string,
-    kind: string,
-    initial: i32,
-    min: i32,
-    max: i32,
-    step: i32,
-    labels: {string}
-}
+-- A control handle owns both its statically indexed name and the typed path
+-- that reads its current value. `AnyControl` is the erased shape a story needs
+-- when it collects differently typed handles in one declaration.
+type AnyControl = { name: string }
+type Control<T> = { declaration: AnyControl, choices: {Choice<T>}, index: () -> i32 }
+type Choice<T> = { label: string, value: T }
+type Range = { declaration: AnyControl, value: () -> i32 }
 
 const DEFAULT_WIDTH: u32 = 960
 const DEFAULT_HEIGHT: u32 = 600
@@ -223,38 +221,34 @@ function show(mount: Mount, name: string, scene: Scene): unit
     end
 end
 
--- Control declarations are real values so the story source type-checks, but
+-- Control declarations are real handles so the story source type-checks, but
 -- their literal calls are read statically by the Storybook indexer. The host
 -- owns their UI metadata and current values.
-function range(name: string, initial: i32, min: i32, max: i32, step: i32): Control
-    return {
-        name = name,
-        kind = "range",
-        initial = initial,
-        min = min,
-        max = max,
-        step = step,
-        labels = {}
-    }
+function range(name: string, initial: i32, min: i32, max: i32, step: i32): Range
+    local function value(): i32
+        return __waluau_storybook_arg_i32(name)
+    end
+    return { declaration = { name = name }, value = value }
 end
 
-function select(name: string, initial: i32, labels: {string}): Control
-    return {
-        name = name,
-        kind = "select",
-        initial = initial,
-        min = 0,
-        max = #labels - 1,
-        step = 1,
-        labels = labels
-    }
+function choice<T>(label: string, value: T): Choice<T>
+    return { label = label, value = value }
 end
 
-function arg_i32(name: string): i32
-    return __waluau_storybook_arg_i32(name)
+function select<T>(name: string, initial: T, choices: {Choice<T>}): Control<T>
+    local function index(): i32
+        return __waluau_storybook_arg_i32(name)
+    end
+    return { declaration = { name = name }, choices = choices, index = index }
 end
 
-function story(name: string, scene: Scene, ...): Story
+function selected<T>(control: Control<T>): T
+    local index: i32 = control.index()
+    assert(index >= 0 and index < #control.choices, "Storybook select value is outside its choices")
+    return control.choices[index].value
+end
+
+function story(name: string, scene: Scene, controls: {AnyControl}?): Story
     return { name = name, scene = scene }
 end
 
@@ -283,8 +277,9 @@ function publish(stories: {Story}): unit
 end
 
 return {
-    arg_i32 = arg_i32,
+    choice = choice,
     range = range,
+    selected = selected,
     select = select,
     story = story,
     publish = publish

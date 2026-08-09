@@ -6,8 +6,8 @@
 // A story is declared as `storybook.story("<name>", { ... })` with a literal
 // name. That is the documented contract, not a heuristic: a name computed at
 // runtime cannot appear in a static index. An optional third argument is a
-// literal list of `storybook.range(...)` / `storybook.select(...)` controls;
-// the same reading becomes the generated CSF args and argTypes.
+// literal list naming local `storybook.range(...)` / `storybook.select(...)`
+// declarations; the same reading becomes the generated CSF args and argTypes.
 
 const STORY_CALL = /(?:^|[^\w.])([A-Za-z_][\w]*)\s*\.\s*story\s*\(\s*(["'])((?:[^\\]|\\.)*?)\2/g;
 const LINE_COMMENT = /--(?!\[=*\[)[^\n]*/g;
@@ -121,18 +121,46 @@ function displayName(name) {
     .replace(/(?:^|\s)\w/g, (character) => character.toUpperCase());
 }
 
-function parseLabels(value, context) {
-  const source = value.trim();
-  if (!source.startsWith('{') || !source.endsWith('}')) {
-    throw new Error(`${context} labels must be a literal string list`);
-  }
-  const labels = splitTopLevel(source.slice(1, -1))
-    .map((label) => stringLiteral(label, `${context} label`));
-  if (labels.length === 0) throw new Error(`${context} must have at least one label`);
-  return labels;
+function controlValueLiteral(value, context) {
+  const source = value.trim().replace(/::[A-Za-z_][\w.]*(?:<[^>]+>)?$/, '').trim();
+  const string = /^(?:["'])/.test(source) ? stringLiteral(source, context) : null;
+  if (string != null) return { key: `string:${string}`, value: string };
+  const integer = integerLiteral(source, context);
+  return { key: `i32:${integer}`, value: integer };
 }
 
-function parseControls(value, binding, storyName) {
+function parseChoices(value, binding, context) {
+  const source = value.trim();
+  if (!source.startsWith('{') || !source.endsWith('}')) {
+    throw new Error(`${context} choices must be a literal list`);
+  }
+  const choices = splitTopLevel(source.slice(1, -1)).map((declaration) => {
+    const pattern = new RegExp(`^${binding}\\s*\\.\\s*choice\\s*\\(([\\s\\S]*)\\)$`);
+    const match = pattern.exec(declaration);
+    if (match == null) {
+      throw new Error(`${context} choices must use ${binding}.choice(label, value)`);
+    }
+    const args = splitTopLevel(match[1]);
+    if (args.length !== 2) throw new Error(`${binding}.choice(label, value) expects two arguments`);
+    return {
+      label: stringLiteral(args[0], `${context} choice label`),
+      ...controlValueLiteral(args[1], `${context} choice value`),
+    };
+  });
+  if (choices.length === 0) throw new Error(`${context} must have at least one choice`);
+  return choices;
+}
+
+function parseControl(declaration, binding, storyName, named) {
+  const reference = /^(\w+)\.declaration$/.exec(declaration.trim());
+  const referenced = reference == null ? null : named.get(reference[1]);
+  if (referenced != null) return referenced;
+  throw new Error(
+    `Controls for story "${storyName}" must use a local ${binding} control's .declaration`,
+  );
+}
+
+function parseControls(value, binding, storyName, named) {
   if (value == null) return [];
   const source = value.trim();
   if (!source.startsWith('{') || !source.endsWith('}')) {
@@ -141,25 +169,17 @@ function parseControls(value, binding, storyName) {
   const controls = [];
   const names = new Set();
   for (const declaration of splitTopLevel(source.slice(1, -1))) {
-    const pattern = new RegExp(`^${binding}\\s*\\.\\s*(range|select)\\s*\\(([\\s\\S]*)\\)$`);
-    const match = pattern.exec(declaration);
-    if (match == null) {
-      throw new Error(
-        `Controls for story "${storyName}" must use ${binding}.range(...) or ${binding}.select(...)`,
-      );
-    }
-    const kind = match[1];
-    const args = splitTopLevel(match[2]);
+    const { kind, args } = parseControl(declaration, binding, storyName, named);
     const name = stringLiteral(args[0] ?? '', `${kind} control name`);
     if (name.length === 0) throw new Error(`A control for story "${storyName}" has an empty name`);
     if (names.has(name)) throw new Error(`Story "${storyName}" repeats control "${name}"`);
     names.add(name);
-    const initial = integerLiteral(args[1] ?? '', `${name} initial value`);
 
     if (kind === 'range') {
       if (args.length !== 5) {
         throw new Error(`${binding}.range(name, initial, min, max, step) expects five arguments`);
       }
+      const initial = integerLiteral(args[1] ?? '', `${name} initial value`);
       const min = integerLiteral(args[2], `${name} minimum`);
       const max = integerLiteral(args[3], `${name} maximum`);
       const step = integerLiteral(args[4], `${name} step`);
@@ -177,24 +197,39 @@ function parseControls(value, binding, storyName) {
     }
 
     if (args.length !== 3) {
-      throw new Error(`${binding}.select(name, initial, labels) expects three arguments`);
+      throw new Error(`${binding}.select(name, initial, choices) expects three arguments`);
     }
-    const labels = parseLabels(args[2], `${name} select control`);
-    if (initial < 0 || initial >= labels.length) {
-      throw new Error(`${name} initial value must select one of its labels`);
-    }
-    const options = labels.map((_, index) => index);
+    const initial = controlValueLiteral(args[1] ?? '', `${name} initial value`);
+    const choices = parseChoices(args[2], binding, `${name} select control`);
+    const initialIndex = choices.findIndex((choice) => choice.key === initial.key);
+    if (initialIndex < 0) throw new Error(`${name} initial value must equal one of its choices`);
+    const options = choices.map((_, index) => index);
     controls.push({
       name,
-      initial,
+      initial: initialIndex,
       argType: {
         name: displayName(name),
         options,
         control: {
           type: 'select',
-          labels: Object.fromEntries(labels.map((label, index) => [index, label])),
+          labels: Object.fromEntries(choices.map((choice, index) => [index, choice.label])),
         },
       },
+    });
+  }
+  return controls;
+}
+
+function namedControls(source, binding) {
+  const controls = new Map();
+  const pattern = new RegExp(
+    `\\blocal\\s+([A-Za-z_][\\w]*)(?:\\s*:\\s*[^=\\n]+)?\\s*=\\s*${binding}\\s*\\.\\s*(range|select)\\s*\\(`,
+    'g',
+  );
+  for (const match of source.matchAll(pattern)) {
+    controls.set(match[1], {
+      kind: match[2],
+      args: storyTail(source, match.index + match[0].length),
     });
   }
   return controls;
@@ -204,6 +239,7 @@ function storyDeclarations(source) {
   const binding = storybookBinding(source);
   if (binding == null) return [];
   const body = withoutComments(source);
+  const controls = namedControls(body, binding);
   const declarations = [];
   const seen = new Set();
   for (const match of body.matchAll(STORY_CALL)) {
@@ -212,7 +248,7 @@ function storyDeclarations(source) {
     if (name.length === 0 || seen.has(name)) continue;
     seen.add(name);
     const tail = storyTail(body, match.index + match[0].length);
-    declarations.push({ name, controls: parseControls(tail[1], binding, name) });
+    declarations.push({ name, controls: parseControls(tail[1], binding, name, controls) });
   }
   return declarations;
 }

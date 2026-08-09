@@ -38,16 +38,38 @@ local book = entity_story.new()
 -- mounted. The clock is a story's own and restarts with it.
 local shared = { clock = 0.0 }
 
--- The arc control is a numeric select; map it onto the arc union in the
--- order the constants used to count (0 = even).
--- TODO(waluau-6lc5.5): Replace this numeric adapter with typed Storybook
--- control access that couples the declaration, name, and domain conversion.
-local function arc_arg(value: i32): card_draw.Arc
-    if value == 1 then return "late" end
-    if value == 2 then return "very-late" end
-    if value == 3 then return "early" end
-    return "even"
-end
+local face_suit = storybook.select("suit", 0::i32, {
+    storybook.choice("Red", 0::i32),
+    storybook.choice("Blue", 1::i32),
+    storybook.choice("Black", 2::i32),
+    storybook.choice("Green", 3::i32)
+})
+local face_rank = storybook.range("rank", 13, 2, 14, 1)
+
+type Playback = "loop" | "scrub"
+type DealOrder = "left-first" | "right-first"
+local draw_playback = storybook.select("playback", "loop"::Playback, {
+    storybook.choice("Loop", "loop"::Playback),
+    storybook.choice("Scrub", "scrub"::Playback)
+})
+local draw_phase = storybook.range("phase", 0, 0, 100, 1)
+local draw_speed = storybook.range("speed", 130, 25, 300, 5)
+local draw_count = storybook.range("count", 3, 1, 5, 1)
+local draw_order = storybook.select("order", "left-first"::DealOrder, {
+    storybook.choice("Left first", "left-first"::DealOrder),
+    storybook.choice("Right first", "right-first"::DealOrder)
+})
+local draw_gap = storybook.range("gap", -5, -60, 40, 1)
+local draw_stagger = storybook.range("stagger", 15, 0, 100, 5)
+local draw_stretch = storybook.range("stretch", 160, 100, 200, 1)
+local draw_overshoot = storybook.range("overshoot", 30, 0, 40, 1)
+local draw_rise = storybook.range("rise", 270, 0, 400, 10)
+local draw_arc = storybook.select("arc", "very-late"::card_draw.Arc, {
+    storybook.choice("Even", "even"::card_draw.Arc),
+    storybook.choice("Late", "late"::card_draw.Arc),
+    storybook.choice("Very late", "very-late"::card_draw.Arc),
+    storybook.choice("Early", "early"::card_draw.Arc)
+})
 
 local function load(): unit
     shared.clock = 0.0
@@ -76,7 +98,7 @@ end
 
 local function face_up(): entity.Node
     return state(
-        card(storybook.arg_i32("rank"), storybook.arg_i32("suit")),
+        card(face_rank.value(), storybook.selected<i32>(face_suit)),
         false,
         false,
         false,
@@ -131,7 +153,7 @@ local function turning(): entity.Node
         card_entity.width,
         card_entity.height,
         function(surface: entity.Surface, bounds: box.Rect): unit
-            local clock = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
+            local clock: f64 = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
             render.draw_flipping_card(surface, card(14, 0), bounds.x, bounds.y, clock, 0.35, false)
         end
     )
@@ -298,11 +320,11 @@ const SCRUB_TAIL = 0.35
 -- so it scales the throws and the deal's cadence, and the hover breathes at
 -- real time whatever the throw did.
 local function playback_rate(): f64
-    return (storybook.arg_i32("speed")::f64) / 100.0
+    return (draw_speed.value()::f64) / 100.0
 end
 
 local function stagger_seconds(): f64
-    return (storybook.arg_i32("stagger")::f64) / 100.0
+    return (draw_stagger.value()::f64) / 100.0
 end
 
 -- Where one card's own clock is. The deal shares a single story clock and
@@ -312,16 +334,16 @@ end
 -- clock has not begun is not anywhere yet: it is still the top of the deck.
 local function card_clock(index: i32, count: i32): f64
     local stagger = stagger_seconds()
-    if storybook.arg_i32("playback") == 1 then
+    if storybook.selected<Playback>(draw_playback) == "scrub" then
         local scrubbed = ((count - 1)::f64) * stagger + card_draw.land_end + SCRUB_TAIL
-        return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0 - (index::f64) * stagger
+        return scrubbed * (draw_phase.value()::f64) / 100.0 - (index::f64) * stagger
     end
     local rate = playback_rate()
     local stagger_real = stagger / rate
     local throw_real = card_draw.land_end / rate
     local hover = card_draw.total_seconds() - card_draw.land_end
     local total = ((count - 1)::f64) * stagger_real + throw_real + hover
-    local looped = shared.clock - math.floor(shared.clock / total) * total
+    local looped: f64 = shared.clock - math.floor(shared.clock / total) * total
     local elapsed = looped - (index::f64) * stagger_real
     if elapsed < throw_real then
         return elapsed * rate
@@ -336,10 +358,10 @@ end
 -- edges touching and negative is a row that overlaps like a loose hand.
 local function drawing(index: i32, count: i32): card_draw.Draw
     local filled = index
-    if storybook.arg_i32("order") == 1 then
+    if storybook.selected<DealOrder>(draw_order) == "right-first" then
         filled = count - 1 - index
     end
-    local spacing = card_entity.width + (storybook.arg_i32("gap")::f64)
+    local spacing = card_entity.width + (draw_gap.value()::f64)
     local slot = ((filled::f64) - ((count - 1)::f64) * 0.5) * spacing
     return {
         from_x = DECK_X,
@@ -348,10 +370,10 @@ local function drawing(index: i32, count: i32): card_draw.Draw
         to_y = CAUGHT_Y,
         width = card_entity.width,
         height = card_entity.height,
-        stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0,
-        overshoot = (storybook.arg_i32("overshoot")::f64) / 100.0,
-        rise = storybook.arg_i32("rise")::f64,
-        arc = arc_arg(storybook.arg_i32("arc"))
+        stretch_limit = (draw_stretch.value()::f64) / 100.0,
+        overshoot = (draw_overshoot.value()::f64) / 100.0,
+        rise = draw_rise.value()::f64,
+        arc = storybook.selected<card_draw.Arc>(draw_arc)
     }
 end
 
@@ -365,7 +387,7 @@ local function drawing_cards(): entity.Node
             graphics:translate(bounds.x, bounds.y)
             draw_deck(surface)
             if capture(surface) then
-                local count = storybook.arg_i32("count")
+                local count = draw_count.value()
                 for index = 0, count - 1 do
                     local clock = card_clock(index, count)
                     if clock >= 0.0 then
@@ -432,10 +454,7 @@ storybook.publish(
         storybook.story(
             "Face up",
             card_scene(face_up),
-            {
-                storybook.select("suit", 0, {"Red", "Blue", "Black", "Green"}),
-                storybook.range("rank", 13, 2, 14, 1)
-            }
+            {face_suit.declaration, face_rank.declaration}
         ),
         storybook.story("Face down", card_scene(face_down)),
         storybook.story("Selected", card_scene(selected)),
@@ -473,35 +492,35 @@ storybook.publish(
                 }
             ),
             {
-                storybook.select("playback", 0, {"Loop", "Scrub"}),
-                storybook.range("phase", 0, 0, 100, 1),
+                draw_playback.declaration,
+                draw_phase.declaration,
                 -- How fast the throw plays, in hundredths of the authored clock.
                 -- The hover is untouched; only the draw itself quickens.
-                storybook.range("speed", 130, 25, 300, 5),
+                draw_speed.declaration,
                 -- How many cards the deck gives up, into a row that keeps its
                 -- centre however many there are.
-                storybook.range("count", 3, 1, 5, 1),
+                draw_count.declaration,
                 -- Which end of the row the deal fills first.
-                storybook.select("order", 0, {"Left first", "Right first"}),
+                draw_order.declaration,
                 -- The daylight between neighbouring landed cards, in logical pixels.
                 -- Zero is edges touching; negative overlaps the row.
-                storybook.range("gap", -5, -60, 40, 1),
+                draw_gap.declaration,
                 -- The pause between one card leaving and the next, in hundredths of
                 -- a second of the animation's clock. Small values overlap the
                 -- throws; past the length of a whole throw the deal turns single
                 -- file.
-                storybook.range("stagger", 15, 0, 100, 5),
+                draw_stagger.declaration,
                 -- The one number that decides whether this reads as a card with
                 -- weight or as a rubber toy.
-                storybook.range("stretch", 160, 100, 200, 1),
+                draw_stretch.declaration,
                 -- How far past its spot the throw carries the card, in hundredths of
                 -- the whole journey. Zero pulls up exactly on the mark.
-                storybook.range("overshoot", 30, 0, 40, 1),
+                draw_overshoot.declaration,
                 -- The top of the arc, in logical pixels of depth toward the viewer.
-                storybook.range("rise", 270, 0, 400, 10),
+                draw_rise.declaration,
                 -- When that top comes. The options are card_draw's arc shapes, in
                 -- the same order it declares them.
-                storybook.select("arc", 2, {"Even", "Late", "Very late", "Early"})
+                draw_arc.declaration
             }
         )
     }

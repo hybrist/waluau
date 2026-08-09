@@ -18,10 +18,9 @@ test('indexes every story a .stories.walu file publishes', async () => {
   try {
     const file = join(root, 'card.stories.walu');
     await writeFile(file, `local storybook = require("waluau:engine/storybook")
+local rank = storybook.range("rank", 13, 2, 14, 1)
 storybook.publish({
-    storybook.story("Face up", { draw = draw_face_up }, {
-      storybook.range("rank", 13, 2, 14, 1),
-    }),
+    storybook.story("Face up", { draw = draw_face_up }, { rank.declaration }),
     storybook.story("Face down", { draw = draw_face_down }),
 })`);
 
