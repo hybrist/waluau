@@ -2859,6 +2859,34 @@ fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
 }
 
 #[test]
+fn verifies_constructor_widened_into_a_nullable_tagged_union() {
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+
+        function find(want: bool): Goods?
+            if want then
+                return Upgrade({ kind = 1 })
+            end
+            return nil
+        end
+
+        function slot(): i32
+            local held: Goods? = Spell({ kind = 2 })
+            if held ~= nil then
+                return 1
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect(
+        "constructing into a nullable union widens the canonical record to the nullable union",
+    );
+}
+
+#[test]
 fn rejects_error_variant_value_access_for_string_payload() {
     let source = r#"
         function run(): i32

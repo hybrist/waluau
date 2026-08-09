@@ -1,0 +1,69 @@
+-- A tagged-union constructor resolves through a nullable expectation: `Goods?`
+-- names the same variants as `Goods`, because constructing is the one direction
+-- in which the answer cannot be nil. Reading a nullable union is the other
+-- direction and still has to prove the value non-nil first.
+
+type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+
+-- A function returning `Goods?` constructs a variant on some paths and answers
+-- nil on the rest.
+function find(want: i32): Goods?
+    if want == 1 then
+        return Upgrade({ kind = 11 })
+    end
+    if want == 2 then
+        return Spell({ kind = 22 })
+    end
+    return nil
+end
+
+-- Narrowing back out of the nullable, then matching on the variant.
+function kind_of(goods: Goods?): i32
+    if goods ~= nil then
+        if goods is Upgrade then
+            return goods.value.kind
+        end
+        if goods is Spell then
+            return 1000 + goods.value.kind
+        end
+    end
+    return -1
+end
+
+assert(kind_of(find(1)) == 11)
+assert(kind_of(find(2)) == 1022)
+assert(kind_of(find(3)) == -1)
+assert(find(3) == nil)
+assert(find(1) ~= nil)
+
+-- A `Goods?` local assigned a variant directly, and reassigned across nil.
+local slot: Goods? = Upgrade({ kind = 5 })
+assert(kind_of(slot) == 5)
+slot = nil
+assert(slot == nil)
+slot = Spell({ kind = 6 })
+assert(kind_of(slot) == 1006)
+
+-- A `Goods?` parameter passed a bare constructor, and passed nil.
+assert(kind_of(Spell({ kind = 7 })) == 1007)
+assert(kind_of(nil) == -1)
+
+-- The nullable is transparent for construction however it is spelled, so a
+-- variant with a non-record payload works the same way.
+type Reward = Coins(i32) | Nothing(bool)
+
+function reward_for(score: i32): Reward?
+    if score > 0 then
+        return Coins(score * 2)
+    end
+    return nil
+end
+
+local reward: Reward? = reward_for(21)
+if reward ~= nil then
+    assert(reward is Coins)
+    assert(reward.value == 42)
+else
+    assert(false)
+end
+assert(reward_for(0) == nil)

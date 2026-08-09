@@ -244,14 +244,29 @@ fn verify_function(
                         block.id,
                         *value,
                     )?;
-                    if value_ty != *from {
+                    // `types_match`, not equality: the cast annotation may name a
+                    // tagged union by the canonical `{ tag, value }` record while
+                    // the value that defines it names the source-level union, or
+                    // the other way round. Every other operand check here already
+                    // reads the two spellings as the same value.
+                    if !types_match(&value_ty, from) {
                         return Err(Diagnostic::new(format!(
                             "cast source in block {:?} has type {}, expected {}",
                             block.id, value_ty, from
                         )));
                     }
-                    let widens_to_nullable = to.nullable_inner().as_ref() == Some(from)
+                    // Nullable widening and narrowing compare the payload with
+                    // `types_match`, not equality, because a tagged union is named
+                    // by its source type on one side of the cast and by the
+                    // canonical `{ tag, value }` record on the other: constructing
+                    // into a `Goods?` casts `{tag, value}` to `Goods?`.
+                    let widens_to_nullable = to
+                        .nullable_inner()
+                        .is_some_and(|inner| types_match(&inner, from))
                         || matches!((from, to), (Type::Nil, Type::Nullable(_)));
+                    let narrows_from_nullable = from
+                        .nullable_inner()
+                        .is_some_and(|inner| types_match(&inner, to));
                     // Nullable numerics widen/narrow with a payload
                     // conversion: `i32 -> f64?`, `i32? -> i64`, `i32? -> f64?`.
                     let nullable_numeric =
@@ -260,7 +275,7 @@ fn verify_function(
                         && nullable_numeric(to))
                         || (nullable_numeric(from) && matches!(to, Type::Numeric(_)))
                         || (nullable_numeric(from) && nullable_numeric(to));
-                    if from.nullable_inner().as_ref() != Some(to)
+                    if !narrows_from_nullable
                         && !widens_to_nullable
                         && !nullable_numeric_conversion
                     {
