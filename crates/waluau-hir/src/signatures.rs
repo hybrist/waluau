@@ -122,10 +122,22 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             .get(name)
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
-        Type::Opaque { name, ty } => Type::Opaque {
-            name: name.clone(),
-            ty: Box::new(substitute_type(ty, subst)),
-        },
+        Type::Opaque {
+            name,
+            ty,
+            generic_extern,
+        } => {
+            let generic_extern = generic_extern
+                .as_ref()
+                .map(|generic| Box::new(generic.map_type_args(|ty| substitute_type(ty, subst))));
+            Type::Opaque {
+                name: generic_extern
+                    .as_ref()
+                    .map_or_else(|| name.clone(), |generic| generic.canonical_name()),
+                ty: Box::new(substitute_type(ty, subst)),
+                generic_extern,
+            }
+        }
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
         Type::Readonly(inner) => Type::Readonly(Box::new(substitute_type(inner, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
@@ -196,7 +208,17 @@ pub(super) fn validate_type_in_scope(
             }
             Ok(())
         }
-        Type::Opaque { ty, .. } => validate_type_in_scope(ty, allowed),
+        Type::Opaque {
+            ty, generic_extern, ..
+        } => {
+            validate_type_in_scope(ty, allowed)?;
+            if let Some(generic) = generic_extern {
+                for arg in &generic.type_args {
+                    validate_type_in_scope(arg, allowed)?;
+                }
+            }
+            Ok(())
+        }
         Type::Nullable(inner) => validate_type_in_scope(inner, allowed),
         Type::Readonly(inner) => validate_type_in_scope(inner, allowed),
         Type::Array(inner) => validate_type_in_scope(inner, allowed),
@@ -231,7 +253,17 @@ fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bo
             .iter()
             .all(|variant| is_valid_type_argument(variant.payload.as_ref(), active_type_params)),
         Type::TypeParam(name) => active_type_params.contains(name),
-        Type::Opaque { ty, .. } => is_valid_type_argument(ty, active_type_params),
+        Type::Opaque {
+            ty, generic_extern, ..
+        } => {
+            is_valid_type_argument(ty, active_type_params)
+                && generic_extern.as_ref().is_none_or(|generic| {
+                    generic
+                        .type_args
+                        .iter()
+                        .all(|arg| is_valid_type_argument(arg, active_type_params))
+                })
+        }
         Type::Nullable(inner) => is_valid_type_argument(inner, active_type_params),
         // A generic body checked against bare `T` can erase `T` into unknown;
         // the instantiated readonly capability would be invisible there.
@@ -267,7 +299,14 @@ fn contains_type_param(ty: &Type) -> bool {
             .iter()
             .any(|variant| contains_type_param(variant.payload.as_ref())),
         Type::TypeParam(_) => true,
-        Type::Opaque { ty, .. } => contains_type_param(ty.as_ref()),
+        Type::Opaque {
+            ty, generic_extern, ..
+        } => {
+            contains_type_param(ty.as_ref())
+                || generic_extern
+                    .as_ref()
+                    .is_some_and(|generic| generic.type_args.iter().any(contains_type_param))
+        }
         Type::Nullable(inner) => contains_type_param(inner.as_ref()),
         Type::Readonly(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
@@ -368,13 +407,33 @@ fn unify(
             Type::Opaque {
                 name: p_name,
                 ty: p_ty,
+                generic_extern: p_generic,
             },
             Type::Opaque {
                 name: a_name,
                 ty: a_ty,
+                generic_extern: a_generic,
             },
         ) => {
-            if p_name != a_name {
+            match (p_generic, a_generic) {
+                (Some(param), Some(actual))
+                    if param.constructor == actual.constructor
+                        && param.type_args.len() == actual.type_args.len() =>
+                {
+                    for (param_arg, actual_arg) in
+                        param.type_args.iter().zip(actual.type_args.iter())
+                    {
+                        unify(param_arg, actual_arg, subst)?;
+                    }
+                }
+                (None, None) if p_name == a_name => {}
+                _ => {
+                    return Err(Diagnostic::new(format!(
+                        "cannot match type {param_ty} with {actual_ty}"
+                    )));
+                }
+            }
+            if p_generic.is_none() && p_name != a_name {
                 return Err(Diagnostic::new(format!(
                     "cannot match type {param_ty} with {actual_ty}"
                 )));

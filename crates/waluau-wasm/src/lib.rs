@@ -682,6 +682,10 @@ mod tests {
                     function exchange(value: service.Promise<i32>): service.Promise<string>
                         return service.exchange(value)
                     end
+
+                    function read(): string
+                        return promise.await(service.make_text())
+                    end
                 "#
                 .to_string(),
             ),
@@ -691,12 +695,17 @@ mod tests {
                     type Promise<T> = extern
 
                     declare function host_exchange(value: Promise<i32>): Promise<string>
+                    declare function host_text(): Promise<string>
 
                     function exchange(value: Promise<i32>): Promise<string>
                         return host_exchange(value)
                     end
 
-                    return { exchange = exchange }
+                    function make_text(): Promise<string>
+                        return host_text()
+                    end
+
+                    return { exchange = exchange, make_text = make_text }
                 "#
                 .to_string(),
             ),
@@ -709,6 +718,12 @@ mod tests {
                 .required_imports
                 .iter()
                 .any(|import| import.name == "host_exchange")
+        );
+        assert!(
+            result
+                .required_imports
+                .iter()
+                .any(|import| import.name == "host_text")
         );
     }
 

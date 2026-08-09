@@ -1482,7 +1482,7 @@ impl Rewriter<'_> {
                     self.rewrite_type(ty);
                 }
             }
-            Type::Opaque { name, ty } => {
+            Type::Opaque { name, ty, .. } => {
                 if self.type_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
                 }

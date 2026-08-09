@@ -46,7 +46,10 @@ fn property_getter_name(base: &str, property: &str) -> String {
 /// signature for each field or method expression.
 pub(super) fn nominal_type_names(mut ty: &Type) -> Vec<&str> {
     let mut names = Vec::new();
-    while let Type::Opaque { name, ty: inner } = ty {
+    while let Type::Opaque {
+        name, ty: inner, ..
+    } = ty
+    {
         names.push(name.as_str());
         let Type::ExternSubtype(parent) = inner.as_ref() else {
             break;
@@ -1467,6 +1470,7 @@ fn infer_expr_inner(
             if let Type::Opaque {
                 name: opaque_name,
                 ty,
+                ..
             } = &base_ty
                 && ty.as_ref() == &Type::Unknown
             {

@@ -165,10 +165,12 @@ fn unify(
             Type::Opaque {
                 name: p_name,
                 ty: p_ty,
+                ..
             },
             Type::Opaque {
                 name: a_name,
                 ty: a_ty,
+                ..
             },
         ) => {
             if p_name != a_name {

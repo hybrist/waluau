@@ -1973,12 +1973,17 @@ end
                 type Promise<T> = extern
 
                 declare function host_exchange(value: Promise<i32>): Promise<string>
+                declare function host_text(): Promise<string>
 
                 function exchange(value: Promise<i32>): Promise<string>
                     return host_exchange(value)
                 end
 
-                return { exchange = exchange }
+                function make_text(): Promise<string>
+                    return host_text()
+                end
+
+                return { exchange = exchange, make_text = make_text }
             "#,
         )
         .expect("service module should write");
@@ -1990,6 +1995,10 @@ end
                 function exchange(value: service.Promise<i32>): service.Promise<string>
                     return service.exchange(value)
                 end
+
+                function read(): string
+                    return promise.await(service.make_text())
+                end
             "#,
         )
         .expect("entry module should write");
@@ -1997,6 +2006,7 @@ end
         let artifacts = super::compile_file_artifacts(&input_path, "game.wasm")
             .expect("module-local aliases in host import signatures should compile");
         assert!(artifacts.js.contains("host_exchange"));
+        assert!(artifacts.js.contains("host_text"));
     }
 
     #[test]

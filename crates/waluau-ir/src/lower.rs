@@ -1507,7 +1507,9 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
 
 fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
     match ty {
-        Type::Opaque { name, ty } if nested && type_contains_opaque_name(ty, name) => Type::Unknown,
+        Type::Opaque { name, ty, .. } if nested && type_contains_opaque_name(ty, name) => {
+            Type::Unknown
+        }
         Type::Opaque { ty, .. } => erase_type_opaque_types_at(ty, nested),
         Type::ExternSubtype(_) => Type::Extern,
         // Literal unions are a type-checking construct; at runtime a string
@@ -3673,9 +3675,14 @@ impl Builder<'_> {
                 narrowed.insert(field.to_string(), inner);
                 Some(Type::Record(narrowed))
             }
-            Type::Opaque { name, ty } => Some(Type::Opaque {
+            Type::Opaque {
+                name,
+                ty,
+                generic_extern,
+            } => Some(Type::Opaque {
                 name: name.clone(),
                 ty: Box::new(Self::narrow_nullable_record_field(ty, field)?),
+                generic_extern: generic_extern.clone(),
             }),
             _ => None,
         }

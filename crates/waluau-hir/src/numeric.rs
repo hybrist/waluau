@@ -316,9 +316,22 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 if matches!(
                     (actual_inner.as_ref(), expected_inner.as_ref()),
                     (
-                        Type::Opaque { name: actual_name, .. },
-                        Type::Opaque { name: expected_name, .. },
-                    ) if actual_name == expected_name
+                        Type::Opaque {
+                            name: actual_name,
+                            generic_extern: actual_generic,
+                            ..
+                        },
+                        Type::Opaque {
+                            name: expected_name,
+                            generic_extern: expected_generic,
+                            ..
+                        },
+                    ) if opaque_identity_matches(
+                        actual_name,
+                        actual_generic.as_deref(),
+                        expected_name,
+                        expected_generic.as_deref(),
+                    )
                 ) =>
             {
                 Ok(Type::Nullable(expected_inner))
@@ -437,6 +450,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
         Some(Type::Opaque {
             name: expected_name,
             ty: expected_ty,
+            generic_extern: expected_generic,
         }) => match actual {
             Type::Record(_) if expected_ty.as_ref() == &Type::Unknown => {
                 Err(Diagnostic::new(format!(
@@ -447,12 +461,24 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Opaque {
                 name: actual_name,
                 ty: actual_ty,
-            } if actual_name == expected_name
-                || extern_opaque_is_subtype(&actual_name, actual_ty.as_ref(), &expected_name) =>
+                generic_extern: actual_generic,
+            } if opaque_identity_matches(
+                &actual_name,
+                actual_generic.as_deref(),
+                &expected_name,
+                expected_generic.as_deref(),
+            ) || extern_opaque_is_subtype(
+                &actual_name,
+                actual_generic.as_deref(),
+                actual_ty.as_ref(),
+                &expected_name,
+                expected_generic.as_deref(),
+            ) =>
             {
                 Ok(Type::Opaque {
                     name: expected_name,
                     ty: expected_ty,
+                    generic_extern: expected_generic,
                 })
             }
             Type::Opaque {
@@ -469,6 +495,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 Ok(Type::Opaque {
                     name: expected_name,
                     ty: expected_ty,
+                    generic_extern: expected_generic,
                 })
             }
             // A tagged-union constructor produces a TaggedVariant; allow it to be
@@ -479,6 +506,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     Ok(Type::Opaque {
                         name: expected_name,
                         ty: Box::new(inner),
+                        generic_extern: expected_generic,
                     })
                 }
                 _ => Err(Diagnostic::new(format!(
@@ -495,6 +523,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     Ok(Type::Opaque {
                         name: expected_name,
                         ty: Box::new(inner),
+                        generic_extern: expected_generic,
                     })
                 }
                 _ => Err(Diagnostic::new(format!(
@@ -508,6 +537,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 Ok(Type::Opaque {
                     name: expected_name,
                     ty: expected_ty,
+                    generic_extern: expected_generic,
                 })
             }
             other if matches!(expected_ty.as_ref(), Type::Readonly(_)) => {
@@ -515,6 +545,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 Ok(Type::Opaque {
                     name: expected_name,
                     ty: expected_ty,
+                    generic_extern: expected_generic,
                 })
             }
             // An inline literal union value (from an un-aliased annotation
@@ -530,6 +561,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 Ok(Type::Opaque {
                     name: expected_name,
                     ty: Box::new(inner),
+                    generic_extern: expected_generic,
                 })
             }
             _ => Err(Diagnostic::new(format!(
@@ -684,13 +716,21 @@ fn same_opaque_array_identity(actual: &Type, expected: &Type) -> bool {
     match (actual, expected) {
         (
             Type::Opaque {
-                name: actual_name, ..
+                name: actual_name,
+                generic_extern: actual_generic,
+                ..
             },
             Type::Opaque {
                 name: expected_name,
+                generic_extern: expected_generic,
                 ..
             },
-        ) => actual_name == expected_name,
+        ) => opaque_identity_matches(
+            actual_name,
+            actual_generic.as_deref(),
+            expected_name,
+            expected_generic.as_deref(),
+        ),
         (Type::Array(actual), Type::Array(expected)) => {
             same_opaque_array_identity(actual, expected)
         }
@@ -706,28 +746,66 @@ pub(super) fn is_extern_subtype_of(actual: &Type, expected: &Type) -> bool {
         Type::Opaque {
             name: actual_name,
             ty: actual_ty,
+            generic_extern: actual_generic,
         },
         Type::Opaque {
             name: expected_name,
+            generic_extern: expected_generic,
             ..
         },
     ) = (actual, expected)
     else {
         return false;
     };
-    extern_opaque_is_subtype(actual_name, actual_ty, expected_name)
+    extern_opaque_is_subtype(
+        actual_name,
+        actual_generic.as_deref(),
+        actual_ty,
+        expected_name,
+        expected_generic.as_deref(),
+    )
 }
 
-fn extern_opaque_is_subtype(actual_name: &str, actual_ty: &Type, expected_name: &str) -> bool {
-    if actual_name == expected_name {
+fn opaque_identity_matches(
+    actual_name: &str,
+    actual_generic: Option<&waluau_ast::GenericExternType>,
+    expected_name: &str,
+    expected_generic: Option<&waluau_ast::GenericExternType>,
+) -> bool {
+    match (actual_generic, expected_generic) {
+        (Some(actual), Some(expected)) => {
+            actual.constructor == expected.constructor && actual.type_args == expected.type_args
+        }
+        (None, None) => actual_name == expected_name,
+        _ => false,
+    }
+}
+
+fn extern_opaque_is_subtype(
+    actual_name: &str,
+    actual_generic: Option<&waluau_ast::GenericExternType>,
+    actual_ty: &Type,
+    expected_name: &str,
+    expected_generic: Option<&waluau_ast::GenericExternType>,
+) -> bool {
+    if opaque_identity_matches(actual_name, actual_generic, expected_name, expected_generic) {
         return true;
     }
     let mut current = actual_ty;
     loop {
         match current {
             Type::ExternSubtype(parent) => match parent.as_ref() {
-                Type::Opaque { name, ty } => {
-                    if name == expected_name {
+                Type::Opaque {
+                    name,
+                    ty,
+                    generic_extern,
+                } => {
+                    if opaque_identity_matches(
+                        name,
+                        generic_extern.as_deref(),
+                        expected_name,
+                        expected_generic,
+                    ) {
                         return true;
                     }
                     current = ty;
@@ -752,7 +830,7 @@ pub(super) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Dia
     let (actual, target) = (numeric_view(actual), numeric_view(target));
     match (&actual, &target) {
         (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
-        (actual, Type::Opaque { name: _, ty }) if actual == ty.as_ref() => Ok(()),
+        (actual, Type::Opaque { ty, .. }) if actual == ty.as_ref() => Ok(()),
         // Boxing into / unboxing out of `unknown` (anyref) is an explicit cast.
         (_, Type::Unknown) | (Type::Unknown, _) => Ok(()),
         _ => match (actual, target) {
