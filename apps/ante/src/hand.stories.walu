@@ -33,7 +33,7 @@ local hand_focused = storybook.select("focused", "none"::Position, {
 })
 
 local function card_at(index: i32): game.Card
-    return { rank = 14 - index, suit = index % 4 }
+    return { rank = 14 - index, suit = (index % 4)::game.Suit }
 end
 
 -- State controls name useful positions instead of raw indices, so they keep
