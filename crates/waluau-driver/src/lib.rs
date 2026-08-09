@@ -126,12 +126,17 @@ fn compile_file_artifacts_with_assets_collect(
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
 ) -> Result<CompileArtifacts, Vec<Diagnostic>> {
-    let (program, parse_diagnostics) =
-        link::link_program_collect(path).map_err(|error| vec![error])?;
-    if !parse_diagnostics.is_empty() {
-        return Err(parse_diagnostics);
+    let asset_module_source = discover_asset_module(path).map_err(|error| vec![error])?;
+    let outcome = link::link_program_collect_with_assets(
+        path,
+        &mut link::FsModules,
+        asset_module_source.as_deref(),
+    )
+    .map_err(|error| vec![error])?;
+    if !outcome.diagnostics.is_empty() {
+        return Err(outcome.diagnostics);
     }
-    compile_program(program, wasm_file_name, assets)
+    compile_program(outcome.program, wasm_file_name, assets)
 }
 
 fn compile_program(
@@ -278,7 +283,11 @@ where
         .as_ref()
         .map(|package| &package.generated)
         .unwrap_or_else(|| empty_asset_manifest());
-    let outcome = session.build_root_with_assets(&options.input, wasm_file_name, assets);
+    let asset_module_source = asset_package
+        .as_ref()
+        .map(|package| package.module_source.as_str());
+    let outcome =
+        session.build_root_with_assets(&options.input, wasm_file_name, assets, asset_module_source);
     if let Some(report_path) = &options.report {
         write_build_report(report_path, &outcome).map_err(|error| vec![error])?;
     }
@@ -533,12 +542,16 @@ struct ProjectAssetManifest {
     assets: Vec<AssetDeclaration>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AssetDeclaration {
+    #[serde(default)]
+    name: Option<String>,
     path: String,
     #[serde(rename = "type")]
     kind: AssetKind,
+    #[serde(default)]
+    family: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -573,6 +586,7 @@ struct PreparedAsset {
 struct PreparedAssetPackage {
     generated: BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
     files: Vec<PreparedAsset>,
+    module_source: String,
 }
 
 impl PreparedAssetPackage {
@@ -591,21 +605,9 @@ impl PreparedAssetPackage {
 }
 
 fn prepare_asset_package(path: &Path) -> Result<PreparedAssetPackage, Diagnostic> {
-    let source =
-        fs::read_to_string(path).map_err(|error| io_error("read asset manifest", path, error))?;
-    let manifest: ProjectAssetManifest = serde_json::from_str(&source).map_err(|error| {
-        Diagnostic::new(format!(
-            "invalid asset manifest `{}`: {error}",
-            path.display()
-        ))
-    })?;
-    if manifest.version != 1 {
-        return Err(Diagnostic::new(format!(
-            "unsupported asset manifest version {}; expected 1",
-            manifest.version
-        )));
-    }
+    let manifest = read_asset_manifest(path)?;
     let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let module_source = generate_asset_module(&manifest.assets)?;
     let mut logical_paths = BTreeSet::new();
     let mut output_paths = BTreeSet::new();
     let mut generated = BTreeMap::new();
@@ -641,7 +643,193 @@ fn prepare_asset_package(path: &Path) -> Result<PreparedAssetPackage, Diagnostic
             bytes,
         });
     }
-    Ok(PreparedAssetPackage { generated, files })
+    Ok(PreparedAssetPackage {
+        generated,
+        files,
+        module_source,
+    })
+}
+
+fn read_asset_manifest(path: &Path) -> Result<ProjectAssetManifest, Diagnostic> {
+    let source =
+        fs::read_to_string(path).map_err(|error| io_error("read asset manifest", path, error))?;
+    let manifest: ProjectAssetManifest = serde_json::from_str(&source).map_err(|error| {
+        Diagnostic::new(format!(
+            "invalid asset manifest `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    if manifest.version != 1 {
+        return Err(Diagnostic::new(format!(
+            "unsupported asset manifest version {}; expected 1",
+            manifest.version
+        )));
+    }
+    Ok(manifest)
+}
+
+pub(crate) fn discover_asset_module(root: &Path) -> Result<Option<String>, Diagnostic> {
+    let start = root.parent().unwrap_or_else(|| Path::new("."));
+    for directory in start.ancestors() {
+        let manifest_path = directory.join("waluau.assets.json");
+        if manifest_path.is_file() {
+            let manifest = read_asset_manifest(&manifest_path)?;
+            return generate_asset_module(&manifest.assets).map(Some);
+        }
+    }
+    Ok(None)
+}
+
+fn valid_asset_name(name: &str) -> bool {
+    const RESERVED: &[&str] = &[
+        "and", "bool", "break", "bytes", "continue", "do", "else", "elseif", "end", "extern",
+        "f32", "f64", "false", "for", "function", "i32", "i64", "if", "in", "local", "nil", "not",
+        "number", "or", "repeat", "return", "string", "then", "thread", "true", "u32", "u64",
+        "unit", "unknown", "until", "void", "while",
+    ];
+    let mut chars = name.chars();
+    !RESERVED.contains(&name)
+        && chars
+            .next()
+            .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn waluau_string(value: &str) -> String {
+    serde_json::to_string(value).expect("strings always serialize")
+}
+
+fn generate_asset_module(declarations: &[AssetDeclaration]) -> Result<String, Diagnostic> {
+    let named = declarations
+        .iter()
+        .filter(|declaration| declaration.name.is_some())
+        .collect::<Vec<_>>();
+    let mut names = BTreeSet::new();
+    for declaration in &named {
+        let name = declaration
+            .name
+            .as_deref()
+            .expect("filtered named declaration");
+        if !valid_asset_name(name) {
+            return Err(Diagnostic::new(format!(
+                "invalid asset name `{name}`; expected a Waluau identifier"
+            )));
+        }
+        if !names.insert(name) {
+            return Err(Diagnostic::new(format!("duplicate asset name `{name}`")));
+        }
+        match declaration.kind {
+            AssetKind::Image | AssetKind::Audio => {}
+            AssetKind::Font
+                if declaration
+                    .family
+                    .as_deref()
+                    .is_some_and(|family| !family.is_empty()) => {}
+            AssetKind::Font => {
+                return Err(Diagnostic::new(format!(
+                    "named font asset `{name}` requires a non-empty `family`"
+                )));
+            }
+            AssetKind::Text | AssetKind::Bytes => {
+                return Err(Diagnostic::new(format!(
+                    "typed bundle asset `{name}` has unsupported type `{}`",
+                    declaration.kind.as_str()
+                )));
+            }
+        }
+    }
+
+    let mut source = String::from(
+        "-- Generated from waluau.assets.json. Do not edit.\n\
+local resources = require(\"waluau:engine/resources\")\n\
+local audio = require(\"waluau:engine/audio\")\n\n\
+type Bundle = {\n    owner: resources.Owner",
+    );
+    for declaration in &named {
+        let name = declaration
+            .name
+            .as_deref()
+            .expect("filtered named declaration");
+        let ty = match declaration.kind {
+            AssetKind::Image => "resources.ImageResource",
+            AssetKind::Font => "resources.FontResource",
+            AssetKind::Audio => "resources.SoundResource",
+            AssetKind::Text | AssetKind::Bytes => unreachable!(),
+        };
+        source.push_str(&format!(",\n    {name}: {ty}?"));
+    }
+    source.push_str(
+        "\n}\n\
+type LoadResult = { bundle: Bundle, errors: {resources.ResourceError} }\n\n\
+function load(): LoadResult\n\
+    local owner: resources.Owner = resources.new_owner()\n\
+    local errors: {resources.ResourceError} = {}\n\
+    local bundle: Bundle = {\n        owner = owner,\n",
+    );
+    for declaration in &named {
+        source.push_str(&format!(
+            "        {} = nil,\n",
+            declaration
+                .name
+                .as_deref()
+                .expect("filtered named declaration")
+        ));
+    }
+    source.push_str("    }\n");
+    for declaration in &named {
+        let name = declaration
+            .name
+            .as_deref()
+            .expect("filtered named declaration");
+        let path = waluau_string(&declaration.path);
+        let (result_ty, resource_ty, await_call, own_call) = match declaration.kind {
+            AssetKind::Image => (
+                "resources.ImageLoadResult",
+                "resources.ImageResource",
+                format!("resources.await_typed_image({path})"),
+                "resources.own_image",
+            ),
+            AssetKind::Font => (
+                "resources.FontLoadResult",
+                "resources.FontResource",
+                format!(
+                    "resources.await_typed_font({path}, {})",
+                    waluau_string(
+                        declaration
+                            .family
+                            .as_deref()
+                            .expect("validated font family")
+                    )
+                ),
+                "resources.own_font",
+            ),
+            AssetKind::Audio => (
+                "resources.SoundLoadResult",
+                "resources.SoundResource",
+                format!("audio.await_typed_sound({path})"),
+                "resources.own_sound",
+            ),
+            AssetKind::Text | AssetKind::Bytes => unreachable!(),
+        };
+        source.push_str(&format!(
+            "    local {name}_result: {result_ty} = {await_call}\n\
+    local maybe_{name}: {resource_ty}? = {name}_result.resource\n\
+    if maybe_{name} ~= nil then\n\
+        local value: {resource_ty} = maybe_{name}::{resource_ty}\n\
+        bundle.{name} = value\n\
+        {own_call}(owner, value)\n\
+    else\n\
+        local maybe_error: resources.ResourceError? = {name}_result.error\n\
+        if maybe_error ~= nil then\n\
+            table.insert(errors, maybe_error::resources.ResourceError)\n\
+        end\n\
+    end\n"
+        ));
+    }
+    source.push_str(
+        "    return { bundle = bundle, errors = errors }\nend\n\nreturn { load = load }\n",
+    );
+    Ok(source)
 }
 
 fn validate_logical_asset_path(path: &str) -> Result<(), Diagnostic> {
@@ -1507,6 +1695,80 @@ mod tests {
     }
 
     #[test]
+    fn cli_compiles_manifest_generated_typed_asset_bundle() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        let manifest_path = tempdir.path().join("waluau.assets.json");
+        fs::create_dir_all(tempdir.path().join("assets")).expect("asset dir should exist");
+        fs::write(tempdir.path().join("assets/card.png"), b"image").expect("image should write");
+        fs::write(tempdir.path().join("assets/font.woff2"), b"font").expect("font should write");
+        fs::write(tempdir.path().join("assets/cue.wav"), b"audio").expect("audio should write");
+        fs::write(
+            &input_path,
+            r#"local assets = require("waluau:assets")
+function load_assets(): i32
+    local result: assets.LoadResult = assets.load()
+    local bundle: assets.Bundle = result.bundle
+    if bundle.card ~= nil and bundle.font ~= nil and bundle.cue ~= nil then return 3 end
+    return #result.errors
+end
+"#,
+        )
+        .expect("fixture should write");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version": 1,
+                "assets": [
+                    {"name":"card","path":"assets/card.png","type":"image"},
+                    {"name":"font","path":"assets/font.woff2","type":"font","family":"Fixture"},
+                    {"name":"cue","path":"assets/cue.wav","type":"audio"}
+                ]
+            }"#,
+        )
+        .expect("manifest should write");
+
+        super::run_with_args([
+            os(&input_path),
+            OsString::from("--output"),
+            os(tempdir.path().join("game.wasm")),
+            OsString::from("--emit-js"),
+            OsString::from("--manifest"),
+            os(&manifest_path),
+        ])
+        .expect("generated typed bundle should compile");
+
+        fs::write(
+            &input_path,
+            r#"local assets = require("waluau:assets")
+local resources = require("waluau:engine/resources")
+local graphics = require("waluau:engine/graphics")
+function wrong_kind(g: graphics.Graphics, bundle: assets.Bundle): graphics.TextureResult
+    local sound: resources.SoundResource = bundle.cue::resources.SoundResource
+    return g:texture_from_image(sound)
+end
+"#,
+        )
+        .expect("invalid fixture should write");
+        let errors = super::run_with_args([
+            os(&input_path),
+            OsString::from("--output"),
+            os(tempdir.path().join("bad.wasm")),
+            OsString::from("--emit-js"),
+            OsString::from("--manifest"),
+            os(&manifest_path),
+        ])
+        .expect_err("sound resources must not type-check as images");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.to_string().contains("SoundResource")
+                    && error.to_string().contains("ImageResource")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn asset_manifest_diagnoses_missing_duplicate_and_unknown_types() {
         let tempdir = tempdir().expect("tempdir should exist");
         let missing = tempdir.path().join("missing.json");
@@ -1548,6 +1810,25 @@ mod tests {
                 super::prepare_asset_package(&invalid).expect_err("invalid path should fail");
             assert!(error.to_string().contains("invalid logical asset path"));
         }
+
+        let bad_name = tempdir.path().join("bad-name.json");
+        fs::write(
+            &bad_name,
+            r#"{"version":1,"assets":[{"name":"card-back","path":"same.txt","type":"image"}]}"#,
+        )
+        .expect("manifest should write");
+        let error = super::prepare_asset_package(&bad_name).expect_err("bad name should fail");
+        assert!(error.to_string().contains("invalid asset name"));
+
+        let missing_family = tempdir.path().join("missing-family.json");
+        fs::write(
+            &missing_family,
+            r#"{"version":1,"assets":[{"name":"font","path":"same.txt","type":"font"}]}"#,
+        )
+        .expect("manifest should write");
+        let error = super::prepare_asset_package(&missing_family)
+            .expect_err("named font without family should fail");
+        assert!(error.to_string().contains("requires a non-empty `family`"));
     }
 
     #[test]
@@ -1792,8 +2073,16 @@ mod tests {
 
     #[test]
     fn compiles_ante_magic_game_engine_fixture() {
-        super::compile_file(&app_path("ante/src/main.walu"))
-            .expect("Ante Magic game engine fixture should compile");
+        let output = tempdir().expect("output directory should exist");
+        super::run_with_args([
+            os(app_path("ante/src/main.walu")),
+            OsString::from("--output"),
+            os(output.path().join("ante.wasm")),
+            OsString::from("--emit-js"),
+            OsString::from("--manifest"),
+            os(app_path("ante/waluau.assets.json")),
+        ])
+        .expect("Ante Magic game engine fixture should compile");
     }
 
     #[test]

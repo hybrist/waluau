@@ -31,6 +31,7 @@ const DOM_WINDOW_FUNCTION: &str = "dom_window";
 const DOM_WINDOW_TYPE: &str = "Window";
 const TFJS_REQUIRE: &str = "tfjs";
 const ENGINE_REQUIRE: &str = "waluau:engine";
+const ASSETS_REQUIRE: &str = "waluau:assets";
 const VITEST_REQUIRE: &str = "waluau:vitest";
 
 /// Resolve the module graph rooted at `entry` and merge it into one program.
@@ -98,13 +99,21 @@ pub fn link_program_collect_with(
     entry: &Path,
     provider: &mut dyn ModuleProvider,
 ) -> Result<LinkOutcome, Diagnostic> {
+    link_program_collect_with_assets(entry, provider, None)
+}
+
+pub fn link_program_collect_with_assets(
+    entry: &Path,
+    provider: &mut dyn ModuleProvider,
+    asset_module_source: Option<&str>,
+) -> Result<LinkOutcome, Diagnostic> {
     let entry = entry.canonicalize().map_err(|error| {
         Diagnostic::new(format!(
             "cannot open input file `{}`: {error}",
             entry.display()
         ))
     })?;
-    let mut loader = Loader::new(provider);
+    let mut loader = Loader::new(provider, asset_module_source);
 
     // Load builtin declarations first
     let (builtin_imports, builtin_constants) = loader.load_builtins()?;
@@ -181,10 +190,11 @@ struct Loader<'a> {
     /// Parse diagnostics collected across the module graph; traversal
     /// continues past modules with syntax errors using their recovered ASTs.
     diagnostics: Vec<Diagnostic>,
+    asset_module_source: Option<&'a str>,
 }
 
 impl<'a> Loader<'a> {
-    fn new(provider: &'a mut dyn ModuleProvider) -> Self {
+    fn new(provider: &'a mut dyn ModuleProvider, asset_module_source: Option<&'a str>) -> Self {
         Self {
             provider,
             modules: Vec::new(),
@@ -194,6 +204,7 @@ impl<'a> Loader<'a> {
             requires_tfjs_externs: false,
             requires_vitest_externs: false,
             diagnostics: Vec::new(),
+            asset_module_source,
         }
     }
 
@@ -226,6 +237,11 @@ impl<'a> Loader<'a> {
         let mut requires = HashMap::new();
         let mut virtual_requires = HashSet::new();
         for raw in raw_paths {
+            if raw == ASSETS_REQUIRE {
+                let target = self.load_assets()?;
+                requires.insert(raw, target);
+                continue;
+            }
             if engine_module_name(&raw).is_some() {
                 let target = self.load_engine(&raw)?;
                 requires.insert(raw, target);
@@ -271,6 +287,41 @@ impl<'a> Loader<'a> {
             virtual_requires,
         });
         self.by_path.insert(path.to_path_buf(), id);
+        Ok(id)
+    }
+
+    fn load_assets(&mut self) -> Result<usize, Diagnostic> {
+        let key = PathBuf::from("/@waluau/assets.walu");
+        if let Some(&id) = self.by_path.get(&key) {
+            return Ok(id);
+        }
+        let source = self.asset_module_source.ok_or_else(|| {
+            Diagnostic::new("waluau:assets requires a waluau.assets.json passed with --manifest")
+        })?;
+        let program =
+            waluau_parser::parse_with_path(source, "package:waluau-assets/v1/assets.walu")?;
+        let mut raw_paths = Vec::new();
+        collect_require_paths(&program, &mut raw_paths);
+        self.stack.push(key.clone());
+        let mut requires = HashMap::new();
+        for raw in raw_paths {
+            if engine_module_name(&raw).is_some() {
+                let target = self.load_engine(&raw)?;
+                requires.insert(raw, target);
+                continue;
+            }
+            return Err(Diagnostic::new(format!(
+                "generated asset module has unsupported require \"{raw}\""
+            )));
+        }
+        self.stack.pop();
+        let id = self.modules.len();
+        self.modules.push(LoadedModule {
+            program,
+            requires,
+            virtual_requires: HashSet::new(),
+        });
+        self.by_path.insert(key, id);
         Ok(id)
     }
 
@@ -399,7 +450,7 @@ fn is_unsupported_virtual_require(raw: &str) -> bool {
 
 fn unsupported_virtual_require(raw: &str) -> Diagnostic {
     Diagnostic::new(format!(
-        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\", \"{ENGINE_REQUIRE}\", \"{VITEST_REQUIRE}\""
+        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\", \"{ENGINE_REQUIRE}\", \"{ASSETS_REQUIRE}\", \"{VITEST_REQUIRE}\""
     ))
 }
 

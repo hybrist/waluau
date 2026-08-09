@@ -757,13 +757,11 @@ function gpu_error(handle: i32): GraphicsError
     return { code = game_gpu_resource_error_code(handle), message = game_gpu_resource_error_message(handle) }
 end
 
--- Upload copies decoded pixels into GPU storage. The source Resource may be
--- released immediately after this function succeeds.
-function Graphics:texture_from_resource(resource: resources.Resource): TextureResult
+function texture_from_handle(self: Graphics, resource_handle: i32): TextureResult
     -- Upload mutates WebGL texture binding, so preserve all queued vertices
     -- against the texture selected when they were emitted.
     self:flush()
-    local handle: i32 = game_gpu_texture_from_resource(self.gl, resource.handle)
+    local handle: i32 = game_gpu_texture_from_resource(self.gl, resource_handle)
     self.current_texture = 0
     if not game_gpu_resource_ok(handle) then
         return {
@@ -785,11 +783,19 @@ function Graphics:texture_from_resource(resource: resources.Resource): TextureRe
     }
 end
 
--- Rasterizes a loaded host font once into an opaque GPU atlas. Upload copies
--- the glyph pixels, so releasing the source FontFace Resource is independent.
-function Graphics:font_from_resource(resource: resources.Resource): FontResult
+-- Upload copies decoded pixels into GPU storage. The source Resource may be
+-- released immediately after this function succeeds.
+function Graphics:texture_from_resource(resource: resources.Resource): TextureResult
+    return texture_from_handle(self, resource.handle)
+end
+
+function Graphics:texture_from_image(resource: resources.ImageResource): TextureResult
+    return texture_from_handle(self, resources.image_handle(resource))
+end
+
+function font_from_handle(self: Graphics, resource_handle: i32): FontResult
     self:flush()
-    local handle: i32 = game_gpu_font_from_resource(self.gl, resource.handle)
+    local handle: i32 = game_gpu_font_from_resource(self.gl, resource_handle)
     self.current_texture = 0
     if not game_gpu_resource_ok(handle) then
         return {
@@ -827,6 +833,16 @@ function Graphics:font_from_resource(resource: resources.Resource): FontResult
         },
         error = { code = "", message = "" },
     }
+end
+
+-- Rasterizes a loaded host font once into an opaque GPU atlas. Upload copies
+-- the glyph pixels, so releasing the source FontFace Resource is independent.
+function Graphics:font_from_resource(resource: resources.Resource): FontResult
+    return font_from_handle(self, resource.handle)
+end
+
+function Graphics:font_from_typed_resource(resource: resources.FontResource): FontResult
+    return font_from_handle(self, resources.font_handle(resource))
 end
 
 function Graphics:font_error(value: Font): GraphicsError

@@ -69,7 +69,20 @@ impl CompilerSession {
     /// Analyze `root` and its `require` subgraph: all parse diagnostics with
     /// recovery, then (when parsing is clean) all type-checker diagnostics.
     pub fn analyze_root(&mut self, root: &Path) -> Analysis {
-        let outcome = match link::link_program_collect_with(root, &mut provider(self)) {
+        let asset_module_source = match crate::discover_asset_module(root) {
+            Ok(source) => source,
+            Err(error) => {
+                return Analysis {
+                    diagnostics: vec![error],
+                    involved_files: Vec::new(),
+                };
+            }
+        };
+        let outcome = match link::link_program_collect_with_assets(
+            root,
+            &mut provider(self),
+            asset_module_source.as_deref(),
+        ) {
             Ok(outcome) => outcome,
             Err(error) => {
                 return Analysis {
@@ -101,7 +114,7 @@ impl CompilerSession {
     /// all diagnostics and the involved files even when the build fails (so
     /// watch mode can still register the whole graph).
     pub fn build_root(&mut self, root: &Path, wasm_file_name: &str) -> BuildOutcome {
-        self.build_root_with_assets(root, wasm_file_name, crate::empty_asset_manifest())
+        self.build_root_with_assets(root, wasm_file_name, crate::empty_asset_manifest(), None)
     }
 
     pub(crate) fn build_root_with_assets(
@@ -109,8 +122,30 @@ impl CompilerSession {
         root: &Path,
         wasm_file_name: &str,
         assets: &std::collections::BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+        asset_module_source: Option<&str>,
     ) -> BuildOutcome {
-        let outcome = match link::link_program_collect_with(root, &mut provider(self)) {
+        let discovered_asset_module;
+        let asset_module_source = match asset_module_source {
+            Some(source) => Some(source),
+            None => {
+                discovered_asset_module = match crate::discover_asset_module(root) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        return BuildOutcome {
+                            artifacts: None,
+                            diagnostics: vec![error],
+                            involved_files: Vec::new(),
+                        };
+                    }
+                };
+                discovered_asset_module.as_deref()
+            }
+        };
+        let outcome = match link::link_program_collect_with_assets(
+            root,
+            &mut provider(self),
+            asset_module_source,
+        ) {
             Ok(outcome) => outcome,
             Err(error) => {
                 return BuildOutcome {
@@ -344,6 +379,29 @@ mod tests {
                 "diagnostic should carry the module path: {diagnostic:?}"
             );
         }
+    }
+
+    #[test]
+    fn analysis_discovers_the_manifest_generated_asset_module() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(
+            dir.path(),
+            "waluau.assets.json",
+            r#"{"version":1,"assets":[{"name":"card","path":"assets/card.png","type":"image"}]}"#,
+        );
+        let main = write(
+            dir.path(),
+            "main.walu",
+            "local assets = require(\"waluau:assets\")\nfunction load(): assets.LoadResult\n    return assets.load()\nend\n",
+        );
+
+        let mut session = CompilerSession::new();
+        let analysis = session.analyze_root(&main);
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
+        );
     }
 
     #[test]

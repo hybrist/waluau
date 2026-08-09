@@ -352,7 +352,14 @@ The version-1 `waluau.assets.json` contract and `--manifest` CLI option package
 typed, read-only project assets with content fingerprints. Generated sibling
 glue exports the logical-path manifest and an import-meta-relative base URL;
 the browser host maps logical requests to emitted URLs and rejects undeclared
-or wrongly typed requests. Save namespaces never consult this manifest. See
+or wrongly typed requests. A declaration with a Waluau identifier in `name`
+also appears in the generated `waluau:assets` module. Its `load()` operation
+returns one bundle with nullable, opaque `ImageResource`, `FontResource`, and
+`SoundResource` fields plus structured errors; named fonts also declare the
+browser FontFace `family`. The bundle's `owner` releases every decoded source
+through one idempotent lifecycle operation. Typed graphics and audio entry
+points reject the wrong resource kind at compile time. Save namespaces never
+consult this manifest. See
 [`examples/game-project`](../examples/game-project/) for the complete layout
 and build command.
 

@@ -177,8 +177,11 @@ export default defineConfig({
 ```
 
 The manifest's asset paths are relative to the manifest itself and remain the
-logical paths requested by Waluau source. See the compiler's asset-manifest
-documentation for the supported asset types.
+logical paths requested by Waluau source. Give image, font, and audio entries a
+Waluau identifier in `name` to expose them through `require("waluau:assets")`;
+named fonts additionally require their browser FontFace `family`. The generated
+module loads all named entries as one typed, explicitly owned bundle. See the
+compiler's asset-manifest documentation for the supported asset types.
 
 ## Testing with vitest
 

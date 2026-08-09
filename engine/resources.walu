@@ -11,6 +11,19 @@ type Resource = { handle: i32, kind: string, path: string }
 type ResourceError = { code: string, message: string, path: string }
 type LoadResult = { ok: bool, resource: Resource, error: ResourceError }
 
+-- Typed manifest bundles use opaque resource shapes so an image cannot be
+-- passed to an audio operation (or a font to a texture upload). A Lease is
+-- shared with the bundle Owner: releasing either one invalidates the same
+-- handle and makes the other release path idempotent.
+type Lease = { handle: i32, path: string, released: bool }
+opaque type ImageResource = { lease: Lease }
+opaque type FontResource = { lease: Lease }
+opaque type SoundResource = { lease: Lease }
+opaque type Owner = { leases: {Lease}, released: bool }
+type ImageLoadResult = { resource: ImageResource?, error: ResourceError? }
+type FontLoadResult = { resource: FontResource?, error: ResourceError? }
+type SoundLoadResult = { resource: SoundResource?, error: ResourceError? }
+
 declare function game_resource_load_text(path: string): extern
 declare function game_resource_load_bytes(path: string): extern
 declare function game_resource_load_image(path: string): extern
@@ -87,6 +100,24 @@ function await_image(path: string): LoadResult
     return finish_image(handle, path)
 end
 
+function typed_image_from_handle(handle: i32, path: string): ImageLoadResult
+    if game_resource_ok(handle) then
+        return { resource = { lease = { handle = handle, path = path, released = false } }, error = nil }
+    end
+    local error: ResourceError = {
+        code = game_resource_error_code(handle),
+        message = game_resource_error_message(handle),
+        path = path,
+    }
+    game_resource_release(handle)
+    return { resource = nil, error = error }
+end
+
+function await_typed_image(path: string): ImageLoadResult
+    local handle: i32 = coroutine.await_promise(load_image(path))::i32
+    return typed_image_from_handle(handle, path)
+end
+
 function load_font(path: string, family: string): extern
     return game_resource_load_font(path, family)
 end
@@ -98,6 +129,98 @@ end
 function await_font(path: string, family: string): LoadResult
     local handle: i32 = coroutine.await_promise(load_font(path, family))::i32
     return finish_font(handle, path)
+end
+
+function typed_font_from_handle(handle: i32, path: string): FontLoadResult
+    if game_resource_ok(handle) then
+        return { resource = { lease = { handle = handle, path = path, released = false } }, error = nil }
+    end
+    local error: ResourceError = {
+        code = game_resource_error_code(handle),
+        message = game_resource_error_message(handle),
+        path = path,
+    }
+    game_resource_release(handle)
+    return { resource = nil, error = error }
+end
+
+function await_typed_font(path: string, family: string): FontLoadResult
+    local handle: i32 = coroutine.await_promise(load_font(path, family))::i32
+    return typed_font_from_handle(handle, path)
+end
+
+function typed_sound_from_handle(handle: i32, path: string): SoundLoadResult
+    if game_resource_ok(handle) then
+        return { resource = { lease = { handle = handle, path = path, released = false } }, error = nil }
+    end
+    local error: ResourceError = {
+        code = game_resource_error_code(handle),
+        message = game_resource_error_message(handle),
+        path = path,
+    }
+    game_resource_release(handle)
+    return { resource = nil, error = error }
+end
+
+function new_owner(): Owner
+    return { leases = {}, released = false }
+end
+
+function own_image(owner: Owner, resource: ImageResource): unit
+    assert(not owner.released)
+    table.insert(owner.leases, resource.lease)
+end
+
+function own_font(owner: Owner, resource: FontResource): unit
+    assert(not owner.released)
+    table.insert(owner.leases, resource.lease)
+end
+
+function own_sound(owner: Owner, resource: SoundResource): unit
+    assert(not owner.released)
+    table.insert(owner.leases, resource.lease)
+end
+
+function lease_handle(lease: Lease): i32
+    if lease.released then return 0 end
+    return lease.handle
+end
+
+function image_handle(resource: ImageResource): i32
+    return lease_handle(resource.lease)
+end
+
+function font_handle(resource: FontResource): i32
+    return lease_handle(resource.lease)
+end
+
+function sound_handle(resource: SoundResource): i32
+    return lease_handle(resource.lease)
+end
+
+function release_lease(lease: Lease): unit
+    if not lease.released then game_resource_release(lease.handle) end
+    lease.released = true
+end
+
+function release_image(resource: ImageResource): unit
+    release_lease(resource.lease)
+end
+
+function release_font(resource: FontResource): unit
+    release_lease(resource.lease)
+end
+
+function release_sound(resource: SoundResource): unit
+    release_lease(resource.lease)
+end
+
+function release_owner(owner: Owner): unit
+    if owner.released then return end
+    for _, lease in owner.leases do
+        release_lease(lease)
+    end
+    owner.released = true
 end
 
 function text(resource: Resource): string
@@ -132,9 +255,25 @@ return {
     load_image = load_image,
     finish_image = finish_image,
     await_image = await_image,
+    typed_image_from_handle = typed_image_from_handle,
+    await_typed_image = await_typed_image,
     load_font = load_font,
     finish_font = finish_font,
     await_font = await_font,
+    typed_font_from_handle = typed_font_from_handle,
+    await_typed_font = await_typed_font,
+    typed_sound_from_handle = typed_sound_from_handle,
+    new_owner = new_owner,
+    own_image = own_image,
+    own_font = own_font,
+    own_sound = own_sound,
+    image_handle = image_handle,
+    font_handle = font_handle,
+    sound_handle = sound_handle,
+    release_image = release_image,
+    release_font = release_font,
+    release_sound = release_sound,
+    release_owner = release_owner,
     text = text,
     byte_data = byte_data,
     font_family = font_family,
