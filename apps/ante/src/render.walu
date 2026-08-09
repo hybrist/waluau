@@ -110,6 +110,8 @@ const EASE_OUT_QUINT: Ease = Ease.out_quint
 const EASE_IN_CUBIC: Ease = Ease.in_cubic
 const EASE_IN_OUT_CUBIC: Ease = Ease.in_out_cubic
 const EASE_OUT_BACK: Ease = Ease.out_back
+-- TODO(waluau-6lc5.6): Replace raw animation-effect ids with a nominal enum so
+-- every Anim carries one of the renderer's supported effects.
 const ANIM_EFFECT_MOVE: i32 = 0
 const ANIM_EFFECT_ASH_REAPPEAR: i32 = 1
 const ANIM_EFFECT_THROW: i32 = 2
@@ -145,6 +147,8 @@ const WIN_LIFT_Y: f64 = 10.0
 -- the four gaps. The cards themselves are drawn later over the light field.
 -- Kept equal to FLY_START + FLY_STAGGER + FLY_SECONDS; top-level constants
 -- require literal initializers.
+-- TODO(waluau-6lc5.1): Express this relationship directly once computed
+-- top-level constant initializers are supported.
 const WIN_GLOW_START: f64 = 1.87
 const WIN_GLOW_FADE: f64 = 0.35
 const SHIMMER_MARGIN: f64 = 64.0

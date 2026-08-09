@@ -82,7 +82,7 @@ end
 -- legend demonstrates the same four through this seam, so a color only ever
 -- looks like one thing on screen.
 --
--- TODO(waluau-engine): Typed shader parameter blocks would let all four
+-- TODO(waluau-6lc5.4): Typed shader parameter blocks would let all four
 -- color effects share one checked binding path instead of repeating
 -- use_shader plus individual string-keyed uniform writes.
 function use_color_field(

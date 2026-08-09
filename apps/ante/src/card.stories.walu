@@ -38,8 +38,10 @@ local book = entity_story.new()
 -- mounted. The clock is a story's own and restarts with it.
 local shared = { clock = 0.0 }
 
--- The arc control is a numeric slider; map it onto the arc union in the
+-- The arc control is a numeric select; map it onto the arc union in the
 -- order the constants used to count (0 = even).
+-- TODO(waluau-6lc5.5): Replace this numeric adapter with typed Storybook
+-- control access that couples the declaration, name, and domain conversion.
 local function arc_arg(value: i32): card_draw.Arc
     if value == 1 then return "late" end
     if value == 2 then return "very-late" end

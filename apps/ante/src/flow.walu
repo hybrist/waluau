@@ -29,6 +29,8 @@ type State = {
     swap_table_cards: {i32},
     modal: Modal,
     revealing: bool,
+    -- TODO(waluau-6lc5.6): Model spell targeting as a nullable or tagged value
+    -- instead of a boolean paired with a slot that is otherwise meaningless.
     casting: bool,
     cast_slot: i32
 }
