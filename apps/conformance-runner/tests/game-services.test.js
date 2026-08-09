@@ -143,6 +143,26 @@ function serviceHarness() {
 }
 
 describe('browser game resource services', () => {
+  it('reports the WebGL type for one named active uniform', () => {
+    const { host } = serviceHarness();
+    const program = { linked: true };
+    const uniforms = [
+      { name: 'u_gain', size: 1, type: 0x1406 },
+      { name: 'u_points[0]', size: 3, type: 0x8B50 },
+    ];
+    const gl = {
+      ACTIVE_UNIFORMS: 0x8B86,
+      isProgram: (candidate) => candidate === program,
+      getProgramParameter: () => uniforms.length,
+      getActiveUniform: (_program, index) => uniforms[index] ?? null,
+    };
+
+    expect(host.game_gpu_uniform_type(gl, program, 'u_gain')).toBe(0x1406);
+    expect(host.game_gpu_uniform_type(gl, program, 'u_points')).toBe(0x8B50);
+    expect(host.game_gpu_uniform_type(gl, program, 'missing')).toBe(0);
+    expect(host.game_gpu_uniform_type(gl, {}, 'u_gain')).toBe(0);
+  });
+
   it('falls back to an HTML image when createImageBitmap cannot decode SVG', async () => {
     let decoded = false;
     let revoked = '';

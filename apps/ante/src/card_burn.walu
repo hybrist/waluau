@@ -76,12 +76,6 @@ function use_card_burn(
     local maybe_shader: graphics_module.Shader? = surface.effects.card_burn.shader
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    local progress_ok: bool = graphics:set_uniform_float("u_progress", progress)
-    local seed_ok: bool = graphics:set_uniform_float("u_seed", seed::f64)
-    local aspect_ok: bool = graphics:set_uniform_float(
-        "u_aspect", card.width / card.height)
-    local mode_ok: bool = graphics:set_uniform_float("u_particle_mode", 0.0)
     local accent_red: f64 = 0.29
     local accent_green: f64 = 0.87
     local accent_blue: f64 = 0.50
@@ -98,9 +92,15 @@ function use_card_burn(
         accent_green = 0.33
         accent_blue = 0.97
     end
-    local accent_ok: bool = graphics:set_uniform_vec3(
-        "u_accent_color", accent_red, accent_green, accent_blue)
-    return progress_ok and seed_ok and aspect_ok and mode_ok and accent_ok
+    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(shader, {
+        graphics_module.float_parameter("u_progress", progress),
+        graphics_module.float_parameter("u_seed", seed::f64),
+        graphics_module.float_parameter("u_aspect", card.width / card.height),
+        graphics_module.float_parameter("u_particle_mode", 0.0),
+        graphics_module.vec3_parameter(
+            "u_accent_color", accent_red, accent_green, accent_blue),
+    })
+    return binding.ok
 end
 
 -- Where the shader's hole front stands, in card pixels from the centre. This

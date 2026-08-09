@@ -499,10 +499,11 @@ function use_result_field(
     if player_won then maybe_shader = effects.gold_shimmer.shader end
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not surface.graphics:use_shader(shader) then return false end
-    local strength_ok: bool = surface.graphics:set_uniform_float("u_strength", strength)
-    local aspect_ok: bool = surface.graphics:set_uniform_float("u_aspect", aspect)
-    return strength_ok and aspect_ok
+    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(shader, {
+        graphics_module.float_parameter("u_strength", strength),
+        graphics_module.float_parameter("u_aspect", aspect),
+    })
+    return binding.ok
 end
 
 function draw_result_field(

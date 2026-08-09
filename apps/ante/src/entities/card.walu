@@ -82,9 +82,6 @@ end
 -- legend demonstrates the same four through this seam, so a color only ever
 -- looks like one thing on screen.
 --
--- TODO(waluau-6lc5.4): Typed shader parameter blocks would let all four
--- color effects share one checked binding path instead of repeating
--- use_shader plus individual string-keyed uniform writes.
 function use_color_field(
     surface: entity.Surface, suit: i32, selected: bool, colored: bool, aspect: f64
 ): bool
@@ -94,17 +91,16 @@ function use_color_field(
     elseif suit == 3 then maybe_shader = surface.effects.green_growth.shader end
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not surface.graphics:use_shader(shader) then return false end
     local selected_value: f64 = 0.0
     if selected then selected_value = 1.0 end
     local colored_value: f64 = 0.0
     if colored then colored_value = 1.0 end
-    local aspect_ok: bool = surface.graphics:set_uniform_float("u_aspect", aspect)
-    local selected_ok: bool = surface.graphics:set_uniform_float(
-        "u_selected", selected_value)
-    local colored_ok: bool = surface.graphics:set_uniform_float(
-        "u_colored", colored_value)
-    return aspect_ok and selected_ok and colored_ok
+    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(shader, {
+        graphics_module.float_parameter("u_aspect", aspect),
+        graphics_module.float_parameter("u_selected", selected_value),
+        graphics_module.float_parameter("u_colored", colored_value),
+    })
+    return binding.ok
 end
 
 function draw_sigil(surface: entity.Surface, suit: i32, x: f64, y: f64): unit

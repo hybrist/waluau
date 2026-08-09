@@ -44,8 +44,15 @@ void main() {
 local SECOND_PIXEL_SOURCE <const>: string = [[
 precision mediump float;
 varying vec4 v_color;
+uniform float u_gain;
+uniform vec4 u_tint;
+uniform int u_enabled;
 void main() {
-    gl_FragColor = vec4(v_color.r, 0.0, v_color.b, v_color.a);
+    if (u_enabled == 1) {
+        gl_FragColor = v_color * u_tint * u_gain;
+    } else {
+        gl_FragColor = v_color;
+    }
 }
 ]]
 
@@ -74,10 +81,27 @@ function install_gpu_shader_fixture(): unit
 
         local created: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, PIXEL_SOURCE)
         assert(created.ok)
-        assert(graphics:use_shader(created.shader))
-        assert(graphics:set_uniform_float("u_gain", 1.0))
-        assert(graphics:set_uniform_vec4("u_tint", 0.25, 1.0, 0.25, 1.0))
-        assert(graphics:set_uniform_int("u_enabled", 1))
+        local missing: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
+            graphics_module.float_parameter("missing", 1.0),
+        })
+        assert(not missing.ok and missing.error.code == "uniform_missing")
+        local mistyped: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
+            graphics_module.vec4_parameter("u_gain", 1.0, 1.0, 1.0, 1.0),
+        })
+        assert(not mistyped.ok and mistyped.error.code == "uniform_type")
+        local bound: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
+            graphics_module.float_parameter("u_gain", 1.0),
+            graphics_module.vec4_parameter("u_tint", 0.25, 1.0, 0.25, 1.0),
+            graphics_module.int_parameter("u_enabled", 1),
+        })
+        assert(bound.ok)
+        -- Binding the same declaration again reuses its cached locations.
+        local rebound: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
+            graphics_module.float_parameter("u_gain", 1.0),
+            graphics_module.vec4_parameter("u_tint", 0.25, 1.0, 0.25, 1.0),
+            graphics_module.int_parameter("u_enabled", 1),
+        })
+        assert(rebound.ok)
         assert(not graphics:set_uniform_float("missing", 1.0))
 
         local original_id: i32 = created.shader.id
@@ -111,6 +135,15 @@ function install_gpu_shader_fixture(): unit
         assert(replaced.ok and replaced.shader.id == original_id)
         assert(created.shader.program ~= original_program)
         assert(not graphics.gl:isProgram(original_program))
+        local rebound_after_replace: graphics_module.ShaderBindingResult = graphics:bind_shader(
+            created.shader,
+            {
+                graphics_module.float_parameter("u_gain", 1.0),
+                graphics_module.vec4_parameter("u_tint", 1.0, 0.0, 1.0, 1.0),
+                graphics_module.int_parameter("u_enabled", 1),
+            }
+        )
+        assert(rebound_after_replace.ok)
         graphics:set_color("#ffffff")
         graphics:fill_rectangle(120.0, 24.0, 32.0, 48.0)
         graphics:use_default_shader()
