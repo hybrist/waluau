@@ -441,17 +441,12 @@ end
 -- `entity.down({ gap = 8.0, align = "center" }, children)` says only
 -- the two things it cares about and takes the rest as it finds them.
 --
--- Two Waluau limits show through here.
+-- Waluau has no default arguments, so this record-of-nullables is the
+-- named-argument idiom.
 --
--- TODO(waluau-3gyg): `and`/`or` are bool-only, so no default can be written as
--- `spec.gap or 0.0`. Each optional field costs a named local and an `if`, which
--- is the whole of `spec_style` below; with `or` it would be one line per field.
--- Waluau has no default arguments either, so this record-of-nullables is the
--- named-argument idiom and every user of it pays the same tax.
---
--- The other is a bug, not a gap: each nullable numeric field is read into a
--- local before it is unboxed, because reading one straight out of the record
--- emits invalid wasm (waluau-v7z1).
+-- TODO(waluau-6lc5.8): Compiler blockers waluau-3gyg and waluau-v7z1 are
+-- closed; use nullable `or` defaults and direct field narrowing to collapse
+-- the named-local and `if` ceremony in `spec_style`.
 type FlowSpec = {
     gap: f64?,
     justify: box.Justify?,

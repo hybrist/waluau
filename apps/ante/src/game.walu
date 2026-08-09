@@ -4,6 +4,9 @@
 
 local snapshot_data = require("./snapshot")
 
+-- TODO(waluau-6lc5.6): Replace raw suit, spell-kind, winner, and side integers
+-- with nominal domain types so constructors and state transitions reject
+-- values outside their closed sets.
 type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
@@ -38,6 +41,8 @@ type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {
 -- loadout and the gold are dealt in rather than fixed, so a run can hand one
 -- duel what the previous one left standing and whatever it bought since.
 opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: i32 }
+-- TODO(waluau-6lc5.2): Stop exposing the State-owned mutable arrays below;
+-- provide a statically read-only view or defensive accessors/copies.
 type View = {
     deck_count: i32,
     player_hand: {HandSlot},
@@ -168,6 +173,8 @@ end
 -- most significant digit, five kicker components the rest. CATEGORY_DIVISOR
 -- is SCORE_RADIX^5, spelled out because top-level constants require literal
 -- initializers; category_of and score_component are the pack inverses.
+-- TODO(waluau-6lc5.1): Derive CATEGORY_DIVISOR from SCORE_RADIX once computed
+-- top-level constant initializers are supported.
 const SCORE_RADIX: i32 = 15
 const CATEGORY_DIVISOR: i32 = 759375
 
@@ -819,6 +826,8 @@ function next_trick(reader: snapshot_data.Reader): Trick
     }
 end
 
+-- TODO(waluau-6lc5.6): Validate decoded domain values and cross-field
+-- invariants here as part of the nominal state-model migration.
 function restore(snapshot_value: string): State?
     local reader: snapshot_data.Reader = snapshot_data.reader(snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
     if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end

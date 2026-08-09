@@ -26,8 +26,10 @@ local COLORS: {string} = {
     "#f97316"
 }
 
--- Story controls are numeric sliders; map them onto the style unions in the
+-- Story select controls expose numeric indices; map them onto the style unions in the
 -- order the controls documented (0 = start).
+-- TODO(waluau-6lc5.5): Replace these numeric adapters with typed Storybook
+-- control access that returns the declared layout choices directly.
 function justify_arg(value: i32): layout.Justify
     if value == 1 then return "center" end
     if value == 2 then return "end" end

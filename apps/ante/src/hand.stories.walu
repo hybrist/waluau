@@ -20,6 +20,8 @@ end
 -- State controls name useful positions instead of raw indices, so they keep
 -- meaning as the count changes. For an even hand, Middle is the left of the
 -- two central cards.
+-- TODO(waluau-6lc5.5): Read a typed Storybook position choice instead of magic
+-- `arg_i32` values; the count-relative index calculation can remain here.
 local function controlled_index(choice: i32, count: i32): i32
     if choice == 0 then
         return -1

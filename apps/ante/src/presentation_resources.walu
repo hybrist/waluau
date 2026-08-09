@@ -77,7 +77,7 @@ function fatal_audio(state: State, code: string, message: string): unit
     state.fatal_audio_message = message
 end
 
--- TODO(waluau-engine): A typed asset-bundle loader should await the manifest as
+-- TODO(waluau-6lc5.3): A typed asset-bundle loader should await the manifest as
 -- one operation and return a bundle whose resources share one release owner.
 -- That would remove the repeated path/error plumbing and partial-ready flags.
 function load_async(state: State): i32

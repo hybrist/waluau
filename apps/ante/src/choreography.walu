@@ -24,6 +24,8 @@ type State = {
     -- both pairs standing, so the ash emitters stay shut rather than shedding
     -- flakes nothing will ever draw.
     reveal_burns: bool,
+    -- TODO(waluau-6lc5.6): Represent the inactive/active spell presentation as
+    -- tagged state instead of kind zero plus independently valid clock/target.
     power_kind: i32,
     power_clock: f64,
     power_target: i32,
@@ -45,6 +47,8 @@ type State = {
     -- sixty times a second should not be sixty allocations.
     sheet: card_warp.Mesh
 }
+-- TODO(waluau-6lc5.7): Reuse render.Interaction instead of duplicating its
+-- shape here and copying every field again in draw.
 type Interaction = {
     hand_focus: i32,
     table_card_cursor: i32,
@@ -138,6 +142,8 @@ function is_animating(state: State): bool
     return state.anim_kind ~= "none"
 end
 
+-- TODO(waluau-6lc5.7): Centralize State reset without mirroring every field or
+-- allocating the fresh mesh that `new` creates but reset deliberately retains.
 function reset(state: State): unit
     local fresh: State = new()
     state.fan_parts = fresh.fan_parts

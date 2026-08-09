@@ -30,6 +30,8 @@ type Offer = { action: Action, kind: i32, sold: bool }
 -- `pending` is the offer being asked about while a full loadout decides which
 -- spell a new one trades away — the one stage where gold has not changed hands
 -- yet. It is -1 the rest of the time.
+-- TODO(waluau-6lc5.6): Replace the -1 sentinel with a nullable pending-offer
+-- state so invalid indices are not representable as the inactive case.
 type State = { open: bool, offers: {Offer}, cursor: i32, pending: i32 }
 -- One line of the shop: what it would do, which loadout slot it does it to,
 -- the spell ink it wears, its price, whether it has already been bought, and
