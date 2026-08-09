@@ -60,7 +60,10 @@ describe("Konami divine intervention", function()
         expect(game.view(rules).middle[2].rank):toBe(12)
         expect(game.view(rules).player_hand[0].card.rank):toBe(13)
         expect(game.view(rules).player_hand[1].card.rank):toBe(14)
-        for card in game.view(rules).middle do expect(card.suit):toBe(0) end
+        for card in game.view(rules).middle do
+            local suit: i32 = card.suit
+            expect(suit):toBe(0)
+        end
         expect(game.view(rules).player_hand[0].card.suit):toBe(0)
         expect(game.view(rules).player_hand[1].card.suit):toBe(0)
         local pair: game.PairChoice = game.best_pair(

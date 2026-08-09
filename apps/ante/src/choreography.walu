@@ -550,9 +550,9 @@ end
 -- slot in the settled one. In the base game both layouts hold five cards; in
 -- a boss battle the new layout is two cards narrower, so every survivor moves
 -- as the row recentres, not just the ones past a spent slot.
-function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: game.Trick, owner: game.Side, start: f64): f64
+function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: readonly<game.Trick>, owner: game.Side, start: f64): f64
     local side: game.TrickSide = game.trick_side(trick, owner)
-    local live: {game.HandSlot} = game.view_side(view, owner)
+    local live: readonly<{game.HandSlot}> = game.view_side(view, owner)
     local kind: render.Slot = hand_slot_kind(owner)
     local old_count: i32 = #side.hand
     local new_count: i32 = #live
@@ -594,7 +594,7 @@ function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: ga
     return finish
 end
 
-function record_burned_losers(state: State, trick: game.Trick): unit
+function record_burned_losers(state: State, trick: readonly<game.Trick>): unit
     if trick.winner == 0 then return end
     local loser: game.TrickSide = game.trick_side(
         trick, game.opposite_side(trick.winner::game.Side))
@@ -602,7 +602,7 @@ function record_burned_losers(state: State, trick: game.Trick): unit
     table.insert(state.session.discards, loser.cards[1])
 end
 
-function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: State): unit
+function resolved_breach_cleanup(view: game.View, trick: readonly<game.Trick>, state: State): unit
     clear_freeze(state)
     -- The trick records the pre-round hands; the live view holds the settled
     -- ones. In a boss battle those layouts differ (the rows narrow by two

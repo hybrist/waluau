@@ -1,0 +1,7 @@
+-- conformance: error=cannot erase a read-only view into unknown
+
+type Model = { count: i32 }
+
+function erase(view: readonly<Model>): unknown
+    return view
+end

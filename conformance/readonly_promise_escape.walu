@@ -1,0 +1,9 @@
+-- conformance: error=coroutine.await_promise cannot erase a read-only result into unknown
+
+type Promise<T> = extern
+type Model = { count: i32 }
+declare function make(view: readonly<Model>): Promise<readonly<Model>>
+
+function escape(view: readonly<Model>): Model
+    return coroutine.await_promise(make(view))
+end

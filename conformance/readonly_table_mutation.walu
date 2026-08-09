@@ -1,0 +1,5 @@
+-- conformance: error=table.insert cannot mutate a read-only array view
+
+function mutate(values: readonly<{i32}>): unit
+    table.insert(values, 2)
+end

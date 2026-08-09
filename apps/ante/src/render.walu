@@ -950,7 +950,7 @@ function table_card_node(frame: Frame, value: game.Card, index: i32, selected: b
     return card.node(look)
 end
 
-function trick_scoring(trick: game.Trick): {bool}
+function trick_scoring(trick: readonly<game.Trick>): {bool}
     if trick.winner == 0 then return { false, false, false, false, false } end
     local winner: game.TrickSide = game.trick_side(trick, trick.winner::game.Side)
     local loser: game.TrickSide = game.trick_side(
@@ -976,7 +976,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
     local fan_parts: {f64} = frame.motion.fan_parts
     local reveal_clock: f64 = frame.motion.reveal_clock
     local discards: {game.Card} = frame.piles.discards
-    local trick: game.Trick = state.history[#state.history - 1]
+    local trick: readonly<game.Trick> = state.history[#state.history - 1]
     -- The reveal shows the hands as they were played, so the rows keep the
     -- trick's layout even though a boss battle's live hands have already
     -- shrunk underneath it.
@@ -1260,7 +1260,7 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
         -- Target selection replaces the phase prompts and commit capsules:
         -- nothing else accepts input until the cast lands or is called off. The
         -- prompt names the spell whose key opened targeting, at its own price.
-        local aimed: game.Spell = state.spells[interaction.cast_slot]
+        local aimed: readonly<game.Spell> = state.spells[interaction.cast_slot]
         centered_line(
             surface, viewport,
             "AIM " .. spell_launch.name(aimed.kind) .. " AT A TABLE CARD",

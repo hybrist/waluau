@@ -127,6 +127,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             ty: Box::new(substitute_type(ty, subst)),
         },
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
+        Type::Readonly(inner) => Type::Readonly(Box::new(substitute_type(inner, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
         Type::Record(fields) => Type::Record(
             fields
@@ -197,6 +198,7 @@ pub(super) fn validate_type_in_scope(
         }
         Type::Opaque { ty, .. } => validate_type_in_scope(ty, allowed),
         Type::Nullable(inner) => validate_type_in_scope(inner, allowed),
+        Type::Readonly(inner) => validate_type_in_scope(inner, allowed),
         Type::Array(inner) => validate_type_in_scope(inner, allowed),
         Type::Record(fields) => {
             for ty in fields.values() {
@@ -231,6 +233,11 @@ fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bo
         Type::TypeParam(name) => active_type_params.contains(name),
         Type::Opaque { ty, .. } => is_valid_type_argument(ty, active_type_params),
         Type::Nullable(inner) => is_valid_type_argument(inner, active_type_params),
+        // A generic body checked against bare `T` can erase `T` into unknown;
+        // the instantiated readonly capability would be invisible there.
+        // Reject readonly type arguments until generic constraints can carry
+        // the capability through the body.
+        Type::Readonly(_) => false,
         Type::Array(inner) => is_valid_type_argument(inner, active_type_params),
         Type::Record(fields) => fields
             .values()
@@ -262,6 +269,7 @@ fn contains_type_param(ty: &Type) -> bool {
         Type::TypeParam(_) => true,
         Type::Opaque { ty, .. } => contains_type_param(ty.as_ref()),
         Type::Nullable(inner) => contains_type_param(inner.as_ref()),
+        Type::Readonly(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
         Type::Record(fields) => fields.values().any(contains_type_param),
         Type::Function {
@@ -378,6 +386,16 @@ fn unify(
         }
         (Type::Nullable(p_inner), Type::Nullable(a_inner)) => {
             unify(p_inner.as_ref(), a_inner.as_ref(), subst)
+        }
+        (Type::Readonly(p_inner), actual) if actual.readonly_base().is_some() => unify(
+            p_inner.as_ref(),
+            actual
+                .readonly_base()
+                .expect("guarded by readonly_base().is_some()"),
+            subst,
+        ),
+        (Type::Readonly(p_inner), actual) if actual.is_mutable_structural() => {
+            unify(p_inner.as_ref(), actual, subst)
         }
         (Type::Record(p_fields), Type::Record(a_fields)) => {
             for (name, p_ty) in p_fields {
@@ -520,6 +538,15 @@ pub(super) fn infer_generic_call(
         ));
     }
     for ty in type_args {
+        if ty.contains_readonly() {
+            return Err(generic_diagnostic(
+                "generic/readonly-type-arg",
+                format!(
+                    "read-only type argument '{ty}' cannot be used by an unconstrained generic body"
+                ),
+                "use a non-generic function whose parameter explicitly preserves readonly<T>",
+            ));
+        }
         if !is_valid_type_argument(ty, active_type_params) {
             return Err(generic_diagnostic(
                 "generic/non-concrete-type-arg",

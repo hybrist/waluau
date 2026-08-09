@@ -6780,7 +6780,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Concat => match operand_ty {
             Type::String => {
@@ -6850,7 +6850,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Mul => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -6903,7 +6903,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Div => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -6962,7 +6962,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::FloorDiv | BinaryOp::Mod | BinaryOp::Pow => {
             unreachable!("handled before stack binary emission")
@@ -7027,7 +7027,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::NotEq => {
             emit_binary(out, ctx, BinaryOp::Eq, operand_ty, Type::Bool)?;
@@ -7094,7 +7094,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::LessEq => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -7157,7 +7157,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Greater => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -7220,7 +7220,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::GreaterEq => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -7283,7 +7283,7 @@ fn emit_binary(
             }
             // Literal unions are erased to string/numeric before emission.
             Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => unreachable!(),
-            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+            Type::Readonly(_) | Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::And => {
             out.instruction(&Instruction::I32And);

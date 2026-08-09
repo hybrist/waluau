@@ -1,0 +1,11 @@
+-- conformance: error=read-only type argument
+
+type Model = { count: i32 }
+
+function erase<T>(value: T): unknown
+    return value
+end
+
+function escape(view: readonly<Model>): Model
+    return erase(view)
+end

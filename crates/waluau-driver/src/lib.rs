@@ -2918,6 +2918,15 @@ end
     }
 
     #[test]
+    fn compiles_readonly_structural_views_to_wasm() {
+        let wasm = super::compile_source(include_str!(
+            "../../../conformance/readonly_structural_views.walu"
+        ))
+        .expect("read-only structural views should compile without a runtime wrapper");
+        assert!(wasm.starts_with(b"\0asm"));
+    }
+
+    #[test]
     fn compile_file_supports_method_declarations_and_calls() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("methods.walu");
