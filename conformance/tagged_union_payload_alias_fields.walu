@@ -1,0 +1,46 @@
+-- A variant payload is an ordinary type position: names written inside it mean
+-- the declarations they mean everywhere else, so a record literal handed to a
+-- constructor is checked against the payload the same way it would be checked
+-- against a plain record annotation.
+
+type Control = "leave" | "cancel"
+type Slot = { control: Control, note: Control? }
+
+type Line = Exit({ control: Control, note: Control? }) | Sale(Slot)
+
+function control_of(line: Line): Control
+    if Exit(p) = line then
+        return p.control
+    end
+    if Sale(p) = line then
+        return p.control
+    end
+    return "leave"
+end
+
+function note_of(line: Line): Control?
+    if Exit(p) = line then
+        return p.note
+    end
+    if Sale(p) = line then
+        return p.note
+    end
+    return nil
+end
+
+-- A literal-union field accepts its own member straight from the literal.
+assert(control_of(Exit({ control = "cancel", note = nil })) == "cancel")
+
+-- The same payload bound to a local first still unifies with the variant.
+local payload: { control: Control, note: Control? } = { control = "leave", note = "cancel" }
+assert(control_of(Exit(payload)) == "leave")
+assert(note_of(Exit(payload)) == "cancel")
+
+-- A payload written as a named alias behaves like the record it aliases.
+local aliased: Slot = { control = "cancel", note = nil }
+assert(control_of(Sale(aliased)) == "cancel")
+assert(note_of(Sale(aliased)) == nil)
+
+-- A nullable literal-union field takes both nil and a member.
+assert(note_of(Sale({ control = "leave", note = "leave" })) == "leave")
+assert(note_of(Exit({ control = "leave", note = nil })) == nil)

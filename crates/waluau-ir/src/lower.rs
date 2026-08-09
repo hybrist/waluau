@@ -1544,6 +1544,23 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
                 .map(|(name, ty)| (name.clone(), erase_type_opaque_types_at(ty, true)))
                 .collect(),
         ),
+        // A payload is stored behind the `value` field of the canonical
+        // `{ tag, value }` record, so it erases exactly like a record field
+        // does. Skipping it left aliases and literal unions alive inside
+        // variants long after every other type position had shed them.
+        Type::TaggedVariant(variant) => Type::TaggedVariant(TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(erase_type_opaque_types_at(&variant.payload, true)),
+        }),
+        Type::TaggedUnion(variants) => Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| TaggedVariant {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(erase_type_opaque_types_at(&variant.payload, true)),
+                })
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -1572,6 +1589,10 @@ fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
         Type::Record(fields) => fields
             .values()
             .any(|ty| type_contains_opaque_name(ty, target)),
+        Type::TaggedVariant(variant) => type_contains_opaque_name(&variant.payload, target),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .any(|variant| type_contains_opaque_name(&variant.payload, target)),
         _ => false,
     }
 }

@@ -2961,6 +2961,91 @@ fn rejects_tagged_union_constructor_for_unknown_variant() {
 }
 
 #[test]
+fn type_checks_tagged_union_payload_with_literal_union_field() {
+    let source = r#"
+        type Control = "leave" | "cancel"
+        type Line = Exit({ control: Control }) | Sale({ slot: i32 })
+
+        function test(): i32
+            local direct: Line = Exit({ control = "cancel" })
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_tagged_union_payload_bound_to_a_local_first() {
+    let source = r#"
+        type Control = "leave" | "cancel"
+        type Line = Exit({ control: Control }) | Sale({ slot: i32 })
+
+        function test(): i32
+            local payload: { control: Control } = { control = "cancel" }
+            local bound: Line = Exit(payload)
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_tagged_union_payload_with_nullable_field() {
+    let source = r#"
+        type Control = "leave" | "cancel"
+        type Line = Exit({ note: Control? }) | Sale({ slot: i32 })
+
+        function test(): i32
+            local blank: Line = Exit({ note = nil })
+            local noted: Line = Exit({ note = "leave" })
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn resolves_named_types_inside_a_variant_payload() {
+    let source = r#"
+        type Slot = { control: i32 }
+        type Line = Exit(Slot) | Sale({ slot: i32 })
+
+        function test(): i32
+            local slot: Slot = { control = 3 }
+            local line: Line = Exit(slot)
+            if Exit(p) = line then
+                return p.control
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_non_member_string_in_a_variant_payload_field() {
+    let source = r#"
+        type Control = "leave" | "cancel"
+        type Line = Exit({ control: Control }) | Sale({ slot: i32 })
+
+        function test(): i32
+            local bad: Line = Exit({ control = "nope" })
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "\"nope\" is not a member of \"leave\" | \"cancel\""
+    );
+}
+
+#[test]
 fn type_checks_tagged_union_narrowing_and_value_access() {
     let source = r#"
         type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)

@@ -2712,6 +2712,33 @@ fn rejects_tagged_union_pattern_match_for_string_payload() {
 }
 
 #[test]
+fn erases_aliases_and_literal_unions_inside_variant_payloads() {
+    // A payload is stored behind the canonical record's `value` field, so it
+    // has to shed nominal aliases and literal unions the way a record field
+    // does; left alone, the string literal reaching the payload has nothing to
+    // coerce `Control` to.
+    let source = r#"
+        type Control = "leave" | "cancel"
+        type Line = Exit({ control: Control, note: Control? }) | Sale({ slot: i32 })
+
+        function control(line: Line): Control
+            if Exit(p) = line then
+                return p.control
+            end
+            return "leave"
+        end
+
+        function build(): Control
+            return control(Exit({ control = "cancel", note = nil }))
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+}
+
+#[test]
 fn verifies_function_with_tagged_union_return_type() {
     let source = r#"
         function poll(co: thread): Finished(i32) | Yielded(i32) | Error(string)
