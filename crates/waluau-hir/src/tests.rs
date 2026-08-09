@@ -3046,6 +3046,76 @@ fn rejects_non_member_string_in_a_variant_payload_field() {
 }
 
 #[test]
+fn type_checks_tagged_union_constructor_through_nullable_return_type() {
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+
+        function find(want: bool): Goods?
+            if want then
+                return Upgrade({ kind = 1 })
+            end
+            return nil
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_tagged_union_constructor_through_nullable_local_and_argument() {
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+
+        function accept(goods: Goods?): i32
+            if goods ~= nil then
+                return 1
+            end
+            return 0
+        end
+
+        function test(): i32
+            local slot: Goods? = Upgrade({ kind = 1 })
+            slot = nil
+            slot = Spell({ kind = 2 })
+            return accept(slot) + accept(Upgrade({ kind = 3 })) + accept(nil)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_unknown_tag_against_nullable_tagged_union() {
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+
+        function find(): Goods?
+            return Trinket({ kind = 1 })
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "unknown name 'Trinket'");
+}
+
+#[test]
+fn rejects_variant_test_on_unnarrowed_nullable_tagged_union() {
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+
+        function test(goods: Goods?): bool
+            return goods is Upgrade
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "type Goods? has no tagged variant 'Upgrade'"
+    );
+}
+
+#[test]
 fn type_checks_tagged_union_narrowing_and_value_access() {
     let source = r#"
         type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)

@@ -5647,8 +5647,9 @@ impl Builder<'_> {
                     // symbol_id is None for names that are not resolved to a local or function,
                     // i.e. potential tagged-union constructor names like `Num` or `Flag`.
                     if symbol_id.is_none() {
-                        if let Some(variant) =
-                            expected.as_ref().and_then(|e| e.tagged_variant(tag))
+                        if let Some(variant) = expected
+                            .as_ref()
+                            .and_then(|e| e.constructed_tagged_variant(tag))
                         {
                             let payload_ty = *variant.payload;
                             if matches!(&payload_ty, Type::String | Type::Bytes) {
@@ -5679,7 +5680,10 @@ impl Builder<'_> {
                             });
                             // The canonical record IS the runtime representation of any
                             // tagged-union value, so TaggedUnion/TaggedVariant expected types
-                            // are satisfied directly.  Only coerce for other targets (e.g. unknown).
+                            // are satisfied directly.  Only coerce for other targets (e.g.
+                            // unknown, or a nullable union: the constructed value is never
+                            // nil, but it still has to carry the `Goods?` annotation onward,
+                            // and the widening cast is what stamps it on).
                             let coerce_target = match &expected {
                                 Some(Type::TaggedUnion(_) | Type::TaggedVariant(_)) => None,
                                 other => other.clone(),
@@ -6177,7 +6181,7 @@ impl Builder<'_> {
             ) = (expr, slot_expected.as_ref())
             {
                 if let (Expr::Name(tag, None, _), [_]) = (callee.as_ref(), args.as_slice()) {
-                    if expected_ty.tagged_variant(tag).is_some() {
+                    if expected_ty.constructed_tagged_variant(tag).is_some() {
                         out.push(self.lower_expr(
                             expr,
                             env,
@@ -6875,8 +6879,9 @@ impl Builder<'_> {
                 if let (Expr::Name(tag, symbol_id, _), [_arg]) = (callee.as_ref(), args.as_slice())
                 {
                     if symbol_id.is_none() {
-                        if let Some(variant) =
-                            expected.as_ref().and_then(|e| e.tagged_variant(tag))
+                        if let Some(variant) = expected
+                            .as_ref()
+                            .and_then(|e| e.constructed_tagged_variant(tag))
                         {
                             let result_ty = Type::TaggedVariant(TaggedVariant {
                                 tag: variant.tag.clone(),
