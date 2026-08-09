@@ -65,45 +65,9 @@ pub(super) const STRING_SPLIT: &str = "string.split";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 fn promise_resolved_type(ty: &Type) -> Option<Type> {
-    let Type::Opaque { name, ty } = ty else {
-        return None;
-    };
-    if !is_promise_like_extern(ty) {
-        return None;
-    }
-    let inner = name.strip_prefix("Promise<")?.strip_suffix('>')?;
-    Some(match inner {
-        "unit" => Type::Unit,
-        "bool" => Type::Bool,
-        "string" => Type::String,
-        "bytes" => Type::Bytes,
-        "extern" => Type::Extern,
-        "unknown" => Type::Unknown,
-        "thread" => Type::Thread,
-        "i32" => Type::Numeric(NumericType::I32),
-        "i64" => Type::Numeric(NumericType::I64),
-        "u32" => Type::Numeric(NumericType::U32),
-        "u64" => Type::Numeric(NumericType::U64),
-        "f32" => Type::Numeric(NumericType::F32),
-        "f64" => Type::Numeric(NumericType::F64),
-        name => Type::Opaque {
-            name: name.to_string(),
-            ty: Box::new(Type::Extern),
-        },
-    })
-}
-
-fn promise_type_erases_readonly(ty: &Type) -> bool {
-    match ty {
-        // Generic extern specializations are nominalized into this stable name
-        // by the resolver. The extern representation itself has no child type
-        // to inspect, so retain the source capability by recognizing it here.
-        Type::Opaque { name, ty } if is_promise_like_extern(ty) => name
-            .strip_prefix("Promise<")
-            .and_then(|inner| inner.strip_suffix('>'))
-            .is_some_and(|inner| inner.contains("readonly<")),
-        _ => false,
-    }
+    let generic = ty.generic_extern()?;
+    (generic.source_name == "Promise" && generic.type_args.len() == 1)
+        .then(|| generic.type_args[0].clone())
 }
 
 fn infer_promise_await_arg(
@@ -324,7 +288,7 @@ pub(super) fn infer_coroutine_builtin_call(
                 Err(error) => return Some(Err(error)),
             };
             if is_promise_like_extern(&promise_ty) {
-                if promise_type_erases_readonly(&promise_ty) {
+                if promise_resolved_type(&promise_ty).is_some_and(|ty| ty.contains_readonly()) {
                     return Some(Err(Diagnostic::new(
                         "coroutine.await_promise cannot erase a read-only result into unknown",
                     )));

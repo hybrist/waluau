@@ -29,6 +29,7 @@ fn diagnostic_type_display_hides_nested_module_mangling() {
         params: vec![Type::Opaque {
             name: "__waluau_m12_Graphics".to_string(),
             ty: Box::new(Type::Record(Default::default())),
+            generic_extern: None,
         }],
         return_type: Box::new(Type::Unit),
     };
@@ -332,7 +333,7 @@ fn extern_type_aliases_are_nominal_and_lower_to_extern() {
     assert_eq!(typed.type_declarations[0].ty, Type::Extern);
     assert!(matches!(
         &typed.functions[0].params[0].ty,
-        Type::Opaque { name, ty } if name == "Element" && **ty == Type::Extern
+        Type::Opaque { name, ty, .. } if name == "Element" && **ty == Type::Extern
     ));
 }
 
@@ -363,11 +364,11 @@ fn tfjs_model_extern_types_are_nominally_distinct() {
 
     assert!(matches!(
         typed.functions[0].return_type.as_ref(),
-        Some(Type::Opaque { name, ty }) if name == "Promise<GraphModel>" && ty.as_ref() == &Type::Extern
+        Some(Type::Opaque { name, ty, .. }) if name == "Promise<GraphModel>" && ty.as_ref() == &Type::Extern
     ));
     assert!(matches!(
         typed.functions[1].return_type.as_ref(),
-        Some(Type::Opaque { name, ty }) if name == "Promise<LayersModel>" && ty.as_ref() == &Type::Extern
+        Some(Type::Opaque { name, ty, .. }) if name == "Promise<LayersModel>" && ty.as_ref() == &Type::Extern
     ));
 }
 
@@ -482,7 +483,7 @@ fn nullable_extern_aliases_narrow_after_nil_check() {
     assert!(matches!(
         &typed.functions[1].params[0].ty,
         Type::Nullable(inner)
-            if matches!(inner.as_ref(), Type::Opaque { name, ty } if name == "Element" && ty.as_ref() == &Type::Extern)
+            if matches!(inner.as_ref(), Type::Opaque { name, ty, .. } if name == "Element" && ty.as_ref() == &Type::Extern)
     ));
 }
 
@@ -919,15 +920,137 @@ fn generic_extern_type_declarations_instantiate_nominally() {
 
     assert!(matches!(
         &typed.functions[0].params[0].ty,
-        Type::Opaque { name, ty } if name == "Promise<Response>" && ty.as_ref() == &Type::Extern
+        Type::Opaque { name, ty, .. } if name == "Promise<Response>" && ty.as_ref() == &Type::Extern
     ));
     assert!(matches!(
         &typed.functions[1].params[0].ty,
-        Type::Opaque { name, ty } if name == "Promise<string>" && ty.as_ref() == &Type::Extern
+        Type::Opaque { name, ty, .. } if name == "Promise<string>" && ty.as_ref() == &Type::Extern
     ));
     assert_ne!(
         typed.functions[0].params[0].ty,
         typed.functions[1].params[0].ty
+    );
+
+    let response_promise = &typed.functions[0].params[0].ty;
+    let metadata = response_promise
+        .generic_extern()
+        .expect("generic extern metadata should be retained");
+    assert_eq!(metadata.constructor, "Promise");
+    assert_eq!(metadata.source_name, "Promise");
+    assert_eq!(metadata.type_args.len(), 1);
+    assert!(matches!(
+        &metadata.type_args[0],
+        Type::Opaque { name, ty, .. } if name == "Response" && ty.as_ref() == &Type::Extern
+    ));
+    assert_eq!(response_promise.to_string(), "Promise<Response>");
+}
+
+#[test]
+fn generic_extern_metadata_preserves_structural_arguments_and_aliases() {
+    let source = r#"
+        type Promise<T> = extern
+        type Model = { values: {i32} }
+        type Pending<T> = Promise<T>
+        type ReadonlyPending = Pending<readonly<Model>>
+
+        declare function make(): ReadonlyPending
+
+        function read(): readonly<Model>
+            local model = promise.await(make())
+            local first: i32 = model.values[0]
+            return model
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let metadata = typed.declared_imports[0]
+        .return_type
+        .generic_extern()
+        .expect("aliases should retain generic extern metadata");
+    assert_eq!(metadata.constructor, "Promise");
+    assert!(matches!(metadata.type_args.as_slice(), [Type::Readonly(_)]));
+    assert_eq!(
+        typed.declared_imports[0].return_type.to_string(),
+        "ReadonlyPending"
+    );
+}
+
+#[test]
+fn typed_promise_await_preserves_readonly_capability() {
+    let source = r#"
+        type Promise<T> = extern
+        type Model = { values: {i32} }
+        declare function make(): Promise<readonly<Model>>
+
+        function mutate(): unit
+            local model = promise.await(make())
+            model.values[0] = 7
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("read-only result must reject mutation");
+    assert_eq!(error.to_string(), "cannot mutate a read-only array view");
+}
+
+#[test]
+fn typed_promise_await_rejects_unrelated_generic_externs() {
+    let source = r#"
+        type Future<T> = extern
+        declare function make(): Future<string>
+
+        function read(): string
+            return promise.await(make())
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("Future<T> is not Promise<T>");
+    assert_eq!(
+        error.to_string(),
+        "promise.await expects a Promise<T> extern value"
+    );
+}
+
+#[test]
+fn generic_functions_substitute_generic_extern_metadata() {
+    let source = r#"
+        type Promise<T> = extern
+        declare function make_text(): Promise<string>
+
+        function unwrap<T>(pending: Promise<T>): T
+            return promise.await(pending)
+        end
+
+        function inferred(): string
+            return unwrap(make_text())
+        end
+
+        function explicit(): string
+            return unwrap<string>(make_text())
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("generic Promise<T> should substitute structurally");
+}
+
+#[test]
+fn generic_extern_equality_rejects_distinct_specializations() {
+    let source = r#"
+        type Promise<T> = extern
+
+        function compare(left: Promise<string>, right: Promise<i32>): bool
+            return left == right
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("distinct specializations stay nominal");
+    assert_eq!(
+        error.to_string(),
+        "== requires compatible extern operand types"
     );
 }
 
@@ -994,11 +1117,11 @@ fn promise_extern_api_declarations_type_check_with_nominal_specializations() {
 
     assert!(matches!(
         typed.functions[0].return_type.as_ref(),
-        Some(Type::Opaque { name, ty }) if name == "Promise<Response>" && ty.as_ref() == &Type::Extern
+        Some(Type::Opaque { name, ty, .. }) if name == "Promise<Response>" && ty.as_ref() == &Type::Extern
     ));
     assert!(matches!(
         typed.functions[1].return_type.as_ref(),
-        Some(Type::Opaque { name, ty }) if name == "Promise<string>" && ty.as_ref() == &Type::Extern
+        Some(Type::Opaque { name, ty, .. }) if name == "Promise<string>" && ty.as_ref() == &Type::Extern
     ));
 }
 
@@ -2085,7 +2208,7 @@ fn preserves_type_method_declarations_as_direct_functions() {
     assert_eq!(function.params[0].name, "self");
     assert!(matches!(
         &function.params[0].ty,
-        Type::Opaque { name, ty } if name == "Point" && matches!(ty.as_ref(), Type::Record(_))
+        Type::Opaque { name, ty, .. } if name == "Point" && matches!(ty.as_ref(), Type::Record(_))
     ));
     assert!(
         typed
@@ -2540,9 +2663,11 @@ fn readonly_views_cannot_erase_through_legacy_promise_await() {
     let source = r#"
         type Promise<T> = extern
         type Model = { count: i32 }
-        declare function make(view: readonly<Model>): Promise<readonly<Model>>
+        type View = readonly<Model>
+        type PendingView = Promise<View>
+        declare function make(view: View): PendingView
 
-        function escape(view: readonly<Model>): Model
+        function escape(view: View): Model
             return coroutine.await_promise(make(view))
         end
     "#;

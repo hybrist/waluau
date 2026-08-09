@@ -2,8 +2,10 @@
 
 type Promise<T> = extern
 type Model = { count: i32 }
-declare function make(view: readonly<Model>): Promise<readonly<Model>>
+type View = readonly<Model>
+type PendingView = Promise<View>
+declare function make(view: View): PendingView
 
-function escape(view: readonly<Model>): Model
+function escape(view: View): Model
     return coroutine.await_promise(make(view))
 end

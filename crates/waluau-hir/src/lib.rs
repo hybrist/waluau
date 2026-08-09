@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use waluau_ast::{
-    AssignOp, Expr, Function, FunctionExpr, FunctionName, NumberLiteral, NumericType, Param,
-    Program, Rebindability, Stmt, Type,
+    AssignOp, Expr, Function, FunctionExpr, FunctionName, GenericExternType, NumberLiteral,
+    NumericType, Param, Program, Rebindability, Stmt, Type,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
@@ -201,11 +201,19 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
             Type::Opaque {
                 name: name.clone(),
                 ty: Box::new(Type::Unknown),
+                generic_extern: None,
             }
         }
-        Type::Opaque { name, ty } => Type::Opaque {
+        Type::Opaque {
+            name,
+            ty,
+            generic_extern,
+        } => Type::Opaque {
             name: name.clone(),
             ty: Box::new(type_visible_from_file(ty, file_path, opaque)),
+            generic_extern: generic_extern.as_ref().map(|generic| {
+                Box::new(generic.map_type_args(|ty| type_visible_from_file(ty, file_path, opaque)))
+            }),
         },
         Type::ExternSubtype(parent) => {
             Type::ExternSubtype(Box::new(type_visible_from_file(parent, file_path, opaque)))
@@ -273,10 +281,18 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
         Type::Opaque { name, .. } if opaque.contains_key(name) => Type::Opaque {
             name: name.clone(),
             ty: Box::new(opaque[name].1.clone()),
+            generic_extern: None,
         },
-        Type::Opaque { name, ty } => Type::Opaque {
+        Type::Opaque {
+            name,
+            ty,
+            generic_extern,
+        } => Type::Opaque {
             name: name.clone(),
             ty: Box::new(restore_module_opaque_type(ty, opaque)),
+            generic_extern: generic_extern.as_ref().map(|generic| {
+                Box::new(generic.map_type_args(|ty| restore_module_opaque_type(ty, opaque)))
+            }),
         },
         Type::ExternSubtype(parent) => {
             Type::ExternSubtype(Box::new(restore_module_opaque_type(parent, opaque)))
@@ -1084,6 +1100,7 @@ fn readonly_type(inner: Type) -> Result<Type, Diagnostic> {
 
 #[derive(Clone)]
 struct GenericTypeDecl {
+    source_name: String,
     type_params: Vec<String>,
     ty: Type,
 }
@@ -1110,9 +1127,16 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 })
                 .collect(),
         ),
-        Type::Opaque { name, ty } => Type::Opaque {
+        Type::Opaque {
+            name,
+            ty,
+            generic_extern,
+        } => Type::Opaque {
             name: name.clone(),
             ty: Box::new(substitute_type_params(ty, subst)),
+            generic_extern: generic_extern.as_ref().map(|generic| {
+                Box::new(generic.map_type_args(|ty| substitute_type_params(ty, subst)))
+            }),
         },
         Type::ExternSubtype(parent) => {
             Type::ExternSubtype(Box::new(substitute_type_params(parent, subst)))
@@ -1163,11 +1187,21 @@ fn generic_instantiation_name(name: &str, type_args: &[Type]) -> String {
     format!("{name}<{rendered_args}>")
 }
 
-fn specialize_generic_extern_constructor(name: &str, type_args: &[Type], resolved: Type) -> Type {
+fn specialize_generic_extern_constructor(
+    name: &str,
+    decl: &GenericTypeDecl,
+    type_args: &[Type],
+    resolved: Type,
+) -> Type {
     match resolved {
         Type::Extern | Type::ExternSubtype(_) => Type::Opaque {
             name: generic_instantiation_name(name, type_args),
             ty: Box::new(resolved),
+            generic_extern: Some(Box::new(GenericExternType {
+                constructor: name.to_string(),
+                source_name: decl.source_name.clone(),
+                type_args: type_args.to_vec(),
+            })),
         },
         other => other,
     }
@@ -1213,6 +1247,7 @@ fn resolve_decl_type_allowing_forward_refs(
     let opaque = Type::Opaque {
         name: name.to_string(),
         ty: Box::new(resolved_underlying),
+        generic_extern: None,
     };
     Ok(opaque)
 }
@@ -1300,7 +1335,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 );
                 stack.pop();
                 return resolved.map(|resolved| {
-                    specialize_generic_extern_constructor(name, &resolved_args, resolved)
+                    specialize_generic_extern_constructor(name, decl, &resolved_args, resolved)
                 });
             }
             if !raw_opaque.contains_key(name) {
@@ -1323,6 +1358,7 @@ fn resolve_type_refs_allowing_forward_refs(
                     return Ok(Type::Opaque {
                         name: name.to_string(),
                         ty: Box::new(Type::Unknown),
+                        generic_extern: None,
                     });
                 }
                 let cycle = stack
@@ -1355,7 +1391,11 @@ fn resolve_type_refs_allowing_forward_refs(
             opaque_cache.insert(name.to_string(), resolved.clone());
             Ok(resolved)
         }
-        Type::Opaque { name, ty } => Ok(Type::Opaque {
+        Type::Opaque {
+            name,
+            ty,
+            generic_extern,
+        } => Ok(Type::Opaque {
             name: name.clone(),
             ty: Box::new(resolve_type_refs_allowing_forward_refs(
                 ty,
@@ -1366,6 +1406,24 @@ fn resolve_type_refs_allowing_forward_refs(
                 stack,
                 guarded,
             )?),
+            generic_extern: generic_extern
+                .as_ref()
+                .map(|metadata| {
+                    metadata
+                        .try_map_type_args(|ty| {
+                            resolve_type_refs_allowing_forward_refs(
+                                ty,
+                                active_type_params,
+                                raw_opaque,
+                                generic,
+                                opaque_cache,
+                                stack,
+                                guarded,
+                            )
+                        })
+                        .map(Box::new)
+                })
+                .transpose()?,
         }),
         Type::ExternSubtype(parent) => {
             let parent = resolve_type_refs_allowing_forward_refs(
@@ -1536,6 +1594,7 @@ fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
             generic.insert(
                 decl.name.clone(),
                 GenericTypeDecl {
+                    source_name: decl.source_name.clone(),
                     type_params: decl.type_params.clone(),
                     ty: decl.ty.clone(),
                 },
@@ -1783,7 +1842,7 @@ fn resolve_type_refs_fixpoint(
                 );
                 stack.pop();
                 return resolved.map(|resolved| {
-                    specialize_generic_extern_constructor(name, &resolved_args, resolved)
+                    specialize_generic_extern_constructor(name, decl, &resolved_args, resolved)
                 });
             }
             if !raw_opaque.contains_key(name) {
@@ -1803,6 +1862,7 @@ fn resolve_type_refs_fixpoint(
                     .unwrap_or_else(|| Type::Opaque {
                         name: name.to_string(),
                         ty: Box::new(Type::Unit),
+                        generic_extern: None,
                     }))
             } else {
                 resolve_decl_type_fixpoint(
@@ -1815,7 +1875,11 @@ fn resolve_type_refs_fixpoint(
                 )
             }
         }
-        Type::Opaque { name, ty } => Ok(Type::Opaque {
+        Type::Opaque {
+            name,
+            ty,
+            generic_extern,
+        } => Ok(Type::Opaque {
             name: name.clone(),
             ty: Box::new(resolve_type_refs_fixpoint(
                 ty,
@@ -1826,6 +1890,24 @@ fn resolve_type_refs_fixpoint(
                 stack,
                 fixpoint_mode,
             )?),
+            generic_extern: generic_extern
+                .as_ref()
+                .map(|metadata| {
+                    metadata
+                        .try_map_type_args(|ty| {
+                            resolve_type_refs_fixpoint(
+                                ty,
+                                active_type_params,
+                                raw_opaque,
+                                generic,
+                                opaque_cache,
+                                stack,
+                                fixpoint_mode,
+                            )
+                        })
+                        .map(Box::new)
+                })
+                .transpose()?,
         }),
         Type::ExternSubtype(parent) => {
             let parent = resolve_type_refs_fixpoint(
@@ -1993,6 +2075,7 @@ fn resolve_decl_type_fixpoint(
                 .unwrap_or_else(|| Type::Opaque {
                     name: name.to_string(),
                     ty: Box::new(Type::Unit),
+                    generic_extern: None,
                 }));
         } else {
             let cycle = stack
@@ -2024,6 +2107,7 @@ fn resolve_decl_type_fixpoint(
     let opaque = Type::Opaque {
         name: name.to_string(),
         ty: Box::new(resolved_underlying),
+        generic_extern: None,
     };
     opaque_cache.insert(name.to_string(), opaque.clone());
     Ok(opaque)

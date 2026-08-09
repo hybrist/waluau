@@ -673,6 +673,7 @@ impl Parser {
         );
         self.definitions[index].detail = Some(format!("enum {name} {{ {} }}", variants.join(", ")));
         Ok(TypeDeclaration {
+            source_name: name.clone(),
             name,
             type_params: Vec::new(),
             ty,
@@ -698,6 +699,7 @@ impl Parser {
         self.type_param_scope.extend(type_params.iter().cloned());
         self.expect_simple(TokenKind::Equal, "expected '=' in type declaration")?;
         let parsed = self.parse_type().map(|ty| TypeDeclaration {
+            source_name: name.clone(),
             name,
             type_params,
             ty,

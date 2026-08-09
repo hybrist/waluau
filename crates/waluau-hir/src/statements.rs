@@ -438,9 +438,14 @@ fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
             narrowed.insert(field.to_string(), inner);
             Some(Type::Record(narrowed))
         }
-        Type::Opaque { name, ty } => Some(Type::Opaque {
+        Type::Opaque {
+            name,
+            ty,
+            generic_extern,
+        } => Some(Type::Opaque {
             name: name.clone(),
             ty: Box::new(narrow_nullable_record_field(ty, field)?),
+            generic_extern: generic_extern.clone(),
         }),
         Type::Readonly(inner) => Some(Type::Readonly(Box::new(narrow_nullable_record_field(
             inner, field,
@@ -1630,6 +1635,7 @@ fn check_stmt_inner(
                 if let Type::Opaque {
                     name: opaque_name,
                     ty,
+                    ..
                 } = &binding.ty
                     && ty.as_ref() == &Type::Unknown
                 {
@@ -1725,6 +1731,7 @@ fn check_stmt_inner(
                 if let Type::Opaque {
                     name: opaque_name,
                     ty,
+                    ..
                 } = &base_ty
                     && ty.as_ref() == &Type::Unknown
                 {

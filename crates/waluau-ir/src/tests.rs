@@ -835,6 +835,7 @@ fn erases_generic_extern_specializations_in_declared_import_signatures() {
 
         declare function take_response(value: Promise<Response>): Promise<Response>
         declare function take_string(value: Promise<string>): Promise<string>
+        declare function take_i32(value: Promise<i32>): Promise<i32>
     "#;
 
     let program = parse(source).expect("parse should succeed");
@@ -856,6 +857,14 @@ fn erases_generic_extern_specializations_in_declared_import_signatures() {
         .expect("take_string import should exist");
     assert_eq!(take_string.params, vec![Type::Extern]);
     assert_eq!(take_string.return_type, Type::Extern);
+
+    let take_i32 = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "take_i32")
+        .expect("take_i32 import should exist");
+    assert_eq!(take_i32.params, vec![Type::Extern]);
+    assert_eq!(take_i32.return_type, Type::Extern);
 }
 
 #[test]

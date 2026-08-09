@@ -72,6 +72,10 @@ pub struct Program {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeDeclaration {
     pub name: String,
+    /// Source spelling retained when a linker gives the declaration a
+    /// module-unique canonical name. Diagnostics and source-defined type
+    /// capabilities use this name; nominal identity uses `name`.
+    pub source_name: String,
     pub type_params: Vec<String>,
     pub ty: Type,
     /// Whether importing modules see this alias as an opaque nominal handle.
@@ -80,6 +84,58 @@ pub struct TypeDeclaration {
     pub module_opaque: bool,
     /// Source file that owns the representation of a module-opaque alias.
     pub file_path: String,
+}
+
+/// Resolved source metadata for an application of a generic extern type
+/// constructor. The constructor is canonical and therefore participates in
+/// nominal identity; `source_name` exists only for diagnostics and
+/// source-defined capabilities such as `Promise<T>` await typing.
+///
+/// This metadata has no runtime representation. IR erases the containing
+/// [`Type::Opaque`] to its extern representation before lowering.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct GenericExternType {
+    pub constructor: String,
+    pub source_name: String,
+    pub type_args: Vec<Type>,
+}
+
+impl GenericExternType {
+    /// Transform every resolved argument while preserving constructor identity.
+    pub fn map_type_args(&self, mut map: impl FnMut(&Type) -> Type) -> Self {
+        Self {
+            constructor: self.constructor.clone(),
+            source_name: self.source_name.clone(),
+            type_args: self.type_args.iter().map(&mut map).collect(),
+        }
+    }
+
+    /// Fallible form of [`Self::map_type_args`].
+    pub fn try_map_type_args<E>(
+        &self,
+        mut map: impl FnMut(&Type) -> Result<Type, E>,
+    ) -> Result<Self, E> {
+        Ok(Self {
+            constructor: self.constructor.clone(),
+            source_name: self.source_name.clone(),
+            type_args: self
+                .type_args
+                .iter()
+                .map(&mut map)
+                .collect::<Result<_, _>>()?,
+        })
+    }
+
+    /// Canonical nominal name used by internal type maps after substitution.
+    pub fn canonical_name(&self) -> String {
+        let args = self
+            .type_args
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{}<{args}>", self.constructor)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -348,6 +404,7 @@ pub enum Type {
     Opaque {
         name: String,
         ty: Box<Type>,
+        generic_extern: Option<Box<GenericExternType>>,
     },
     /// A zero-cost, recursively read-only view of a structural value.
     ///
@@ -464,11 +521,17 @@ impl Type {
     pub fn contains_readonly(&self) -> bool {
         match self {
             Self::Readonly(_) => true,
-            Self::Opaque { ty, .. }
-            | Self::ExternSubtype(ty)
-            | Self::Nullable(ty)
-            | Self::Array(ty)
-            | Self::Variadic(ty) => ty.contains_readonly(),
+            Self::Opaque {
+                ty, generic_extern, ..
+            } => {
+                ty.contains_readonly()
+                    || generic_extern.as_ref().is_some_and(|generic| {
+                        generic.type_args.iter().any(Self::contains_readonly)
+                    })
+            }
+            Self::ExternSubtype(ty) | Self::Nullable(ty) | Self::Array(ty) | Self::Variadic(ty) => {
+                ty.contains_readonly()
+            }
             Self::Multi(types) => types.iter().any(Self::contains_readonly),
             Self::Function {
                 params,
@@ -481,6 +544,20 @@ impl Type {
                 .any(|variant| variant.payload.contains_readonly()),
             Self::Named { type_args, .. } => type_args.iter().any(Self::contains_readonly),
             _ => false,
+        }
+    }
+
+    /// The resolved generic extern application represented by this nominal
+    /// type, if any. Consumers inspect constructor identity and arguments
+    /// through this interface; rendered type names are diagnostics only.
+    pub fn generic_extern(&self) -> Option<&GenericExternType> {
+        match self {
+            Self::Opaque {
+                generic_extern: Some(generic),
+                ..
+            } => Some(generic),
+            Self::Opaque { ty, .. } => ty.generic_extern(),
+            _ => None,
         }
     }
 
@@ -666,9 +743,14 @@ impl Type {
                     _ => Some(Self::TaggedUnion(remaining)),
                 }
             }
-            Self::Opaque { name, ty } => ty.remove_tagged_variant(tag).map(|inner| Self::Opaque {
+            Self::Opaque {
+                name,
+                ty,
+                generic_extern,
+            } => ty.remove_tagged_variant(tag).map(|inner| Self::Opaque {
                 name: name.clone(),
                 ty: Box::new(inner),
+                generic_extern: generic_extern.clone(),
             }),
             _ => None,
         }
@@ -763,7 +845,24 @@ impl std::fmt::Display for Type {
                 }
                 Ok(())
             }
-            Self::Opaque { name, .. } => f.write_str(name),
+            Self::Opaque {
+                name,
+                generic_extern,
+                ..
+            } => {
+                let Some(generic) = generic_extern else {
+                    return f.write_str(name);
+                };
+                f.write_str(&generic.source_name)?;
+                write!(f, "<")?;
+                for (index, ty) in generic.type_args.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{ty}")?;
+                }
+                write!(f, ">")
+            }
             Self::Readonly(inner) => write!(f, "readonly<{inner}>"),
             Self::Array(element) => write!(f, "{{{element}}}"),
             Self::Variadic(element) => write!(f, "{element}..."),
@@ -1670,7 +1769,9 @@ mod type_tests {
             ty: Box::new(Type::Nullable(Box::new(Type::Opaque {
                 name: "Goods".to_string(),
                 ty: Box::new(goods()),
+                generic_extern: None,
             }))),
+            generic_extern: None,
         };
         assert_eq!(
             aliased
