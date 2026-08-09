@@ -246,15 +246,14 @@ describe("Ante Magic target", function()
             end
         end
         -- The table crosses what a duel pays rather than staying under it.
-        -- Early duels ask for well below the eleven a cleared one pays
-        -- (measured in economy.test.walu), so a run that is going well banks a
-        -- surplus; late duels ask for more than any duel can pay, so the run
-        -- is spent out of that pile and arrives at the last one on fumes.
-        expect(run.target_at(1, false)):toBeLessThan(11)
-        expect(run.target_at(2, false)):toBeLessThan(11)
-        expect(run.target_at(3, false)):toBeLessThan(11)
-        expect(run.target_at(run.run_length(false), false)):toBeGreaterThan(22)
-        expect(run.target_at(run.run_length(false) - 1, false)):toBeGreaterThan(11)
+        -- Early duels ask for below the rarity-weighted pay measured in
+        -- economy.test.walu, so a run that is going well banks a surplus;
+        -- late duels spend the run out of that pile.
+        expect(run.target_at(1, false)):toBeLessThan(25)
+        expect(run.target_at(2, false)):toBeLessThan(25)
+        expect(run.target_at(3, false)):toBeLessThan(25)
+        expect(run.target_at(run.run_length(false), false)):toBeGreaterThan(36)
+        expect(run.target_at(run.run_length(false) - 1, false)):toBeGreaterThan(25)
     end)
 
     it("keeps climbing past the table, faster than a duel can pay", function()
@@ -266,11 +265,10 @@ describe("Ante Magic target", function()
             expect(step):toBeGreaterThan(previous_step)
             previous_step = step
             -- The tail always ends. Every duel past the finish asks for more
-            -- than the eleven a cleared one pays (measured in
-            -- economy.test.walu), and the shortfall widens with the step, so a
-            -- run walks on out of whatever surplus it arrived with and no
-            -- further.
-            expect(run.target_at(finish + past, false)):toBeGreaterThan(11)
+            -- than a typical boss pays (measured in economy.test.walu), and
+            -- the shortfall widens with the step, so a run walks on out of
+            -- whatever surplus it arrived with and no further.
+            expect(run.target_at(finish + past, false)):toBeGreaterThan(36)
         end
         -- Concretely: a run that finished the table holding fifty walks about
         -- two more duels, not twenty.
@@ -278,8 +276,8 @@ describe("Ante Magic target", function()
         local walked: i32 = 0
         for past = 1::i32, 20 do
             local target: i32 = run.target_at(finish + past, false)
-            if purse + 11 < target then break end
-            purse = purse + 11 - target
+            if purse + 36 < target then break end
+            purse = purse + 36 - target
             walked = past
         end
         expect(walked):toBeGreaterThan(0)

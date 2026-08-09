@@ -59,7 +59,7 @@ function body(): entity.Node
         modal.heading("2. PLAY"),
         modal.body_line("SELECT 2 CARDS. THE STRONGEST FIVE-CARD POKER HAND WINS."),
         modal.body_line(
-            "LATER ROUNDS ARE WORTH MORE GOLD."
+            "LATER ROUNDS AND RARER HANDS ARE WORTH MORE GOLD."
                 .. " THREE OPPONENT WINS END THE DUEL."),
         entity.gap(0.0, BLOCK_GAP - LINE_GAP),
         modal.heading("3. THE TARGET"),

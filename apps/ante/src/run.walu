@@ -41,8 +41,8 @@ const RUN_LENGTH: i32 = 9
 const RUSH_LENGTH: i32 = 5
 -- Past the last duel the city keeps going and the table runs out, so the target
 -- takes over on a formula. The step grows with every duel beyond the finish,
--- which is what makes the tail end: a duel pays about eleven and the demand
--- climbs past that immediately and never comes back down.
+-- which is what makes the tail end: the demand climbs past a typical duel's
+-- rarity-weighted pay immediately and never comes back down.
 const ENDLESS_STEP: i32 = 6
 -- Two spells are as many as the player can hold ready at once — keys 1 and 2
 -- in the duel. Learning a third is a trade, not an addition.
@@ -90,12 +90,12 @@ end
 
 -- What clearing the numbered duel costs, taken out of the gold the player
 -- walk out holding. Priced against measured play rather than guessed: a cleared
--- duel pays about eleven gold (see `economy.test.walu`), and the table is
--- built around that number crossing it.
+-- standard duel pays about twenty-five gold and a boss about thirty-six (see
+-- `economy.test.walu`), and the table is built around those numbers crossing it.
 --
--- The first act asks for well under eleven, so a run that is going well banks a
--- surplus. The second holds near it. The third asks for more than a duel can
--- pay, so the pile that took two acts to build is what act three is spent out
+-- The first act asks for well under that pay, so a run that is going well banks
+-- a surplus. The second holds near it. The third asks more than a typical duel
+-- pays, so the pile that took two acts to build is what act three is spent out
 -- of — a run arrives at the last duel on fumes, and one that stumbled anywhere
 -- along the way does not arrive at all. That is where the difficulty ramps: not
 -- in making a round harder to win, which nothing here touches, but in what
@@ -107,8 +107,8 @@ end
 -- The table is written out inside the function rather than held module-side so
 -- the values sit next to the reasoning about them.
 function target_at(duel: i32, rush: bool): i32
-    local table_values: {i32} = { 3, 5, 8, 12, 16, 21, 25, 29, 34 }
-    if rush then table_values = { 5, 10, 16, 23, 30 } end
+    local table_values: {i32} = { 6, 10, 18, 21, 25, 35, 38, 43, 70 }
+    if rush then table_values = { 12, 24, 38, 55, 80 } end
     local length: i32 = #table_values
     if duel < 1 then return table_values[0] end
     if duel <= length then return table_values[duel - 1] end
