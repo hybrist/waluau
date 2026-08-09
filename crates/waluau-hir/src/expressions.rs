@@ -787,11 +787,15 @@ fn infer_expr_inner(
             ..
         } => {
             // Tagged-union constructor: Tag(expr) when Tag is a variant in the expected type.
-            // The inferred type is the full expected type (union or variant) so that
-            // Stmt::Let's exact-equality check passes and the variable carries the union type.
+            // The inferred type is the full expected type (union, variant, or a
+            // nullable around either) so that Stmt::Let's exact-equality check
+            // passes and the variable carries the annotated type.
             if let (Expr::Name(tag, _, _), [arg]) = (callee.as_ref(), args.as_slice()) {
                 if !fn_signatures.contains_key(tag.as_str()) && !vars.contains_key(tag.as_str()) {
-                    if let Some(variant) = expected.as_ref().and_then(|e| e.tagged_variant(tag)) {
+                    if let Some(variant) = expected
+                        .as_ref()
+                        .and_then(|e| e.constructed_tagged_variant(tag))
+                    {
                         let payload_ty = *variant.payload.clone();
                         let arg_ty = infer_expr(
                             arg,

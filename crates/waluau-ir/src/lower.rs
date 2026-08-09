@@ -1546,6 +1546,23 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
                 .map(|(name, ty)| (name.clone(), erase_type_opaque_types_at(ty, true)))
                 .collect(),
         ),
+        // A payload is stored behind the `value` field of the canonical
+        // `{ tag, value }` record, so it erases exactly like a record field
+        // does. Skipping it left aliases and literal unions alive inside
+        // variants long after every other type position had shed them.
+        Type::TaggedVariant(variant) => Type::TaggedVariant(TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(erase_type_opaque_types_at(&variant.payload, true)),
+        }),
+        Type::TaggedUnion(variants) => Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| TaggedVariant {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(erase_type_opaque_types_at(&variant.payload, true)),
+                })
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -1574,6 +1591,10 @@ fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
         Type::Record(fields) => fields
             .values()
             .any(|ty| type_contains_opaque_name(ty, target)),
+        Type::TaggedVariant(variant) => type_contains_opaque_name(&variant.payload, target),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .any(|variant| type_contains_opaque_name(&variant.payload, target)),
         _ => false,
     }
 }
@@ -2275,6 +2296,7 @@ impl Builder<'_> {
 
     fn emit(&mut self, mut instruction: Instruction) -> ValueId {
         sort_phi_incoming(&mut instruction);
+        canonicalize_cast_types(&mut instruction);
         let value = self.function.next_value();
         block_mut(&mut self.function, self.current_block)
             .instructions
@@ -2365,6 +2387,7 @@ impl Builder<'_> {
     /// which are created before the exit block becomes the current block).
     fn emit_in(&mut self, block: BlockId, mut instruction: Instruction) -> ValueId {
         sort_phi_incoming(&mut instruction);
+        canonicalize_cast_types(&mut instruction);
         let value = self.function.next_value();
         block_mut(&mut self.function, block)
             .instructions
@@ -5631,8 +5654,9 @@ impl Builder<'_> {
                     // symbol_id is None for names that are not resolved to a local or function,
                     // i.e. potential tagged-union constructor names like `Num` or `Flag`.
                     if symbol_id.is_none() {
-                        if let Some(variant) =
-                            expected.as_ref().and_then(|e| e.tagged_variant(tag))
+                        if let Some(variant) = expected
+                            .as_ref()
+                            .and_then(|e| e.constructed_tagged_variant(tag))
                         {
                             let payload_ty = *variant.payload;
                             if matches!(&payload_ty, Type::String | Type::Bytes) {
@@ -5663,7 +5687,10 @@ impl Builder<'_> {
                             });
                             // The canonical record IS the runtime representation of any
                             // tagged-union value, so TaggedUnion/TaggedVariant expected types
-                            // are satisfied directly.  Only coerce for other targets (e.g. unknown).
+                            // are satisfied directly.  Only coerce for other targets (e.g.
+                            // unknown, or a nullable union: the constructed value is never
+                            // nil, but it still has to carry the `Goods?` annotation onward,
+                            // and the widening cast is what stamps it on).
                             let coerce_target = match &expected {
                                 Some(Type::TaggedUnion(_) | Type::TaggedVariant(_)) => None,
                                 other => other.clone(),
@@ -6161,7 +6188,7 @@ impl Builder<'_> {
             ) = (expr, slot_expected.as_ref())
             {
                 if let (Expr::Name(tag, None, _), [_]) = (callee.as_ref(), args.as_slice()) {
-                    if expected_ty.tagged_variant(tag).is_some() {
+                    if expected_ty.constructed_tagged_variant(tag).is_some() {
                         out.push(self.lower_expr(
                             expr,
                             env,
@@ -6859,8 +6886,9 @@ impl Builder<'_> {
                 if let (Expr::Name(tag, symbol_id, _), [_arg]) = (callee.as_ref(), args.as_slice())
                 {
                     if symbol_id.is_none() {
-                        if let Some(variant) =
-                            expected.as_ref().and_then(|e| e.tagged_variant(tag))
+                        if let Some(variant) = expected
+                            .as_ref()
+                            .and_then(|e| e.constructed_tagged_variant(tag))
                         {
                             let result_ty = Type::TaggedVariant(TaggedVariant {
                                 tag: variant.tag.clone(),
@@ -12299,6 +12327,22 @@ fn block_mut(function: &mut Function, block: BlockId) -> &mut BasicBlock {
 fn sort_phi_incoming(instruction: &mut Instruction) {
     if let Instruction::Phi(incoming) = instruction {
         incoming.sort_by_key(|(predecessor, _)| *predecessor);
+    }
+}
+
+/// A cast names the type it converts from and the type it converts to, and both
+/// annotations describe runtime values, so both have to be written in the
+/// runtime representation. Source-level annotations reach the two sides through
+/// different routes — one from an inferred expression type, the other from a
+/// declared one — and a tagged union nested in an aggregate is spelled by its
+/// source type on one route and by the canonical `{ tag, value }` record on the
+/// other. Normalizing at the emission boundary, the way phi inputs are sorted
+/// there, means no lowering path can emit the two halves in different spellings
+/// and leave the verifier to read a conversion into what converts nothing.
+fn canonicalize_cast_types(instruction: &mut Instruction) {
+    if let Instruction::Cast { from, to, .. } = instruction {
+        *from = to_runtime_type(from);
+        *to = to_runtime_type(to);
     }
 }
 

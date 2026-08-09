@@ -5772,11 +5772,21 @@ fn emit_cast(
         ));
     }
     // Reference-typed nullables share the inner type's (already nullable)
-    // wasm representation, so widening and narrowing are both no-ops.
-    if from.nullable_inner().as_ref() == Some(&to) {
+    // wasm representation, so widening and narrowing are both no-ops. The
+    // payload is compared through `runtime_representation` because a tagged
+    // union is spelled by its source type on one side of the cast and by the
+    // canonical `{ tag, value }` record it is stored as on the other.
+    let same_wasm_type =
+        |a: &Type, b: &Type| a == b || a.runtime_representation() == b.runtime_representation();
+    if from
+        .nullable_inner()
+        .is_some_and(|inner| same_wasm_type(&inner, &to))
+    {
         return Ok(());
     }
-    if to.nullable_inner().as_ref() == Some(&from)
+    if to
+        .nullable_inner()
+        .is_some_and(|inner| same_wasm_type(&inner, &from))
         || matches!((&from, &to), (Type::Nil, Type::Nullable(_)))
     {
         return Ok(());

@@ -2721,6 +2721,33 @@ fn rejects_tagged_union_pattern_match_for_string_payload() {
 }
 
 #[test]
+fn erases_aliases_and_literal_unions_inside_variant_payloads() {
+    // A payload is stored behind the canonical record's `value` field, so it
+    // has to shed nominal aliases and literal unions the way a record field
+    // does; left alone, the string literal reaching the payload has nothing to
+    // coerce `Control` to.
+    let source = r#"
+        type Control = "leave" | "cancel"
+        type Line = Exit({ control: Control, note: Control? }) | Sale({ slot: i32 })
+
+        function control(line: Line): Control
+            if Exit(p) = line then
+                return p.control
+            end
+            return "leave"
+        end
+
+        function build(): Control
+            return control(Exit({ control = "cancel", note = nil }))
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+}
+
+#[test]
 fn verifies_function_with_tagged_union_return_type() {
     let source = r#"
         function poll(co: thread): Finished(i32) | Yielded(i32) | Error(string)
@@ -2730,6 +2757,142 @@ fn verifies_function_with_tagged_union_return_type() {
     let program = parse(source).expect("parse should succeed");
     let module = build(&program).expect("ir build should succeed");
     verify(&module).expect("ir should verify a tagged-union return type against the canonical record produced by coroutine.resume");
+}
+
+#[test]
+fn lowers_alias_cast_over_tagged_union_field_in_runtime_representation() {
+    // Both halves of a cast describe runtime values, but they reach lowering by
+    // different routes — one from an inferred expression type, the other from a
+    // declared one — and only one of those spells a nested tagged union as the
+    // canonical `{ tag, value }` record. Emitting either half in its source
+    // spelling makes the verifier read a conversion into what converts nothing.
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 })
+        type Offer = { goods: Goods, price: i32 }
+
+        function entry(): i32
+            local pending: Offer? = { goods = Upgrade({ kind = 1 }), price = 4 }
+            if pending ~= nil then
+                local sale: Offer = pending :: Offer
+                return sale.price
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("casting a record alias holding a tagged union should verify");
+
+    let casts = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| &block.instructions)
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::Cast { from, to, .. } => Some((from, to)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !casts.is_empty(),
+        "expected the nullable narrowing to emit a cast"
+    );
+    for (from, to) in casts {
+        assert_eq!(
+            from,
+            &from.runtime_representation(),
+            "cast source should be annotated in its runtime representation"
+        );
+        assert_eq!(
+            to,
+            &to.runtime_representation(),
+            "cast target should be annotated in its runtime representation"
+        );
+    }
+}
+
+#[test]
+fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
+    // The value is a record whose field is already the canonical record; the
+    // annotation names the same field by the union it came from. Those are one
+    // runtime value under two names, and the verifier only ever asks about the
+    // runtime value.
+    let goods = Type::TaggedVariant(waluau_ast::TaggedVariant {
+        tag: "Upgrade".into(),
+        payload: Box::new(Type::Record(BTreeMap::from([(
+            "kind".to_string(),
+            Type::Numeric(NumericType::I32),
+        )]))),
+    });
+    let declared = Type::Record(BTreeMap::from([("goods".to_string(), goods)]));
+    let represented = Type::Record(BTreeMap::from([(
+        "goods".to_string(),
+        Type::canonical_tagged_union_record(),
+    )]));
+    let function = Function {
+        name: "entry".into(),
+        params: vec![("offer".into(), Type::Nullable(Box::new(represented)))],
+        return_type: Type::Bool,
+        entry: BlockId(0),
+        next_value: 2,
+        capture_count: 0,
+        value_symbols: BTreeMap::new(),
+        symbol_id: None,
+        blocks: BTreeMap::from([(
+            BlockId(0),
+            BasicBlock {
+                id: BlockId(0),
+                instructions: vec![
+                    (ValueId(0), Instruction::Param(0)),
+                    (
+                        ValueId(1),
+                        Instruction::IsNull {
+                            value: ValueId(0),
+                            ty: declared,
+                        },
+                    ),
+                ],
+                terminator: Terminator::Return(ValueId(1)),
+            },
+        )]),
+    };
+    verify(&Module {
+        globals: Vec::new(),
+        functions: vec![function],
+        declared_imports: Vec::new(),
+        start: None,
+        tag_ids: std::collections::BTreeMap::new(),
+    })
+    .expect("a nullable record and its inner record should match through the union naming");
+}
+
+#[test]
+fn verifies_constructor_widened_into_a_nullable_tagged_union() {
+    let source = r#"
+        type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+
+        function find(want: bool): Goods?
+            if want then
+                return Upgrade({ kind = 1 })
+            end
+            return nil
+        end
+
+        function slot(): i32
+            local held: Goods? = Spell({ kind = 2 })
+            if held ~= nil then
+                return 1
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect(
+        "constructing into a nullable union widens the canonical record to the nullable union",
+    );
 }
 
 #[test]

@@ -244,14 +244,29 @@ fn verify_function(
                         block.id,
                         *value,
                     )?;
-                    if value_ty != *from {
+                    // `types_match`, not equality: the cast annotation may name a
+                    // tagged union by the canonical `{ tag, value }` record while
+                    // the value that defines it names the source-level union, or
+                    // the other way round. Every other operand check here already
+                    // reads the two spellings as the same value.
+                    if !types_match(&value_ty, from) {
                         return Err(Diagnostic::new(format!(
                             "cast source in block {:?} has type {}, expected {}",
                             block.id, value_ty, from
                         )));
                     }
-                    let widens_to_nullable = to.nullable_inner().as_ref() == Some(from)
+                    // Nullable widening and narrowing compare the payload with
+                    // `types_match`, not equality, because a tagged union is named
+                    // by its source type on one side of the cast and by the
+                    // canonical `{ tag, value }` record on the other: constructing
+                    // into a `Goods?` casts `{tag, value}` to `Goods?`.
+                    let widens_to_nullable = to
+                        .nullable_inner()
+                        .is_some_and(|inner| types_match(&inner, from))
                         || matches!((from, to), (Type::Nil, Type::Nullable(_)));
+                    let narrows_from_nullable = from
+                        .nullable_inner()
+                        .is_some_and(|inner| types_match(&inner, to));
                     // Nullable numerics widen/narrow with a payload
                     // conversion: `i32 -> f64?`, `i32? -> i64`, `i32? -> f64?`.
                     let nullable_numeric =
@@ -260,7 +275,7 @@ fn verify_function(
                         && nullable_numeric(to))
                         || (nullable_numeric(from) && matches!(to, Type::Numeric(_)))
                         || (nullable_numeric(from) && nullable_numeric(to));
-                    if from.nullable_inner().as_ref() != Some(to)
+                    if !narrows_from_nullable
                         && !widens_to_nullable
                         && !nullable_numeric_conversion
                     {
@@ -1321,28 +1336,23 @@ fn require_block(function: &Function, block: BlockId) -> Result<(), Diagnostic> 
     }
 }
 
-/// At the Wasm/IR level, `TaggedUnion`, `TaggedVariant`, and the canonical record
-/// `{ tag: i32, value: unknown }` all share the same runtime representation.
-/// Return true when two types are compatible for call-argument and return-type checks.
+/// Whether two IR annotations describe the same runtime value. The verifier only
+/// ever asks that question: `TaggedUnion`, `TaggedVariant`, and the canonical
+/// record `{ tag: i32, value: unknown }` are one value under three names, and a
+/// union nested anywhere inside an aggregate is spelled by its source type in
+/// one annotation and by the canonical record in the other. So normalize both
+/// sides to their runtime representation first and compare the normalized types
+/// from there; comparing the raw spellings answers a source-level question the
+/// verifier is not asking.
 fn types_match(a: &Type, b: &Type) -> bool {
     if a == b {
         return true;
     }
-    let is_tagged = |t: &Type| {
-        matches!(t, Type::TaggedUnion(_) | Type::TaggedVariant(_))
-            || t == &Type::canonical_tagged_union_record()
-    };
-    if is_tagged(a) && is_tagged(b) {
+    let (a, b) = (a.runtime_representation(), b.runtime_representation());
+    if a == b {
         return true;
     }
-    // The same rule one level down: a union nested inside an aggregate is named
-    // by its source type in one annotation and by the canonical record in the
-    // other. Only tagged types are rewritten, so agreeing under the rewrite
-    // means these are the same value under two names.
-    if a.runtime_representation() == b.runtime_representation() {
-        return true;
-    }
-    match (a, b) {
+    match (&a, &b) {
         (Type::Array(a), Type::Variadic(b)) | (Type::Variadic(a), Type::Array(b)) => a == b,
         (Type::Nullable(inner), other) | (other, Type::Nullable(inner)) => inner.as_ref() == other,
         _ => false,

@@ -1534,6 +1534,45 @@ fn resolve_type_refs_allowing_forward_refs(
                 })
                 .collect::<Result<_, Diagnostic>>()?,
         )),
+        // A variant payload is a type position like any other: a name written
+        // there has to mean the declaration it means everywhere else. Left
+        // unresolved, the payload keeps a raw `Named` that nothing else in the
+        // program ever produces, so a value of the aliased type will not unify
+        // with the payload it was written for. The payload is guarded the way a
+        // record field is: it lives behind the `value` field of the canonical
+        // `{ tag, value }` record, so a payload that names the union under
+        // resolution still describes a finite runtime value.
+        Type::TaggedVariant(variant) => Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(resolve_type_refs_allowing_forward_refs(
+                variant.payload.as_ref(),
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+                true,
+            )?),
+        })),
+        Type::TaggedUnion(variants) => Ok(Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| {
+                    Ok(waluau_ast::TaggedVariant {
+                        tag: variant.tag.clone(),
+                        payload: Box::new(resolve_type_refs_allowing_forward_refs(
+                            variant.payload.as_ref(),
+                            active_type_params,
+                            raw_opaque,
+                            generic,
+                            opaque_cache,
+                            stack,
+                            true,
+                        )?),
+                    })
+                })
+                .collect::<Result<_, Diagnostic>>()?,
+        )),
         other => Ok(other.clone()),
     }
 }
@@ -1974,6 +2013,40 @@ fn resolve_type_refs_fixpoint(
                             fixpoint_mode,
                         )?,
                     ))
+                })
+                .collect::<Result<_, Diagnostic>>()?,
+        )),
+        // Same reasoning as the forward-ref resolver: a payload is an ordinary
+        // type position, and skipping it here is what left `Named` aliases
+        // stranded inside variants.
+        Type::TaggedVariant(variant) => Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(resolve_type_refs_fixpoint(
+                variant.payload.as_ref(),
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+                fixpoint_mode,
+            )?),
+        })),
+        Type::TaggedUnion(variants) => Ok(Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| {
+                    Ok(waluau_ast::TaggedVariant {
+                        tag: variant.tag.clone(),
+                        payload: Box::new(resolve_type_refs_fixpoint(
+                            variant.payload.as_ref(),
+                            active_type_params,
+                            raw_opaque,
+                            generic,
+                            opaque_cache,
+                            stack,
+                            fixpoint_mode,
+                        )?),
+                    })
                 })
                 .collect::<Result<_, Diagnostic>>()?,
         )),

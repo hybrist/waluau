@@ -674,6 +674,22 @@ impl Type {
         }
     }
 
+    /// The variant a constructor call `Tag(payload)` builds when this type is
+    /// the expectation. A nullable is transparent here and nowhere else:
+    /// constructing is the one direction in which `nil` cannot be the answer,
+    /// so `Goods?` names the same variants as `Goods` and the constructed value
+    /// simply widens into the nullable. Reading a nullable union — `is`,
+    /// pattern matching, narrowing — must prove the value non-nil first, so
+    /// those paths keep using [`Type::tagged_variant`], which stops at the
+    /// `Nullable`.
+    pub fn constructed_tagged_variant(&self, tag: &str) -> Option<TaggedVariant> {
+        match self {
+            Self::Nullable(inner) => inner.constructed_tagged_variant(tag),
+            Self::Opaque { ty, .. } => ty.constructed_tagged_variant(tag),
+            other => other.tagged_variant(tag),
+        }
+    }
+
     /// The canonical GC record used at runtime to represent any tagged-union value.
     /// Layout: `{ tag: i32, value: unknown }` where `tag` is the variant discriminant
     /// and `value` holds the boxed payload (anyref / i31ref).
@@ -1710,4 +1726,63 @@ pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod type_tests {
+    use super::{NumericType, TaggedVariant, Type};
+
+    fn goods() -> Type {
+        Type::TaggedUnion(vec![
+            TaggedVariant {
+                tag: "Upgrade".to_string(),
+                payload: Box::new(Type::Numeric(NumericType::I32)),
+            },
+            TaggedVariant {
+                tag: "Spell".to_string(),
+                payload: Box::new(Type::Numeric(NumericType::I32)),
+            },
+        ])
+    }
+
+    #[test]
+    fn tagged_variant_stops_at_a_nullable() {
+        let nullable = Type::Nullable(Box::new(goods()));
+        assert!(nullable.tagged_variant("Upgrade").is_none());
+        assert!(nullable.remove_tagged_variant("Upgrade").is_none());
+    }
+
+    #[test]
+    fn constructed_tagged_variant_looks_through_a_nullable() {
+        let nullable = Type::Nullable(Box::new(goods()));
+        let variant = nullable
+            .constructed_tagged_variant("Upgrade")
+            .expect("a nullable union constructs the same variants as the union");
+        assert_eq!(variant.tag, "Upgrade");
+        assert_eq!(*variant.payload, Type::Numeric(NumericType::I32));
+    }
+
+    #[test]
+    fn constructed_tagged_variant_looks_through_an_aliased_nullable() {
+        let aliased = Type::Opaque {
+            name: "MaybeGoods".to_string(),
+            ty: Box::new(Type::Nullable(Box::new(Type::Opaque {
+                name: "Goods".to_string(),
+                ty: Box::new(goods()),
+            }))),
+        };
+        assert_eq!(
+            aliased
+                .constructed_tagged_variant("Spell")
+                .expect("alias wrappers are transparent")
+                .tag,
+            "Spell"
+        );
+    }
+
+    #[test]
+    fn constructed_tagged_variant_rejects_an_unknown_tag() {
+        let nullable = Type::Nullable(Box::new(goods()));
+        assert!(nullable.constructed_tagged_variant("Trinket").is_none());
+    }
 }
