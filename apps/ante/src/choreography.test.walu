@@ -25,4 +25,14 @@ describe("Ante Magic presentation choreography", function()
         expect(choreography.reveal_finished(state)):toBe(false)
         expect(state.sheet.xs[0]):toBe(321.0)
     end)
+
+
+    it("rejects invalid restored spell conditions", function()
+        expect(choreography.restore(
+            "target-presentation-v4,5,0,1,0,0,0") == nil):toBe(true)
+        expect(choreography.restore(
+            "target-presentation-v4,5,9,0,0,0,0") == nil):toBe(true)
+        expect(choreography.restore(
+            "target-presentation-v4,5,1,3,0,0,0") == nil):toBe(true)
+    end)
 end)

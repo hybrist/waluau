@@ -110,11 +110,10 @@ const EASE_OUT_QUINT: Ease = Ease.out_quint
 const EASE_IN_CUBIC: Ease = Ease.in_cubic
 const EASE_IN_OUT_CUBIC: Ease = Ease.in_out_cubic
 const EASE_OUT_BACK: Ease = Ease.out_back
--- TODO(waluau-6lc5.6): Replace raw animation-effect ids with a nominal enum so
--- every Anim carries one of the renderer's supported effects.
-const ANIM_EFFECT_MOVE: i32 = 0
-const ANIM_EFFECT_ASH_REAPPEAR: i32 = 1
-const ANIM_EFFECT_THROW: i32 = 2
+enum AnimEffect { move, ash_reappear, throw }
+const ANIM_EFFECT_MOVE: AnimEffect = AnimEffect.move
+const ANIM_EFFECT_ASH_REAPPEAR: AnimEffect = AnimEffect.ash_reappear
+const ANIM_EFFECT_THROW: AnimEffect = AnimEffect.throw
 
 -- The thrown card's dials, straight from the tuning the card stories settled
 -- on: how long the sheet may get, how far past its slot the throw carries it
@@ -172,7 +171,7 @@ type Anim = {
     card: game.Card,
     faces: Face,
     known: bool,
-    effect: i32,
+    effect: AnimEffect,
     from: Point,
     to: Point,
     angle0: f64,
@@ -957,8 +956,9 @@ end
 
 function trick_scoring(trick: game.Trick): {bool}
     if trick.winner == 0 then return { false, false, false, false, false } end
-    local winner: game.TrickSide = game.trick_side(trick, trick.winner)
-    local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
+    local winner: game.TrickSide = game.trick_side(trick, trick.winner::game.Side)
+    local loser: game.TrickSide = game.trick_side(
+        trick, game.opposite_side(trick.winner::game.Side))
     return game.scoring_cards(
         { trick.middle[0], trick.middle[1], trick.middle[2], winner.cards[0], winner.cards[1] },
         winner.value, loser.value)
