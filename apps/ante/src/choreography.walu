@@ -13,8 +13,7 @@ local card_warp = require("./card_warp")
 
 type AnimKind = "none" | "deal" | "swap" | "firebolt-replace"
 
-type State = {
-    fan_parts: {f64},
+type Session = {
     anims: {render.Anim},
     anim_clock: f64,
     anim_total: f64,
@@ -40,26 +39,17 @@ type State = {
     spells: render.SpellParticles,
     discards: {game.Card},
     computer_won: {game.Card},
-    player_won: {game.Card},
+    player_won: {game.Card}
+}
+
+type State = {
+    fan_parts: {f64},
+    session: Session,
     -- Scratch geometry for the thrown table_card cards: one deformable sheet the
     -- renderer rebuilds each frame a throw is in the air. Working state like
     -- the ash, never snapshotted — and kept here because a card deformed
     -- sixty times a second should not be sixty allocations.
     sheet: card_warp.Mesh
-}
--- TODO(waluau-6lc5.7): Reuse render.Interaction instead of duplicating its
--- shape here and copying every field again in draw.
-type Interaction = {
-    hand_focus: i32,
-    table_card_cursor: i32,
-    cursor_area: "hand" | "table-cards",
-    play_picks: {i32},
-    swap_hand: {i32},
-    swap_table_cards: {i32},
-    modal: "none" | "history" | "help" | "final",
-    revealing: bool,
-    casting: bool,
-    cast_slot: i32
 }
 
 
@@ -103,9 +93,8 @@ const NOT_BURNING: f64 = -1.0
 const SNAPSHOT_SCHEMA: string = "target-presentation-v4"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
-function new(): State
+function new_session(): Session
     return {
-        fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 },
         anims = {},
         anim_clock = 0.0,
         anim_total = 0.0,
@@ -120,47 +109,40 @@ function new(): State
         discards = {},
         computer_won = {},
         player_won = {},
+    }
+end
+
+function new(): State
+    return {
+        fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 },
+        session = new_session(),
         sheet = card_warp.new_mesh(THROW_COLUMNS, THROW_ROWS),
     }
 end
 
 function begin_anims(state: State, anims: {render.Anim}, total: f64, kind: AnimKind): unit
-    state.anims = anims
-    state.anim_clock = 0.0
-    state.anim_total = total
-    state.anim_kind = kind
+    state.session.anims = anims
+    state.session.anim_clock = 0.0
+    state.session.anim_total = total
+    state.session.anim_kind = kind
 end
 
 function skip(state: State): unit
-    state.anims = {}
-    state.anim_clock = 0.0
-    state.anim_total = 0.0
-    state.anim_kind = "none"
+    state.session.anims = {}
+    state.session.anim_clock = 0.0
+    state.session.anim_total = 0.0
+    state.session.anim_kind = "none"
 end
 
 function is_animating(state: State): bool
-    return state.anim_kind ~= "none"
+    return state.session.anim_kind ~= "none"
 end
 
--- TODO(waluau-6lc5.7): Centralize State reset without mirroring every field or
--- allocating the fresh mesh that `new` creates but reset deliberately retains.
 function reset(state: State): unit
-    local fresh: State = new()
-    state.fan_parts = fresh.fan_parts
-    state.anims = fresh.anims
-    state.anim_clock = fresh.anim_clock
-    state.anim_total = fresh.anim_total
-    state.anim_kind = fresh.anim_kind
-    state.reveal_clock = fresh.reveal_clock
-    state.reveal_burns = fresh.reveal_burns
-    state.power_kind = fresh.power_kind
-    state.power_clock = fresh.power_clock
-    state.power_target = fresh.power_target
-    state.ash = fresh.ash
-    state.spells = fresh.spells
-    state.discards = fresh.discards
-    state.computer_won = fresh.computer_won
-    state.player_won = fresh.player_won
+    state.fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 }
+    state.session = new_session()
+    -- `sheet` is working geometry, not duel state. Keep its allocation across
+    -- resets; the renderer overwrites every vertex before a thrown card draws.
 end
 
 -- Spell treatments mirror the rules-owned gameplay state: kinds 1-4 replace
@@ -170,24 +152,24 @@ end
 function apply_power(state: State, kind: i32, target: i32): unit
     if kind < 0 or kind > 4 then return end
     if target < 0 or target > 2 then return end
-    state.power_kind = kind
-    state.power_clock = 0.0
-    state.power_target = target
+    state.session.power_kind = kind
+    state.session.power_clock = 0.0
+    state.session.power_target = target
     -- A new condition starts its table_card's burn from nothing; whatever the last
     -- one left in the air belongs to a card that is no longer there. The same
     -- holds for the last cast's trail and burst, and for the dust off a grave
     -- that is no longer open.
-    state.ash.table_card_sheet:reset()
-    state.ash.table_card_fall:reset()
-    state.spells.sparks.trail:reset()
-    state.spells.sparks.burst:reset()
-    state.spells.grave_dust:reset()
+    state.session.ash.table_card_sheet:reset()
+    state.session.ash.table_card_fall:reset()
+    state.session.spells.sparks.trail:reset()
+    state.session.spells.sparks.burst:reset()
+    state.session.spells.grave_dust:reset()
 end
 
 -- Both of a burning table_card's falls run off one reading of its burn.
 function tick_table_card_ash(state: State, progress: f64, dt: f64): unit
-    render.step_reveal_ash(state.ash.table_card_sheet, progress, dt)
-    render.step_table_card_ash(state.ash.table_card_fall, progress, dt)
+    render.step_reveal_ash(state.session.ash.table_card_sheet, progress, dt)
+    render.step_table_card_ash(state.session.ash.table_card_fall, progress, dt)
 end
 
 -- Advance a spell condition and return the table_card whose Firebolt has just
@@ -200,27 +182,27 @@ end
 -- frame it always did — a visual emitter must not be able to move when a card
 -- is replaced.
 function update_power(state: State, dt: f64): i32
-    if state.power_kind == 0 then
+    if state.session.power_kind == 0 then
         tick_table_card_ash(state, NOT_BURNING, dt)
         render.step_spell_particles(
-            state.spells, layout.current(), 0, 0.0, state.power_target, dt)
+            state.session.spells, layout.current(), 0, 0.0, state.session.power_target, dt)
         return -1
     end
-    state.power_clock += dt
+    state.session.power_clock += dt
     local burning: f64 = NOT_BURNING
-    if state.power_kind == game.spell_firebolt then
-        burning = render.fireball_formation(state.power_clock)
+    if state.session.power_kind == game.spell_firebolt then
+        burning = render.fireball_formation(state.session.power_clock)
     end
     tick_table_card_ash(state, burning, dt)
     render.step_spell_particles(
-        state.spells, layout.current(),
-        state.power_kind, state.power_clock, state.power_target, dt)
-    if state.power_kind == game.spell_firebolt
-        and render.firebolt_burn_finished(state.power_clock)
+        state.session.spells, layout.current(),
+        state.session.power_kind, state.session.power_clock, state.session.power_target, dt)
+    if state.session.power_kind == game.spell_firebolt
+        and render.firebolt_burn_finished(state.session.power_clock)
     then
-        local target: i32 = state.power_target
-        state.power_kind = 0
-        state.power_clock = 0.0
+        local target: i32 = state.session.power_target
+        state.session.power_kind = 0
+        state.session.power_clock = 0.0
         return target
     end
     return -1
@@ -230,12 +212,12 @@ end
 -- rules thaw every table_card when a swap resolves and again when a round does, and
 -- the ice on the board has to go with them.
 function clear_freeze(state: State): unit
-    if state.power_kind == game.spell_freeze_ray then apply_power(state, 0, 0) end
+    if state.session.power_kind == game.spell_freeze_ray then apply_power(state, 0, 0) end
 end
 
 function firebolt_pending(state: State): bool
-    return state.power_kind == game.spell_firebolt
-        or state.anim_kind == "firebolt-replace"
+    return state.session.power_kind == game.spell_firebolt
+        or state.session.anim_kind == "firebolt-replace"
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -289,18 +271,18 @@ end
 -- cue crossed this frame. The engine adapter decides how the sound is played,
 -- but it no longer knows face modes or timing implementation.
 function update(state: State, dt: f64): i32
-    if state.anim_kind == "none" then return 0 end
-    local previous: f64 = state.anim_clock
-    state.anim_clock += dt
+    if state.session.anim_kind == "none" then return 0 end
+    local previous: f64 = state.session.anim_clock
+    state.session.anim_clock += dt
     local cues: i32 = 0
-    for anim in state.anims do
+    for anim in state.session.anims do
         if anim.faces == render.faces_flip_up or anim.faces == render.faces_flip_down then
-            if crossed(previous, state.anim_clock, turn_sound_time(anim)) then
+            if crossed(previous, state.session.anim_clock, turn_sound_time(anim)) then
                 cues += 1
             end
         end
     end
-    if state.anim_clock >= state.anim_total then skip(state) end
+    if state.session.anim_clock >= state.session.anim_total then skip(state) end
     return cues
 end
 
@@ -316,27 +298,27 @@ end
 -- `burns` says whether this reveal ends with a losing pair coming apart. A
 -- stalemate does not, and its emitters stay shut for the whole reveal.
 function begin_reveal(state: State, burns: bool): unit
-    state.reveal_clock = 0.0
-    state.reveal_burns = burns
-    state.ash.reveal_first:reset()
-    state.ash.reveal_second:reset()
+    state.session.reveal_clock = 0.0
+    state.session.reveal_burns = burns
+    state.session.ash.reveal_first:reset()
+    state.session.ash.reveal_second:reset()
 end
 
 function update_reveal(state: State, dt: f64): i32
-    local previous: f64 = state.reveal_clock
-    state.reveal_clock += dt
-    if state.reveal_clock >= REVEAL_SECONDS then state.reveal_clock = REVEAL_SECONDS end
+    local previous: f64 = state.session.reveal_clock
+    state.session.reveal_clock += dt
+    if state.session.reveal_clock >= REVEAL_SECONDS then state.session.reveal_clock = REVEAL_SECONDS end
     local burning: f64 = NOT_BURNING
-    if state.reveal_burns then
-        burning = render.loss_burn_progress(state.reveal_clock)
+    if state.session.reveal_burns then
+        burning = render.loss_burn_progress(state.session.reveal_clock)
     end
-    render.step_reveal_ash(state.ash.reveal_first, burning, dt)
-    render.step_reveal_ash(state.ash.reveal_second, burning, dt)
-    return reveal_flip_cues(previous, state.reveal_clock)
+    render.step_reveal_ash(state.session.ash.reveal_first, burning, dt)
+    render.step_reveal_ash(state.session.ash.reveal_second, burning, dt)
+    return reveal_flip_cues(previous, state.session.reveal_clock)
 end
 
 function finish_reveal(state: State): unit
-    state.reveal_clock = REVEAL_SECONDS
+    state.session.reveal_clock = REVEAL_SECONDS
 end
 
 -- The counterpart to finish_reveal for a spell: jump the launch to the reading
@@ -351,15 +333,15 @@ end
 -- restore pays the debt and clears the condition. A burn that had already
 -- resolved before the snapshot left power_kind at zero and returns above.
 function finish_power(state: State): unit
-    if state.power_kind == 0 then
-        state.power_clock = 0.0
+    if state.session.power_kind == 0 then
+        state.session.power_clock = 0.0
         return
     end
-    state.power_clock = render.power_settled_clock()
+    state.session.power_clock = render.power_settled_clock()
 end
 
 function reveal_finished(state: State): bool
-    return state.reveal_clock >= REVEAL_SECONDS
+    return state.session.reveal_clock >= REVEAL_SECONDS
 end
 
 -- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
@@ -447,7 +429,7 @@ function firebolt_resolved(
     replacement: game.Card,
     target: i32
 ): unit
-    table.insert(state.discards, discarded)
+    table.insert(state.session.discards, discarded)
     local anims: {render.Anim} = {}
     local finish: f64 = push_deal(
         layout.current(), anims, replacement, render.slot_middle, target,
@@ -604,8 +586,8 @@ end
 function record_burned_losers(state: State, trick: game.Trick): unit
     if trick.winner == 0 then return end
     local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
-    table.insert(state.discards, loser.cards[0])
-    table.insert(state.discards, loser.cards[1])
+    table.insert(state.session.discards, loser.cards[0])
+    table.insert(state.session.discards, loser.cards[1])
 end
 
 function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: State): unit
@@ -625,10 +607,10 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         local winner: game.TrickSide = game.trick_side(trick, trick.winner)
         local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
         local won_kind: render.Slot = render.slot_computer_won
-        local won: {game.Card} = state.computer_won
+        local won: {game.Card} = state.session.computer_won
         if trick.winner > 0 then
             won_kind = render.slot_player_won
-            won = state.player_won
+            won = state.session.player_won
         end
         for i = 0::i32, 2::i32 do
             if not trick.frozen_middle[i] then
@@ -645,15 +627,15 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         for i = 0::i32, 2::i32 do
             if not trick.frozen_middle[i] then
                 push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos(layout.current(), render.slot_middle, i), row_center, render.slot_aside)
-                table.insert(state.discards, trick.middle[i])
+                table.insert(state.session.discards, trick.middle[i])
             end
         end
         push_scoop_pair(layout.current(), anims, trick.player_cards[0], trick.player_cards[1], render.slot_player, trick.player_first, trick.player_second, old_count)
         push_scoop_pair(layout.current(), anims, trick.computer_cards[0], trick.computer_cards[1], render.slot_computer, trick.computer_first, trick.computer_second, old_count)
-        table.insert(state.discards, trick.player_cards[0])
-        table.insert(state.discards, trick.player_cards[1])
-        table.insert(state.discards, trick.computer_cards[0])
-        table.insert(state.discards, trick.computer_cards[1])
+        table.insert(state.session.discards, trick.player_cards[0])
+        table.insert(state.session.discards, trick.player_cards[1])
+        table.insert(state.session.discards, trick.computer_cards[0])
+        table.insert(state.session.discards, trick.computer_cards[1])
     end
     local finish: f64 = push_hand_shifts(layout.current(), anims, view, trick, 1, SCOOP_GATHER_SECONDS)
     local computer_finish: f64 = push_hand_shifts(layout.current(), anims, view, trick, -1, SCOOP_GATHER_SECONDS)
@@ -807,11 +789,11 @@ end
 -- table_card, and the three pile ledgers.
 function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_i32(parts, #state.fan_parts)
-    snapshot_data.append_i32(parts, state.power_kind)
-    snapshot_data.append_i32(parts, state.power_target)
-    append_cards(parts, state.discards)
-    append_cards(parts, state.computer_won)
-    append_cards(parts, state.player_won)
+    snapshot_data.append_i32(parts, state.session.power_kind)
+    snapshot_data.append_i32(parts, state.session.power_target)
+    append_cards(parts, state.session.discards)
+    append_cards(parts, state.session.computer_won)
+    append_cards(parts, state.session.player_won)
 end
 
 function next_cards(reader: snapshot_data.Reader): {game.Card}
@@ -826,11 +808,11 @@ end
 function restore_snapshot(reader: snapshot_data.Reader): State
     local state: State = new()
     state.fan_parts = closed_fan_parts(reader:next_length())
-    state.power_kind = reader:next_i32()
-    state.power_target = reader:next_i32()
-    state.discards = next_cards(reader)
-    state.computer_won = next_cards(reader)
-    state.player_won = next_cards(reader)
+    state.session.power_kind = reader:next_i32()
+    state.session.power_target = reader:next_i32()
+    state.session.discards = next_cards(reader)
+    state.session.computer_won = next_cards(reader)
+    state.session.player_won = next_cards(reader)
     -- The reveal comes back finished rather than mid-burn. The trick it shows
     -- was already resolved by the rules before the reveal began, and the flow
     -- gate still waits for the player to advance out of it, so this settles a
@@ -860,42 +842,31 @@ function draw(
     view: game.View,
     run: run_module.View,
     state: State,
-    interaction: Interaction
+    interaction: render.Interaction
 ): unit
     render.draw(surface, {
         viewport = layout.current(),
         view = view,
         run = run,
-        interaction = {
-            hand_focus = interaction.hand_focus,
-            table_card_cursor = interaction.table_card_cursor,
-            cursor_area = interaction.cursor_area,
-            play_picks = interaction.play_picks,
-            swap_hand = interaction.swap_hand,
-            swap_table_cards = interaction.swap_table_cards,
-            modal = interaction.modal,
-            revealing = interaction.revealing,
-            casting = interaction.casting,
-            cast_slot = interaction.cast_slot,
-        },
+        interaction = interaction,
         motion = {
             fan_parts = state.fan_parts,
-            reveal_clock = state.reveal_clock,
-            anims = state.anims,
-            anim_clock = state.anim_clock,
+            reveal_clock = state.session.reveal_clock,
+            anims = state.session.anims,
+            anim_clock = state.session.anim_clock,
         },
         piles = {
-            discards = state.discards,
-            computer_won = state.computer_won,
-            player_won = state.player_won,
+            discards = state.session.discards,
+            computer_won = state.session.computer_won,
+            player_won = state.session.player_won,
         },
         spell = {
-            kind = state.power_kind,
-            clock = state.power_clock,
-            target = state.power_target,
+            kind = state.session.power_kind,
+            clock = state.session.power_clock,
+            target = state.session.power_target,
         },
-        ash = state.ash,
-        spells = state.spells,
+        ash = state.session.ash,
+        spells = state.session.spells,
         sheet = state.sheet,
     })
 end

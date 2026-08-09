@@ -1,0 +1,28 @@
+require("waluau:vitest")
+
+local choreography = require("./choreography")
+local game = require("./game")
+
+describe("Ante Magic presentation choreography", function()
+    it("resets duel presentation through one initializer and retains scratch geometry", function()
+        local state: choreography.State = choreography.new()
+        local baseline: string = choreography.snapshot(state)
+
+        state.fan_parts = { 0.2, 0.4 }
+        state.sheet.xs[0] = 321.0
+        choreography.apply_power(state, game.spell_firebolt, 1)
+        choreography.finish_reveal(state)
+
+        expect(choreography.snapshot(state) == baseline):toBe(false)
+        expect(choreography.firebolt_pending(state)):toBe(true)
+        expect(choreography.reveal_finished(state)):toBe(true)
+
+        choreography.reset(state)
+
+        expect(choreography.snapshot(state)):toBe(baseline)
+        expect(#state.fan_parts):toBe(5)
+        expect(choreography.firebolt_pending(state)):toBe(false)
+        expect(choreography.reveal_finished(state)):toBe(false)
+        expect(state.sheet.xs[0]):toBe(321.0)
+    end)
+end)
