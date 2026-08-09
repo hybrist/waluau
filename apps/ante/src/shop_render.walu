@@ -158,8 +158,9 @@ function draw(
     ink.text(graphics, "THE SHOP", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
     local subtitle: string = "GOLD SPENT HERE WILL NOT ENTER DUEL " .. tostring(run.duel)
     local offered: i32 = 0
-    if choosing then
-        offered = state.offers[state.pending].kind
+    local pending: i32? = state.pending
+    if choosing and pending ~= nil then
+        offered = state.offers[pending or 0].kind
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end
     ink.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, ink.fade("#a1a1aa", alpha))

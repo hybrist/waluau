@@ -12,6 +12,11 @@ local layout = require("./layout")
 local card_warp = require("./card_warp")
 
 type AnimKind = "none" | "deal" | "swap" | "firebolt-replace"
+type Power = { kind: game.SpellKind, clock: f64, target: i32 }
+
+function power_or_resting(power: Power?): Power
+    return power or { kind = 1, clock = 0.0, target = 0 }
+end
 
 type Session = {
     anims: {render.Anim},
@@ -23,11 +28,9 @@ type Session = {
     -- both pairs standing, so the ash emitters stay shut rather than shedding
     -- flakes nothing will ever draw.
     reveal_burns: bool,
-    -- TODO(waluau-6lc5.6): Represent the inactive/active spell presentation as
-    -- tagged state instead of kind zero plus independently valid clock/target.
-    power_kind: i32,
-    power_clock: f64,
-    power_target: i32,
+    -- A spell condition is either wholly absent or carries all of the state
+    -- required to present it. There is no inactive clock or target.
+    power: Power?,
     -- Live ash. These are simulations, not settings: they hold the flakes
     -- currently in the air, which is why they are advanced every tick beside
     -- the clocks that release them and are never written to a snapshot.
@@ -101,9 +104,7 @@ function new_session(): Session
         anim_kind = "none",
         reveal_clock = 0.0,
         reveal_burns = false,
-        power_kind = 0,
-        power_clock = 0.0,
-        power_target = 0,
+        power = nil,
         ash = render.new_card_ash(),
         spells = render.new_spell_particles(),
         discards = {},
@@ -152,9 +153,14 @@ end
 function apply_power(state: State, kind: i32, target: i32): unit
     if kind < 0 or kind > 4 then return end
     if target < 0 or target > 2 then return end
-    state.session.power_kind = kind
-    state.session.power_clock = 0.0
-    state.session.power_target = target
+    if kind == 0 then state.session.power = nil
+    else
+        local checked: game.SpellKind? = game.spell_kind_from(kind)
+        if checked == nil then return end
+        state.session.power = {
+            kind = checked::game.SpellKind, clock = 0.0, target = target,
+        }
+    end
     -- A new condition starts its table_card's burn from nothing; whatever the last
     -- one left in the air belongs to a card that is no longer there. The same
     -- holds for the last cast's trail and burst, and for the dust off a grave
@@ -177,32 +183,33 @@ end
 -- the condition at that boundary lets the replacement card render intact.
 --
 -- The particle ticks are deliberately outside that decision. They read the
--- clock this function has already advanced and never touch power_kind,
--- power_clock, or the returned table_card, so the rules boundary fires on exactly the
+-- clock this function has already advanced and never touch the active power
+-- record or the returned table_card, so the rules boundary fires on exactly the
 -- frame it always did — a visual emitter must not be able to move when a card
 -- is replaced.
 function update_power(state: State, dt: f64): i32
-    if state.session.power_kind == 0 then
+    local power: Power? = state.session.power
+    if power == nil then
         tick_table_card_ash(state, NOT_BURNING, dt)
         render.step_spell_particles(
-            state.session.spells, layout.current(), 0, 0.0, state.session.power_target, dt)
+            state.session.spells, layout.current(), 0, 0.0, 0, dt)
         return -1
     end
-    state.session.power_clock += dt
+    local active: Power = power_or_resting(power)
+    active.clock += dt
     local burning: f64 = NOT_BURNING
-    if state.session.power_kind == game.spell_firebolt then
-        burning = render.fireball_formation(state.session.power_clock)
+    if (active.kind::i32) == game.spell_firebolt then
+        burning = render.fireball_formation(active.clock)
     end
     tick_table_card_ash(state, burning, dt)
     render.step_spell_particles(
         state.session.spells, layout.current(),
-        state.session.power_kind, state.session.power_clock, state.session.power_target, dt)
-    if state.session.power_kind == game.spell_firebolt
-        and render.firebolt_burn_finished(state.session.power_clock)
+        active.kind::i32, active.clock, active.target, dt)
+    if (active.kind::i32) == game.spell_firebolt
+        and render.firebolt_burn_finished(active.clock)
     then
-        local target: i32 = state.session.power_target
-        state.session.power_kind = 0
-        state.session.power_clock = 0.0
+        local target: i32 = active.target
+        state.session.power = nil
         return target
     end
     return -1
@@ -212,11 +219,17 @@ end
 -- rules thaw every table_card when a swap resolves and again when a round does, and
 -- the ice on the board has to go with them.
 function clear_freeze(state: State): unit
-    if state.session.power_kind == game.spell_freeze_ray then apply_power(state, 0, 0) end
+    local power: Power? = state.session.power
+    local active: Power = power_or_resting(power)
+    if power ~= nil and (active.kind::i32) == game.spell_freeze_ray then
+        apply_power(state, 0, 0)
+    end
 end
 
 function firebolt_pending(state: State): bool
-    return state.session.power_kind == game.spell_firebolt
+    local power: Power? = state.session.power
+    local active: Power = power_or_resting(power)
+    return (power ~= nil and (active.kind::i32) == game.spell_firebolt)
         or state.session.anim_kind == "firebolt-replace"
 end
 
@@ -331,13 +344,11 @@ end
 -- snapshot taken mid-burn caught a duel where that mutation had not happened
 -- yet. The settled reading is past that boundary, so the first update after a
 -- restore pays the debt and clears the condition. A burn that had already
--- resolved before the snapshot left power_kind at zero and returns above.
+-- resolved before the snapshot left no active power and returns above.
 function finish_power(state: State): unit
-    if state.session.power_kind == 0 then
-        state.session.power_clock = 0.0
-        return
-    end
-    state.session.power_clock = render.power_settled_clock()
+    local power: Power? = state.session.power
+    local active: Power = power_or_resting(power)
+    if power ~= nil then active.clock = render.power_settled_clock() end
 end
 
 function reveal_finished(state: State): bool
@@ -346,7 +357,7 @@ end
 
 -- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
 -- Opponent's sealed row.
-function hand_slot_kind(owner: i32): render.Slot
+function hand_slot_kind(owner: game.Side): render.Slot
     if owner > 0 then return render.slot_player end
     return render.slot_computer
 end
@@ -391,7 +402,7 @@ end
 -- The hands keep the flat slide: five cards arriving as aerial throws would
 -- be a juggling act, not a deal, and the sealed row has nothing to show off.
 function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card, kind: render.Slot, index: i32, count: i32, faces: render.Face, start: f64): f64
-    local effect: i32 = render.anim_effect_move
+    local effect: render.AnimEffect = render.anim_effect_move
     local duration: f64 = DEAL_SECONDS
     if kind == render.slot_middle then
         effect = render.anim_effect_throw
@@ -539,7 +550,7 @@ end
 -- slot in the settled one. In the base game both layouts hold five cards; in
 -- a boss battle the new layout is two cards narrower, so every survivor moves
 -- as the row recentres, not just the ones past a spent slot.
-function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: game.Trick, owner: i32, start: f64): f64
+function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: game.Trick, owner: game.Side, start: f64): f64
     local side: game.TrickSide = game.trick_side(trick, owner)
     local live: {game.HandSlot} = game.view_side(view, owner)
     local kind: render.Slot = hand_slot_kind(owner)
@@ -585,7 +596,8 @@ end
 
 function record_burned_losers(state: State, trick: game.Trick): unit
     if trick.winner == 0 then return end
-    local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
+    local loser: game.TrickSide = game.trick_side(
+        trick, game.opposite_side(trick.winner::game.Side))
     table.insert(state.session.discards, loser.cards[0])
     table.insert(state.session.discards, loser.cards[1])
 end
@@ -604,8 +616,9 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
     local row_center: render.Point = render.midpoint(
         render.row_left(layout.current()), render.row_right(layout.current()))
     if trick.winner ~= 0 then
-        local winner: game.TrickSide = game.trick_side(trick, trick.winner)
-        local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
+        local winner: game.TrickSide = game.trick_side(trick, trick.winner::game.Side)
+        local loser: game.TrickSide = game.trick_side(
+            trick, game.opposite_side(trick.winner::game.Side))
         local won_kind: render.Slot = render.slot_computer_won
         local won: {game.Card} = state.session.computer_won
         if trick.winner > 0 then
@@ -665,7 +678,7 @@ function swap(outcome: game.SwapOutcome, state: State): unit
     local count: i32 = #outcome.hand_indices
     if outcome.winner == 0 or count == 0 then return end
     local player_won: bool = outcome.winner > 0
-    local hand_kind: render.Slot = hand_slot_kind(outcome.winner)
+    local hand_kind: render.Slot = hand_slot_kind(outcome.winner::game.Side)
     local last_stagger: f64 = SWAP_STEP * ((count - 1)::f64)
     local aside_start: f64 = SWAP_LEAVE_SECONDS + last_stagger + 0.05
     local place_start: f64 = aside_start + SWAP_ASIDE_SECONDS + last_stagger + 0.1
@@ -789,8 +802,10 @@ end
 -- table_card, and the three pile ledgers.
 function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_i32(parts, #state.fan_parts)
-    snapshot_data.append_i32(parts, state.session.power_kind)
-    snapshot_data.append_i32(parts, state.session.power_target)
+    local power: Power? = state.session.power
+    local active: Power = power_or_resting(power)
+    snapshot_data.append_i32(parts, if power == nil then 0 else active.kind::i32)
+    snapshot_data.append_i32(parts, active.target)
     append_cards(parts, state.session.discards)
     append_cards(parts, state.session.computer_won)
     append_cards(parts, state.session.player_won)
@@ -800,19 +815,45 @@ function next_cards(reader: snapshot_data.Reader): {game.Card}
     local cards: {game.Card} = {}
     local length: i32 = reader:next_length()
     for _ = 1, length do
-        table.insert(cards, { rank = reader:next_i32(), suit = reader:next_i32() })
+        table.insert(cards, {
+            rank = reader:next_i32(), suit = reader:next_i32()::game.Suit,
+        })
     end
     return cards
 end
 
-function restore_snapshot(reader: snapshot_data.Reader): State
+function valid_cards(cards: {game.Card}): bool
+    for card in cards do
+        if not game.valid_card(card) then return false end
+    end
+    return true
+end
+
+function restore_snapshot(reader: snapshot_data.Reader): State?
     local state: State = new()
     state.fan_parts = closed_fan_parts(reader:next_length())
-    state.session.power_kind = reader:next_i32()
-    state.session.power_target = reader:next_i32()
+    local power_kind: i32 = reader:next_i32()
+    local power_target: i32 = reader:next_i32()
+    if power_kind == 0 then
+        if power_target ~= 0 then return nil end
+    else
+        if power_kind < 1 or power_kind > game.spell_kind_count then return nil end
+        if power_target < 0 or power_target > 2 then return nil end
+        local checked: game.SpellKind? = game.spell_kind_from(power_kind)
+        if checked == nil then return nil end
+        state.session.power = {
+            kind = checked::game.SpellKind, clock = 0.0, target = power_target,
+        }
+    end
     state.session.discards = next_cards(reader)
     state.session.computer_won = next_cards(reader)
     state.session.player_won = next_cards(reader)
+    if not valid_cards(state.session.discards)
+        or not valid_cards(state.session.computer_won)
+        or not valid_cards(state.session.player_won)
+    then
+        return nil
+    end
     -- The reveal comes back finished rather than mid-burn. The trick it shows
     -- was already resolved by the rules before the reveal began, and the flow
     -- gate still waits for the player to advance out of it, so this settles a
@@ -832,9 +873,10 @@ function restore(snapshot_value: string): State?
     local reader: snapshot_data.Reader = snapshot_data.reader(
         snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
     if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
-    local restored: State = restore_snapshot(reader)
+    local restored: State? = restore_snapshot(reader)
+    if restored == nil then return nil end
     if not reader:complete() then return nil end
-    return restored
+    return restored::State
 end
 
 function draw(
@@ -844,6 +886,8 @@ function draw(
     state: State,
     interaction: render.Interaction
 ): unit
+    local power: Power? = state.session.power
+    local active: Power = power_or_resting(power)
     render.draw(surface, {
         viewport = layout.current(),
         view = view,
@@ -861,9 +905,9 @@ function draw(
             player_won = state.session.player_won,
         },
         spell = {
-            kind = state.session.power_kind,
-            clock = state.session.power_clock,
-            target = state.session.power_target,
+            kind = if power == nil then 0 else active.kind::i32,
+            clock = active.clock,
+            target = active.target,
         },
         ash = state.session.ash,
         spells = state.session.spells,
