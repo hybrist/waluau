@@ -1212,6 +1212,7 @@ describe('browser conformance', () => {
   });
 
   it('compiles, binds, configures, and releases game-provided shaders', async () => {
+    let uniformTypeReads = 0;
     const { root, cleanup } = await compileAndInstantiateWithDom(
       {
         '/fixtures/game-engine/gpu-shaders.walu': gameEngineGpuShaders,
@@ -1222,7 +1223,21 @@ describe('browser conformance', () => {
         '/engine/input.walu': gameEngineInput,
         '/engine/time.walu': gameEngineTime,
       },
-      '/fixtures/game-engine/gpu-shaders.walu'
+      '/fixtures/game-engine/gpu-shaders.walu',
+      {
+        hostImports: {
+          game_gpu_uniform_type(gl, program, name) {
+            uniformTypeReads += 1;
+            const expected = String(name);
+            const count = Number(gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS));
+            for (let index = 0; index < count; index += 1) {
+              const info = gl.getActiveUniform(program, index);
+              if (info?.name === expected) return Number(info.type);
+            }
+            return 0;
+          },
+        },
+      },
     );
     try {
       const canvas = root.querySelector('#walua-game-canvas');
@@ -1242,6 +1257,10 @@ describe('browser conformance', () => {
       expect(secondPixel[0]).toBeGreaterThan(200);
       expect(secondPixel[1]).toBeLessThan(10);
       expect(secondPixel[2]).toBeGreaterThan(200);
+      // One read for the missing declaration, one for the mistyped declaration,
+      // three for the first valid block, none for the cached repeat, and three
+      // fresh reads after hot replacement advances the program revision.
+      expect(uniformTypeReads).toBe(8);
     } finally {
       cleanup();
     }

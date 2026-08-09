@@ -132,14 +132,17 @@ drops those draws.
 Custom shaders consume any subset of the renderer's standard vertex attributes:
 `a_position`, `a_color`, `a_uv`, and `a_textured`. The engine supplies
 `u_texture`, live frame time in `u_time`, and logical-pixel scaling in
-`u_pixel_scale` when those uniforms are declared. `use_shader` and
-`use_default_shader` switch programs; float/vector and integer uniform setters
-target the active program. `replace_shader` compiles and links a fresh program,
-then atomically updates the existing `Shader` handle. A compile/link failure
-returns structured data and leaves the prior program live; replacing an active
-program flushes and rebinds it before deleting the old program. Program and
-uniform changes flush pending geometry, so one batch never observes two shader
-states.
+`u_pixel_scale` when those uniforms are declared. `bind_shader` accepts a block
+of `float_parameter`, vector-parameter, and integer-parameter values. It checks
+every name and GLSL value shape through WebGL2 before selecting the program or
+drawing, then caches uniform locations for that linked program revision.
+`replace_shader` compiles and links a fresh program, atomically updates the
+existing `Shader` handle, and advances its revision so the next bind resolves
+fresh locations. A compile/link failure returns structured data and leaves the
+prior program live; replacing an active program flushes and rebinds it before
+deleting the old program. `use_shader`, `use_default_shader`, and the individual
+uniform setters remain available for dynamic cases. Program and uniform changes
+flush pending geometry, so one batch never observes two shader states.
 
 For filled rectangles, `a_uv` spans `(0, 0)` at the top-left to `(1, 1)` at
 the bottom-right even though `a_textured` is zero. This gives procedural
@@ -148,11 +151,18 @@ Sprites use their atlas UVs with `a_textured` set to one; other untextured
 primitives currently receive zero UVs.
 
 ```walu
+local graphics_module = require("waluau:engine/graphics")
 local result = graphics:create_shader(vertex_source, pixel_source)
 if result.ok then
-    graphics:use_shader(result.shader)
-    graphics:set_uniform_float("u_strength", 0.8)
-    graphics:fill_rectangle(24.0, 24.0, 96.0, 48.0)
+    local bound = graphics:bind_shader(result.shader, {
+        graphics_module.float_parameter("u_strength", 0.8),
+        graphics_module.vec4_parameter("u_tint", 0.2, 0.8, 1.0, 1.0),
+    })
+    if bound.ok then
+        graphics:fill_rectangle(24.0, 24.0, 96.0, 48.0)
+    else
+        print(bound.error.code .. ": " .. bound.error.message)
+    end
     graphics:use_default_shader()
     graphics:release_shader(result.shader)
 else

@@ -1448,6 +1448,18 @@ export function createGameServicesHost(options = {}) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
     },
+    game_gpu_uniform_type: (gl, program, name) => {
+      if (!gl?.isProgram?.(program)) return 0;
+      const expected = String(name);
+      const count = Number(gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS) ?? 0);
+      for (let index = 0; index < count; index += 1) {
+        const info = gl.getActiveUniform(program, index);
+        if (info?.name === expected || (info?.size > 1 && info.name === `${expected}[0]`)) {
+          return Number(info.type);
+        }
+      }
+      return 0;
+    },
     game_gpu_resource_release: releaseGpu,
 
     game_audio_load_sound: (path) => load('sound', path, async (response) => {

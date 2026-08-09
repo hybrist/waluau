@@ -15,18 +15,17 @@ function use(graphics: Graphics, effects: EffectShaders, seed: i32, ember: bool)
         return false
     end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then
-        return false
-    end
     local kind: f64 = 0.0
     if ember then
         kind = 1.0
     end
-    local progress_ok: bool = graphics:set_uniform_float("u_progress", kind)
-    local seed_ok: bool = graphics:set_uniform_float("u_seed", seed::f64)
-    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", 1.0)
-    local mode_ok: bool = graphics:set_uniform_float("u_particle_mode", 1.0)
-    return progress_ok and seed_ok and aspect_ok and mode_ok
+    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(shader, {
+        graphics_module.float_parameter("u_progress", kind),
+        graphics_module.float_parameter("u_seed", seed::f64),
+        graphics_module.float_parameter("u_aspect", 1.0),
+        graphics_module.float_parameter("u_particle_mode", 1.0),
+    })
+    return binding.ok
 end
 
 function stop(graphics: Graphics): unit
