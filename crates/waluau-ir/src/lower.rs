@@ -1576,10 +1576,7 @@ fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
 /// cells, casts, etc.) so the annotation matches the value's actual runtime
 /// representation that `verify` checks against.
 fn to_runtime_type(ty: &Type) -> Type {
-    match ty {
-        Type::TaggedUnion(_) | Type::TaggedVariant(_) => Type::canonical_tagged_union_record(),
-        other => other.clone(),
-    }
+    ty.runtime_representation()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5872,10 +5869,11 @@ impl Builder<'_> {
                 let element_ty = array_ty
                     .element_type()
                     .expect("array literal must have element type");
+                // Typed without an expectation, so an element that needs one — a
+                // tagged-union constructor, say — simply reports "not a pack".
                 let trailing_ty = elements
                     .last()
-                    .map(|element| self.infer_expr_type(element, types, None))
-                    .transpose()?;
+                    .and_then(|element| self.infer_expr_type(element, types, None).ok());
                 let trailing_pack = trailing_ty.as_ref().is_some_and(|ty| match ty {
                     Type::Variadic(_) => true,
                     Type::Multi(parts) => {
@@ -5940,7 +5938,7 @@ impl Builder<'_> {
                     .map(|element| self.lower_expr(element, env, types, Some(element_ty.clone())))
                     .collect::<Result<Vec<_>, _>>()?;
                 let value = self.emit(Instruction::ArrayNew {
-                    element_ty,
+                    element_ty: to_runtime_type(&element_ty),
                     elements: lowered,
                 });
                 self.coerce_value(value, array_ty, expected)?
@@ -5983,7 +5981,10 @@ impl Builder<'_> {
                 let value = self.emit(Instruction::ArrayGet {
                     array,
                     index,
-                    element_ty: element_ty.clone(),
+                    // The cell is annotated with what it holds; the read still
+                    // carries the source element type onwards, so a tagged union
+                    // read out of an array can still be matched on.
+                    element_ty: to_runtime_type(&element_ty),
                 });
                 self.coerce_value(value, element_ty, expected)?
             }
@@ -6018,7 +6019,7 @@ impl Builder<'_> {
                     lowered_fields.push(field_value);
                 }
                 let value = self.emit(Instruction::StructNew {
-                    struct_ty: struct_ty.clone(),
+                    struct_ty: to_runtime_type(&struct_ty),
                     fields: lowered_fields,
                 });
                 self.coerce_value(value, struct_ty, expected)?
@@ -6593,7 +6594,12 @@ impl Builder<'_> {
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
             Expr::Name(name, symbol_id, _) => {
-                let symbol_id = symbol_id.expect("symbol_id should be resolved");
+                // A name with no symbol is normally a tagged-union constructor being
+                // probed without the expected type that would resolve it. Callers that
+                // probe types recover from this, so it is a diagnostic, not a crash.
+                let Some(symbol_id) = *symbol_id else {
+                    return Err(Diagnostic::new(format!("unknown name '{name}'")));
+                };
                 if let Some(ty) = types.get(&symbol_id) {
                     // Coerce toward the expected type when possible (dynamic
                     // `unknown` values, nullable widening, ...); callers that
@@ -7335,6 +7341,11 @@ impl Builder<'_> {
                 let target = coerce_type(actual.clone(), Some(expected.clone()))?;
                 if target == actual {
                     Ok(value)
+                } else if to_runtime_type(&target) == to_runtime_type(&actual) {
+                    // The two annotations name the same runtime value — a tagged
+                    // union against the canonical record that represents it, or a
+                    // variant widening to its union. There is nothing to convert.
+                    Ok(value)
                 } else {
                     Ok(self.emit(Instruction::Cast {
                         value,
@@ -7483,10 +7494,13 @@ impl Builder<'_> {
             }
         }
         let expected_element = expected.as_ref().and_then(Type::element_type);
+        // Typed without an expectation, so a constructor that names a variant of
+        // the expected element type cannot be inferred here; a failure only means
+        // the element is not a variadic pack (see infer_array_literal in
+        // waluau-hir).
         let trailing_pack = elements
             .last()
-            .map(|element| self.infer_expr_type(element, types, None))
-            .transpose()?
+            .and_then(|element| self.infer_expr_type(element, types, None).ok())
             .is_some_and(|ty| match ty {
                 Type::Variadic(_) => true,
                 Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
@@ -7497,6 +7511,16 @@ impl Builder<'_> {
         // element type to unknown.
         if trailing_pack || expected_element == Some(Type::Unknown) {
             return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
+        }
+        // A tagged union stays the element type of the whole literal rather than
+        // narrowing to the first element's variant (see infer_array_literal in
+        // waluau-hir), so every element resolves its constructor against all the
+        // variants the array declares.
+        if let Some(union_ty) = expected_element.as_ref().filter(|ty| {
+            matches!(ty, Type::TaggedUnion(_))
+                || matches!(ty, Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::TaggedUnion(_)))
+        }) {
+            return coerce_type(Type::Array(Box::new(union_ty.clone())), expected);
         }
         let mut iter = elements.iter();
         let first = iter.next().expect("non-empty array literal");
@@ -9286,7 +9310,11 @@ impl Builder<'_> {
             )));
         }
         let element_ty = self.table_array_element_type(TABLE_INSERT, args, types)?;
-        let array_ty = Type::Array(Box::new(element_ty.clone()));
+        // The value is lowered against the source element type, so a tagged-union
+        // constructor still resolves against the variants the element declares;
+        // the cells it is stored into are annotated with what they actually hold.
+        let stored_ty = to_runtime_type(&element_ty);
+        let array_ty = Type::Array(Box::new(stored_ty.clone()));
         let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
         let i32_ty = Type::Numeric(NumericType::I32);
 
@@ -9298,7 +9326,7 @@ impl Builder<'_> {
                 array,
                 index: len,
                 value,
-                element_ty,
+                element_ty: stored_ty,
             });
             let unit = self.emit(Instruction::Unit);
             return self.coerce_value(unit, Type::Unit, expected);
@@ -9309,6 +9337,7 @@ impl Builder<'_> {
         // outside 0..=#t traps via the array bounds checks).
         let pos = self.lower_expr(&args[1], env, types, Some(i32_ty.clone()))?;
         let value = self.lower_expr(&args[2], env, types, Some(element_ty.clone()))?;
+        let element_ty = stored_ty;
         let n = self.emit(Instruction::ArrayLen { array });
         self.emit(Instruction::ArraySet {
             array,
@@ -11988,6 +12017,21 @@ fn type_record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
 }
 
 fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic> {
+    // A tagged union nested inside an aggregate is named by its source type in
+    // some annotations and by the canonical `{ tag, value }` record that
+    // represents it in others — `{Goods}` against `{{tag, value}}`, say. Those
+    // describe the same value, and `to_runtime_type` rewrites nothing else, so
+    // agreeing under it means the annotations differ only in that naming. A bare
+    // tagged type is left to the tag-by-tag arms below.
+    if let Some(expected_ty) = &expected {
+        if !matches!(actual, Type::TaggedUnion(_) | Type::TaggedVariant(_))
+            && !matches!(expected_ty, Type::TaggedUnion(_) | Type::TaggedVariant(_))
+            && actual != *expected_ty
+            && to_runtime_type(&actual) == to_runtime_type(expected_ty)
+        {
+            return Ok(expected.expect("checked in the guard above"));
+        }
+    }
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
@@ -12029,9 +12073,58 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
                     ))
                 }),
         },
+        // A constructor produces the single variant it names; that variant widens
+        // to any union declaring the same tag. Both are the canonical
+        // `{ tag, value }` record at the IR level, so this is a type-level
+        // widening with no lowering behind it — which is also why a value that has
+        // already been reduced to that record still coerces here.
+        Some(Type::TaggedUnion(expected_variants)) => match &actual {
+            Type::TaggedVariant(actual_variant)
+                if expected_variants
+                    .iter()
+                    .any(|variant| variant.tag == actual_variant.tag) =>
+            {
+                Ok(Type::TaggedUnion(expected_variants))
+            }
+            Type::TaggedUnion(actual_variants)
+                if actual_variants.iter().all(|actual_variant| {
+                    expected_variants
+                        .iter()
+                        .any(|variant| variant.tag == actual_variant.tag)
+                }) =>
+            {
+                Ok(Type::TaggedUnion(expected_variants))
+            }
+            _ if actual == Type::canonical_tagged_union_record() => {
+                Ok(Type::TaggedUnion(expected_variants))
+            }
+            _ => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual} to {}",
+                Type::TaggedUnion(expected_variants)
+            ))),
+        },
+        Some(Type::TaggedVariant(expected_variant)) => match &actual {
+            Type::TaggedVariant(actual_variant) if actual_variant.tag == expected_variant.tag => {
+                Ok(Type::TaggedVariant(expected_variant))
+            }
+            _ if actual == Type::canonical_tagged_union_record() => {
+                Ok(Type::TaggedVariant(expected_variant))
+            }
+            _ => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual} to {}({})",
+                expected_variant.tag, expected_variant.payload
+            ))),
+        },
         // Records coerce field-by-field so a field value can box into an `unknown`
         // field. Lowering then targets the expected field types and inserts boxes.
         Some(Type::Record(expected_fields)) => {
+            // A tagged union is that record at the IR level, so a variant value
+            // reaching a record-typed position is already the shape it needs.
+            if matches!(actual, Type::TaggedUnion(_) | Type::TaggedVariant(_))
+                && Type::Record(expected_fields.clone()) == Type::canonical_tagged_union_record()
+            {
+                return Ok(Type::Record(expected_fields));
+            }
             let Type::Record(actual_fields) = &actual else {
                 return Err(Diagnostic::new(format!(
                     "cannot implicitly convert {actual} to {}",
