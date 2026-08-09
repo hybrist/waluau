@@ -19,7 +19,7 @@ assert(c == 10)
 assert(d == 20)
 
 -- A top-level untyped const literal is a module constant, visible inside
--- function bodies just like `local NAME <const> = <literal>`.
+-- function bodies just like `local NAME <const> = <expression>`.
 const SCALE = 3.0
 
 function scaled(v: f64): f64

@@ -914,164 +914,14 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     }
 }
 
-/// Collects a module's constants: top-level `local NAME <const> = <literal>`
-/// bindings. Their values are inlined wherever the name is referenced from a
-/// function body (top-level locals are otherwise invisible there) and
-/// wherever a consumer reads them off the module's export table. Numeric
-/// literals keep their annotated types through explicit casts; aggregate
-/// literals are recursively typed and cloned so each use owns its value.
 fn module_constants(program: &Program) -> Result<HashMap<String, Expr>, Diagnostic> {
-    let mut constants = HashMap::new();
-    let type_declarations = program
-        .type_declarations
-        .iter()
-        .map(|declaration| (declaration.name.as_str(), &declaration.ty))
-        .collect::<HashMap<_, _>>();
-    for stmt in &program.top_level {
-        let Stmt::Let {
-            name,
-            rebindability: waluau_ast::Rebindability::Const,
-            ty,
-            value,
-            ..
-        } = stmt
-        else {
-            continue;
-        };
-        let resolved_ty = ty
-            .as_ref()
-            .map(|ty| resolve_constant_type(ty, &type_declarations, &mut HashSet::new()));
-        let literal =
-            constant_literal(resolved_ty.as_ref(), value, &constants).ok_or_else(|| {
-                let diagnostic = Diagnostic::new(format!(
-                    "top-level const '{name}' initializer must be an inlinable literal"
-                ));
-                match value.span() {
-                    Some(span) => diagnostic.with_span(span),
-                    None => diagnostic,
-                }
-            })?;
-        constants.insert(name.clone(), literal);
-    }
-    Ok(constants)
-}
-
-/// The inlinable expression for a constant initializer, or `None` when the
-/// initializer cannot be duplicated without evaluating mutable state or
-/// effects.
-fn constant_literal(
-    ty: Option<&Type>,
-    value: &Expr,
-    constants: &HashMap<String, Expr>,
-) -> Option<Expr> {
-    match value {
-        Expr::Number(..) => numeric_constant_literal(ty, value),
-        Expr::Unary {
-            op: waluau_ast::UnaryOp::Neg,
-            expr,
-            ..
-        } if matches!(&**expr, Expr::Number(..)) => numeric_constant_literal(ty, value),
-        Expr::Bool(..) | Expr::String(..) | Expr::Bytes(..) | Expr::Nil(..) => Some(value.clone()),
-        Expr::Cast { expr, ty, span } => Some(Expr::Cast {
-            expr: Box::new(constant_literal(Some(ty), expr, constants)?),
-            ty: ty.clone(),
-            span: *span,
-        }),
-        Expr::Name(name, _, _) => constants.get(name).cloned(),
-        Expr::TableLiteral { fields, span } => {
-            let expected_fields = match ty {
-                Some(Type::Record(fields)) => Some(fields),
-                _ => None,
-            };
-            let fields = fields
-                .iter()
-                .map(|field| {
-                    Some(TableField {
-                        name: field.name.clone(),
-                        value: constant_literal(
-                            expected_fields.and_then(|fields| fields.get(&field.name)),
-                            &field.value,
-                            constants,
-                        )?,
-                    })
-                })
-                .collect::<Option<Vec<_>>>()?;
-            typed_aggregate_literal(
-                Expr::TableLiteral {
-                    fields,
-                    span: *span,
-                },
-                ty,
-            )
+    waluau_ast::collect_module_constants(program).map_err(|error| {
+        let diagnostic = Diagnostic::new(error.to_string());
+        match error.span() {
+            Some(span) => diagnostic.with_span(span),
+            None => diagnostic,
         }
-        Expr::ArrayLiteral { elements, span } => {
-            let element_ty = match ty {
-                Some(Type::Array(element_ty)) => Some(element_ty.as_ref()),
-                _ => None,
-            };
-            let elements = elements
-                .iter()
-                .map(|element| constant_literal(element_ty, element, constants))
-                .collect::<Option<Vec<_>>>()?;
-            typed_aggregate_literal(
-                Expr::ArrayLiteral {
-                    elements,
-                    span: *span,
-                },
-                ty,
-            )
-        }
-        _ => None,
-    }
-}
-
-fn typed_aggregate_literal(value: Expr, ty: Option<&Type>) -> Option<Expr> {
-    match ty {
-        Some(ty @ (Type::Record(_) | Type::Array(_))) => Some(Expr::Cast {
-            expr: Box::new(value),
-            ty: ty.clone(),
-            span: None,
-        }),
-        None => Some(value),
-        Some(_) => None,
-    }
-}
-
-fn resolve_constant_type(
-    ty: &Type,
-    declarations: &HashMap<&str, &Type>,
-    visiting: &mut HashSet<String>,
-) -> Type {
-    match ty {
-        Type::Named { name, type_args } if type_args.is_empty() => {
-            let Some(declared) = declarations.get(name.as_str()) else {
-                return ty.clone();
-            };
-            if !visiting.insert(name.clone()) {
-                return ty.clone();
-            }
-            let resolved = resolve_constant_type(declared, declarations, visiting);
-            visiting.remove(name);
-            resolved
-        }
-        Type::Array(element) => Type::Array(Box::new(resolve_constant_type(
-            element,
-            declarations,
-            visiting,
-        ))),
-        Type::Record(fields) => Type::Record(
-            fields
-                .iter()
-                .map(|(name, ty)| {
-                    (
-                        name.clone(),
-                        resolve_constant_type(ty, declarations, visiting),
-                    )
-                })
-                .collect(),
-        ),
-        _ => ty.clone(),
-    }
+    })
 }
 
 fn is_aggregate_constant(expr: &Expr) -> bool {
@@ -1091,20 +941,6 @@ fn is_named_const(stmt: &Stmt, names: &HashSet<String>) -> bool {
             ..
         } if names.contains(name)
     )
-}
-
-fn numeric_constant_literal(ty: Option<&Type>, value: &Expr) -> Option<Expr> {
-    match ty {
-        // Keep the annotated numeric type: a bare literal would default to f64
-        // in unconstrained positions.
-        Some(ty @ Type::Numeric(_)) => Some(Expr::Cast {
-            expr: Box::new(value.clone()),
-            ty: ty.clone(),
-            span: None,
-        }),
-        None => Some(value.clone()),
-        Some(_) => None,
-    }
 }
 
 fn compute_module_export(
@@ -1484,7 +1320,7 @@ fn export_field_value(
         Expr::Function(_) => Ok(ExportedField::Function(format!("{prefix}{}", field.name))),
         _ => Err(Diagnostic::new(format!(
             "module export field '{}' must be a function name, namespace member, `function ... end`, \
-             or a top-level `local NAME <const> = <literal>` constant",
+             or a top-level `local NAME <const> = <expression>` constant",
             field.name
         ))),
     }

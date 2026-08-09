@@ -144,11 +144,7 @@ const WIN_LIFT_Y: f64 = 10.0
 -- beneath the completed row and brightens over WIN_GLOW_FADE. It extends a
 -- little beyond the cards, while its uninterrupted centre remains visible in
 -- the four gaps. The cards themselves are drawn later over the light field.
--- Kept equal to FLY_START + FLY_STAGGER + FLY_SECONDS; top-level constants
--- require literal initializers.
--- TODO(waluau-6lc5.1): Express this relationship directly once computed
--- top-level constant initializers are supported.
-const WIN_GLOW_START: f64 = 1.87
+const WIN_GLOW_START: f64 = FLY_START + FLY_STAGGER + FLY_SECONDS
 const WIN_GLOW_FADE: f64 = 0.35
 const SHIMMER_MARGIN: f64 = 64.0
 

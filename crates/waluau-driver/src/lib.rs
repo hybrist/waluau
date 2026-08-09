@@ -2815,7 +2815,7 @@ end
     }
 
     #[test]
-    fn compile_file_rejects_non_literal_module_constant_at_declaration() {
+    fn compile_file_rejects_effectful_module_constant_at_declaration() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
             tempdir.path().join("config.walu"),
@@ -2856,11 +2856,59 @@ end
         let error = super::compile_file(&input_path).expect_err("compile should fail");
         assert_eq!(
             error.to_string(),
-            "top-level const 'SIZE' initializer must be an inlinable literal"
+            "top-level const 'SIZE' initializer must be a side-effect-free expression over literals and earlier constants"
         );
         assert!(
             error.span().is_some(),
             "diagnostic should point at the initializer"
+        );
+    }
+
+    #[test]
+    fn compile_file_supports_computed_module_constants() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                const BASE: i32 = 3
+                const SQUARED: i32 = BASE ^ 2
+                const RESULT: i32 = -(SQUARED * 5 + BASE) // 2
+
+                function result(): i32
+                    return RESULT
+                end
+
+                assert(result() == -24)
+            "#,
+        )
+        .expect("fixture should write");
+
+        let wasm = super::compile_file(&input_path).expect("computed constants should compile");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_rejects_module_constant_cycles() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                const FIRST: i32 = SECOND + 1
+                const SECOND: i32 = FIRST + 1
+            "#,
+        )
+        .expect("fixture should write");
+
+        let error = super::compile_file(&input_path).expect_err("constant cycle should fail");
+        assert_eq!(
+            error.to_string(),
+            "top-level const cycle detected: 'FIRST' -> 'SECOND' -> 'FIRST'"
+        );
+        assert!(
+            error.span().is_some(),
+            "diagnostic should point at the cycle"
         );
     }
 

@@ -1,10 +1,12 @@
 pub use waluau_span::Span;
 
 mod lua_pattern;
+mod module_constants;
 pub use lua_pattern::{
     LuaCaptureKind, lua_pattern_captures, lua_pattern_is_plain, string_find_result_types,
     string_match_result_types,
 };
+pub use module_constants::{ModuleConstantError, collect_module_constants};
 
 /// Capture kinds for a string builtin's pattern argument. Only literal
 /// patterns can be analyzed statically; non-literal patterns and malformed
