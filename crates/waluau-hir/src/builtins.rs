@@ -93,6 +93,19 @@ fn promise_resolved_type(ty: &Type) -> Option<Type> {
     })
 }
 
+fn promise_type_erases_readonly(ty: &Type) -> bool {
+    match ty {
+        // Generic extern specializations are nominalized into this stable name
+        // by the resolver. The extern representation itself has no child type
+        // to inspect, so retain the source capability by recognizing it here.
+        Type::Opaque { name, ty } if is_promise_like_extern(ty) => name
+            .strip_prefix("Promise<")
+            .and_then(|inner| inner.strip_suffix('>'))
+            .is_some_and(|inner| inner.contains("readonly<")),
+        _ => false,
+    }
+}
+
 fn infer_promise_await_arg(
     arg: &Expr,
     vars: &HashMap<String, Binding>,
@@ -311,6 +324,11 @@ pub(super) fn infer_coroutine_builtin_call(
                 Err(error) => return Some(Err(error)),
             };
             if is_promise_like_extern(&promise_ty) {
+                if promise_type_erases_readonly(&promise_ty) {
+                    return Some(Err(Diagnostic::new(
+                        "coroutine.await_promise cannot erase a read-only result into unknown",
+                    )));
+                }
                 Some(coerce_type(Type::Unknown, expected))
             } else {
                 Some(Err(Diagnostic::new(
@@ -348,13 +366,18 @@ pub(super) fn infer_pcall_builtin_call(
     };
     let Type::Function {
         params,
-        return_type: _,
+        return_type,
     } = callee_ty
     else {
         return Some(Err(Diagnostic::new(format!(
             "{PCALL} expects a function, got {callee_ty}"
         ))));
     };
+    if return_type.contains_readonly() {
+        return Some(Err(Diagnostic::new(
+            "pcall cannot erase a read-only return value into unknown",
+        )));
+    }
     if !call_arity_matches(&params, args.len() - 1) {
         return Some(Err(Diagnostic::new(format!(
             "{PCALL} protected function expects {} arguments, got {}",
@@ -694,15 +717,23 @@ fn infer_table_array_element(
     vars: &HashMap<String, Binding>,
     fn_signatures: &HashMap<String, FnSignature>,
     active_type_params: &HashSet<String>,
+    requires_mutable: bool,
 ) -> Result<Type, Diagnostic> {
     let list_ty =
         super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)?;
-    match list_ty {
-        Type::Array(element) => Ok(*element),
-        other => Err(Diagnostic::new(format!(
-            "{name} expects an array as its first argument, got {other}"
-        ))),
+    if !list_ty.is_array() {
+        return Err(Diagnostic::new(format!(
+            "{name} expects an array as its first argument, got {list_ty}"
+        )));
     }
+    if requires_mutable && list_ty.is_readonly() {
+        return Err(Diagnostic::new(format!(
+            "{name} cannot mutate a read-only array view"
+        )));
+    }
+    Ok(list_ty
+        .element_type()
+        .expect("array type has an element type"))
 }
 
 /// `Float32Array.create(len)` (and the other typed-array kinds): allocate a
@@ -857,6 +888,7 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
+                false,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -892,9 +924,14 @@ pub(super) fn infer_table_builtin_call(
                     args.len()
                 ))));
             }
-            if let Err(error) =
-                infer_table_array_element(name, &args[0], vars, fn_signatures, active_type_params)
-            {
+            if let Err(error) = infer_table_array_element(
+                name,
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                false,
+            ) {
                 return Some(Err(error));
             }
             return Some(coerce_type(i32_ty, expected));
@@ -912,6 +949,7 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
+                true,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -964,6 +1002,7 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
+                true,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -1000,6 +1039,7 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
+                true,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -1058,7 +1098,7 @@ pub(super) fn infer_table_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
-    if list_ty != expected_list {
+    if list_ty.element_type() != Some(Type::String) {
         return Some(Err(Diagnostic::new(format!(
             "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
         ))));

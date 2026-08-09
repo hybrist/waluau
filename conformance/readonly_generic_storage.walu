@@ -1,0 +1,4 @@
+-- conformance: error=cannot preserve deep read-only access
+
+function reject<T>(view: readonly<{ item: T }>): unit
+end

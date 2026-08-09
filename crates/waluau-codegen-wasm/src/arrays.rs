@@ -368,7 +368,9 @@ fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
                 insert_nullable_box_kinds(ty, out);
             }
         }
-        Type::Opaque { ty, .. } | Type::ExternSubtype(ty) => insert_nullable_box_kinds(ty, out),
+        Type::Opaque { ty, .. } | Type::Readonly(ty) | Type::ExternSubtype(ty) => {
+            insert_nullable_box_kinds(ty, out)
+        }
         Type::TaggedVariant(variant) => insert_nullable_box_kinds(&variant.payload, out),
         Type::TaggedUnion(variants) => {
             for variant in variants {
@@ -691,7 +693,9 @@ pub(crate) fn array_storage_type(
         // section, so `(array (ref null $coroutine_state))` would create an invalid forward
         // reference. Store thread handles as `anyref` and cast on `array.get` instead.
         Type::Thread => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
-        Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+        Type::Named { .. } | Type::Opaque { .. } | Type::Readonly(_) => {
+            unreachable!("read-only types must be erased before wasm lowering")
+        }
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",
         )),
@@ -750,7 +754,9 @@ pub(crate) fn record_storage_type(
             registry.coroutine_state_type()?,
         ))),
         Type::Unknown => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
-        Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+        Type::Named { .. } | Type::Opaque { .. } | Type::Readonly(_) => {
+            unreachable!("read-only types must be erased before wasm lowering")
+        }
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in record fields",
         )),

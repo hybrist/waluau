@@ -46,8 +46,8 @@ pub(crate) fn wasm_type(
         Type::Numeric(NumericType::U64 | NumericType::I64) => Ok(ValType::I64),
         Type::Numeric(NumericType::F32) => Ok(ValType::F32),
         Type::Numeric(NumericType::F64) => Ok(ValType::F64),
-        Type::Named { .. } | Type::Opaque { .. } => {
-            unreachable!("opaque types must be erased before wasm lowering")
+        Type::Named { .. } | Type::Opaque { .. } | Type::Readonly(_) => {
+            unreachable!("source-only types must be erased before wasm lowering")
         }
         Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => {
             unreachable!("literal unions must be erased before wasm lowering")

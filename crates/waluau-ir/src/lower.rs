@@ -900,6 +900,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
             }
         }
         Type::Opaque { ty, .. }
+        | Type::Readonly(ty)
         | Type::Array(ty)
         | Type::Variadic(ty)
         | Type::Nullable(ty)
@@ -1515,6 +1516,10 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         Type::StringLiteralUnion(_) => Type::String,
         Type::NumberLiteralUnion(union) => Type::Numeric(union.numeric),
         Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types_at(inner, true))),
+        // Read-only is enforced entirely by HIR. It is an aliasing discipline,
+        // not a runtime representation, so IR sees the existing structural
+        // value directly and performs no copy or conversion.
+        Type::Readonly(inner) => erase_type_opaque_types_at(inner, nested),
         Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types_at(inner, true))),
         Type::Variadic(inner) => Type::Variadic(Box::new(erase_type_opaque_types_at(inner, true))),
         Type::Multi(types) => Type::Multi(
@@ -1549,6 +1554,7 @@ fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
         Type::Opaque { ty, .. }
         | Type::ExternSubtype(ty)
         | Type::Nullable(ty)
+        | Type::Readonly(ty)
         | Type::Array(ty)
         | Type::Variadic(ty) => type_contains_opaque_name(ty, target),
         Type::Multi(types) => types
@@ -4885,6 +4891,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to {name}",
                         )));
                     }
+                    Type::Readonly(_) => {
+                        return Err(Diagnostic::new(
+                            "read-only types must be erased before IR lowering",
+                        ));
+                    }
                     Type::Array(_) | Type::Variadic(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to array",
@@ -5250,6 +5261,11 @@ impl Builder<'_> {
                             Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::Readonly(_) => {
+                                return Err(Diagnostic::new(
+                                    "read-only types must be erased before IR lowering",
                                 ));
                             }
                             Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
@@ -6549,6 +6565,9 @@ impl Builder<'_> {
                 Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",
                 ))),
+                Some(Type::Readonly(_)) => Err(Diagnostic::new(
+                    "read-only types must be erased before IR lowering",
+                )),
                 Some(Type::Array(_) | Type::Variadic(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
@@ -6746,6 +6765,9 @@ impl Builder<'_> {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
+                        Type::Readonly(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
@@ -11987,6 +12009,7 @@ fn lua_type_name(ty: &Type) -> Option<&'static str> {
         // A nominal alias (`type Point = { x: number }`) is transparent to
         // `type()`, which reports the underlying representation's name.
         Type::Opaque { ty, .. } => return lua_type_name(ty),
+        Type::Readonly(inner) => return lua_type_name(inner),
         // Callers adjust multi-value results before classifying them.
         Type::Multi(_) => return None,
         // Dispatched at runtime by the caller, never named statically.
@@ -12220,6 +12243,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
                 "cannot implicitly convert unknown to {expected_numeric}; use an explicit cast",
             ))),
             Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual} to {expected_numeric}",
+            ))),
+            Type::Readonly(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {actual} to {expected_numeric}",
             ))),
         },

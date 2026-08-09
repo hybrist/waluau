@@ -2358,6 +2358,252 @@ fn type_checks_record_param_return_and_function_type_annotation() {
 }
 
 #[test]
+fn readonly_views_project_mutable_state_and_support_deep_reads() {
+    let source = r#"
+        type Item = { value: i32 }
+        type Model = { items: {Item}, metadata: { count: i32 } }
+
+        function total(view: readonly<Model>): i32
+            local sum: i32 = view.metadata.count
+            for item in view.items do
+                sum += item.value
+            end
+            return sum + #view.items
+        end
+
+        local model: Model = {
+            items = { { value = 20::i32 }, { value = 19::i32 } },
+            metadata = { count = 1::i32 },
+        }
+        local view: readonly<Model> = model
+        assert(total(view) == 42)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("deep read-only reads should type check");
+}
+
+#[test]
+fn readonly_views_reject_record_field_mutation() {
+    let source = r#"
+        type Model = { count: i32 }
+        function mutate(view: readonly<Model>): unit
+            view.count = 2
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("field mutation should fail");
+    assert_eq!(error.to_string(), "cannot mutate a read-only record view");
+}
+
+#[test]
+fn readonly_views_reject_array_element_mutation() {
+    let source = r#"
+        type Model = { values: {i32} }
+        function mutate(view: readonly<Model>): unit
+            view.values[0] = 2
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("array mutation should fail");
+    assert_eq!(error.to_string(), "cannot mutate a read-only array view");
+}
+
+#[test]
+fn readonly_typed_array_views_support_reads_and_length_but_reject_writes() {
+    let readable = parse(
+        r#"
+            function read(values: readonly<Float32Array>): f32
+                return values[0] + (#values::f32)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&readable).expect("typed array reads should remain ergonomic");
+
+    let mutable = parse(
+        r#"
+            function mutate(values: readonly<Float32Array>): unit
+                values[0] = 1
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&mutable).expect_err("typed array mutation should fail");
+    assert_eq!(error.to_string(), "cannot mutate a read-only array view");
+}
+
+#[test]
+fn readonly_views_reject_nested_record_mutation() {
+    let source = r#"
+        type Item = { value: i32 }
+        type Model = { items: {Item} }
+        function mutate(view: readonly<Model>): unit
+            view.items[0].value += 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("nested mutation should fail");
+    assert_eq!(error.to_string(), "cannot mutate a read-only record view");
+}
+
+#[test]
+fn readonly_views_reject_mutating_table_builtins() {
+    for (call, name) in [
+        ("table.insert(values, 2)", "table.insert"),
+        ("table.remove(values)", "table.remove"),
+        ("table.sort(values)", "table.sort"),
+    ] {
+        let source = format!(
+            r#"
+                function mutate(values: readonly<{{i32}}>): unit
+                    {call}
+                end
+            "#
+        );
+        let program = parse(&source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("table mutation should fail");
+        assert_eq!(
+            error.to_string(),
+            format!("{name} cannot mutate a read-only array view")
+        );
+    }
+}
+
+#[test]
+fn readonly_views_do_not_flow_back_to_mutable_types() {
+    let source = r#"
+        type Model = { count: i32 }
+        function escape(view: readonly<Model>): Model
+            return view
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("mutable escape should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert readonly<Model> to Model"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn readonly_views_cannot_erase_through_unknown() {
+    let source = r#"
+        type Model = { count: i32 }
+        type Wrapper = { view: readonly<Model> }
+        function erase(wrapper: Wrapper): unknown
+            return wrapper
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("unknown escape should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot erase a read-only view into unknown"
+    );
+}
+
+#[test]
+fn readonly_views_cannot_erase_through_generic_pcall_or_heterogeneous_arrays() {
+    let cases = [
+        r#"
+            type Model = { count: i32 }
+            function erase<T>(value: T): unknown return value end
+            function escape(view: readonly<Model>): Model
+                return erase(view)
+            end
+        "#,
+        r#"
+            type Model = { count: i32 }
+            function escape(view: readonly<Model>): Model
+                local ok, payload = pcall(function(): readonly<Model> return view end)
+                return payload
+            end
+        "#,
+        r#"
+            type Model = { count: i32 }
+            function escape(view: readonly<Model>): Model
+                local mixed = { view, 1 }
+                return mixed[0]
+            end
+        "#,
+    ];
+    for source in cases {
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect_err("indirect unknown erasure should fail");
+    }
+}
+
+#[test]
+fn readonly_views_cannot_erase_through_legacy_promise_await() {
+    let source = r#"
+        type Promise<T> = extern
+        type Model = { count: i32 }
+        declare function make(view: readonly<Model>): Promise<readonly<Model>>
+
+        function escape(view: readonly<Model>): Model
+            return coroutine.await_promise(make(view))
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("promise erasure should fail");
+    assert_eq!(
+        error.to_string(),
+        "coroutine.await_promise cannot erase a read-only result into unknown"
+    );
+}
+
+#[test]
+fn readonly_aliases_compose_with_parameters_and_safe_table_reads() {
+    let source = r#"
+        type Shape = { values: {i32} }
+        type View = readonly<Shape>
+        type Values = readonly<{i32}>
+
+        function count(shape: readonly<Shape>): i32
+            return table.getn(shape.values)
+        end
+
+        function first(values: Values): i32
+            return table.unpack(values, 0, 0)
+        end
+
+        function main(shape: Shape): i32
+            local view: View = shape
+            return count(view) + first(view.values)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("read-only aliases should compose");
+}
+
+#[test]
+fn readonly_views_reject_storage_that_cannot_preserve_the_capability() {
+    for field in [
+        "item: unknown",
+        "item: T",
+        "load: () -> { value: i32 }",
+        "choice: Some({ value: i32 }) | None(unit)",
+    ] {
+        let source = if field.contains("T") {
+            format!("function reject<T>(view: readonly<{{ {field} }}>): unit end")
+        } else {
+            format!("function reject(view: readonly<{{ {field} }}>): unit end")
+        };
+        let program = parse(&source).expect("parse should succeed");
+        let error = super::type_check(&program)
+            .expect_err("unsupported storage must not create a shallow view");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot preserve deep read-only access"),
+            "unexpected diagnostic for {field}: {error}"
+        );
+    }
+}
+
+#[test]
 fn rejects_record_missing_field_on_annotation() {
     let source = r#"
         function entry(): i32

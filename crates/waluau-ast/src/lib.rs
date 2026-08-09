@@ -349,6 +349,13 @@ pub enum Type {
         name: String,
         ty: Box<Type>,
     },
+    /// A zero-cost, recursively read-only view of a structural value.
+    ///
+    /// The wrapper has the same runtime representation as its inner type. Reads
+    /// project nested records and arrays through the same wrapper, while the
+    /// type checker rejects every operation that could mutate the referenced
+    /// storage.
+    Readonly(Box<Type>),
     Array(Box<Type>),
     /// A fixed-length numeric array in linear memory (`Float32Array` etc.).
     /// Runtime value: i32 pointer to the element data; see [`TypedArrayKind`].
@@ -382,17 +389,137 @@ impl Type {
     }
 
     pub fn is_array(&self) -> bool {
-        matches!(self, Self::Array(_) | Self::Variadic(_))
+        match self {
+            Self::Array(_) | Self::Variadic(_) => true,
+            Self::Readonly(inner) | Self::Opaque { ty: inner, .. } => inner.is_array(),
+            _ => false,
+        }
     }
 
     pub fn is_record(&self) -> bool {
-        matches!(self, Self::Record(_))
+        match self {
+            Self::Record(_) => true,
+            Self::Readonly(inner) | Self::Opaque { ty: inner, .. } => inner.is_record(),
+            _ => false,
+        }
+    }
+
+    pub fn is_typed_array(&self) -> bool {
+        match self {
+            Self::TypedArray(_) => true,
+            Self::Readonly(inner) | Self::Opaque { ty: inner, .. } => inner.is_typed_array(),
+            _ => false,
+        }
+    }
+
+    /// Whether this type is a read-only view at its current structural level.
+    pub fn is_readonly(&self) -> bool {
+        match self {
+            Self::Readonly(_) => true,
+            Self::Opaque { ty, .. } => ty.is_readonly(),
+            _ => false,
+        }
+    }
+
+    /// The structural type viewed through this read-only capability, including
+    /// when a source alias preserves the capability behind an opaque shell.
+    pub fn readonly_base(&self) -> Option<&Type> {
+        match self {
+            Self::Readonly(inner) => Some(inner),
+            Self::Opaque { ty, .. } => ty.readonly_base(),
+            _ => None,
+        }
+    }
+
+    /// Whether every value reachable by a structural read has a statically
+    /// known type whose read-only projection can be preserved.
+    ///
+    /// Dynamic values and unconstrained type parameters could contain mutable
+    /// records or arrays while presenting no capability for the checker to
+    /// retain. Function and tagged-union storage likewise needs richer effect
+    /// or narrowing rules, so the source-level `readonly<T>` constructor rejects
+    /// those shapes instead of promising a shallow view.
+    pub fn supports_readonly_view(&self) -> bool {
+        match self {
+            Self::Unknown
+            | Self::TypeParam(_)
+            | Self::Named { .. }
+            | Self::Function { .. }
+            | Self::TaggedVariant(_)
+            | Self::TaggedUnion(_) => false,
+            Self::Opaque { ty, .. }
+            | Self::ExternSubtype(ty)
+            | Self::Nullable(ty)
+            | Self::Readonly(ty)
+            | Self::Array(ty)
+            | Self::Variadic(ty) => ty.supports_readonly_view(),
+            Self::Multi(types) => types.iter().all(Self::supports_readonly_view),
+            Self::Record(fields) => fields.values().all(Self::supports_readonly_view),
+            _ => true,
+        }
+    }
+
+    /// Whether erasing this type into `unknown` would discard read-only
+    /// capability information at any depth.
+    pub fn contains_readonly(&self) -> bool {
+        match self {
+            Self::Readonly(_) => true,
+            Self::Opaque { ty, .. }
+            | Self::ExternSubtype(ty)
+            | Self::Nullable(ty)
+            | Self::Array(ty)
+            | Self::Variadic(ty) => ty.contains_readonly(),
+            Self::Multi(types) => types.iter().any(Self::contains_readonly),
+            Self::Function {
+                params,
+                return_type,
+            } => params.iter().any(Self::contains_readonly) || return_type.contains_readonly(),
+            Self::Record(fields) => fields.values().any(Self::contains_readonly),
+            Self::TaggedVariant(variant) => variant.payload.contains_readonly(),
+            Self::TaggedUnion(variants) => variants
+                .iter()
+                .any(|variant| variant.payload.contains_readonly()),
+            Self::Named { type_args, .. } => type_args.iter().any(Self::contains_readonly),
+            _ => false,
+        }
+    }
+
+    /// Project a value read through a read-only view.
+    ///
+    /// Primitive values are copied and stay unchanged. Reference-shaped
+    /// records and arrays gain a read-only wrapper, and nullable values carry
+    /// the projection into their non-nil branch. This is the one place that
+    /// defines deep propagation for field and element reads.
+    pub fn readonly_projection(&self) -> Type {
+        match self {
+            Self::Readonly(_) => self.clone(),
+            Self::Record(_) | Self::Array(_) | Self::TypedArray(_) => {
+                Self::Readonly(Box::new(self.clone()))
+            }
+            Self::Opaque { ty, .. } if ty.is_mutable_structural() => {
+                Self::Readonly(Box::new(self.clone()))
+            }
+            Self::Nullable(inner) => Self::Nullable(Box::new(inner.readonly_projection())),
+            _ => self.clone(),
+        }
+    }
+
+    /// Whether this value denotes mutable structural storage at runtime.
+    pub fn is_mutable_structural(&self) -> bool {
+        match self {
+            Self::Record(_) | Self::Array(_) | Self::TypedArray(_) => true,
+            Self::Opaque { ty, .. } => ty.is_mutable_structural(),
+            _ => false,
+        }
     }
 
     pub fn element_type(&self) -> Option<Type> {
         match self {
             Self::Array(element) | Self::Variadic(element) => Some(*element.clone()),
             Self::TypedArray(kind) => Some(Self::Numeric(kind.element_numeric_type())),
+            Self::Readonly(inner) => inner
+                .element_type()
+                .map(|element| element.readonly_projection()),
             Self::Nullable(inner) | Self::Opaque { ty: inner, .. } => inner.element_type(),
             _ => None,
         }
@@ -402,6 +529,9 @@ impl Type {
         match self {
             Self::Record(fields) => fields.get(name).cloned(),
             Self::Opaque { ty, .. } => ty.record_field(name),
+            Self::Readonly(inner) => inner
+                .record_field(name)
+                .map(|field| field.readonly_projection()),
             Self::TaggedVariant(variant) if name == "value" => Some((*variant.payload).clone()),
             // Both are the canonical `{ tag, value }` record at runtime, so the
             // discriminant reads off either one. A variant answers its own payload
@@ -498,6 +628,7 @@ impl Type {
                 Self::Variadic(Box::new(element_ty.runtime_representation()))
             }
             Self::Nullable(inner) => Self::Nullable(Box::new(inner.runtime_representation())),
+            Self::Readonly(inner) => inner.runtime_representation(),
             other => other.clone(),
         }
     }
@@ -617,6 +748,7 @@ impl std::fmt::Display for Type {
                 Ok(())
             }
             Self::Opaque { name, .. } => f.write_str(name),
+            Self::Readonly(inner) => write!(f, "readonly<{inner}>"),
             Self::Array(element) => write!(f, "{{{element}}}"),
             Self::Variadic(element) => write!(f, "{element}..."),
             Self::TypedArray(kind) => f.write_str(kind.type_name()),

@@ -442,6 +442,9 @@ fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
             name: name.clone(),
             ty: Box::new(narrow_nullable_record_field(ty, field)?),
         }),
+        Type::Readonly(inner) => Some(Type::Readonly(Box::new(narrow_nullable_record_field(
+            inner, field,
+        )?))),
         _ => None,
     }
 }
@@ -746,6 +749,9 @@ fn collect_return_types_with_scope(
                 base, index, value, ..
             } => {
                 let base_ty = infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
+                if base_ty.is_readonly() {
+                    return Err(Diagnostic::new("cannot mutate a read-only array view"));
+                }
                 let element_ty = base_ty.element_type().ok_or_else(|| {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
@@ -805,6 +811,10 @@ fn collect_return_types_with_scope(
             Stmt::FieldAssign {
                 base, name, value, ..
             } => {
+                let base_ty = infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
+                if base_ty.is_readonly() {
+                    return Err(Diagnostic::new("cannot mutate a read-only record view"));
+                }
                 if let Expr::Name(base_name, _, _) = base.as_ref() {
                     let binding = scope
                         .get(base_name)
@@ -1039,11 +1049,14 @@ fn collect_return_types_with_scope(
                         }
                         return_values.into_iter().skip(1).collect::<Vec<_>>()
                     }
-                    Type::Array(element_ty) => {
+                    array_ty if array_ty.is_array() => {
+                        let element_ty = array_ty
+                            .element_type()
+                            .expect("array type has an element type");
                         if names.len() == 1 {
-                            vec![*element_ty]
+                            vec![element_ty]
                         } else if names.len() == 2 {
-                            vec![Type::Numeric(NumericType::I32), *element_ty]
+                            vec![Type::Numeric(NumericType::I32), element_ty]
                         } else {
                             return Err(Diagnostic::new(format!(
                                 "array for-in loop expects 1 or 2 loop variables, got {}",
@@ -1485,6 +1498,9 @@ fn check_stmt_inner(
             value,
         } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
+            if base_ty.is_readonly() {
+                return Err(Diagnostic::new("cannot mutate a read-only array view"));
+            }
             let element_ty = base_ty.element_type().ok_or_else(|| {
                 Diagnostic::new("array element assignment requires an array operand")
             })?;
@@ -1563,6 +1579,9 @@ fn check_stmt_inner(
             value,
         } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
+            if base_ty.is_readonly() {
+                return Err(Diagnostic::new("cannot mutate a read-only record view"));
+            }
             if let Some((signature, _)) =
                 type_property_setter_signature(&base_ty, name, fn_signatures)
             {
@@ -1956,11 +1975,14 @@ fn check_stmt_inner(
                         }
                         return_values.into_iter().skip(1).collect::<Vec<_>>()
                     }
-                    Type::Array(element_ty) => {
+                    array_ty if array_ty.is_array() => {
+                        let element_ty = array_ty
+                            .element_type()
+                            .expect("array type has an element type");
                         if names.len() == 1 {
-                            vec![*element_ty]
+                            vec![element_ty]
                         } else if names.len() == 2 {
-                            vec![Type::Numeric(NumericType::I32), *element_ty]
+                            vec![Type::Numeric(NumericType::I32), element_ty]
                         } else {
                             return Err(Diagnostic::new(format!(
                                 "array for-in loop expects 1 or 2 loop variables, got {}",

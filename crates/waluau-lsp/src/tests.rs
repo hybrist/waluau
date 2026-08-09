@@ -773,6 +773,27 @@ fn member_completion_offers_fields_and_methods_of_the_inferred_type() {
 }
 
 #[test]
+fn readonly_aliases_preserve_record_member_completion() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let text = "type View = readonly<{ count: i32 }>\n\
+local view: View = { count = 1::i32 }\n\
+view.\n";
+    std::fs::write(&path, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, text);
+    let result = request(&mut server, "textDocument/completion", &path, 2, 5);
+    let labels: Vec<&str> = result
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"count"), "{labels:?}");
+}
+
+#[test]
 fn annotated_module_qualified_types_resolve_members() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("game.walu"), GAME_MODULE).expect("write fixture");

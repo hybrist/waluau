@@ -1,0 +1,8 @@
+-- conformance: error=cannot erase a read-only view into unknown
+
+type Model = { count: i32 }
+
+function escape(view: readonly<Model>): Model
+    local mixed = { view, 1 }
+    return mixed[0]
+end

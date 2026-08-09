@@ -1588,6 +1588,7 @@ impl Rewriter<'_> {
             }
             Type::ExternSubtype(parent) => self.rewrite_type(parent),
             Type::Nullable(inner) => self.rewrite_type(inner),
+            Type::Readonly(inner) => self.rewrite_type(inner),
             Type::TaggedVariant(variant) => self.rewrite_type(variant.payload.as_mut()),
             Type::TaggedUnion(variants) => {
                 for variant in variants {

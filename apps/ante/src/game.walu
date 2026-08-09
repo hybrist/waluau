@@ -9,7 +9,7 @@ type SpellKind = 1 | 2 | 3 | 4
 type Winner = -1 | 0 | 1
 type Side = -1 | 1
 
-type Card = { rank: i32, suit: Suit }
+type Card = readonly<{ rank: i32, suit: Suit }>
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
 type SwapOutcome = {
@@ -43,9 +43,7 @@ type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {
 -- loadout and the gold are dealt in rather than fixed, so a run can hand one
 -- duel what the previous one left standing and whatever it bought since.
 opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: Winner, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: SpellKind? }
--- TODO(waluau-6lc5.2): Stop exposing the State-owned mutable arrays below;
--- provide a statically read-only view or defensive accessors/copies.
-type View = {
+type View = readonly<{
     deck_count: i32,
     player_hand: {HandSlot},
     computer_hand: {HandSlot},
@@ -66,16 +64,16 @@ type View = {
     swap_middle_indices: {i32},
     finished: bool,
     spells: {Spell}
-}
+}>
 -- The pair one side committed to a resolved trick, the hand slots it left,
 -- and that side's full revealed hand — see trick_side.
-type TrickSide = {
-    cards: {Card},
+type TrickSide = readonly<{
+    cards: readonly<{Card}>,
     first: i32,
     second: i32,
     value: i32,
-    hand: {HandSlot}
-}
+    hand: readonly<{HandSlot}>
+}>
 const MIN_RANK: i32 = 2
 const MAX_RANK: i32 = 14
 const MIN_SUIT: i32 = 0
@@ -123,7 +121,7 @@ end
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
 -- run's own records — so nothing inside a duel can upgrade a spell.
-function clone_spells(spells: {Spell}): {Spell}
+function clone_spells(spells: readonly<{Spell}>): {Spell}
     local copy: {Spell} = {}
     for spell in spells do
         table.insert(copy, { kind = spell.kind, cost = spell.cost })
@@ -166,7 +164,7 @@ end
 
 -- The bare cards of a hand, for the card-identity scoring and AI functions,
 -- which have no business knowing about watched marks.
-function hand_cards(slots: {HandSlot}): {Card}
+function hand_cards(slots: readonly<{HandSlot}>): {Card}
     local cards: {Card} = {}
     for slot in slots do table.insert(cards, slot.card) end
     return cards
@@ -175,7 +173,7 @@ end
 -- Slot copies for a Trick: the live slots keep mutating (marks, removal,
 -- refills) after the trick resolves, so history must hold its own records.
 -- Cards themselves are immutable and safe to share.
-function clone_slots(slots: {HandSlot}): {HandSlot}
+function clone_slots(slots: readonly<{HandSlot}>): {HandSlot}
     local copy: {HandSlot} = {}
     for slot in slots do table.insert(copy, { card = slot.card, known = slot.known }) end
     return copy
@@ -210,7 +208,7 @@ function swap_if_lower(ranks: {i32}, left: i32, right: i32): unit
     end
 end
 
-function rank_five(cards: {Card}): i32
+function rank_five(cards: readonly<{Card}>): i32
     assert(#cards == 5)
     local ranks: {i32} = { cards[0].rank, cards[1].rank, cards[2].rank, cards[3].rank, cards[4].rank }
     -- A fixed five-item bubble sorting network avoids allocating comparator
@@ -272,11 +270,11 @@ function rank_five(cards: {Card}): i32
     return pack(0, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4])
 end
 
-function value_for_pair(hand: {Card}, middle: {Card}, first: i32, second: i32): i32
+function value_for_pair(hand: readonly<{Card}>, middle: readonly<{Card}>, first: i32, second: i32): i32
     return rank_five({ middle[0], middle[1], middle[2], hand[first], hand[second] })
 end
 
-function best_pair(hand: {Card}, middle: {Card}): PairChoice
+function best_pair(hand: readonly<{Card}>, middle: readonly<{Card}>): PairChoice
     local best: PairChoice = { first = 0, second = 1, value = value_for_pair(hand, middle, 0, 1) }
     for first = ZERO, #hand - TWO do
         for second = first + ONE, #hand - ONE do
@@ -291,7 +289,7 @@ function best_pair(hand: {Card}, middle: {Card}): PairChoice
     return best
 end
 
-function clone_cards(cards: {Card}): {Card}
+function clone_cards(cards: readonly<{Card}>): {Card}
     local copy: {Card} = {}
     for card in cards do table.insert(copy, card) end
     return copy
@@ -323,7 +321,7 @@ end
 
 -- Three-card poker ordering used only to break equal swap wagers:
 -- straight flush > three of a kind > straight > flush > pair > high card.
-function rank_three(cards: {Card}): i32
+function rank_three(cards: readonly<{Card}>): i32
     assert(#cards == 3)
     local ranks: {i32} = { cards[0].rank, cards[1].rank, cards[2].rank }
     swap_if_lower(ranks, 0, 1)
@@ -354,7 +352,7 @@ function swap_priority(player_wager: i32, player_community: i32, computer_wager:
     return 0
 end
 
-function proposed_swap(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle_indices: {i32}): SwapChoice
+function proposed_swap(hand: readonly<{Card}>, middle: readonly<{Card}>, hand_indices: {i32}, middle_indices: {i32}): SwapChoice
     local proposed_hand: {Card} = clone_cards(hand)
     local proposed_middle: {Card} = clone_cards(middle)
     exchange(proposed_hand, proposed_middle, hand_indices, middle_indices)
@@ -389,7 +387,7 @@ function swap_hand_options(count: i32): {{i32}}
     return options
 end
 
-function best_available_swap(hand: {Card}, middle: {Card}, frozen_middle: {bool}): SwapChoice
+function best_available_swap(hand: readonly<{Card}>, middle: readonly<{Card}>, frozen_middle: readonly<{bool}>): SwapChoice
     local baseline: i32 = best_pair(hand, middle).value
     local best: SwapChoice = { hand_indices = {}, middle_indices = {}, community_value = rank_three(middle), hand_value = baseline }
     local hand_options: {{i32}} = swap_hand_options(#hand)
@@ -419,7 +417,7 @@ function best_available_swap(hand: {Card}, middle: {Card}, frozen_middle: {bool}
     return best
 end
 
-function best_swap(hand: {Card}, middle: {Card}): SwapChoice
+function best_swap(hand: readonly<{Card}>, middle: readonly<{Card}>): SwapChoice
     return best_available_swap(hand, middle, { false, false, false })
 end
 
@@ -667,7 +665,7 @@ end
 -- reflecting arbitrary tables. That keeps incompatibility a normal false
 -- result when the rules state changes, rather than turning this into a
 -- long-lived save-game format.
-function append_cards(parts: {string}, cards: {Card}): unit
+function append_cards(parts: {string}, cards: readonly<{Card}>): unit
     snapshot_data.append_i32(parts, #cards)
     for card in cards do
         snapshot_data.append_i32(parts, card.rank)
@@ -675,7 +673,7 @@ function append_cards(parts: {string}, cards: {Card}): unit
     end
 end
 
-function append_slots(parts: {string}, slots: {HandSlot}): unit
+function append_slots(parts: {string}, slots: readonly<{HandSlot}>): unit
     snapshot_data.append_i32(parts, #slots)
     for slot in slots do
         snapshot_data.append_i32(parts, slot.card.rank)
@@ -684,7 +682,7 @@ function append_slots(parts: {string}, slots: {HandSlot}): unit
     end
 end
 
-function append_spells(parts: {string}, spells: {Spell}): unit
+function append_spells(parts: {string}, spells: readonly<{Spell}>): unit
     snapshot_data.append_i32(parts, #spells)
     for spell in spells do
         snapshot_data.append_i32(parts, spell.kind)
@@ -692,7 +690,7 @@ function append_spells(parts: {string}, spells: {Spell}): unit
     end
 end
 
-function append_flags(parts: {string}, flags: {bool}): unit
+function append_flags(parts: {string}, flags: readonly<{bool}>): unit
     snapshot_data.append_i32(parts, #flags)
     for flag in flags do snapshot_data.append_bool(parts, flag) end
 end
@@ -845,21 +843,21 @@ function valid_card(card: Card): bool
         and (card.suit::i32) >= MIN_SUIT and (card.suit::i32) <= MAX_SUIT
 end
 
-function valid_cards(cards: {Card}): bool
+function valid_cards(cards: readonly<{Card}>): bool
     for card in cards do
         if not valid_card(card) then return false end
     end
     return true
 end
 
-function valid_slots(slots: {HandSlot}): bool
+function valid_slots(slots: readonly<{HandSlot}>): bool
     for slot in slots do
         if not valid_card(slot.card) then return false end
     end
     return true
 end
 
-function valid_indices(indices: {i32}, count: i32): bool
+function valid_indices(indices: readonly<{i32}>, count: i32): bool
     for index in indices do
         if index < 0 or index >= count then return false end
     end
@@ -1245,7 +1243,7 @@ end
 -- side of a decisive trick. Consumers resolve "the winner's pair" or "the
 -- loser's slots" once instead of re-selecting player_/computer_ fields at
 -- every use. owner 0 names no side and is a caller error.
-function trick_side(trick: Trick, owner: Side): TrickSide
+function trick_side(trick: readonly<Trick>, owner: Side): TrickSide
     if owner > 0 then
         return {
             cards = trick.player_cards,
@@ -1271,7 +1269,7 @@ end
 
 -- The same owner selection over a live board view: the side's current hand,
 -- each slot carrying its own watched mark.
-function view_side(view: View, owner: Side): {HandSlot}
+function view_side(view: View, owner: Side): readonly<{HandSlot}>
     if owner > 0 then return view.player_hand end
     return view.computer_hand
 end
@@ -1355,7 +1353,7 @@ function made_components_match(value: i32, other_value: i32, count: i32): bool
     return true
 end
 
-function formation_cards(cards: {Card}, value: i32): {bool}
+function formation_cards(cards: readonly<{Card}>, value: i32): {bool}
     assert(#cards == 5)
     local category: i32 = category_of(value)
     if category == 8 or category == 5 or category == 4 then
@@ -1381,7 +1379,7 @@ end
 -- Mark the cards that visibly explain why a winning five-card hand won. The
 -- made hand is always included; when both hands made the same hand,
 -- include kickers through the first score component that breaks the tie.
-function scoring_cards(cards: {Card}, value: i32, other_value: i32): {bool}
+function scoring_cards(cards: readonly<{Card}>, value: i32, other_value: i32): {bool}
     assert(#cards == 5)
     local marked_ranks: {i32} = {}
     local category: i32 = category_of(value)
