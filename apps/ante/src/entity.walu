@@ -443,10 +443,6 @@ end
 --
 -- Waluau has no default arguments, so this record-of-nullables is the
 -- named-argument idiom.
---
--- TODO(waluau-6lc5.8): Compiler blockers waluau-3gyg and waluau-v7z1 are
--- closed; use nullable `or` defaults and direct field narrowing to collapse
--- the named-local and `if` ceremony in `spec_style`.
 type FlowSpec = {
     gap: f64?,
     justify: box.Justify?,
@@ -455,19 +451,12 @@ type FlowSpec = {
 }
 
 function spec_style(axis: box.Axis, spec: FlowSpec): box.Style
-    local flow_gap: f64 = 0.0
-    local maybe_gap: f64? = spec.gap
-    if maybe_gap ~= nil then flow_gap = maybe_gap::f64 end
-    local flow_justify: box.Justify = "start"
-    local maybe_justify: box.Justify? = spec.justify
-    if maybe_justify ~= nil then flow_justify = maybe_justify::box.Justify end
-    local flow_align: box.Align = "start"
-    local maybe_align: box.Align? = spec.align
-    if maybe_align ~= nil then flow_align = maybe_align::box.Align end
-    local flow_padding: box.Edges = no_padding()
-    local maybe_padding: box.Edges? = spec.padding
-    if maybe_padding ~= nil then flow_padding = maybe_padding::box.Edges end
-    return style(axis, flow_gap, flow_justify, flow_align, flow_padding)
+    return style(
+        axis,
+        spec.gap or 0.0,
+        spec.justify or "start",
+        spec.align or "start",
+        spec.padding or no_padding())
 end
 
 -- Children stacked down the board.
