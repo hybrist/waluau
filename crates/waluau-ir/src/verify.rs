@@ -512,7 +512,7 @@ fn verify_function(
                             block.id,
                             *element,
                         )?;
-                        if element_value_ty != *element_ty {
+                        if !types_match(&element_value_ty, element_ty) {
                             return Err(Diagnostic::new(format!(
                                 "array literal element in block {:?} has type {}, expected {}",
                                 block.id, element_value_ty, element_ty
@@ -536,9 +536,9 @@ fn verify_function(
                     let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
                     // Allow the array operand to be either an array of the element type
                     // or the raw element type itself (degenerate cell representation).
-                    let ok_array = array_ty == expected_array_ty
-                        || array_ty == expected_variadic_ty
-                        || array_ty == *element_ty;
+                    let ok_array = types_match(&array_ty, &expected_array_ty)
+                        || types_match(&array_ty, &expected_variadic_ty)
+                        || types_match(&array_ty, element_ty);
                     if !ok_array {
                         return Err(Diagnostic::new(format!(
                             "array get in block {:?} expects {}, got {}",
@@ -574,9 +574,9 @@ fn verify_function(
                     )?;
                     let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
                     let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
-                    let ok_array = array_ty == expected_array_ty
-                        || array_ty == expected_variadic_ty
-                        || array_ty == *element_ty;
+                    let ok_array = types_match(&array_ty, &expected_array_ty)
+                        || types_match(&array_ty, &expected_variadic_ty)
+                        || types_match(&array_ty, element_ty);
                     if !ok_array {
                         return Err(Diagnostic::new(format!(
                             "array set in block {:?} expects {}, got {}",
@@ -603,7 +603,7 @@ fn verify_function(
                         block.id,
                         *value,
                     )?;
-                    if value_ty != *element_ty {
+                    if !types_match(&value_ty, element_ty) {
                         return Err(Diagnostic::new(format!(
                             "array set value in block {:?} has type {}, expected {}",
                             block.id, value_ty, element_ty
@@ -891,7 +891,7 @@ fn verify_function(
                             block.id,
                             *value,
                         )?;
-                        if actual != *field_ty {
+                        if !types_match(&actual, field_ty) {
                             return Err(Diagnostic::new(format!(
                                 "struct new field in block {:?} has type {}, expected {}",
                                 block.id, actual, field_ty
@@ -1333,6 +1333,13 @@ fn types_match(a: &Type, b: &Type) -> bool {
             || t == &Type::canonical_tagged_union_record()
     };
     if is_tagged(a) && is_tagged(b) {
+        return true;
+    }
+    // The same rule one level down: a union nested inside an aggregate is named
+    // by its source type in one annotation and by the canonical record in the
+    // other. Only tagged types are rewritten, so agreeing under the rewrite
+    // means these are the same value under two names.
+    if a.runtime_representation() == b.runtime_representation() {
         return true;
     }
     match (a, b) {
