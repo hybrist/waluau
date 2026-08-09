@@ -391,6 +391,24 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_resolves_the_supplied_asset_module() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                "local assets = require(\"waluau:assets\")\nfunction count(): i32\n    return assets.count()\nend\n".to_string(),
+            ),
+            (
+                "/@waluau/assets.walu".to_string(),
+                "function count(): i32\n    return 4\nend\nreturn { count = count }\n".to_string(),
+            ),
+        ]);
+
+        let result = compile_sources(&files, "/main.walu")
+            .expect("browser compiler should resolve the supplied typed asset module");
+        assert!(result.ir.contains("count"));
+    }
+
+    #[test]
     fn compile_success_ir_contains_function_name() {
         let source = "function greet(x: i32): i32\n    return x\nend";
         let result = compile_source(source).expect("compile should succeed");

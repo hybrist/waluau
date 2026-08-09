@@ -6,24 +6,19 @@ local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local resources = require("waluau:engine/resources")
 local audio = require("waluau:engine/audio")
+local assets = require("waluau:assets")
 local effect_shaders = require("./effect_shaders")
 local render = require("./render")
 local entity = require("./entity")
 local layout = require("./layout")
 
 type State = {
-    image_source: resources.Resource,
-    noise_source: resources.Resource,
-    font_source: resources.Resource,
-    flip_sound: resources.Resource,
+    bundle: assets.Bundle?,
     texture: graphics_module.Texture?,
     font: graphics_module.Font?,
     effects: effect_shaders.EffectShaders,
     effect_set: effect_shaders.State,
     graphics: engine.Graphics?,
-    image_finished: bool,
-    noise_finished: bool,
-    font_finished: bool,
     sound_finished: bool,
     audio_unlocked: bool,
     fatal_shader_error: string,
@@ -35,27 +30,18 @@ type State = {
     shader_warnings: string
 }
 
-const IMAGE_PATH: string = "assets/card-back.svg"
-const NOISE_PATH: string = "assets/ice-noise.png"
-const FONT_PATH: string = "assets/Cinzel-Bold.ttf"
 const SOUND_PATH: string = "assets/card-flip.wav"
 const FLIP_SOUND_VOLUME: f64 = 0.62
 
 function new(): State
     local effect_set: effect_shaders.State = effect_shaders.new()
     return {
-        image_source = { handle = 0, kind = "image", path = IMAGE_PATH },
-        noise_source = { handle = 0, kind = "image", path = NOISE_PATH },
-        font_source = { handle = 0, kind = "font", path = FONT_PATH },
-        flip_sound = { handle = 0, kind = "sound", path = SOUND_PATH },
+        bundle = nil,
         texture = nil,
         font = nil,
         effects = effect_set.shaders,
         effect_set = effect_set,
         graphics = nil,
-        image_finished = false,
-        noise_finished = false,
-        font_finished = false,
         sound_finished = false,
         audio_unlocked = false,
         fatal_shader_error = "",
@@ -77,35 +63,14 @@ function fatal_audio(state: State, code: string, message: string): unit
     state.fatal_audio_message = message
 end
 
--- TODO(waluau-6lc5.3): A typed asset-bundle loader should await the manifest as
--- one operation and return a bundle whose resources share one release owner.
--- That would remove the repeated path/error plumbing and partial-ready flags.
 function load_async(state: State): i32
-    local image_result: resources.LoadResult = resources.await_image(IMAGE_PATH)
-    if image_result.ok then state.image_source = image_result.resource
-    else
-        state.image_finished = true
-        append_warning(state, image_result.error.code .. ": " .. image_result.error.message)
-    end
-
-    local noise_result: resources.LoadResult = resources.await_image(NOISE_PATH)
-    if noise_result.ok then state.noise_source = noise_result.resource
-    else
-        state.noise_finished = true
-        append_warning(state, noise_result.error.code .. ": " .. noise_result.error.message)
-    end
-
-    local font_result: resources.LoadResult = resources.await_font(FONT_PATH, "Arcane Duel")
-    if font_result.ok then state.font_source = font_result.resource
-    else
-        state.font_finished = true
-        append_warning(state, font_result.error.code .. ": " .. font_result.error.message)
-    end
-
-    local sound_result: resources.LoadResult = audio.await_sound(SOUND_PATH)
+    local result: assets.LoadResult = assets.load()
+    state.bundle = result.bundle
     state.sound_finished = true
-    if sound_result.ok then state.flip_sound = sound_result.resource
-    else fatal_audio(state, sound_result.error.code, sound_result.error.message) end
+    for _, error in result.errors do
+        if error.path == SOUND_PATH then fatal_audio(state, error.code, error.message)
+        else append_warning(state, error.code .. ": " .. error.message) end
+    end
     return 0
 end
 
@@ -121,32 +86,36 @@ function prepare(state: State, graphics: engine.Graphics): unit
             print("ante: optional shader warning: " .. state.shader_warnings)
         end
     end
-    if not state.image_finished and state.image_source.handle ~= 0 then
-        local source: resources.Resource = state.image_source
-        local result: graphics_module.TextureResult = graphics:texture_from_resource(source)
-        resources.release(source)
-        state.image_source = { handle = 0, kind = "image", path = source.path }
-        state.image_finished = true
-        if result.ok then state.texture = result.texture
-        else append_warning(state, result.error.code .. ": " .. result.error.message) end
-    end
-    if not state.noise_finished and state.noise_source.handle ~= 0 then
-        local source: resources.Resource = state.noise_source
-        local result: graphics_module.TextureResult = graphics:texture_from_resource(source)
-        resources.release(source)
-        state.noise_source = { handle = 0, kind = "image", path = source.path }
-        state.noise_finished = true
-        if result.ok then state.effects.noise_texture = result.texture
-        else append_warning(state, result.error.code .. ": " .. result.error.message) end
-    end
-    if not state.font_finished and state.font_source.handle ~= 0 then
-        local source: resources.Resource = state.font_source
-        local result: graphics_module.FontResult = graphics:font_from_resource(source)
-        resources.release(source)
-        state.font_source = { handle = 0, kind = "font", path = source.path }
-        state.font_finished = true
-        if result.ok then state.font = result.font
-        else append_warning(state, result.error.code .. ": " .. result.error.message) end
+    local maybe_bundle: assets.Bundle? = state.bundle
+    if maybe_bundle ~= nil then
+        local bundle: assets.Bundle = maybe_bundle::assets.Bundle
+        local maybe_image: resources.ImageResource? = bundle.card_back
+        if maybe_image ~= nil then
+            local source: resources.ImageResource = maybe_image::resources.ImageResource
+            local result: graphics_module.TextureResult = graphics:texture_from_image(source)
+            resources.release_image(source)
+            bundle.card_back = nil
+            if result.ok then state.texture = result.texture
+            else append_warning(state, result.error.code .. ": " .. result.error.message) end
+        end
+        local maybe_noise: resources.ImageResource? = bundle.ice_noise
+        if maybe_noise ~= nil then
+            local source: resources.ImageResource = maybe_noise::resources.ImageResource
+            local result: graphics_module.TextureResult = graphics:texture_from_image(source)
+            resources.release_image(source)
+            bundle.ice_noise = nil
+            if result.ok then state.effects.noise_texture = result.texture
+            else append_warning(state, result.error.code .. ": " .. result.error.message) end
+        end
+        local maybe_font_source: resources.FontResource? = bundle.vault_font
+        if maybe_font_source ~= nil then
+            local source: resources.FontResource = maybe_font_source::resources.FontResource
+            local result: graphics_module.FontResult = graphics:font_from_typed_resource(source)
+            resources.release_font(source)
+            bundle.vault_font = nil
+            if result.ok then state.font = result.font
+            else append_warning(state, result.error.code .. ": " .. result.error.message) end
+        end
     end
 
     local maybe_font: graphics_module.Font? = state.font
@@ -169,11 +138,18 @@ end
 
 function play_flip(state: State): unit
     if #state.fatal_audio_code > 0 then return end
-    if state.flip_sound.handle == 0 then
+    local maybe_bundle: assets.Bundle? = state.bundle
+    if maybe_bundle == nil then
         fatal_audio(state, "invalid_handle", "decoded card flip sound has no resource handle")
         return
     end
-    if not audio.play(state.flip_sound, false, FLIP_SOUND_VOLUME) then
+    local maybe_sound: resources.SoundResource? = (maybe_bundle::assets.Bundle).card_flip
+    if maybe_sound == nil then
+        fatal_audio(state, "invalid_handle", "decoded card flip sound has no resource handle")
+        return
+    end
+    if not audio.play_sound(
+        maybe_sound::resources.SoundResource, false, FLIP_SOUND_VOLUME) then
         print("ante: the audio host refused to start decoded sound playback")
     end
 end
@@ -212,18 +188,26 @@ end
 function dispose(state: State): unit
     local maybe_graphics: engine.Graphics? = state.graphics
     if maybe_graphics ~= nil then
+        local graphics: engine.Graphics = maybe_graphics::engine.Graphics
         effect_shaders.release(
-            state.effect_set, maybe_graphics::engine.Graphics)
+            state.effect_set, graphics)
+        local maybe_texture: graphics_module.Texture? = state.texture
+        if maybe_texture ~= nil then
+            graphics:release_texture(maybe_texture::graphics_module.Texture)
+            state.texture = nil
+        end
+        local maybe_font: graphics_module.Font? = state.font
+        if maybe_font ~= nil then
+            graphics:release_font(maybe_font::graphics_module.Font)
+            state.font = nil
+        end
         state.graphics = nil
     end
-    if state.image_source.handle ~= 0 then resources.release(state.image_source) end
-    if state.noise_source.handle ~= 0 then resources.release(state.noise_source) end
-    if state.font_source.handle ~= 0 then resources.release(state.font_source) end
-    if state.flip_sound.handle ~= 0 then resources.release(state.flip_sound) end
-    state.image_source.handle = 0
-    state.noise_source.handle = 0
-    state.font_source.handle = 0
-    state.flip_sound.handle = 0
+    local maybe_bundle: assets.Bundle? = state.bundle
+    if maybe_bundle ~= nil then
+        resources.release_owner((maybe_bundle::assets.Bundle).owner)
+        state.bundle = nil
+    end
 end
 
 return {

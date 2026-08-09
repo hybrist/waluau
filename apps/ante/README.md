@@ -307,9 +307,11 @@ procedural copy of the artwork. Text uses the packaged Cinzel Bold font
 (a static wght=700 instance of the Cinzel variable font, whose engraved
 Trajan-style capitals match the tarot card artwork) after its FontFace
 resource has been copied to a GPU glyph atlas, with the built-in bitmap font
-as the not-ready/failure fallback. Source image/font resources are released
-immediately after the GPU copies succeed; GPU resources retain their own
-explicit lifetime.
+as the not-ready/failure fallback. The manifest-generated bundle owns decoded
+image, font, and sound sources together. Image and font leases close after GPU
+promotion, the sound lease remains live for playback, and bundle disposal is
+idempotent across all three; the presentation state explicitly releases the
+promoted GPU resources.
 
 Card turns use the packaged [`assets/card-flip.wav`](assets/card-flip.wav),
 decoded through the engine's sound-effect service. Playback is triggered
