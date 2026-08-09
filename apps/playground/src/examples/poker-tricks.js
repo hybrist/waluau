@@ -3,6 +3,7 @@
 // editor, the preset list, or the rest of the fixtures.
 
 import cardBackUrl from '../../../ante/assets/card-back.svg?url';
+import iceNoiseUrl from '../../../ante/assets/ice-noise.png?url';
 import vaultFontUrl from '../../../ante/assets/Cinzel-Bold.ttf?url';
 import cardFlipUrl from '../../../ante/assets/card-flip.wav?url';
 import { createAnteProject } from '../../../ante/project.js';
@@ -31,8 +32,14 @@ export const POKER_TRICKS_EXAMPLE = {
   },
   entryFile: anteProject.entryFile,
   assetManifest: {
-    'assets/card-back.svg': { url: cardBackUrl, type: 'image' },
-    'assets/Cinzel-Bold.ttf': { url: vaultFontUrl, type: 'font' },
-    'assets/card-flip.wav': { url: cardFlipUrl, type: 'audio' },
+    'assets/card-back.svg': { url: cardBackUrl, type: 'image', name: 'card_back' },
+    'assets/ice-noise.png': { url: iceNoiseUrl, type: 'image', name: 'ice_noise' },
+    'assets/Cinzel-Bold.ttf': {
+      url: vaultFontUrl,
+      type: 'font',
+      name: 'vault_font',
+      family: 'Arcane Duel',
+    },
+    'assets/card-flip.wav': { url: cardFlipUrl, type: 'audio', name: 'card_flip' },
   },
 };

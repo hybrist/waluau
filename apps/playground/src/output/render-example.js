@@ -13,6 +13,7 @@ import {
 } from '../utils/wasm.js';
 import '../dom-output.css';
 import { loadWaluauWasm } from '../utils/waluauWasmModule.js';
+import { withTypedAssetModule } from '../utils/typedAssets.js';
 
 function reportError(error) {
   console.error('Example failed:', error);
@@ -32,7 +33,10 @@ export async function renderExample({ files, entryFile, label, assetManifest = n
   try {
     const compiler = await loadWaluauWasm();
 
-    const compiled = compiler.compile_multi(files, entryFile);
+    const compiled = compiler.compile_multi(
+      withTypedAssetModule(files, assetManifest),
+      entryFile,
+    );
     const wasmBytes = new Uint8Array(compiled.wasm);
     const wasmModule = await WebAssembly.compile(wasmBytes, {
       builtins: ['js-string'],

@@ -11,6 +11,7 @@ const DOM_WINDOW_FUNCTION: &str = "dom_window";
 const DOM_WINDOW_TYPE: &str = "Window";
 const TFJS_REQUIRE: &str = "tfjs";
 const ENGINE_REQUIRE: &str = "waluau:engine";
+const ASSETS_REQUIRE: &str = "waluau:assets";
 const VITEST_REQUIRE: &str = "waluau:vitest";
 
 pub struct LoadedModule {
@@ -217,6 +218,11 @@ impl<'a> Loader<'a> {
         let mut requires = HashMap::new();
         let mut virtual_requires = HashSet::new();
         for raw in raw_paths {
+            if raw == ASSETS_REQUIRE {
+                let target = self.load("/@waluau/assets.walu")?;
+                requires.insert(raw, target);
+                continue;
+            }
             if engine_module_name(&raw).is_some() {
                 let target = self.load_engine(&raw)?;
                 requires.insert(raw, target);
@@ -406,7 +412,7 @@ fn is_unsupported_virtual_require(raw: &str) -> bool {
 
 fn unsupported_virtual_require(raw: &str) -> String {
     format!(
-        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\", \"{ENGINE_REQUIRE}\", \"{VITEST_REQUIRE}\""
+        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\", \"{ENGINE_REQUIRE}\", \"{ASSETS_REQUIRE}\", \"{VITEST_REQUIRE}\""
     )
 }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   WALUAU_STRING_CONSTANTS_MODULE,
   WALUAU_MAIN_EXPORT,
@@ -12,8 +12,13 @@ import {
   cancelPendingAnimationFrames,
 } from '../utils/wasm.js';
 import { getWaluauCompilerClient } from '../utils/waluauCompilerClient.js';
+import { withTypedAssetModule } from '../utils/typedAssets.js';
 
 export default function useWaluauCompiler({ files, entryFile, assetManifest = null }) {
+  const compilerFiles = useMemo(
+    () => withTypedAssetModule(files, assetManifest),
+    [files, assetManifest],
+  );
   const [status, setStatus] = useState('loading'); // 'loading', 'analyzing', 'ready', 'success', 'error'
   const [loadErrorMsg, setLoadErrorMsg] = useState('');
   const [output, setOutput] = useState('');
@@ -56,7 +61,7 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
     compilerClientRef.current = client;
     setStatus(completedAnalysisRef.current ? 'analyzing' : 'loading');
 
-    client.analyzeProject(files, entryFile)
+    client.analyzeProject(compilerFiles, entryFile)
       .then((result) => {
         if (!active || result == null) return;
         completedAnalysisRef.current = true;
@@ -84,7 +89,7 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
     return () => {
       active = false;
     };
-  }, [files, entryFile]);
+  }, [compilerFiles, entryFile]);
 
   // Monaco accepts promises from language providers, so position requests can
   // cross the worker seam without blocking the UI. The live document keeps a
