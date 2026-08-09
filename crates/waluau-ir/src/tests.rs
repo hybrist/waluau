@@ -2051,6 +2051,29 @@ fn monomorphizes_generic_calls_with_inferred_type_arguments() {
 }
 
 #[test]
+fn monomorphizes_top_level_generic_calls_with_nested_generic_arguments() {
+    let source = r#"
+        function identity<T>(value: T): T
+            return value
+        end
+
+        function selected<T>(initial: T, choices: {T}): T
+            return choices[0]
+        end
+
+        local typed = {1, 2, 3}::Float32Array
+        local selected_value = selected("red", {identity("red"), identity("blue")})
+
+        function main(): string
+            return "red"
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("nested generic calls should monomorphize");
+    verify(&module).expect("IR should verify");
+}
+
+#[test]
 fn monomorphizes_generic_table_builtin_calls_in_multi_bindings() {
     let source = r#"
         function exercise<T>(values: {T}, value: T): i32

@@ -46,11 +46,13 @@ test('turns a .stories.walu import into a CSF module of published stories', asyn
     const transformed = await plugin.transform.call(
       { addWatchFile: () => {} },
       `local storybook = require("waluau:engine/storybook")
+local suit = storybook.select("suit", "red", {
+  storybook.choice("Red", "red"),
+  storybook.choice("Blue", "blue"),
+})
+local rank = storybook.range("rank", 13, 2, 14, 1)
 storybook.publish({
-    storybook.story("Face up", { draw = draw_face_up }, {
-      storybook.select("suit", 0, { "Red", "Blue" }),
-      storybook.range("rank", 13, 2, 14, 1),
-    }),
+    storybook.story("Face up", { draw = draw_face_up }, { suit.declaration, rank.declaration }),
     storybook.story("Face down", { draw = draw_face_down }),
 })`,
       entry,

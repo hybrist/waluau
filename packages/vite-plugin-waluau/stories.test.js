@@ -70,13 +70,17 @@ storybook.publish({
   ]);
 });
 
-test('reads range and labelled select controls from a story declaration', () => {
+test('reads named range and typed select controls from a story declaration', () => {
   const stories = parseStories(source(`
+local suit = storybook.select("suit", "black"::Suit, {
+    storybook.choice("Red", "red"::Suit),
+    storybook.choice("Blue", "blue"::Suit),
+    storybook.choice("Black", "black"::Suit),
+    storybook.choice("Green", "green"::Suit),
+})
+local rank = storybook.range("rank", 13, 2, 14, 1)
 storybook.publish({
-    storybook.story("Card", card_scene(draw_card), {
-        storybook.select("suit", 2, { "Red", "Blue", "Black", "Green" }),
-        storybook.range("rank", 13, 2, 14, 1),
-    }),
+    storybook.story("Card", card_scene(draw_card), { suit.declaration, rank.declaration }),
 })`));
 
   assert.deepEqual(stories, [{
@@ -102,22 +106,29 @@ storybook.publish({
 
 test('rejects control declarations that cannot become valid Storybook args', () => {
   assert.throws(
-    () => parseStories(source(`storybook.story("Card", scene, {
-      storybook.select("suit", 4, { "Red", "Blue", "Black", "Green" }),
-    })`)),
-    /suit initial value must select one of its labels/,
+    () => parseStories(source(`
+    local suit = storybook.select("suit", "purple", {
+        storybook.choice("Red", "red"),
+        storybook.choice("Blue", "blue"),
+    })
+    storybook.story("Card", scene, { suit.declaration })`)),
+    /suit initial value must equal one of its choices/,
   );
   assert.throws(
-    () => parseStories(source(`storybook.story("Card", scene, {
-      storybook.range("rank", 13, 14, 2, 0),
-    })`)),
+    () => parseStories(source(`
+    local rank = storybook.range("rank", 13, 14, 2, 0)
+    storybook.story("Card", scene, { rank.declaration })`)),
     /rank minimum must not exceed its maximum/,
   );
   assert.throws(
-    () => parseStories(source(`storybook.story("Card", scene, {
-      storybook.range("rank", 13, 2, 14, 1),
-      storybook.range("rank", 12, 2, 14, 1),
-    })`)),
+    () => parseStories(source(`
+    local high_rank = storybook.range("rank", 13, 2, 14, 1)
+    local low_rank = storybook.range("rank", 12, 2, 14, 1)
+    storybook.story("Card", scene, { high_rank.declaration, low_rank.declaration })`)),
     /repeats control "rank"/,
+  );
+  assert.throws(
+    () => parseStories(source(`storybook.story("Card", scene, { rank.declaration })`)),
+    /must use a local storybook control's \.declaration/,
   );
 });
