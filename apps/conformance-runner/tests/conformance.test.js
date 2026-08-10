@@ -338,6 +338,59 @@ describe('browser conformance', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('assigns a collection of tagged unions into a record field across modules', async () => {
+    const shop = `
+      type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+      type Category = "spells"
+      type Slot = { category: Category, goods: Goods, price: i32 }
+      type State = { slots: {Slot}, cursor: i32 }
+
+      function new_state(): State
+          return { slots = {}, cursor = 0 }
+      end
+
+      function roll(): {Slot}
+          local slots: {Slot} = {}
+          table.insert(slots, { category = "spells", goods = Upgrade({ kind = 1 }), price = 4 })
+          table.insert(slots, { category = "spells", goods = Spell({ kind = 2 }), price = 7 })
+          return slots
+      end
+
+      -- The field's declared type names the union; the value reaching it holds
+      -- the canonical record the union is represented by. Across a module
+      -- boundary the two namings meet here rather than being normalized together.
+      function open_for(state: State): unit
+          state.slots = roll()
+      end
+
+      function kind_of(slot: Slot): i32
+          if Upgrade(upgrade) = slot.goods then return upgrade.kind end
+          if Spell(spell) = slot.goods then return 100 + spell.kind end
+          return 0
+      end
+
+      return {
+          new_state = new_state,
+          open_for = open_for,
+          kind_of = kind_of,
+      }
+    `;
+    const main = `
+      local shop = require("./shop")
+
+      local state: shop.State = shop.new_state()
+      shop.open_for(state)
+      assert(#state.slots == 2)
+      assert(shop.kind_of(state.slots[0]) == 1)
+      assert(shop.kind_of(state.slots[1]) == 102)
+      assert(state.slots[0].goods is Upgrade)
+      assert(state.slots[1].price == 7)
+    `;
+    await expect(
+      compileAndInstantiate({ '/shop.walu': shop, '/main.walu': main }, '/main.walu'),
+    ).resolves.toBeUndefined();
+  });
+
   it('clones typed aggregate constants at every module use', async () => {
     const defaults = `
       type Inner = { value: i32 }
