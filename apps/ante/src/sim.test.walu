@@ -80,6 +80,25 @@ describe("Ante Magic scoring", function()
         expect(one_pair):toBeGreaterThan(high_card)
     end)
 
+    it("rewards winning hand categories by their poker rarity", function()
+        local hands: {{game.Card}} = {
+            { card(14, 0), card(11, 1), card(8, 0), card(5, 1), card(2, 2) },
+            { card(13, 0), card(13, 1), card(10, 0), card(6, 1), card(2, 2) },
+            { card(14, 0), card(14, 1), card(3, 0), card(3, 1), card(8, 2) },
+            { card(7, 0), card(7, 1), card(7, 2), card(12, 3), card(2, 0) },
+            { card(9, 0), card(8, 1), card(7, 2), card(6, 3), card(5, 0) },
+            { card(14, 2), card(10, 2), card(7, 2), card(5, 2), card(2, 2) },
+            { card(8, 0), card(8, 1), card(8, 2), card(4, 0), card(4, 1) },
+            { card(9, 0), card(9, 1), card(9, 2), card(9, 3), card(2, 0) },
+            { card(10, 3), card(11, 3), card(12, 3), card(13, 3), card(14, 3) },
+        }
+        local bonuses: {i32} = { 0, 1, 2, 3, 4, 6, 9, 25, 50 }
+
+        for index, cards in hands do
+            expect(game.hand_bonus(game.rank_five(cards))):toBe(bonuses[index])
+        end
+    end)
+
     it("marks the made hand and only tie-breaking kickers", function()
         local winning_pair_cards: {game.Card} = { card(13, 0), card(13, 1), card(14, 2), card(7, 3), card(4, 0) }
         local losing_pair_cards: {game.Card} = { card(13, 2), card(13, 3), card(12, 0), card(7, 1), card(4, 2) }
@@ -472,7 +491,8 @@ describe("Ante Magic game flow", function()
             expect(trick.round):toBe(expected_round)
             expect(trick.winner):toBe(1)
             expect(trick.pot):toBe(trick.player_wager + trick.computer_wager)
-            expect(trick.points):toBe(expected_round + trick.pot)
+            expect(trick.points):toBe(
+                expected_round + trick.pot + game.hand_bonus(trick.player_value))
             expect(#trick.middle):toBe(3)
             expect(#trick.player_cards):toBe(2)
             expect(#trick.computer_cards):toBe(2)

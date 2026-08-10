@@ -198,6 +198,24 @@ function category_of(value: i32): i32
     return value // CATEGORY_DIVISOR
 end
 
+-- Extra gold paid for the rarity of a winning five-card hand. The curve
+-- follows ordinary poker frequencies without trying to pay literal odds:
+-- common formations stay close together, while quads and a straight flush
+-- are jackpot hands. This bonus is added beside the pot rather than applied
+-- to it, so a larger swap wager never multiplies the rarity award.
+function hand_bonus(value: i32): i32
+    local category: i32 = category_of(value)
+    if category == 8 then return 50 end
+    if category == 7 then return 25 end
+    if category == 6 then return 9 end
+    if category == 5 then return 6 end
+    if category == 4 then return 4 end
+    if category == 3 then return 3 end
+    if category == 2 then return 2 end
+    if category == 1 then return 1 end
+    return 0
+end
+
 -- Return a lexicographically sortable score for exactly five cards. Category
 -- occupies the most significant base-15 digit, followed by poker kickers.
 function swap_if_lower(ranks: {i32}, left: i32, right: i32): unit
@@ -588,10 +606,10 @@ function State:play(first: i32, second: i32): Trick?
     self.last_winner = 0
     local trick_points: i32 = 0
     if self.last_player_value > self.last_computer_value then
-        self.player_points += self.round + self.pot
+        trick_points = self.round + self.pot + hand_bonus(self.last_player_value)
+        self.player_points += trick_points
         self.player_tricks += 1
         self.last_winner = 1
-        trick_points = self.round + self.pot
     elseif self.last_computer_value > self.last_player_value then
         self.computer_tricks += 1
         self.last_winner = -1
@@ -1430,6 +1448,7 @@ return {
     rank_five = rank_five,
     value_for_pair = value_for_pair,
     best_pair = best_pair,
+    hand_bonus = hand_bonus,
     rank_three = rank_three,
     swap_priority = swap_priority,
     proposed_swap = proposed_swap,

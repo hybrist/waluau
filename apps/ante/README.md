@@ -2,8 +2,9 @@
 
 A five-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
 game engine. It preserves Poker Tricks' deck, exchange, wager, hand-ranking,
-computer search, and scoring rules while replacing the casino-table presentation
-with a magical robbery inside an arcane vault.
+and computer search while replacing the casino-table presentation with a
+magical robbery inside an arcane vault. A won breach pays its round and pot,
+plus a bonus that climbs with the rarity of its five-card poker hand.
 
 The four suits are now the Red, Blue, Black, and Green schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
@@ -19,11 +20,12 @@ what is left is what the next vault is dealt with. The pool is the run's, not
 the vault's, and every cast spends from it for good. Between two vaults the run
 stops at the fence, where that same mana buys spell upgrades.
 
-The ante climbs, and it climbs past what a vault pays. Early vaults ask for well
-under it, so a run that is going well banks a surplus; the last act asks for
-more than any heist can earn, so the third act is spent out of the pile the
-first two banked and the ninth vault is reached on fumes. That is the ramp: not
-a breach that is harder to win, but a win that has to be worth more.
+The ante climbs, and it climbs past what a typical vault pays. Early vaults ask
+for well under it, so a run that is going well banks a surplus; the last act
+asks for more than ordinary hands earn, so the third act is spent out of the
+pile the first two banked and the ninth vault is reached on fumes. A rare hand
+can beat the curve with a windfall. That is the ramp: not a breach that is
+harder to win, but a win that has to be worth more.
 
 There are two ways a run ends. The Arch Mage holding three wards ends it, carried
 mana included — that is far and away the common one, since a vault is close to a
