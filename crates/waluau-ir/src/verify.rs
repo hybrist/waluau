@@ -960,7 +960,7 @@ fn verify_function(
                         block.id,
                         *value,
                     )?;
-                    if actual_value_ty != expected_field_ty {
+                    if !types_match(&actual_value_ty, &expected_field_ty) {
                         return Err(Diagnostic::new(format!(
                             "struct set in block {:?} field '{}' has type {}, expected {}",
                             block.id, field, actual_value_ty, expected_field_ty

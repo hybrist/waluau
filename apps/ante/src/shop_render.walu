@@ -53,51 +53,66 @@ function row_at(viewport: layout.State, x: f64, y: f64, count: i32): i32
     return -1
 end
 
--- What one line says on its left. Prices are the right-hand column, so nothing
+-- What a sale line says on its left. Each kind of goods writes its own copy,
+-- next to the numbers it is about; prices are the right-hand column, so nothing
 -- here repeats them. A spent line drops the detail it used to carry: the numbers
 -- it quoted were the ones it has already changed.
-function row_label(row: shop.Row, run: run_module.State, offer: i32): string
-    if row.action == "sharpen" then
-        local name: string = spell_launch.name(row.kind)
-        if row.sold then return "UPGRADED " .. name end
-        -- The spell an offer named can leave the loadout: the other offer of the
-        -- same visit may have traded it away.
-        if row.slot < 0 then return "UPGRADE " .. name .. "   TRADED AWAY" end
-        local spell: game.Spell = run.spells[row.slot]
-        if not run:can_sharpen(row.slot) then
+function goods_label(goods: shop.Goods, sold: bool, run: run_module.State): string
+    if Upgrade(upgrade) = goods then
+        local name: string = spell_launch.name(upgrade.kind)
+        if sold then return "UPGRADED " .. name end
+        -- The spell a slot named can leave the loadout: another slot of the same
+        -- visit may have traded it away.
+        local key: i32 = run:slot_of(upgrade.kind)
+        if key < 0 then return "UPGRADE " .. name .. "   TRADED AWAY" end
+        if not run:can_sharpen(key) then
             return "UPGRADE " .. name .. "   AS CHEAP AS IT GETS"
         end
+        local spell: game.Spell = run.spells[key]
         return "UPGRADE " .. name
             .. "   USE " .. tostring(spell.cost)
             .. " TO " .. tostring(spell.cost - 1) .. " GOLD"
     end
-    if row.action == "learn" then
-        local name: string = spell_launch.name(row.kind)
-        if row.sold then
+    if Spell(offered) = goods then
+        local name: string = spell_launch.name(offered.kind)
+        if sold then
             return "LEARNED " .. name
-                .. "   KEY " .. tostring(run:slot_of(row.kind) + 1)
+                .. "   KEY " .. tostring(run:slot_of(offered.kind) + 1)
         end
-        if row.slot < 0 then
+        local key: i32 = run:open_slot()
+        if key < 0 then
             return "LEARN " .. name .. "   TRADES A SPELL AWAY"
         end
-        return "LEARN " .. name .. "   KEY " .. tostring(row.slot + 1)
+        return "LEARN " .. name .. "   KEY " .. tostring(key + 1)
     end
-    if row.action == "replace" then
-        return "TRADE " .. spell_launch.name(row.kind)
-            .. " FOR " .. spell_launch.name(offer)
+    return ""
+end
+
+-- What one line says on its left. A sale line asks the goods its slot holds
+-- rather than carrying a copy, so the copy and the sale cannot drift apart.
+function row_label(
+    state: shop.State, row: shop.Row, run: run_module.State, offered: i32
+): string
+    if row.kind == "sale" then
+        local slot: shop.Slot = state.slots[row.slot]
+        return goods_label(slot.goods, row.sold, run)
     end
-    if row.action == "cancel" then return "KEEP BOTH SPELLS" end
+    if row.kind == "choice" then
+        return "TRADE " .. spell_launch.name(row.spell)
+            .. " FOR " .. spell_launch.name(offered)
+    end
+    if row.kind == "cancel" then return "KEEP BOTH SPELLS" end
     local duel: string = "ENTER DUEL " .. tostring(run.duel)
     if run:boss() then duel = duel .. "   CHALLENGE" end
     return duel .. "   TARGET " .. tostring(run:target())
 end
 
--- Idle ink: an offer about a spell wears that spell's colour the way the menu's
+-- Idle ink: a line about a spell wears that spell's colour the way the menu's
 -- selection list does, and a line the purse cannot cover goes dark whether it
 -- names a spell or not.
 function row_ink(row: shop.Row): string
     if not row.available then return "#52525b" end
-    if row.kind ~= 0 then return spell_launch.color(row.kind) end
+    if row.spell ~= 0 then return spell_launch.color(row.spell) end
     return "#d4d4d8"
 end
 
@@ -157,10 +172,8 @@ function draw(
         ink.fade("#09090b", alpha * 0.94), ink.fade("#a1a1aa", alpha))
     ink.text(graphics, "THE SHOP", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
     local subtitle: string = "GOLD SPENT HERE WILL NOT ENTER DUEL " .. tostring(run.duel)
-    local offered: i32 = 0
-    local pending: i32? = state.pending
-    if choosing and pending ~= nil then
-        offered = state.offers[pending or 0].kind
+    local offered: i32 = shop.pending_spell(state)
+    if choosing then
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end
     ink.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, ink.fade("#a1a1aa", alpha))
@@ -179,11 +192,11 @@ function draw(
     local rows: {shop.Row} = shop.rows(state, run)
     for index, row in rows do
         draw_row(
-            graphics, viewport, row, row_label(row, run, offered),
+            graphics, viewport, row, row_label(state, row, run, offered),
             index, index == state.cursor, alpha)
     end
     if not choosing then
-        -- Two offers are the whole stock of a visit, so say what the list is
+        -- The slots are the whole stock of a visit, so say what the list is
         -- rather than leaving the player waiting for it to refill.
         ink.text_centered(
             graphics, "TWO OFFERS PER VISIT. THE NEXT SHOP HAS ITS OWN",
@@ -197,4 +210,6 @@ end
 return {
     draw = draw,
     row_at = row_at,
+    row_label = row_label,
+    row_ink = row_ink,
 }
