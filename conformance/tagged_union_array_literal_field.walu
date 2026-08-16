@@ -1,0 +1,66 @@
+-- An array literal assigned into a record field, where the element type holds a
+-- tagged union. The literal's value names the union by the canonical
+-- `{ tag, value }` record it lowers to, while the field's declared type names
+-- the union — the IR verifier's StructSet arm must compare the two by runtime
+-- representation, not exact equality (waluau-xiln).
+--
+-- A call's return type keeps the union's name, so `field = f()` never trips
+-- this; only a literal on the right-hand side of a field assignment does. Both
+-- the empty literal (the ante shop's `close`) and a filled one are pinned here.
+
+type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+type Slot = { goods: Goods, price: i32 }
+type Shop = { open: bool, slots: {Slot} }
+type Satchel = { goods: {Goods} }
+
+function close(shop: Shop): unit
+    shop.open = false
+    shop.slots = {}
+end
+
+function restock(shop: Shop): unit
+    shop.open = true
+    shop.slots = {
+        { goods = Upgrade({ kind = 1 }), price = 4 },
+        { goods = Spell({ kind = 2 }), price = 7 },
+    }
+end
+
+function empty(satchel: Satchel): unit
+    satchel.goods = {}
+end
+
+function kind_of(goods: Goods): i32
+    if Upgrade(upgrade) = goods then return upgrade.kind end
+    if Spell(spell) = goods then return 100 + spell.kind end
+    return -1
+end
+
+local shop: Shop = { open = false, slots = {} }
+
+-- A filled literal reaches the field and reads back variant by variant.
+restock(shop)
+assert(shop.open)
+assert(#shop.slots == 2)
+assert(shop.slots[0].goods is Upgrade)
+assert(shop.slots[1].goods is Spell)
+assert(kind_of(shop.slots[0].goods) == 1)
+assert(kind_of(shop.slots[1].goods) == 102)
+assert(shop.slots[1].price == 7)
+
+-- The empty literal replaces it — the ante shop's `close`, where this was
+-- first caught.
+close(shop)
+assert(not shop.open)
+assert(#shop.slots == 0)
+
+-- And the field can be filled again after being cleared.
+restock(shop)
+assert(#shop.slots == 2)
+assert(kind_of(shop.slots[1].goods) == 102)
+
+-- The union as the element type directly, without a record in between.
+local satchel: Satchel = { goods = { Spell({ kind = 9 }) } }
+assert(#satchel.goods == 1)
+empty(satchel)
+assert(#satchel.goods == 0)
