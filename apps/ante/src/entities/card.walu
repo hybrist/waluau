@@ -5,7 +5,7 @@
 -- the other side has watched it come off the table cards.
 --
 -- Its intrinsic size is the design space its face is authored in. Everything
--- that arranges cards — the fan, the sealed row, the table_card band, the piles —
+-- that arranges cards — the fan, the sealed row, the table_card band, the pile —
 -- asks for that measurement rather than restating 104 by 128, and a rectangle
 -- of another size scales the whole face rather than reflowing its insides: a
 -- card is a printed object, so it gets larger, not roomier.

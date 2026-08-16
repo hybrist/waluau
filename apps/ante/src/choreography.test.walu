@@ -28,11 +28,14 @@ describe("Ante Magic presentation choreography", function()
 
 
     it("rejects invalid restored spell conditions", function()
+        -- The same body with a resting condition restores, so each rejection
+        -- below is the condition failing and not a malformed snapshot.
+        expect(choreography.restore("target-presentation-v5,5,0,0,0") == nil):toBe(false)
         expect(choreography.restore(
-            "target-presentation-v4,5,0,1,0,0,0") == nil):toBe(true)
+            "target-presentation-v5,5,0,1,0") == nil):toBe(true)
         expect(choreography.restore(
-            "target-presentation-v4,5,9,0,0,0,0") == nil):toBe(true)
+            "target-presentation-v5,5,9,0,0") == nil):toBe(true)
         expect(choreography.restore(
-            "target-presentation-v4,5,1,3,0,0,0") == nil):toBe(true)
+            "target-presentation-v5,5,1,3,0") == nil):toBe(true)
     end)
 end)

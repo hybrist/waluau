@@ -40,9 +40,9 @@ type Session = {
     -- simulations, ticked beside the clock that releases them, never
     -- snapshotted.
     spells: render.SpellParticles,
-    discards: {game.Card},
-    computer_won: {game.Card},
-    player_won: {game.Card}
+    -- Every card a round is done with, whoever played it: the burned pair and
+    -- the hand its winner took, in the order the board sent them there.
+    discards: {game.Card}
 }
 
 type State = {
@@ -93,7 +93,7 @@ const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
 -- A burn reading below zero means nothing is burning: an ash emitter goes
 -- quiet on it, while the flakes already in the air keep falling.
 const NOT_BURNING: f64 = -1.0
-const SNAPSHOT_SCHEMA: string = "target-presentation-v4"
+const SNAPSHOT_SCHEMA: string = "target-presentation-v5"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new_session(): Session
@@ -108,8 +108,6 @@ function new_session(): Session
         ash = render.new_card_ash(),
         spells = render.new_spell_particles(),
         discards = {},
-        computer_won = {},
-        player_won = {},
     }
 end
 
@@ -430,7 +428,7 @@ function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card
 end
 
 -- Once Firebolt's old table_card is fully gone, expose the rules result as one
--- coordinated presentation beat: the burned card joins the neutral pile,
+-- coordinated presentation beat: the burned card joins the spent pile,
 -- while its replacement flies from the sealed deck into the empty table_card slot.
 -- The live middle already contains replacement; the animation's destination
 -- mark keeps that settled copy hidden until this card lands.
@@ -516,7 +514,7 @@ function push_scoop_pair(viewport: layout.State, anims: {render.Anim}, first_car
 end
 
 -- A burned card has no intact journey left to make. Its next visible form is
--- rebuilt directly on the neutral pile, and marking that pile as its
+-- rebuilt directly on the spent pile, and marking that pile as its
 -- destination keeps the ledger copy hidden until the reconstruction lands.
 function push_ash_reappearance(viewport: layout.State, anims: {render.Anim}, card: game.Card, start: f64): f64
     local finish: f64 = start + ASH_REAPPEAR_SECONDS
@@ -619,22 +617,19 @@ function resolved_breach_cleanup(view: game.View, trick: readonly<game.Trick>, s
         local winner: game.TrickSide = game.trick_side(trick, trick.winner::game.Side)
         local loser: game.TrickSide = game.trick_side(
             trick, game.opposite_side(trick.winner::game.Side))
-        local won_kind: render.Slot = render.slot_computer_won
-        local won: {game.Card} = state.session.computer_won
-        if trick.winner > 0 then
-            won_kind = render.slot_player_won
-            won = state.session.player_won
-        end
+        -- The taken hand goes the same way the burned pair already did: onto
+        -- the one spent pile. Winning a round is worth points, not a keepsake.
+        local spent: {game.Card} = state.session.discards
         for i = 0::i32, 2::i32 do
             if not trick.frozen_middle[i] then
-                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos(layout.current(), render.slot_middle, i), row_center, won_kind)
-                table.insert(won, trick.middle[i])
+                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos(layout.current(), render.slot_middle, i), row_center, render.slot_aside)
+                table.insert(spent, trick.middle[i])
             end
         end
-        push_scoop(layout.current(), anims, winner.cards[0], render.row_left(layout.current()), row_center, won_kind)
-        push_scoop(layout.current(), anims, winner.cards[1], render.row_right(layout.current()), row_center, won_kind)
-        table.insert(won, winner.cards[0])
-        table.insert(won, winner.cards[1])
+        push_scoop(layout.current(), anims, winner.cards[0], render.row_left(layout.current()), row_center, render.slot_aside)
+        push_scoop(layout.current(), anims, winner.cards[1], render.row_right(layout.current()), row_center, render.slot_aside)
+        table.insert(spent, winner.cards[0])
+        table.insert(spent, winner.cards[1])
         ash_finish = push_ash_pair(layout.current(), anims, loser.cards[0], loser.cards[1])
     else
         for i = 0::i32, 2::i32 do
@@ -799,7 +794,7 @@ end
 -- What is written is state a reload cannot re-derive: the fan's row size (one
 -- resting offset per card, so every fan loop and hit scan stays the right
 -- width for a boss battle's longer hand), the spell condition standing on a
--- table_card, and the three pile ledgers.
+-- table_card, and the spent pile's ledger.
 function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_i32(parts, #state.fan_parts)
     local power: Power? = state.session.power
@@ -807,8 +802,6 @@ function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_i32(parts, if power == nil then 0 else active.kind::i32)
     snapshot_data.append_i32(parts, active.target)
     append_cards(parts, state.session.discards)
-    append_cards(parts, state.session.computer_won)
-    append_cards(parts, state.session.player_won)
 end
 
 function next_cards(reader: snapshot_data.Reader): {game.Card}
@@ -846,14 +839,7 @@ function restore_snapshot(reader: snapshot_data.Reader): State?
         }
     end
     state.session.discards = next_cards(reader)
-    state.session.computer_won = next_cards(reader)
-    state.session.player_won = next_cards(reader)
-    if not valid_cards(state.session.discards)
-        or not valid_cards(state.session.computer_won)
-        or not valid_cards(state.session.player_won)
-    then
-        return nil
-    end
+    if not valid_cards(state.session.discards) then return nil end
     -- The reveal comes back finished rather than mid-burn. The trick it shows
     -- was already resolved by the rules before the reveal began, and the flow
     -- gate still waits for the player to advance out of it, so this settles a
@@ -901,8 +887,6 @@ function draw(
         },
         piles = {
             discards = state.session.discards,
-            computer_won = state.session.computer_won,
-            player_won = state.session.player_won,
         },
         spell = {
             kind = if power == nil then 0 else active.kind::i32,
