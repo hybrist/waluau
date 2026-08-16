@@ -36,7 +36,7 @@ const CARD_WIDTH: f64 = 104.0
 const CARD_HEIGHT: f64 = 128.0
 
 -- Across, at its tightest: a margin and one card column on each flank — the
--- sealed deck on the left, the three piles on the right — a seam between
+-- sealed deck on the left, the spent pile on the right — a seam between
 -- each column and the play area, and the fixed three-table_card row.
 -- TABLE_CARD_ROW_SPAN mirrors render.walu's table_card row: three cards on a 116-unit
 -- pitch (2 * 116 + 104).
@@ -65,7 +65,7 @@ const TABLE_CARD_BIAS: f64 = 12.0
 
 -- The hand rows may spread at most five card widths — wider stops reading
 -- as one hand — and keep a wide seam to the side columns so a parting fan
--- never brushes the deck or the piles.
+-- never brushes the deck or the spent pile.
 const HAND_SEAM: f64 = 60.0
 
 function min_board_width(): f64

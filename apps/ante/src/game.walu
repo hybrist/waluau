@@ -1235,7 +1235,7 @@ end
 
 -- Finish Firebolt's board effect after presentation has burned the targeted
 -- table_card away. The discarded card is returned to the screen choreography,
--- which owns the neutral discard-pile ledger; the replacement is immediately
+-- which owns the spent-pile ledger; the replacement is immediately
 -- part of the live rules state and comes off the same sealed deck as a deal.
 -- Only a Firebolt these rules charged for can burn a table_card away, whichever
 -- loadout slot it was cast from.

@@ -81,22 +81,18 @@ const HEADLINE_TOP: f64 = 90.0
 
 -- Board anchors card animations travel between. Choreography mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
-enum Slot { none, player, computer, middle, deck, aside, computer_won, player_won }
+enum Slot { none, player, computer, middle, deck, aside }
 const SLOT_NONE: Slot = Slot.none
 const SLOT_PLAYER: Slot = Slot.player
 const SLOT_COMPUTER: Slot = Slot.computer
 const SLOT_MIDDLE: Slot = Slot.middle
 const SLOT_DECK: Slot = Slot.deck
--- The burn pile, mid-height on the right edge: the losing pair, reduced to
--- embers during the reveal, is recorded here — no one keeps a burned trick.
+-- The one spent pile, mid-height on the right edge opposite the deck. Every
+-- card a round is finished with lands here, whoever it belonged to: the losing
+-- pair reduced to embers during the reveal, and the whole five-card hand the
+-- winner took — the three table cards plus the pair that settled it. Nobody
+-- keeps their tricks; the score already says who took what.
 const SLOT_ASIDE: Slot = Slot.aside
--- Each side keeps the tricks it won in its own pile, stacked down the right
--- edge beside that side's hand: the Opponent's held table cards up by its sealed
--- row, the player's breached tricks down by the fan, the burn pile between
--- them. A won trick is the whole five-card hand — the three table cards plus the
--- pair that settled it.
-const SLOT_COMPUTER_WON: Slot = Slot.computer_won
-const SLOT_PLAYER_WON: Slot = Slot.player_won
 
 -- Faces an animated card shows along its flight: stay sealed, stay revealed,
 -- or flip between the two mid-flight. Choreography mirrors these values too.
@@ -206,9 +202,7 @@ type Motion = {
     anim_clock: f64
 }
 type Piles = {
-    discards: {game.Card},
-    computer_won: {game.Card},
-    player_won: {game.Card}
+    discards: {game.Card}
 }
 type SpellPresentation = {
     kind: i32,
@@ -336,9 +330,8 @@ function row_slot(viewport: layout.State, slots: i32, index: i32): box.Rect
 end
 
 -- Top-left of a board slot's card box. The player's row reads off the closed
--- fan; the burn pile and both won piles share the right edge, one card column
--- opposite the deck, each at its owner's height: the Opponent's up beside its
--- sealed row, the player's down beside the fan, the burn pile centred between.
+-- fan; the spent pile stands on the right edge, one card column opposite the
+-- deck at the height of the table_card row.
 -- The count parameter sizes the two hand rows; every other slot ignores it.
 function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32): Point
     match kind do
@@ -351,10 +344,6 @@ function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32)
             band, index))
     case Slot.middle then return top_left(row_slot(viewport, 3, index))
     case Slot.deck then return point(viewport.side_left, viewport.table_card_y)
-    case Slot.computer_won then
-        return point(viewport.side_right, viewport.computer_y)
-    case Slot.player_won then
-        return point(viewport.side_right, viewport.player_y - card.height * 0.5 + 7.0)
     case Slot.none then
         return point(
             viewport.side_right + (index::f64) * 4.0,
@@ -366,7 +355,7 @@ function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32)
     end
 end
 
--- Countless slots — the table cards, the deck, and the three piles — never move
+-- Countless slots — the table cards, the deck, and the spent pile — never move
 -- with the hand layout; this shorthand names them without inventing a count.
 -- The two hand rows must go through slot_pos_at with their real size.
 function slot_pos(viewport: layout.State, kind: Slot, index: i32): Point
@@ -906,7 +895,7 @@ end
 
 -- How many of a pile's cards have actually arrived: the ledger's total minus
 -- every card still flying a leg that lands on that pile, so the stack only
--- thickens when a card visibly reaches it. The swap's aside legs pass the burn
+-- thickens when a card visibly reaches it. The swap's aside legs pass the pile
 -- anchor as a waypoint, but they carry slot_none and stay uncounted.
 function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: Slot): i32
     local pending: i32 = 0
@@ -916,25 +905,14 @@ function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: S
     return #cards - pending
 end
 
+-- The one right-edge pile, drawn only once it holds cards.
 function draw_pile(
     surface: entity.Surface, viewport: layout.State,
-    cards: {game.Card}, count: i32, kind: Slot
+    cards: {game.Card}, count: i32
 ): unit
-    local slot: Point = slot_pos(viewport, kind, 0)
+    local slot: Point = slot_pos(viewport, SLOT_ASIDE, 0)
     pile.node(cards, count).paint(
         surface, entity.rect(slot.x, slot.y, card.width, card.height))
-end
-
--- Draws whichever of the three right-edge piles hold cards.
-function draw_piles(
-    surface: entity.Surface, viewport: layout.State,
-    discards: {game.Card}, discard_count: i32,
-    computer_won: {game.Card}, computer_won_count: i32,
-    player_won: {game.Card}, player_won_count: i32
-): unit
-    draw_pile(surface, viewport, computer_won, computer_won_count, SLOT_COMPUTER_WON)
-    draw_pile(surface, viewport, discards, discard_count, SLOT_ASIDE)
-    draw_pile(surface, viewport, player_won, player_won_count, SLOT_PLAYER_WON)
 end
 
 -- One slot of the middle row, powered or plain. A table_card at rest is face up for
@@ -1006,16 +984,13 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
         lift_progress = easing.out_back(glow_time)
         loss_progress = loss_burn_progress(reveal_clock)
     end
-    -- The won piles are settled here — this trick joins its winner's pile only
-    -- once play advances and the scoop carries it there. The losing pair is
-    -- already in the ledger too, but remains visibly absent until advancing
-    -- the result rebuilds both cards from ash directly on the neutral pile.
+    -- The pile is settled here — the taken hand joins it only once play
+    -- advances and the scoop carries it there. The losing pair is already in
+    -- the ledger, but remains visibly absent until advancing the result
+    -- rebuilds both cards from ash on the pile.
     local burn_landed: i32 = #discards
     if trick.winner ~= 0 then burn_landed -= 2 end
-    draw_piles(
-        surface, viewport, discards, burn_landed,
-        frame.piles.computer_won, #frame.piles.computer_won,
-        frame.piles.player_won, #frame.piles.player_won)
+    draw_pile(surface, viewport, discards, burn_landed)
     if trick.winner > 0 then
         centered_line(
             surface, viewport,
@@ -1320,14 +1295,10 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
     end
     draw_hud(surface, viewport, state, frame.run)
     draw_deck(surface, viewport, state.deck_count)
-    draw_piles(
+    draw_pile(
         surface, viewport,
         frame.piles.discards,
-        pile_landed(frame.piles.discards, anims, anim_clock, SLOT_ASIDE),
-        frame.piles.computer_won,
-        pile_landed(frame.piles.computer_won, anims, anim_clock, SLOT_COMPUTER_WON),
-        frame.piles.player_won,
-        pile_landed(frame.piles.player_won, anims, anim_clock, SLOT_PLAYER_WON))
+        pile_landed(frame.piles.discards, anims, anim_clock, SLOT_ASIDE))
     draw_computer_row(surface, frame)
 
     local table_card_hidden: {bool} = hidden_slots(
@@ -1466,8 +1437,6 @@ return {
     slot_middle = SLOT_MIDDLE,
     slot_deck = SLOT_DECK,
     slot_aside = SLOT_ASIDE,
-    slot_computer_won = SLOT_COMPUTER_WON,
-    slot_player_won = SLOT_PLAYER_WON,
     faces_down = FACES_DOWN,
     faces_up = FACES_UP,
     faces_flip_up = FACES_FLIP_UP,

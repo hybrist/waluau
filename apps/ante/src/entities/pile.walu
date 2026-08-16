@@ -1,13 +1,13 @@
--- One of the three right-edge piles, drawn face up so it always shows the last
--- card that landed — every card in them is public history, unlike the sealed
+-- The spent pile on the right edge, drawn face up so it always shows the last
+-- card that landed — every card in it is public history, unlike the sealed
 -- draw pile. `count` is how many cards have visibly arrived; the top card is
 -- read from the same ledger, so a scoop still in the air leaves both the
 -- thickness and the face showing exactly what the table last saw.
 --
 -- The stack's shadow steps left, away from the board edge, and hangs outside
 -- the box for the same reason the deck's hangs right: depth is not content.
--- The piles carry no count label — which side each belongs to is clear from its
--- place on the board, and the round orbs already tally the run.
+-- The pile carries no count label — it belongs to no one, and the round orbs
+-- already tally the run.
 
 local game = require("../game")
 local box = require("../box_layout")
