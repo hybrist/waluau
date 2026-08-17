@@ -16,7 +16,7 @@ local card = require("./card")
 local card_row = require("./card_row")
 
 -- FAN_PITCH is well under a card width, so cards overlap; because each one
--- covers only its neighbour's right edge, the rank and color in the top-left
+-- covers only its neighbour's right edge, the rank and school glyphs at left
 -- corner stay readable.
 const FAN_MIDDLE: f64 = 2.0
 const FAN_PITCH: f64 = 74.0

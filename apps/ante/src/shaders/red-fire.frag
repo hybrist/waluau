@@ -8,6 +8,14 @@ uniform float u_aspect;
 uniform float u_selected;
 uniform float u_colored;
 
+float rounded_card_distance() {
+    float radius = 0.0625;
+    vec2 point = vec2(v_uv.x * u_aspect, v_uv.y);
+    vec2 half_size = vec2(u_aspect * 0.5, 0.5);
+    vec2 q = abs(point - half_size) - (half_size - radius);
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+}
+
 float tongue(vec2 p, float center, float width, float height, float phase, float speed) {
     float rise = clamp(p.y / height, 0.0, 1.0);
     float sway = sin(p.y * 9.0 + phase - u_time * speed) * width * (0.10 + rise * 0.24);
@@ -21,6 +29,7 @@ float tongue(vec2 p, float center, float width, float height, float phase, float
 }
 
 void main() {
+    if (rounded_card_distance() > 0.0) discard;
     // UV y runs top-to-bottom, so this makes y=0 the flame's bottom edge.
     vec2 p = vec2((v_uv.x - 0.5) * 2.0 * u_aspect, 1.0 - v_uv.y);
 

@@ -6,7 +6,7 @@
 --
 -- Its intrinsic size is the design space its face is authored in. Everything
 -- that arranges cards — the fan, the sealed row, the table_card band, the pile —
--- asks for that measurement rather than restating 104 by 128, and a rectangle
+-- asks for that measurement rather than restating 92 by 128, and a rectangle
 -- of another size scales the whole face rather than reflowing its insides: a
 -- card is a printed object, so it gets larger, not roomier.
 
@@ -17,8 +17,12 @@ local entity = require("../entity")
 local ink = require("../ink")
 
 -- The design space a card face is drawn in.
-const WIDTH: f64 = 104.0
+-- 92:128 is within a fraction of the traditional 2.5:3.5 playing-card ratio.
+-- Keeping the old height preserves the board's vertical choreography while
+-- the narrower silhouette makes the relic read as a physical card.
+const WIDTH: f64 = 92.0
 const HEIGHT: f64 = 128.0
+const CORNER_RADIUS: f64 = 8.0
 
 const SELECTION_HIGHLIGHT: string = "#fbbf24"
 -- How far a selected card lifts out of its row, along the card's own up.
@@ -51,6 +55,11 @@ type Look = {
     known: bool
 }
 
+-- One school mark in a rank's constellation, relative to the card centre.
+-- Number cards use this vocabulary; face cards have their own figurative
+-- tarot plates instead of pretending to be eleven, twelve, or thirteen pips.
+type Mark = { x: f64, y: f64, size: f64 }
+
 function look(
     card: game.Card, selected: bool, focused: bool,
     hidden: bool, colored: bool, known: bool
@@ -75,6 +84,221 @@ end
 
 function intrinsic(): box.Intrinsic
     return box.fixed(WIDTH, HEIGHT)
+end
+
+-- A filled rounded card silhouette made only from the WebGL2 drawing
+-- primitives the engine already exposes. There is deliberately no companion
+-- stroke: the cut paper edge is its silhouette, not an outline printed on it.
+function fill_shape(
+    graphics: graphics_module.Graphics,
+    x: f64, y: f64, width: f64, height: f64, radius: f64
+): unit
+    graphics:fill_rectangle(x + radius, y, width - radius * 2.0, height)
+    graphics:fill_rectangle(x, y + radius, width, height - radius * 2.0)
+    graphics:fill_circle(x + radius, y + radius, radius)
+    graphics:fill_circle(x + width - radius, y + radius, radius)
+    graphics:fill_circle(x + radius, y + height - radius, radius)
+    graphics:fill_circle(x + width - radius, y + height - radius, radius)
+end
+
+function fill_silhouette(
+    graphics: graphics_module.Graphics, x: f64, y: f64, color: string
+): unit
+    graphics:set_color(color)
+    fill_shape(graphics, x, y, WIDTH, HEIGHT, CORNER_RADIUS)
+end
+
+function add_ring(
+    marks: {Mark}, count: i32, radius_x: f64, radius_y: f64,
+    phase: f64, size: f64
+): unit
+    for index = 0::i32, count - 1 do
+        local angle: f64 = phase + (index::f64) * math.pi * 2.0 / (count::f64)
+        table.insert(marks, {
+            x = math.cos(angle) * radius_x,
+            y = math.sin(angle) * radius_y,
+            size = size,
+        })
+    end
+end
+
+-- Every number rank has its own constellation. A seven is six school marks
+-- orbiting a seventh; eight through ten add denser inner readings. Face cards
+-- deliberately return no pips because they are drawn as court arcana below.
+function rank_marks(rank: i32): {Mark}
+    local count: i32 = rank
+    local marks: {Mark} = {}
+    if count < 2 or count > 10 then return marks end
+    if count <= 6 then
+        local phase: f64 = -math.pi * 0.5
+        if count == 2 then phase = math.pi * 0.5 end
+        add_ring(marks, count, 23.0, 38.0, phase, 5.0)
+    elseif count == 7 then
+        table.insert(marks, { x = 0.0, y = 0.0, size = 5.2 })
+        add_ring(marks, 6, 24.0, 39.0, -math.pi * 0.5, 4.8)
+    elseif count == 8 then
+        add_ring(marks, 8, 25.0, 40.0, -math.pi * 0.5, 4.5)
+    elseif count == 9 then
+        table.insert(marks, { x = 0.0, y = 0.0, size = 4.7 })
+        add_ring(marks, 8, 25.0, 40.0, -math.pi * 0.5, 4.4)
+    else
+        add_ring(marks, 8, 25.0, 40.0, -math.pi * 0.5, 4.2)
+        add_ring(marks, 2, 0.0, 16.0, math.pi * 0.5, 4.2)
+    end
+    return marks
+end
+
+-- A small, unsealed school glyph for the repeated rank constellations. These
+-- are signs scratched into the card rather than a suit icon on a poker deck:
+-- flame, tide, void-star, and leaf respectively.
+function draw_school_mark(
+    surface: entity.Surface, suit: i32, x: f64, y: f64, size: f64
+): unit
+    local graphics = surface.graphics
+    graphics:set_color(ink.fade(ink.color_ink(suit), 0.90))
+    graphics:set_line_width(math.max(0.75, size * 0.22))
+    graphics:begin_path()
+    if suit == 0 then
+        graphics:move_to(x, y + size)
+        graphics:quadratic_curve_to(x - size * 0.9, y, x + size * 0.15, y - size)
+        graphics:quadratic_curve_to(x + size * 0.95, y, x, y + size)
+        graphics:move_to(x, y + size * 0.55)
+        graphics:quadratic_curve_to(x - size * 0.15, y, x + size * 0.25, y - size * 0.45)
+        graphics:stroke()
+    elseif suit == 1 then
+        graphics:move_to(x - size, y - size * 0.25)
+        graphics:quadratic_curve_to(x - size * 0.25, y - size, x + size, y - size * 0.15)
+        graphics:move_to(x - size, y + size * 0.35)
+        graphics:quadratic_curve_to(x, y - size * 0.2, x + size, y + size * 0.35)
+        graphics:stroke()
+    elseif suit == 2 then
+        graphics:stroke()
+        graphics:fill_circle(x, y, size * 0.34)
+        graphics:line(x - size, y, x - size * 0.5, y)
+        graphics:line(x + size * 0.5, y, x + size, y)
+        graphics:line(x, y - size, x, y - size * 0.5)
+        graphics:line(x, y + size * 0.5, x, y + size)
+    else
+        graphics:move_to(x, y + size)
+        graphics:quadratic_curve_to(x - size, y, x, y - size)
+        graphics:quadratic_curve_to(x + size, y, x, y + size)
+        graphics:move_to(x, y - size * 0.7)
+        graphics:line_to(x, y + size * 0.8)
+        graphics:stroke()
+    end
+end
+
+function draw_arcane_field(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
+    local graphics = surface.graphics
+    local center_x: f64 = x + WIDTH * 0.5
+    local center_y: f64 = y + HEIGHT * 0.54
+    -- Uneven washes, fibers, and rubbed patches keep the dark parchment from
+    -- reading as a mathematically flat UI tile.
+    graphics:set_color("#6f5b710d")
+    graphics:fill_circle(x + 25.0, y + 41.0, 19.0)
+    graphics:set_color("#d8c8aa08")
+    graphics:fill_circle(x + 67.0, y + 92.0, 23.0)
+    graphics:set_color("#08070b26")
+    graphics:fill_rectangle(x + 12.0, y + 76.0, WIDTH - 24.0, 17.0)
+    graphics:set_color("#d8c8aa12")
+    graphics:set_line_width(0.55)
+    graphics:line(x + 14.0, y + 33.0, x + 78.0, y + 26.0)
+    graphics:line(x + 18.0, y + 102.0, x + 73.0, y + 109.0)
+    graphics:line(x + 29.0, y + 17.0, x + 25.0, y + 115.0)
+    graphics:set_color(ink.fade(ink.color_ink(suit), 0.12))
+    graphics:set_line_width(0.75)
+    graphics:line(center_x, y + 26.0, center_x, y + HEIGHT - 18.0)
+    -- Interior compass rays are ornament, never a perimeter outline.
+    graphics:line(center_x - 31.0, center_y, center_x - 27.0, center_y)
+    graphics:line(center_x + 27.0, center_y, center_x + 31.0, center_y)
+    graphics:line(center_x, center_y - 46.0, center_x, center_y - 42.0)
+    graphics:line(center_x, center_y + 42.0, center_x, center_y + 46.0)
+end
+
+function stroke_ring(
+    graphics: graphics_module.Graphics, x: f64, y: f64, radius: f64
+): unit
+    graphics:begin_path()
+    for step = 0::i32, 24::i32 do
+        local angle: f64 = (step::f64) * math.pi * 2.0 / 24.0
+        local px: f64 = x + math.cos(angle) * radius
+        local py: f64 = y + math.sin(angle) * radius
+        if step == 0 then graphics:move_to(px, py) else graphics:line_to(px, py) end
+    end
+    graphics:close_path()
+    graphics:stroke()
+end
+
+-- The high ranks remain recognisable face cards, but their people belong to
+-- this world: Jack is a hooded adept, Queen an orb-bearing seer, King a
+-- crowned hierophant. Ace stands apart as one large school omen. These plates
+-- borrow tarot's frontal, emblematic figures without copying poker courts.
+function draw_high_arcana(
+    surface: entity.Surface, rank: i32, suit: i32, x: f64, y: f64
+): unit
+    local graphics = surface.graphics
+    local center_x: f64 = x + WIDTH * 0.5
+    local center_y: f64 = y + HEIGHT * 0.54
+    local school: string = ink.fade(ink.color_ink(suit), 0.72)
+    graphics:set_color(ink.fade(ink.color_ink(suit), 0.13))
+    graphics:fill_circle(center_x, center_y, 31.0)
+    graphics:set_color("#d8cfbb70")
+    graphics:set_line_width(0.8)
+    stroke_ring(graphics, center_x, center_y, 30.0)
+
+    if rank == 14 then
+        graphics:set_color("#d8cfbb9a")
+        stroke_ring(graphics, center_x, center_y, 19.0)
+        graphics:line(center_x, center_y - 29.0, center_x, center_y - 22.0)
+        graphics:line(center_x, center_y + 22.0, center_x, center_y + 29.0)
+        graphics:line(center_x - 29.0, center_y, center_x - 22.0, center_y)
+        graphics:line(center_x + 22.0, center_y, center_x + 29.0, center_y)
+        draw_school_mark(surface, suit, center_x, center_y, 12.0)
+        return
+    end
+
+    local head_y: f64 = center_y - 15.0
+    graphics:set_color(school)
+    graphics:fill_circle(center_x, head_y, 5.0)
+    -- A translucent robe gives the court figure a body without introducing
+    -- the mirrored portrait box of a conventional deck.
+    graphics:fill_quad(
+        center_x - 7.0, head_y + 5.0,
+        center_x + 7.0, head_y + 5.0,
+        center_x + 18.0, center_y + 28.0,
+        center_x - 18.0, center_y + 28.0)
+    graphics:set_color("#e9e0cc")
+    graphics:set_line_width(1.15)
+
+    if rank == 11 then
+        -- Hood and pilgrim's staff: the adept before initiation.
+        graphics:line(center_x - 8.0, head_y + 2.0, center_x, head_y - 11.0)
+        graphics:line(center_x, head_y - 11.0, center_x + 8.0, head_y + 2.0)
+        graphics:line(center_x + 15.0, head_y - 7.0, center_x + 15.0, center_y + 29.0)
+        graphics:line(center_x + 12.0, head_y - 7.0, center_x + 18.0, head_y - 7.0)
+        draw_school_mark(surface, suit, center_x - 2.0, center_y + 8.0, 5.0)
+    elseif rank == 12 then
+        -- Crescent crown and held orb: the seer reads the school directly.
+        graphics:line(center_x - 8.0, head_y - 5.0, center_x - 4.0, head_y - 11.0)
+        graphics:line(center_x - 4.0, head_y - 11.0, center_x, head_y - 5.0)
+        graphics:line(center_x, head_y - 5.0, center_x + 4.0, head_y - 11.0)
+        graphics:line(center_x + 4.0, head_y - 11.0, center_x + 8.0, head_y - 5.0)
+        graphics:line(center_x - 14.0, center_y + 3.0, center_x - 6.0, center_y + 10.0)
+        graphics:line(center_x + 14.0, center_y + 3.0, center_x + 6.0, center_y + 10.0)
+        graphics:set_color(school)
+        graphics:fill_circle(center_x, center_y + 12.0, 5.0)
+    else
+        -- Three-point crown, sceptre, and solar seal: the hierophant rules by
+        -- command of a school rather than by a poker king's weapon.
+        graphics:line(center_x - 9.0, head_y - 5.0, center_x - 6.0, head_y - 13.0)
+        graphics:line(center_x - 6.0, head_y - 13.0, center_x, head_y - 6.0)
+        graphics:line(center_x, head_y - 6.0, center_x + 6.0, head_y - 13.0)
+        graphics:line(center_x + 6.0, head_y - 13.0, center_x + 9.0, head_y - 5.0)
+        graphics:line(center_x - 16.0, head_y - 6.0, center_x - 16.0, center_y + 29.0)
+        graphics:set_color(school)
+        graphics:fill_circle(center_x - 16.0, head_y - 9.0, 3.5)
+        draw_school_mark(surface, suit, center_x + 3.0, center_y + 9.0, 5.5)
+    end
 end
 
 -- The four color fields, selected as one call. Selection runs the color's
@@ -173,31 +397,62 @@ function draw_back(surface: entity.Surface, x: f64, y: f64, veiled: bool): unit
     end
     local fill: string = "#111118"
     if veiled then fill = "#11111880" end
-    ink.panel(graphics, x, y, WIDTH, HEIGHT, fill, "#3f3f46")
+    fill_silhouette(graphics, x, y, fill)
 end
 
 function draw_face(surface: entity.Surface, value: Look, x: f64, y: f64): unit
     local graphics = surface.graphics
     local card: game.Card = value.card
-    -- Suit marks always keep their color. Selection activates the
-    -- color's grayscale pattern; contributing cards use its colored variant.
+    -- Selection activates the school's grayscale field; contributing cards
+    -- use its coloured variant. The field is cut by the rounded silhouette,
+    -- so even an animated surface remains a physical piece of paper.
     if value.colored or value.selected then
         use_color_field(
             surface, card.suit, value.selected, value.colored,
-            (WIDTH - 4.0) / (HEIGHT - 4.0))
+            WIDTH / HEIGHT)
+        -- One quad gives the animated field one continuous UV space; each
+        -- field shader cuts this quad to the same rounded paper silhouette.
+        graphics:set_color("#211d24")
+        graphics:fill_rectangle(x, y, WIDTH, HEIGHT)
+    else
+        fill_silhouette(graphics, x, y, "#211d24")
     end
-    graphics:set_color("#17171c")
-    graphics:fill_rectangle(x + 2.0, y + 2.0, WIDTH - 4.0, HEIGHT - 4.0)
     if value.colored or value.selected then ink.stop_effect(graphics) end
-    graphics:set_color(ink.color_ink(card.suit))
-    graphics:fill_rectangle(x + 7.0, y + 7.0, 5.0, HEIGHT - 14.0)
-    ink.text(graphics, game.rank_name(card.rank), x + 20.0, y + 31.0, 24, "#f8fafc")
-    -- The color never appears in words on a card: the accent stripe and the
-    -- card carry it, the same pairing the help legend teaches.
-    draw_sigil(surface, card.suit, x + 42.0, y + 82.0)
+    draw_arcane_field(surface, card.suit, x, y)
+
+    -- Familiar rank labels preserve the deck's mechanics and instant reading;
+    -- the artwork, surface, and court figures carry the tarot influence. The
+    -- small upper-left reading survives the hand-fan overlap.
+    local rank_label: string = game.rank_name(card.rank)
+    ink.text(graphics, rank_label, x + 7.0, y + 17.0, 10.0, "#eee7d5")
+    graphics:push()
+    graphics:translate(x + WIDTH - 7.0, y + HEIGHT - 11.0)
+    graphics:rotate(math.pi)
+    ink.text(graphics, rank_label, 0.0, 0.0, 8.0, "#bdb4a1")
+    graphics:pop()
+
+    if card.rank <= 10 then
+        local marks: {Mark} = rank_marks(card.rank)
+        local center_x: f64 = x + WIDTH * 0.5
+        local center_y: f64 = y + HEIGHT * 0.54
+        for mark in marks do
+            draw_school_mark(
+                surface, card.suit,
+                center_x + mark.x, center_y + mark.y, mark.size)
+        end
+    else
+        draw_high_arcana(surface, card.rank, card.suit, x, y)
+    end
     if value.selected then
         ink.text_centered(
-            graphics, "SELECTED", x + WIDTH * 0.5, y + 119.0, 9, SELECTION_HIGHLIGHT)
+            graphics, "BOUND", x + WIDTH * 0.5, y + 119.0, 8, SELECTION_HIGHLIGHT)
+    elseif value.focused then
+        -- Focus is an interior divination mark, not a temporary border.
+        graphics:set_color(SELECTION_HIGHLIGHT)
+        graphics:fill_circle(x + WIDTH - 9.0, y + 10.0, 2.2)
+        graphics:set_line_width(0.8)
+        graphics:line(x + WIDTH - 14.0, y + 10.0, x + WIDTH - 4.0, y + 10.0)
+        graphics:line(x + WIDTH - 9.0, y + 5.0, x + WIDTH - 9.0, y + 15.0)
     end
 end
 
@@ -209,10 +464,8 @@ end
 function draw_at(surface: entity.Surface, value: Look, x: f64, y: f64): unit
     local graphics = surface.graphics
     if value.selected then y -= SELECT_LIFT end
-    local edge: string = "#52525b"
-    if value.focused then edge = SELECTION_HIGHLIGHT
-    elseif value.selected then edge = ink.color_ink(value.card.suit) end
-    ink.panel(graphics, x, y, WIDTH, HEIGHT, "#17171c", edge)
+    -- A soft offset shadow gives the paper thickness without outlining it.
+    fill_silhouette(graphics, x + 2.0, y + 3.0, "#07060a")
     if value.hidden then
         if value.known then
             draw_face(surface, look(value.card, false, false, false, false, false), x, y)
@@ -224,8 +477,8 @@ function draw_at(surface: entity.Surface, value: Look, x: f64, y: f64): unit
     if value.known then draw_eye(surface, x + WIDTH * 0.5, y) end
 end
 
--- Capture the complete live card into one texture. The rank, color shader,
--- card, and border then share a single UV space, letting one noisy front eat
+-- Capture the complete live card into one texture. The rank, school field,
+-- paper, and artwork then share a single UV space, letting one noisy front eat
 -- the object instead of dissolving each drawing primitive — and letting a
 -- card be handed whole to an effect that has to treat it as a surface rather
 -- than as the dozen primitives it is drawn from.
@@ -246,22 +499,20 @@ function capture(surface: entity.Surface, value: Look): graphics_module.RenderTa
     -- capture shows a zoomed crop of a face.
     graphics:push_identity()
     graphics:clear("#00000000")
-    draw_at(surface, look(
-        value.card, false, false, value.hidden, value.colored, value.known), 0.0, 0.0)
-    -- The target owns a texture exactly the size of the card. Reassert the two
-    -- thin identity layers last: the ordinary renderer can safely batch them
-    -- among the face primitives, but on a target boundary the frame stroke is
-    -- partially clipped and the five-pixel color stripe can otherwise
-    -- disappear at the handoff. They remain part of this texture, so the burn
-    -- shader chars and removes them only when its front reaches them. A sealed
-    -- card shows neither: its back is the packaged image, edge to edge.
-    if not value.hidden then
-        graphics:set_color("#52525b")
-        graphics:set_line_width(2.0)
-        graphics:stroke_rectangle(1.0, 1.0, WIDTH - 2.0, HEIGHT - 2.0)
-        graphics:set_color(ink.color_ink(value.card.suit))
-        graphics:fill_rectangle(7.0, 7.0, 5.0, HEIGHT - 14.0)
+    local captured: Look = look(
+        value.card, false, false, value.hidden, value.colored, value.known)
+    -- Captures contain the paper itself, not the board-space drop shadow.
+    -- That keeps rounded corners transparent for warps and burn effects.
+    if captured.hidden then
+        if captured.known then
+            draw_face(surface, look(
+                captured.card, false, false, false, false, false), 0.0, 0.0)
+        end
+        draw_back(surface, 0.0, 0.0, captured.known)
+    else
+        draw_face(surface, captured, 0.0, 0.0)
     end
+    if captured.known then draw_eye(surface, WIDTH * 0.5, 0.0) end
     graphics:pop()
     graphics:set_screen_target()
     return target
@@ -275,7 +526,7 @@ end
 
 -- The card as an entity: it measures as the design space its face is authored
 -- in, and a rectangle of any other size scales the whole printed object into
--- it rather than reflowing the rank, stripe, and card inside it.
+-- it rather than reflowing the rank, constellation, and paper inside it.
 function node(value: Look): entity.Node
     return entity.measured(
         function(metrics: entity.Metrics): box.Intrinsic
@@ -304,13 +555,19 @@ return {
     draw_at = draw_at,
     draw_face = draw_face,
     draw_back = draw_back,
+    fill_shape = fill_shape,
+    fill_silhouette = fill_silhouette,
     draw_sigil = draw_sigil,
+    draw_school_mark = draw_school_mark,
+    draw_high_arcana = draw_high_arcana,
+    rank_marks = rank_marks,
     draw_eye = draw_eye,
     capture = capture,
     capture_face = capture_face,
     use_color_field = use_color_field,
     width = WIDTH,
     height = HEIGHT,
+    corner_radius = CORNER_RADIUS,
     select_lift = SELECT_LIFT,
     selection_highlight = SELECTION_HIGHLIGHT,
 }

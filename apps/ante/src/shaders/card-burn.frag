@@ -8,7 +8,6 @@ uniform float u_progress;
 uniform float u_seed;
 uniform float u_aspect;
 uniform float u_particle_mode;
-uniform vec3 u_accent_color;
 
 // Value noise is deliberately evaluated in card UV space rather than screen
 // space. The burn therefore stays attached to a tilted card, while four
@@ -80,22 +79,6 @@ void main() {
     vec4 card = texture2D(u_texture, v_uv) * v_color;
     if (card.a < 0.01) discard;
 
-    // Render-target capture clips a stroke centred directly on its outer
-    // bounds, and the very narrow school stripe is vulnerable to filtering.
-    // Restore those two pieces from their canonical card-space geometry before
-    // combustion. They still pass through the same char and alpha fronts below,
-    // so this preserves intact identity without painting over burned pixels.
-    float card_edge_distance = min(
-        min(v_uv.x, 1.0 - v_uv.x), min(v_uv.y, 1.0 - v_uv.y));
-    float frame_mask = 1.0 - smoothstep(0.007, 0.022, card_edge_distance);
-    float stripe_x = smoothstep(0.055, 0.069, v_uv.x)
-        * (1.0 - smoothstep(0.111, 0.124, v_uv.x));
-    float stripe_y = smoothstep(0.043, 0.058, v_uv.y)
-        * (1.0 - smoothstep(0.942, 0.957, v_uv.y));
-    float stripe_mask = stripe_x * stripe_y;
-    card.rgb = mix(card.rgb, vec3(0.32, 0.32, 0.36), frame_mask);
-    card.rgb = mix(card.rgb, u_accent_color, stripe_mask);
-
     vec2 from_center = (v_uv - 0.5) * vec2(u_aspect, 1.0);
     float corner = 0.5 * length(vec2(u_aspect, 1.0));
     float radial = length(from_center) / corner;
@@ -112,7 +95,7 @@ void main() {
 
     // The scorch stays only a narrow step ahead of the hole. Both fronts begin
     // below the minimum noisy centre value, so the first frames preserve the
-    // sampled card exactly—including its school stripe—before a pinprick
+    // sampled card exactly—including its constellation—before a pinprick
     // ignition appears. They then cross every pixel in the same local order:
     // intact art, browned paper, hot cut edge, transparency.
     float char_t = smoothstep(0.06, 0.94, u_progress);

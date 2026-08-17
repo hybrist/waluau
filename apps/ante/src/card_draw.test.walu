@@ -11,7 +11,7 @@ const DECK_X: f64 = 168.0
 const DECK_Y: f64 = 322.0
 const CAUGHT_X: f64 = 505.0
 const CAUGHT_Y: f64 = 196.0
-const CARD_W: f64 = 104.0
+const CARD_W: f64 = 92.0
 const CARD_H: f64 = 128.0
 const SAMPLES: i32 = 240
 -- How far the middle of the card is allowed to slip backwards between two

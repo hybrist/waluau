@@ -93,7 +93,7 @@ export async function clickMenuItem(page, canvas, index = 0) {
 export function countCardBackInk(canvas) {
   return countDesignInk(
     canvas,
-    { x: 56, wardOffsetY: 0, width: 104, height: 128 },
+    { x: 56, wardOffsetY: 0, width: 92, height: 128 },
     [232, 223, 189],
     [12, 12, 12],
   );

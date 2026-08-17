@@ -33,10 +33,10 @@ const DISINTEGRATE_SECONDS: f64 = 1.42
 const ASH_FLECKS: i32 = 28
 
 -- Half the card's diagonal, in card pixels; top-level constants require
--- literal initializers, so sqrt(52^2 + 64^2) is written out. The card-burn
+-- literal initializers, so sqrt(46^2 + 64^2) is written out. The card-burn
 -- shader normalises its radial field by exactly this distance, so a front
 -- reading of 1.0 stands at the corners.
-const CARD_HALF_DIAGONAL: f64 = 82.4621
+const CARD_HALF_DIAGONAL: f64 = 78.8162
 -- Progress readings between which the losing sheet sheds ash, and the flakes
 -- per second released over that span. The window is the third of the burn's
 -- three beats; the rate is the old fleck count spread across it.
@@ -76,29 +76,11 @@ function use_card_burn(
     local maybe_shader: graphics_module.Shader? = surface.effects.card_burn.shader
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local accent_red: f64 = 0.29
-    local accent_green: f64 = 0.87
-    local accent_blue: f64 = 0.50
-    if suit == 0 then
-        accent_red = 0.94
-        accent_green = 0.27
-        accent_blue = 0.27
-    elseif suit == 1 then
-        accent_red = 0.22
-        accent_green = 0.74
-        accent_blue = 0.97
-    elseif suit == 2 then
-        accent_red = 0.66
-        accent_green = 0.33
-        accent_blue = 0.97
-    end
     local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(shader, {
         graphics_module.float_parameter("u_progress", progress),
         graphics_module.float_parameter("u_seed", seed::f64),
         graphics_module.float_parameter("u_aspect", card.width / card.height),
         graphics_module.float_parameter("u_particle_mode", 0.0),
-        graphics_module.vec3_parameter(
-            "u_accent_color", accent_red, accent_green, accent_blue),
     })
     return binding.ok
 end
