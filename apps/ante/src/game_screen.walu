@@ -350,7 +350,10 @@ function submit_swap(state: State): unit
     local outcome: game.SwapOutcome?
     if #ui.swap_hand == 0 and #ui.swap_table_cards == 0 then
         outcome = state.rules:resolve_swap({}, {})
-    elseif #ui.swap_hand ~= #ui.swap_table_cards or #ui.swap_hand > state.rules:gold() then
+    elseif #ui.swap_hand ~= #ui.swap_table_cards
+        or #ui.swap_hand > state.rules:gold()
+        or #ui.swap_hand < state.rules:minimum_swap()
+    then
         return
     else
         outcome = state.rules:resolve_swap(ui.swap_hand, ui.swap_table_cards)

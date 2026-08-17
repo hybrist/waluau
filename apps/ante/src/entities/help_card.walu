@@ -54,6 +54,8 @@ function body(): entity.Node
         entity.gap(0.0, BLOCK_GAP - LINE_GAP),
         modal.heading("1. SWAP"),
         modal.body_line("SELECT UP TO 3 CARDS AND THE SAME NUMBER OF TABLE CARDS."),
+        modal.body_line("EACH SWAP MUST RAISE YOUR LAST AND MATCH THE OPPONENT'S."),
+        modal.body_line("THE FEINT ENDS WHEN BOTH PASS OR BOTH REACH 3 CARDS."),
         modal.body_line("EACH CARD COSTS 1 GOLD. PRESS P TO SKIP."),
         entity.gap(0.0, BLOCK_GAP - LINE_GAP),
         modal.heading("2. PLAY"),

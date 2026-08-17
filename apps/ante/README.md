@@ -13,6 +13,10 @@ formations such as a bound pair, arcane sequence, and perfect convergence.
 The Arch Mage can commit any valid feint without a mana balance. Its third
 breach win ends the heist, while player wins never end the five-breach vault
 early — which is the room a vault leaves to earn its ante and then some.
+During a feint, both sides may propose more than once. A new proposal must use
+more cards than that side's previous proposal and at least as many as the other
+side's largest proposal, up to three. The feint ends when both pass or when both
+have reached three; proposal history resets for the next breach.
 
 A vault is one heist inside a longer roguelike run of nine, and clearing one
 costs its ante: the vault takes a cut of the mana the robbers are holding, and

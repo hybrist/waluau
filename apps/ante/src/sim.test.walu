@@ -58,6 +58,14 @@ local function force_stalemate(state: game.State): unit
     )
 end
 
+-- Passing can give the Arch Mage another legal raise. Keep passing until it
+-- passes too (or exhausts three cards), which is how a caller reaches play.
+local function finish_swap_phase(state: game.State): unit
+    while state:swap_open() do
+        assert(state:resolve_swap({}, {}) ~= nil)
+    end
+end
+
 describe("Ante Magic scoring", function()
     it("orders every five-card hand category", function()
         local straight_flush: i32 = game.rank_five({ card(10, 3), card(11, 3), card(12, 3), card(13, 3), card(14, 3) })
@@ -151,6 +159,21 @@ describe("Ante Magic scoring", function()
 end)
 
 describe("Ante Magic swaps", function()
+    it("ends when both sides pass", function()
+        local state = game.new(false, starter_loadout(), game.starting_gold)
+        game_fixture.arrange_arch_mage(
+            state,
+            { card(10, 0), card(11, 0), card(12, 0) },
+            { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+        )
+
+        local outcome: game.SwapOutcome? = state:resolve_swap({}, {})
+        expect(outcome == nil):toBe(false)
+        expect(game.view(state).player_swap_max):toBe(0)
+        expect(game.view(state).computer_swap_max):toBe(0)
+        expect(game.view(state).swap_open):toBe(false)
+    end)
+
     it("exchanges a winning proposal once without consuming the deck", function()
         math.randomseed(7)
         local state = game.new(false, starter_loadout(), game.starting_gold)
@@ -175,7 +198,7 @@ describe("Ante Magic swaps", function()
         local outcome_outgoing_rank: i32 = won_feint.outgoing[0].rank
         local outcome_incoming_rank: i32 = won_feint.incoming[0].rank
 
-        expect(game.view(state).swap_open):toBe(false)
+        expect(game.view(state).swap_open):toBe(true)
         expect(outcome_winner):toBe(1)
         expect(outcome_hand_count):toBe(1)
         expect(outcome_hand_index):toBe(0)
@@ -205,7 +228,7 @@ describe("Ante Magic swaps", function()
         expect(game.view(state).player_hand[4].known):toBe(false)
         for i = 0::i32, 4::i32 do expect(game.view(state).computer_hand[i].known):toBe(false) end
 
-        state:resolve_swap({ 1 }, { 1 })
+        expect(state:resolve_swap({ 1 }, { 1 }) == nil):toBe(true)
         expect(game.view(state).player_wager):toBe(1)
         expect(game.view(state).swap_count):toBe(1)
     end)
@@ -222,6 +245,7 @@ describe("Ante Magic swaps", function()
         state:resolve_swap({ 3 }, { 0 })
         expect(game.view(state).swap_winner):toBe(1)
         expect(game.view(state).player_hand[3].known):toBe(true)
+        finish_swap_phase(state)
         local played: game.Trick? = state:play(0, 1)
         assert(played ~= nil)
 
@@ -343,6 +367,45 @@ describe("Ante Magic swaps", function()
         expect(marked_slots):toBe(3)
     end)
 
+    it("requires raises to match the opponent and closes at the three-card ceiling", function()
+        local state = game.new(false, starter_loadout(), game.starting_gold)
+        game_fixture.arrange_arch_mage(
+            state,
+            { card(2, 1), card(4, 2), card(6, 3) },
+            { card(10, 0), card(11, 0), card(12, 0), card(13, 0), card(14, 0) }
+        )
+
+        state:resolve_swap({}, {})
+        expect(game.view(state).computer_swap_max):toBe(3)
+        expect(state:minimum_swap()):toBe(3)
+        expect(state:resolve_swap({ 0, 1 }, { 0, 1 }) == nil):toBe(true)
+        expect(game.view(state).player_wager):toBe(0)
+
+        local final_raise: game.SwapOutcome? = state:resolve_swap(
+            { 0, 1, 2 }, { 0, 1, 2 })
+        expect(final_raise == nil):toBe(false)
+        expect(game.view(state).player_swap_max):toBe(3)
+        expect(game.view(state).computer_swap_max):toBe(3)
+        expect(game.view(state).swap_open):toBe(false)
+        expect(game.view(state).player_wager):toBe(3)
+        expect(game.view(state).computer_wager):toBe(3)
+        expect(game.view(state).pot):toBe(6)
+
+        force_player_win(state)
+        expect(state:play(0, 1) == nil):toBe(false)
+        expect(game.view(state).swap_open):toBe(true)
+        expect(game.view(state).player_swap_max):toBe(0)
+        expect(game.view(state).computer_swap_max):toBe(0)
+        expect(state:minimum_swap()):toBe(1)
+    end)
+
+    it("computes each legal raise from both sides' previous swaps", function()
+        expect(game.next_swap_min(0, 0)):toBe(1)
+        expect(game.next_swap_min(0, 2)):toBe(2)
+        expect(game.next_swap_min(2, 2)):toBe(3)
+        expect(game.next_swap_min(3, 3)):toBe(4)
+    end)
+
     it("chooses the pair that completes the strongest hand", function()
         local middle: {game.Card} = { card(2, 2), card(7, 2), card(11, 2) }
         local hand: {game.Card} = { card(14, 0), card(14, 1), card(5, 2), card(13, 2), card(9, 0) }
@@ -358,6 +421,7 @@ describe("Ante Magic development snapshots", function()
         math.randomseed(49)
         local state: game.State = game.new(false, starter_loadout(), game.starting_gold)
         state:resolve_swap({ 0 }, { 1 })
+        finish_swap_phase(state)
         force_player_win(state)
         state:play(0, 1)
         state:resolve_swap({}, {})
@@ -481,7 +545,7 @@ describe("Ante Magic game flow", function()
             expect(game.view(state).finished):toBe(false)
             expect(#game.view(state).player_hand):toBe(5)
             expect(#game.view(state).computer_hand):toBe(5)
-            state:resolve_swap({}, {})
+            finish_swap_phase(state)
             expect(game.view(state).swap_open):toBe(false)
             force_player_win(state)
             state:play(0, 1)
@@ -520,7 +584,7 @@ describe("Ante Magic game flow", function()
         math.randomseed(43)
         local state = game.new(false, starter_loadout(), game.starting_gold)
         for expected_round = FIRST_ROUND, 3 do
-            state:resolve_swap({}, {})
+            finish_swap_phase(state)
             force_computer_win(state)
             state:play(0, 1)
             local trick = game.view(state).history[expected_round - 1]
@@ -539,7 +603,7 @@ describe("Ante Magic game flow", function()
     it("keeps a stalemate open and refunds its wager", function()
         math.randomseed(44)
         local state = game.new(false, starter_loadout(), game.starting_gold)
-        state:resolve_swap({}, {})
+        finish_swap_phase(state)
         force_stalemate(state)
         local points: i32 = game.view(state).player_points
         state:play(0, 1)
@@ -557,11 +621,11 @@ describe("Ante Magic game flow", function()
         math.randomseed(45)
         local state = game.new(false, starter_loadout(), game.starting_gold)
         for _ = 1, 2 do
-            state:resolve_swap({}, {})
+            finish_swap_phase(state)
             force_computer_win(state)
             state:play(0, 1)
         end
-        state:resolve_swap({}, {})
+        finish_swap_phase(state)
         force_stalemate(state)
         state:play(0, 1)
 
@@ -606,7 +670,7 @@ describe("Ante Magic boss battle", function()
             expect(#game.view(state).player_hand):toBe(expected_hand)
             expect(#game.view(state).computer_hand):toBe(expected_hand)
             local deck_before: i32 = game.view(state).deck_count
-            state:resolve_swap({}, {})
+            finish_swap_phase(state)
             force_boss_player_win(state)
             state:play(0, 1)
             local trick = game.view(state).history[expected_round - 1]
@@ -634,7 +698,7 @@ describe("Ante Magic boss battle", function()
         math.randomseed(52)
         local state = game.new(false, starter_loadout(), game.starting_gold)
         expect(state:is_boss()):toBe(false)
-        state:resolve_swap({}, {})
+        finish_swap_phase(state)
         force_player_win(state)
         state:play(0, 1)
         expect(#game.view(state).player_hand):toBe(5)
@@ -795,13 +859,13 @@ describe("Ante Magic spell casting", function()
         expect(#resolved.middle_indices):toBe(2)
         for table_card in resolved.middle_indices do expect(table_card == 0):toBe(false) end
         expect(state:is_frozen(0)):toBe(false)
-        expect(state:swap_open()):toBe(false)
+        expect(state:swap_open()):toBe(true)
     end)
 
     it("retains a table_card frozen after the swap for exactly one more round", function()
         math.randomseed(61)
         local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_gold)
-        state:resolve_swap({}, {})
+        finish_swap_phase(state)
         local retained = game.view(state).middle[1]
         local replaced_left = game.view(state).middle[0]
         local replaced_right = game.view(state).middle[2]
