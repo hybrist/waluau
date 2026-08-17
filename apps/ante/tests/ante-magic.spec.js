@@ -104,7 +104,7 @@ test('starts a boss rush from its menu option', async ({ page }) => {
   const canvas = await openGame(page);
 
   // BOSS RUSH sits directly under NEW RUN; Enter on it opens the spell list,
-  // and a second Enter deals the first vault as the eleven-card variant,
+  // and a second Enter deals the first vault as the seven-card variant,
   // whose board still shows the sealed draw pile.
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');

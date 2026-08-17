@@ -58,15 +58,15 @@ describe("card row", function(): unit
     end)
 
     it("overlaps a boss battle's row instead of widening it", function(): unit
-        local bounds = entity.rect(0.0, 0.0, 624.0, card.height)
-        local pitch = card_row.pitch_in(bounds, 11, card_row.flat_pitch)
-        -- Eleven cards over a 520-unit span is a 52 pitch: half a card, so
+        local bounds = entity.rect(0.0, 0.0, 416.0, card.height)
+        local pitch = card_row.pitch_in(bounds, 7, card_row.flat_pitch)
+        -- Seven cards over a 312-unit span is a 52 pitch: half a card, so
         -- every card covers half of its neighbour.
         expect(pitch):toBe(52.0)
 
-        local slots = card_row.slot_rects(11, pitch, bounds)
+        local slots = card_row.slot_rects(7, pitch, bounds)
         expect(slots[0].x):toBe(0.0)
-        expect(slots[10].x + slots[10].width):toBe(624.0)
+        expect(slots[6].x + slots[6].width):toBe(416.0)
         expect(slots[1].x - slots[0].x):toBe(52.0)
     end)
 end)

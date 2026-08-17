@@ -23,7 +23,7 @@ local card = require("./card")
 const FLAT_PITCH: f64 = 116.0
 
 -- Widest sideways spread a row may occupy before it starts tightening. A
--- five-card row never reaches it; a boss battle's eleven-card row shrinks its
+-- five-card row never reaches it; a boss battle's seven-card row shrinks its
 -- pitch to fit.
 function pitch_for(span: f64, count: i32, preferred: f64): f64
     if count <= 1 then

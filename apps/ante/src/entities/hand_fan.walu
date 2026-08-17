@@ -40,7 +40,7 @@ const FAN_PART: f64 = 0.23
 const CLOSED: i32 = -1
 
 -- Both hand rows are laid out for however many cards they currently hold. The
--- five-card layout is the reference; boss battles start at eleven and shrink
+-- five-card layout is the reference; boss battles start at seven and shrink
 -- after every round, so the geometry below is parametric on that count.
 function middle_of(count: i32): f64
     return ((count - 1)::f64) * 0.5

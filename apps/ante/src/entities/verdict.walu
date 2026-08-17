@@ -58,7 +58,7 @@ function subtitle_of(run: run_module.View): string
         return "ALL " .. tostring(run.run_length)
             .. " DUELS WON. THE CITY GOES ON PAST THEM"
     end
-    return "FIVE ROUNDS COMPLETE. THE RUN GOES ON"
+    return "THE ROUNDS ARE COMPLETE. THE RUN GOES ON"
 end
 
 -- One figure under its caption.
