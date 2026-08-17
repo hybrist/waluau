@@ -69,7 +69,7 @@ end
 local function autopilot(state: game.State): unit
     for _ = 1, 5 do
         if state:is_finished() then return end
-        if state:swap_open() then reference_swap(state) end
+        while state:swap_open() do reference_swap(state) end
         local pair: game.PairChoice = game.best_pair(
             game.hand_cards(game.view(state).player_hand), game.view(state).middle)
         state:play(pair.first, pair.second)
@@ -176,28 +176,16 @@ describe("Ante Magic duel economy", function()
         expect(clear_percent(flush)):toBe(clear_percent(lean))
     end)
 
-    it("charges for contesting a swap and hands back no rounds for it", function()
-        -- Not the result this harness was written expecting, and the one most
-        -- worth keeping a shop around. A purse of nothing cannot wager, so the
-        -- Opponent's exchange executes unopposed every round — and the duel is
-        -- cleared about as often as when every swap is contested to the hilt.
-        --
-        -- The arithmetic behind it: a wager is paid with certainty and only
-        -- comes back inside a pot the round has to win, which in a mirror match
-        -- is a coin flip, so contesting costs about half of every gold staked.
-        -- What it buys is that the player's exchange runs instead of the Arch
-        -- opponent's — and the exchange lands on the shared table cards, which both hands
-        -- then play through. Improving the board improves the board for two.
-        --
-        -- So the swap, the mechanic the game is built around, is dominated by
-        -- passing. That is a rules problem rather than a target problem, tracked
-        -- separately; the target only has to be designed knowing it is true, since
-        -- charging for gold gives a player one more reason to never wager.
+    it("does not make contesting more profitable than passing", function()
+        -- A purse of nothing cannot raise, so the Opponent's swaps execute
+        -- unopposed. Multiple escalating proposals alter how often each stake
+        -- enters the pot, but they do not yet make the funded mirror policy
+        -- earn more than passing; that broader economy problem stays measured.
         local broke: Sample = measure(false, 0, STANDARD_TRIALS)
         local funded: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
         expect(clear_percent(broke)):toBeGreaterThanOrEqual(clear_percent(funded) - 5)
         expect(clear_percent(broke)):toBeLessThanOrEqual(clear_percent(funded) + 5)
-        expect(mean_income(broke)):toBeGreaterThan(mean_income(funded))
+        expect(mean_income(broke)):toBeGreaterThanOrEqual(mean_income(funded))
     end)
 end)
 

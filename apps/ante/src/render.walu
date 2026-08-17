@@ -1250,8 +1250,13 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
         return
     end
     if state.swap_open then
+        local minimum_swap: i32 = game.next_swap_min(
+            state.player_swap_max, state.computer_swap_max)
+        local swap_prompt: string = "SWAP AT LEAST " .. tostring(minimum_swap)
+            .. ": SELECT MATCHING CARDS + TABLE CARDS"
+        if minimum_swap > 3 then swap_prompt = "NO SWAP REMAINS: SKIP" end
         centered_line(
-            surface, viewport, "SWAP: SELECT MATCHING CARDS + TABLE CARDS",
+            surface, viewport, swap_prompt,
             viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE, "#fbbf24")
         -- Mirrors the screen's submit rule so the capsule only lights up when
         -- a commit would actually be accepted.
@@ -1262,6 +1267,7 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
         local balanced: bool = available
             and #interaction.swap_hand == #interaction.swap_table_cards
             and #interaction.swap_hand <= state.player_points
+            and (#interaction.swap_hand == 0 or #interaction.swap_hand >= minimum_swap)
         draw_actions(surface, {
             action_bar.action("MAKE SWAP", balanced),
             action_bar.action("SKIP", true),

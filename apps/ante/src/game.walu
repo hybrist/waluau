@@ -42,7 +42,7 @@ type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {
 -- their gold, both the wager stake and the resource each cast burns. Both the
 -- loadout and the gold are dealt in rather than fixed, so a run can hand one
 -- duel what the previous one left standing and whatever it bought since.
-opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: Winner, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: SpellKind? }
+opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: Winner, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, player_swap_max: i32, computer_swap_max: i32, swap_winner: Winner, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: SpellKind? }
 type View = readonly<{
     deck_count: i32,
     player_hand: {HandSlot},
@@ -58,6 +58,8 @@ type View = readonly<{
     pot: i32,
     player_wager: i32,
     computer_wager: i32,
+    player_swap_max: i32,
+    computer_swap_max: i32,
     swap_winner: Winner,
     swap_count: i32,
     swap_hand_indices: {i32},
@@ -100,7 +102,7 @@ const SPELL_CLONE: i32 = 4
 const SPELL_KIND_COUNT: i32 = 4
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "duel-state-v6"
+const SNAPSHOT_SCHEMA: string = "duel-state-v7"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 -- A spell as it is first learned: full price until something reduces it.
@@ -405,7 +407,12 @@ function swap_hand_options(count: i32): {{i32}}
     return options
 end
 
-function best_available_swap(hand: readonly<{Card}>, middle: readonly<{Card}>, frozen_middle: readonly<{bool}>): SwapChoice
+function best_available_swap(
+    hand: readonly<{Card}>,
+    middle: readonly<{Card}>,
+    frozen_middle: readonly<{bool}>,
+    minimum_count: i32
+): SwapChoice
     local baseline: i32 = best_pair(hand, middle).value
     local best: SwapChoice = { hand_indices = {}, middle_indices = {}, community_value = rank_three(middle), hand_value = baseline }
     local hand_options: {{i32}} = swap_hand_options(#hand)
@@ -416,7 +423,9 @@ function best_available_swap(hand: readonly<{Card}>, middle: readonly<{Card}>, f
             for index in middle_indices do
                 if frozen_middle[index] then available = false end
             end
-            if available and #hand_indices == #middle_indices then
+            if available and #hand_indices == #middle_indices
+                and #hand_indices >= minimum_count
+            then
                 local candidate: SwapChoice = proposed_swap(hand, middle, hand_indices, middle_indices)
                 if candidate.hand_value > best.hand_value or (candidate.hand_value == best.hand_value and candidate.community_value > best.community_value) then
                     best.hand_indices = candidate.hand_indices
@@ -436,7 +445,7 @@ function best_available_swap(hand: readonly<{Card}>, middle: readonly<{Card}>, f
 end
 
 function best_swap(hand: readonly<{Card}>, middle: readonly<{Card}>): SwapChoice
-    return best_available_swap(hand, middle, { false, false, false })
+    return best_available_swap(hand, middle, { false, false, false }, 1)
 end
 
 -- Spend two slots of a hand; the watched marks travel inside their slots.
@@ -535,27 +544,50 @@ function State:divine_intervention(target: i32): bool
     return false
 end
 
+-- A side must raise its own previous proposal while at least matching the
+-- other side's largest proposal. Four means that side has exhausted the
+-- three-card ceiling and can only pass.
+function next_swap_min(own_max: i32, opponent_max: i32): i32
+    local minimum: i32 = own_max + 1
+    if opponent_max > minimum then minimum = opponent_max end
+    return minimum
+end
+
 function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOutcome?
     if self.finished or not self.swap_open then return nil end
     local player_wager: i32 = #hand_indices
+    local player_minimum: i32 = next_swap_min(
+        self.player_swap_max, self.computer_swap_max)
     local valid_player_swap: bool = player_wager <= 3
         and player_wager <= self.player_points
         and player_wager == #middle_indices
         and self:middle_indices_available(middle_indices)
+        and (player_wager == 0 or player_wager >= player_minimum)
     if not valid_player_swap then return nil end
 
+    local proposed_player_max: i32 = self.player_swap_max
+    if player_wager > proposed_player_max then proposed_player_max = player_wager end
+    local computer_minimum: i32 = next_swap_min(
+        self.computer_swap_max, proposed_player_max)
     local computer: SwapChoice = best_available_swap(
-        hand_cards(self.computer_hand), self.middle, self.frozen_middle)
+        hand_cards(self.computer_hand), self.middle, self.frozen_middle,
+        computer_minimum)
+    local computer_wager: i32 = #computer.hand_indices
     local player_community: i32 = 0
-    if valid_player_swap then
+    if player_wager > 0 then
         player_community = proposed_swap(hand_cards(self.player_hand), self.middle, hand_indices, middle_indices).community_value
     end
 
-    self.player_wager = player_wager
-    self.computer_wager = #computer.hand_indices
-    self.player_points -= self.player_wager
-    self.pot = self.player_wager + self.computer_wager
-    self.swap_winner = swap_priority(self.player_wager, player_community, self.computer_wager, computer.community_value)
+    self.player_wager += player_wager
+    self.computer_wager += computer_wager
+    self.player_points -= player_wager
+    self.pot += player_wager + computer_wager
+    self.player_swap_max = proposed_player_max
+    if computer_wager > self.computer_swap_max then
+        self.computer_swap_max = computer_wager
+    end
+    self.swap_winner = swap_priority(
+        player_wager, player_community, computer_wager, computer.community_value)
     self.swap_count = 0
     -- The executed exchange, slot by slot, so the presentation can animate
     -- exactly which cards and table cards traded places (the Opponent's picks
@@ -573,7 +605,10 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
         self.swap_hand_indices = computer.hand_indices
         self.swap_middle_indices = computer.middle_indices
     end
-    self.swap_open = false
+    self.swap_open = not (
+        (player_wager == 0 and computer_wager == 0)
+        or (self.player_swap_max == 3 and self.computer_swap_max == 3)
+    )
     self:clear_frozen()
     local outgoing: {Card} = {}
     local incoming: {Card} = {}
@@ -670,6 +705,8 @@ function State:play(first: i32, second: i32): Trick?
         self.pot = 0
         self.player_wager = 0
         self.computer_wager = 0
+        self.player_swap_max = 0
+        self.computer_swap_max = 0
         self.swap_winner = 0
         self.swap_count = 0
         self.swap_hand_indices = {}
@@ -756,6 +793,8 @@ function snapshot(state: State): string
     snapshot_data.append_i32(parts, state.pot)
     snapshot_data.append_i32(parts, state.player_wager)
     snapshot_data.append_i32(parts, state.computer_wager)
+    snapshot_data.append_i32(parts, state.player_swap_max)
+    snapshot_data.append_i32(parts, state.computer_swap_max)
     snapshot_data.append_i32(parts, state.swap_winner)
     snapshot_data.append_i32(parts, state.swap_count)
     snapshot_data.append_indices(parts, state.swap_hand_indices)
@@ -946,6 +985,8 @@ function restore(snapshot_value: string): State?
     local pot: i32 = reader:next_i32()
     local player_wager: i32 = reader:next_i32()
     local computer_wager: i32 = reader:next_i32()
+    local player_swap_max: i32 = reader:next_i32()
+    local computer_swap_max: i32 = reader:next_i32()
     local swap_winner: i32 = reader:next_i32()
     local swap_count: i32 = reader:next_i32()
     local swap_hand_indices: {i32} = reader:next_indices()
@@ -977,16 +1018,20 @@ function restore(snapshot_value: string): State?
     then
         return nil
     end
+    if player_swap_max < 0 or player_swap_max > 3
+        or computer_swap_max < 0 or computer_swap_max > 3
+        or player_wager < player_swap_max or computer_wager < computer_swap_max
+        or (player_swap_max == 0 and player_wager ~= 0)
+        or (computer_swap_max == 0 and computer_wager ~= 0)
+        or (swap_open and player_swap_max == 3 and computer_swap_max == 3)
+    then
+        return nil
+    end
     if swap_count < 0 or swap_count > 3
         or #swap_hand_indices ~= swap_count
         or #swap_middle_indices ~= swap_count
         or not valid_indices(swap_hand_indices, BOSS_HAND_SIZE)
         or not valid_indices(swap_middle_indices, 3)
-    then
-        return nil
-    end
-    if swap_open and (pot ~= 0 or player_wager ~= 0 or computer_wager ~= 0
-        or swap_winner ~= 0 or swap_count ~= 0)
     then
         return nil
     end
@@ -1013,6 +1058,8 @@ function restore(snapshot_value: string): State?
         pot = pot,
         player_wager = player_wager,
         computer_wager = computer_wager,
+        player_swap_max = player_swap_max,
+        computer_swap_max = computer_swap_max,
         swap_winner = swap_winner::Winner,
         swap_count = swap_count,
         swap_hand_indices = swap_hand_indices,
@@ -1046,6 +1093,8 @@ function new(boss: bool, spells: {Spell}, gold: i32): State
         pot = 0,
         player_wager = 0,
         computer_wager = 0,
+        player_swap_max = 0,
+        computer_swap_max = 0,
         swap_winner = 0,
         swap_count = 0,
         swap_hand_indices = {},
@@ -1081,6 +1130,8 @@ function view(state: State): View
         pot = state.pot,
         player_wager = state.player_wager,
         computer_wager = state.computer_wager,
+        player_swap_max = state.player_swap_max,
+        computer_swap_max = state.computer_swap_max,
         swap_winner = state.swap_winner,
         swap_count = state.swap_count,
         swap_hand_indices = state.swap_hand_indices,
@@ -1184,6 +1235,10 @@ end
 
 function State:swap_open(): bool
     return self.swap_open
+end
+
+function State:minimum_swap(): i32
+    return next_swap_min(self.player_swap_max, self.computer_swap_max)
 end
 
 function State:gold(): i32
@@ -1318,6 +1373,8 @@ function State:reset(boss: bool, spells: {Spell}, gold: i32): unit
     self.pot = fresh.pot
     self.player_wager = fresh.player_wager
     self.computer_wager = fresh.computer_wager
+    self.player_swap_max = fresh.player_swap_max
+    self.computer_swap_max = fresh.computer_swap_max
     self.swap_winner = fresh.swap_winner
     self.swap_count = fresh.swap_count
     self.swap_hand_indices = fresh.swap_hand_indices
@@ -1451,6 +1508,7 @@ return {
     hand_bonus = hand_bonus,
     rank_three = rank_three,
     swap_priority = swap_priority,
+    next_swap_min = next_swap_min,
     proposed_swap = proposed_swap,
     best_swap = best_swap,
     rank_name = rank_name,
