@@ -32,11 +32,11 @@ type State = {
 }
 
 -- Every third duel is the boss battle variant, so a run's cadence is two
--- standard heists and then eleven cards with no replacements.
+-- standard heists and then seven cards with no replacements.
 const BOSS_EVERY: i32 = 3
 -- Nine duels is the run the target table is written for: three acts of two
 -- heists and a boss, ending on one. The boss rush is a shorter, steeper sprint
--- rather than nine consecutive eleven-card battles.
+-- rather than nine consecutive seven-card battles.
 const RUN_LENGTH: i32 = 9
 const RUSH_LENGTH: i32 = 5
 -- Past the last duel the city keeps going and the table runs out, so the target
@@ -102,7 +102,7 @@ end
 -- winning has to be worth by the time the run is deep.
 --
 -- Boss duels take the largest steps, which is what makes the end of an act a
--- gold wall as well as an eleven-card one.
+-- gold wall as well as a seven-card one.
 --
 -- The table is written out inside the function rather than held module-side so
 -- the values sit next to the reasoning about them.

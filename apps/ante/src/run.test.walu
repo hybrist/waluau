@@ -235,7 +235,7 @@ describe("Ante Magic target", function()
         end
         -- Every boss duel asks for more of a step up than the standard duel
         -- before it, so the end of an act is a gold wall as well as an
-        -- eleven-card one.
+        -- seven-card one.
         for duel = 3::i32, run.run_length(false) do
             if run.boss_at(duel, false) then
                 local boss_step: i32 = run.target_at(duel, false)
@@ -442,11 +442,11 @@ describe("Ante Magic run progression", function()
         clear_vault(state, 30)
         expect(state.duel):toBe(3)
         expect(state.cleared):toBe(2)
-        -- The third duel is the boss battle: eleven cards, no replacements.
+        -- The third duel is the boss battle: seven cards, no replacements.
         local third: game.State = game.new(state:boss(), state.spells, state.gold)
         expect(third:gold()):toBe(30 - run.target_at(2, false))
         expect(third:is_boss()):toBe(true)
-        expect(third:hand_size()):toBe(11)
+        expect(third:hand_size()):toBe(7)
     end)
 
     it("ends the run where the Opponent stops it", function()
@@ -468,13 +468,13 @@ describe("Ante Magic run progression", function()
         local state: run.State = run.new(game.spell_freeze_ray, true)
         local opening: game.State = settle_vault(state, 0, 25)
         expect(opening:is_boss()):toBe(true)
-        expect(opening:hand_size()):toBe(11)
+        expect(opening:hand_size()):toBe(7)
 
         expect(state.duel):toBe(2)
         expect(state:boss()):toBe(true)
         expect(state:next_is_boss()):toBe(true)
         local second: game.State = game.new(state:boss(), state.spells, state.gold)
         expect(second:gold()):toBe(25 - run.target_at(1, true))
-        expect(second:hand_size()):toBe(11)
+        expect(second:hand_size()):toBe(7)
     end)
 end)

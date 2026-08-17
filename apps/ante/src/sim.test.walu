@@ -620,13 +620,13 @@ local function force_boss_player_win(state: game.State): unit
 end
 
 describe("Ante Magic boss battle", function()
-    it("deals eleven cards and never replaces a spent one", function()
+    it("deals seven cards and never replaces a spent one", function()
         math.randomseed(50)
         local state = game.new(true, starter_loadout(), game.starting_gold)
         expect(state:is_boss()):toBe(true)
-        expect(game.view(state).deck_count):toBe(27)
-        expect(#game.view(state).player_hand):toBe(11)
-        expect(#game.view(state).computer_hand):toBe(11)
+        expect(game.view(state).deck_count):toBe(35)
+        expect(#game.view(state).player_hand):toBe(7)
+        expect(#game.view(state).computer_hand):toBe(7)
         expect(#game.view(state).middle):toBe(3)
         expect(game.view(state).player_points):toBe(10)
         expect(game.view(state).swap_open):toBe(true)
@@ -634,8 +634,8 @@ describe("Ante Magic boss battle", function()
         -- Round 1: Player wins
         expect(game.view(state).round):toBe(1)
         expect(game.view(state).finished):toBe(false)
-        expect(#game.view(state).player_hand):toBe(11)
-        expect(#game.view(state).computer_hand):toBe(11)
+        expect(#game.view(state).player_hand):toBe(7)
+        expect(#game.view(state).computer_hand):toBe(7)
         finish_swap_phase(state)
         force_boss_player_win(state)
         state:play(0, 1)
@@ -644,18 +644,18 @@ describe("Ante Magic boss battle", function()
         
         -- Round 2: Player wins and game ends (best of 3 means first to 2 wins)
         expect(game.view(state).round):toBe(2)
-        expect(#game.view(state).player_hand):toBe(9)
-        expect(#game.view(state).computer_hand):toBe(9)
+        expect(#game.view(state).player_hand):toBe(5)
+        expect(#game.view(state).computer_hand):toBe(5)
         finish_swap_phase(state)
         force_boss_player_win(state)
         state:play(0, 1)
 
         expect(game.view(state).finished):toBe(true)
         expect(game.view(state).player_tricks):toBe(2)
-        expect(#game.view(state).player_hand):toBe(7)
-        expect(#game.view(state).computer_hand):toBe(7)
+        expect(#game.view(state).player_hand):toBe(3)
+        expect(#game.view(state).computer_hand):toBe(3)
         expect(#game.view(state).middle):toBe(0)
-        expect(game.view(state).deck_count):toBe(24)
+        expect(game.view(state).deck_count):toBe(32)
     end)
 
     it("keeps the standard game's five-card deal and replacements", function()
@@ -669,18 +669,18 @@ describe("Ante Magic boss battle", function()
         expect(#game.view(state).computer_hand):toBe(5)
     end)
 
-    it("searches the whole eleven-card hand for the best swap", function()
-        local middle: {game.Card} = { card(9, 2), card(5, 0), card(6, 1) }
+    it("searches the whole seven-card hand for the best swap", function()
+        local middle: {game.Card} = { card(5, 3), card(6, 3), card(2, 1) }
         local hand: {game.Card} = {
-            card(2, 0), card(3, 1), card(4, 2), card(7, 3), card(8, 0),
-            card(2, 1), card(3, 2), card(4, 3),
-            card(9, 3), card(9, 0), card(9, 1),
+            card(2, 0), card(3, 1), card(12, 2), card(8, 3), card(9, 3),
+            card(13, 0), card(7, 3),
         }
-        -- Two of the hand's three nines must stay home while a third joins
-        -- the table cards, so every fourfold-circle swap binds an index past the
-        -- old five-card option table.
+        -- The straight flush wants the whole table replaced with the hand's
+        -- high spades, and the seven of spades sits in the hand's last slot,
+        -- so the winning swap binds an index past the old five-card option
+        -- table.
         local choice = game.best_swap(hand, middle)
-        expect(game.category_name(choice.hand_value)):toBe("four of a kind")
+        expect(game.category_name(choice.hand_value)):toBe("straight flush")
         local high_index: i32 = 0
         for index in choice.hand_indices do
             if index > high_index then high_index = index end
@@ -696,7 +696,7 @@ describe("Ante Magic boss battle", function()
         expect(restored == nil):toBe(false)
         if restored ~= nil then
             expect(restored:is_boss()):toBe(true)
-            expect(#game.view(restored).player_hand):toBe(11)
+            expect(#game.view(restored).player_hand):toBe(7)
             expect(game.snapshot(restored)):toBe(encoded)
         end
 
@@ -713,7 +713,7 @@ describe("Ante Magic boss battle", function()
         local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_gold)
         state:reset(true, loadout_of(game.spell_clone), 23)
         expect(state:is_boss()):toBe(true)
-        expect(state:hand_size()):toBe(11)
+        expect(state:hand_size()):toBe(7)
         expect((state:spell_kind(0) or 1)::i32):toBe(game.spell_clone)
         expect(state:gold()):toBe(23)
         -- A duel dealt a pair of spells is fought with both, each on its own

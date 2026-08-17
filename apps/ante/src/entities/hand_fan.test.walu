@@ -43,11 +43,11 @@ describe("hand fan", function(): unit
     end)
 
     it("flattens a longer hand back toward the reference silhouette", function(): unit
-        -- An eleven-card boss hand keeps the outermost tilt of a five-card
+        -- A seven-card boss hand keeps the outermost tilt of a five-card
         -- one rather than curling off the board.
-        expect(hand_fan.angle_at(10, 0.0, 11)):toBeCloseTo(
+        expect(hand_fan.angle_at(6, 0.0, 7)):toBeCloseTo(
             hand_fan.angle_at(4, 0.0, COUNT), 9)
-        expect(hand_fan.dip_of(11)):toBeCloseTo(hand_fan.dip_of(COUNT), 9)
+        expect(hand_fan.dip_of(7)):toBeCloseTo(hand_fan.dip_of(COUNT), 9)
     end)
 
     it("opens around the focused card and closes with no focus", function(): unit

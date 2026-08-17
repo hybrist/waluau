@@ -120,23 +120,25 @@ local function mean_income(sample: Sample): i32
     return sample.income_sum / sample.trials
 end
 
--- A standard duel is cheap to play; a boss duel searches an eleven-card hand
+-- A standard duel is cheap to play; a boss duel searches a seven-card hand
 -- for every one-, two-, and three-card swap against seven table_card subsets, each
--- candidate ranking all fifty-five pairs, so it gets far fewer trials.
+-- candidate ranking all twenty-one pairs, so it gets far fewer trials.
 const STANDARD_TRIALS: i32 = 200
 const BOSS_TRIALS: i32 = 25
 
--- Measured, 2026-08-09, 200 standard and 25 boss trials after rarity bonuses:
+-- Measured, 2026-08-16, 200 standard and 25 boss trials after rarity bonuses,
+-- on three-round duels and the seven-card boss deal they imply:
 --
---   standard  clear 54%  mean income +15  cleared +25  range -7 .. +75
---   boss      clear 48%  mean income +22  cleared +36  range -7 .. +85
+--   standard  clear 48%  mean income +7  cleared +14  range -8 .. +56
+--   boss      clear 52%  mean income +7  cleared +14  range -6 .. +36
 --
 -- Two of those are worth saying out loud, because the target's whole design rests
 -- on them. A duel is close to a coin flip even for a player that never
 -- misplays — the opponent is the same policy, so half the rounds go to it.
--- The rarity curve makes boss hands especially lucrative because eleven-card
--- search finds exceptional formations more often. The target table prices the
--- standard and boss cadence against their separate measured pays.
+-- The seven-card boss deal pays on the same order as a standard duel: the
+-- wider swap search no longer outruns what never drawing replacements costs
+-- the later rounds. The target table still prices the boss cadence against
+-- the old, richer eleven-card pay (waluau-ms4i tracks re-pricing it).
 describe("Ante Magic duel economy", function()
     it("makes a standard duel close to a coin flip and pays the winner", function()
         local sample: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
@@ -159,8 +161,8 @@ describe("Ante Magic duel economy", function()
         local sample: Sample = measure(true, game.starting_gold, BOSS_TRIALS)
         expect(clear_percent(sample)):toBeGreaterThanOrEqual(30)
         expect(clear_percent(sample)):toBeLessThanOrEqual(65)
-        expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(22)
-        expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(55)
+        expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(8)
+        expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(35)
     end)
 
     it("pays a duel the same however big the purse it opened with", function()
@@ -220,8 +222,9 @@ end
 -- one or two duels' worth of play.
 const RUN_TRIALS: i32 = 300
 
--- Measured, 2026-08-09, over 300 runs: all ended on the Opponent, the deepest
--- reached duel 11, and the mean cleared one duel. The target table is
+-- Measured, 2026-08-16, over 300 runs of three-round duels: nearly every run
+-- ended on the Opponent (289 of 300, the target took the rest), the deepest
+-- reached duel 6, and the mean cleared one duel. The target table is
 -- remeasured whenever duel pay changes. The target controls how much of a
 -- lucky run's rarity pay survives to shop, but the coin-flip Opponent remains
 -- by far the common end.
@@ -268,10 +271,16 @@ describe("Ante Magic run economy", function()
 
     it("spends act three out of the pile the first two acts banked", function()
         -- The design claim, checked against the table directly rather than
-        -- through the shuffle: at a cleared duel's measured pay, the purse
-        -- rises through act one, holds through act two, and falls through act
+        -- through the shuffle: at a cleared duel's pay, the purse rises
+        -- through act one, holds through act two, and falls through act
         -- three. A statistical version of this would need runs to reach duel
         -- nine, and a coin-flip duel means almost none do.
+        --
+        -- The pays below are the five-round, eleven-card-boss era's measured
+        -- +25/+36 the table was priced against. Three-round duels pay +14
+        -- (measured above), which breaks this arc in play; the table has not
+        -- been re-priced yet, and waluau-ms4i tracks doing so and re-anchoring
+        -- these numbers.
         local purse: i32 = game.starting_gold
         local peak: i32 = purse
         local peak_vault: i32 = 0

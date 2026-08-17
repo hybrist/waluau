@@ -32,9 +32,9 @@ type HandSlot = { card: Card, known: bool }
 -- do not necessarily pay the same for it.
 type Spell = { kind: SpellKind, cost: i32 }
 type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
--- `boss` selects the boss battle variant: both sides start with eleven cards
+-- `boss` selects the boss battle variant: both sides start with seven cards
 -- instead of five and never draw replacements, so the hands shrink by two each
--- round and the third round is fought from a seven-card hand.
+-- round and the third round is fought from a three-card hand.
 -- `spells` is the loadout the player brought into this duel, in the order
 -- they learned the spells; a cast names a slot of it. `cast_kind` is the kind
 -- of the last cast these rules charged for, which is what decides whether a
@@ -86,7 +86,10 @@ const TWO: i32 = 2
 const MAX_ROUNDS: i32 = 3
 const OPPONENT_WINS_TO_END: i32 = 2
 const HAND_SIZE: i32 = 5
-const BOSS_HAND_SIZE: i32 = 11
+-- Boss hands are never replenished: two cards spent a round, with the last
+-- round fought from a three-card hand, so the opening deal follows from the
+-- round count rather than being its own decision.
+const BOSS_HAND_SIZE: i32 = 3 + (MAX_ROUNDS - 1) * 2
 -- The gold a duel is fought with when nothing carried into it. A run hands
 -- the next duel whatever the last one left standing instead.
 const STARTING_GOLD: i32 = 10
@@ -386,7 +389,7 @@ end
 
 -- Every way to pull one, two, or three cards out of a hand of `count` cards.
 -- The five-card hand's twenty-five options used to be a literal table; boss
--- battle hands run up to eleven cards, so the options are enumerated instead.
+-- battle hands run up to seven cards, so the options are enumerated instead.
 function swap_hand_options(count: i32): {{i32}}
     local options: {{i32}} = {}
     for first = ZERO, count - ONE do
@@ -686,7 +689,7 @@ function State:play(first: i32, second: i32): Trick?
 
     remove_pair(self.player_hand, first, second)
     remove_pair(self.computer_hand, computer.first, computer.second)
-    -- Boss battles never replace spent cards: the opening eleven are the
+    -- Boss battles never replace spent cards: the opening seven are the
     -- whole run, so both hands shrink toward the three-card final round.
     if not self.boss then
         for _ = 1, 2 do
