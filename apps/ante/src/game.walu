@@ -695,7 +695,7 @@ function State:play(first: i32, second: i32): Trick?
         end
     end
 
-    if self.computer_tricks >= OPPONENT_WINS_TO_END or self.round >= MAX_ROUNDS then
+    if self.computer_tricks >= OPPONENT_WINS_TO_END or self.player_tricks >= OPPONENT_WINS_TO_END or self.round >= MAX_ROUNDS then
         self.middle = {}
         self.finished = true
     else
