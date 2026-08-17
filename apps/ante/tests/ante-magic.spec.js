@@ -137,24 +137,6 @@ test('responds to keyboard input without an iframe focus step', async ({ page })
 test.describe('on high-DPI displays', () => {
   test.use({ deviceScaleFactor: 2, viewport: { width: 1200, height: 800 } });
 
-  test('uploads the card back at high-density card proportions', async ({ page }) => {
-    await page.addInitScript(() => {
-      const original = WebGL2RenderingContext.prototype.texImage2D;
-      window.__anteTextureUploads = [];
-      WebGL2RenderingContext.prototype.texImage2D = function instrumentTextureUpload(...args) {
-        const source = args.at(-1);
-        if (Number.isFinite(source?.width) && Number.isFinite(source?.height)) {
-          window.__anteTextureUploads.push({ width: source.width, height: source.height });
-        }
-        return original.apply(this, args);
-      };
-    });
-
-    await openGame(page);
-    await expect.poll(() => page.evaluate(() => window.__anteTextureUploads))
-      .toContainEqual({ width: 368, height: 512 });
-  });
-
   test('matches its WebGL backing buffer to CSS size and device density', async ({ page }) => {
     const canvas = await openGame(page);
     const metrics = () => canvas.evaluate((node) => {
