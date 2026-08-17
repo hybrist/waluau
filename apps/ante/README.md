@@ -316,8 +316,10 @@ for optional effects), and a later valid edit clears that diagnostic.
 Shader files are intentionally not runtime assets in `waluau.assets.json`.
 
 The sealed-card artwork is the committed vector
-[`assets/card-back.svg`](assets/card-back.svg). Until its asynchronous image
-load and GPU copy complete—or if either reports a structured failure—the
+[`assets/card-back.svg`](assets/card-back.svg), authored in the card's 92×128
+design space and decoded at 4× density so scaled cards remain crisp on high-DPI
+canvases. Until its asynchronous image load and GPU copy complete—or if either
+reports a structured failure—the
 renderer shows only a neutral sealed silhouette; it does not maintain a second
 procedural copy of the artwork. Text uses the packaged Cinzel Bold font
 (a static wght=700 instance of the Cinzel variable font, whose engraved
