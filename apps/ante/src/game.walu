@@ -34,7 +34,7 @@ type Spell = { kind: SpellKind, cost: i32 }
 type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
 -- `boss` selects the boss battle variant: both sides start with eleven cards
 -- instead of five and never draw replacements, so the hands shrink by two each
--- round and the fifth round is fought from a three-card hand.
+-- round and the third round is fought from a seven-card hand.
 -- `spells` is the loadout the player brought into this duel, in the order
 -- they learned the spells; a cast names a slot of it. `cast_kind` is the kind
 -- of the last cast these rules charged for, which is what decides whether a
@@ -1536,4 +1536,5 @@ return {
     spell_kind_count = SPELL_KIND_COUNT,
     spell_cost = SPELL_COST,
     starting_gold = STARTING_GOLD,
+    max_rounds = MAX_ROUNDS,
 }

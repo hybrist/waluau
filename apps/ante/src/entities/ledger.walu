@@ -1,6 +1,6 @@
 -- The round ledger: every round of this duel, who took it, and which two
 -- hands settled it. One row per round, and the rows are a column rather
--- than a running y cursor, so the ledger of a five-round duel and the ledger
+-- than a running y cursor, so the ledger of a three-round duel and the ledger
 -- of an empty one are the same code.
 
 local game = require("../game")

@@ -1,6 +1,6 @@
 # Ante Magic fixture
 
-A five-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
+A three-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
 game engine. It preserves Poker Tricks' deck, exchange, wager, hand-ranking,
 and computer search while replacing the casino-table presentation with a
 magical robbery inside an arcane vault. A won breach pays its round and pot,
@@ -10,9 +10,9 @@ The four suits are now the Red, Blue, Black, and Green schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
-The Arch Mage can commit any valid feint without a mana balance. Its third
-breach win ends the heist, while player wins never end the five-breach vault
-early — which is the room a vault leaves to earn its ante and then some.
+The Arch Mage can commit any valid feint without a mana balance. Either side's
+second breach win ends the vault: the Arch Mage's ends the heist, the player's
+settles the vault as won.
 During a feint, both sides may propose more than once. A new proposal must use
 more cards than that side's previous proposal and at least as many as the other
 side's largest proposal, up to three. The feint ends when both pass or when both
@@ -60,8 +60,8 @@ is charged on the way out and there is a whole heist in between to earn it.
 
 Every third vault of a run is a boss battle: both sides are dealt eleven relics
 up front and spent pairs are never replaced from the draw pile, so the hands
-shrink by two every breach and the fifth breach is fought from a three-card
-fan. Everything else — feints, wagers, scoring, and the five breaches — matches
+shrink by two every breach and the third breach is fought from a seven-card
+fan. Everything else — feints, wagers, scoring, and the three breaches — matches
 a standard vault. The menu's BOSS RUSH starts a run made of nothing else: five
 vaults rather than nine, on its own steeper ante. Both
 hand rows lay themselves out for however many cards they hold, tightening their
@@ -282,7 +282,7 @@ frames the row will paint into.
 | `entities/deck.walu` | The sealed draw pile and its count. |
 | `entities/pile.walu` | One of the three right-edge piles, face up on its last card. |
 | `entities/hud.walu` | The header band: the title block, the breach orbs, the mana on hand. |
-| `entities/orb_track.walu` | The five breaches of a vault as five orbs, and the three outcome colours. |
+| `entities/orb_track.walu` | The three breaches of a vault as three orbs, and the three outcome colours. |
 | `entities/footer.walu` | The centred way back to the menu and the lower-right ability diamond. |
 | `entities/ability_diamond.walu` | Four ready-ability sockets in South, West, North, East face-button order. |
 | `entities/capsule.walu` | A clickable control, as wide as its own label. |

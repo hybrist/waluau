@@ -23,7 +23,7 @@ local function settle_vault(
     return rules
 end
 
--- Take the live duel leaving `gold` behind, the way five survived rounds do.
+-- Take the live duel leaving `gold` behind, the way three survived rounds do.
 local function clear_vault(state: run.State, gold: i32): unit
     settle_vault(state, 0, gold)
 end

@@ -1,4 +1,4 @@
--- The five rounds of a duel, as five orbs. Each one is the verdict of the
+-- The rounds of a duel, one orb each. Each one is the verdict of the
 -- round it stands for; the one the board is currently fighting wears an amber
 -- ring behind it. The three outcomes a resolved round can have are declared
 -- here because the help legend draws the same orbs from them, so a colour only
@@ -8,7 +8,6 @@ local game = require("../game")
 local box = require("../box_layout")
 local entity = require("../entity")
 
-const TOTAL_ROUNDS: i32 = 5
 -- The live round's ring is the widest thing an orb ever draws, so it is what
 -- an orb's box measures.
 const ORB_RADIUS: f64 = 10.0
@@ -43,7 +42,7 @@ function draw_orb(
 end
 
 -- One round's orb, keyed off the winner recorded for it. A stalemate is not a
--- table_card hold: it does not count toward the Opponent's three wins, so it must
+-- table_card hold: it does not count toward the Opponent's two wins, so it must
 -- not wear the lost colour or the run looks like it should have ended early.
 function orb(state: game.View, round: i32): entity.Node
     return entity.sized(
@@ -77,7 +76,7 @@ end
 
 function node(state: game.View): entity.Node
     local orbs: {entity.Node} = {}
-    for round = 0::i32, TOTAL_ROUNDS - 1 do
+    for round = 0::i32, game.max_rounds - 1 do
         table.insert(orbs, orb(state, round))
     end
     return entity.flow(

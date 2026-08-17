@@ -62,7 +62,7 @@ function body(): entity.Node
         modal.body_line("SELECT 2 CARDS. THE STRONGEST FIVE-CARD POKER HAND WINS."),
         modal.body_line(
             "LATER ROUNDS AND RARER HANDS ARE WORTH MORE GOLD."
-                .. " THREE OPPONENT WINS END THE DUEL."),
+                .. " TWO OPPONENT WINS END THE DUEL."),
         entity.gap(0.0, BLOCK_GAP - LINE_GAP),
         modal.heading("3. THE TARGET"),
         modal.body_line(
@@ -77,14 +77,15 @@ function body(): entity.Node
     }, LINE_GAP)
 end
 
--- "Three table cards hold" would read as though a tie counted; only rounds
--- the opponent actually wins end the run. Five rounds make a duel; the
+-- "Two table cards hold" would read as though a tie counted; only rounds
+-- the opponent actually wins end the run, which is why the subtitle says
+-- survive rather than win. Three rounds make a duel; the
 -- target is what leaving it costs, which is a third thing to learn and so a
 -- third numbered block — the card is a column, so it simply gets longer.
 function node(): entity.Node
     return modal.node(
         "THE JOB",
-        "WIN FIVE ROUNDS, THEN REACH THE GOLD TARGET TO CONTINUE",
+        "SURVIVE THREE ROUNDS, THEN REACH THE GOLD TARGET TO CONTINUE",
         body())
 end
 

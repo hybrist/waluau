@@ -1,5 +1,5 @@
 -- The band across the top of the duel: who is being robbed, where the run
--- stands, how the five rounds have gone, and how much gold is on the table.
+-- stands, how the three rounds have gone, and how much gold is on the table.
 --
 -- It is a row of three things that want opposite edges — the title block left,
 -- the orb track in the middle, the gold right — so it is written as exactly
