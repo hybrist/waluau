@@ -83,8 +83,8 @@ const MAX_SUIT: i32 = 3
 const ZERO: i32 = 0
 const ONE: i32 = 1
 const TWO: i32 = 2
-const MAX_ROUNDS: i32 = 5
-const OPPONENT_WINS_TO_END: i32 = 3
+const MAX_ROUNDS: i32 = 3
+const OPPONENT_WINS_TO_END: i32 = 2
 const HAND_SIZE: i32 = 5
 const BOSS_HAND_SIZE: i32 = 11
 -- The gold a duel is fought with when nothing carried into it. A run hands
@@ -695,7 +695,7 @@ function State:play(first: i32, second: i32): Trick?
         end
     end
 
-    if self.computer_tricks >= OPPONENT_WINS_TO_END or self.round >= MAX_ROUNDS then
+    if self.computer_tricks >= OPPONENT_WINS_TO_END or self.player_tricks >= OPPONENT_WINS_TO_END or self.round >= MAX_ROUNDS then
         self.middle = {}
         self.finished = true
     else
