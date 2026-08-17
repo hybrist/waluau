@@ -14,7 +14,7 @@ describe("hand fan", function(): unit
         local size = hand_fan.intrinsic(COUNT)
         -- Four card widths of pitch plus the card itself, and a card's height
         -- plus the arc's dip on both sides of the centre line.
-        expect(size.preferred_width):toBe(400.0)
+        expect(size.preferred_width):toBe(388.0)
         expect(size.preferred_height):toBeCloseTo(
             card.height + hand_fan.dip_of(COUNT) * 2.0, 9)
         expect(hand_fan.dip_of(COUNT)):toBeCloseTo(11.2, 9)
@@ -22,14 +22,14 @@ describe("hand fan", function(): unit
 
     it("hangs the closed fan symmetrically about the band's centre", function(): unit
         local bounds = entity.rect(
-            0.0, 0.0, 400.0, hand_fan.intrinsic(COUNT).preferred_height)
+            0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
         local first = hand_fan.slot_rect(bounds, 0, 0.0, COUNT)
         local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)
         local last = hand_fan.slot_rect(bounds, 4, 0.0, COUNT)
 
         expect(first.x):toBe(0.0)
-        expect(last.x + last.width):toBe(400.0)
-        expect(middle.x + middle.width * 0.5):toBe(200.0)
+        expect(last.x + last.width):toBe(388.0)
+        expect(middle.x + middle.width * 0.5):toBe(194.0)
         -- The outermost cards dip below the middle one by the arc's drop.
         expect(first.y - middle.y):toBeCloseTo(11.2, 9)
         expect(last.y):toBe(first.y)
@@ -59,7 +59,7 @@ describe("hand fan", function(): unit
 
     it("prefers the card drawn on top where two overlap", function(): unit
         local bounds = entity.rect(
-            0.0, 0.0, 400.0, hand_fan.intrinsic(COUNT).preferred_height)
+            0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
         local parts: {f64} = { 0.0, 0.0, 0.0, 0.0, 0.0 }
         local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)
 

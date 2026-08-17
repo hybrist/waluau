@@ -13,9 +13,9 @@ describe("Ante Magic canvas layout", function()
         expect(state.width):toBe(1200.0)
         expect(state.height):toBe(600.0)
         expect(state.center_x):toBe(600.0)
-        expect(state.side_right):toBe(1040.0)
+        expect(state.side_right):toBe(1052.0)
         -- The hand lane caps at five card widths however much width there is.
-        expect(state.hand_span):toBe(520.0)
+        expect(state.hand_span):toBe(460.0)
     end)
 
     it("scales every element up together when both dimensions allow it", function()
@@ -61,8 +61,8 @@ describe("Ante Magic canvas layout", function()
         expect(state.width):toBe(700.0)
         expect(state.hand_span):toBe(260.0)
         -- The table_card row still clears both side columns.
-        expect(state.center_x - 168.0):toBeGreaterThan(state.side_left + 104.0)
-        expect(state.center_x + 168.0):toBeLessThan(state.side_right)
+        expect(state.center_x - 162.0):toBeGreaterThan(state.side_left + 92.0)
+        expect(state.center_x + 162.0):toBeLessThan(state.side_right)
     end)
 
     it("survives an unmeasured canvas", function()

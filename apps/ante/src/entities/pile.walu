@@ -21,12 +21,11 @@ function draw_at(
     if count <= 0 then return end
     local graphics = surface.graphics
     if count > 18 then
-        ink.panel(graphics, x - 6.0, y + 6.0, card.width, card.height, "#17171c", "#3f3f46")
+        card.fill_silhouette(graphics, x - 6.0, y + 6.0, "#111118")
     end
     if count > 6 then
-        ink.panel(graphics, x - 3.0, y + 3.0, card.width, card.height, "#17171c", "#3f3f46")
+        card.fill_silhouette(graphics, x - 3.0, y + 3.0, "#15151c")
     end
-    ink.panel(graphics, x, y, card.width, card.height, "#17171c", "#52525b")
     card.draw_face(surface, card.plain(cards[count - 1]), x, y)
 end
 

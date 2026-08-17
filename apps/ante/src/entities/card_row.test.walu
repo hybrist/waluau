@@ -11,7 +11,7 @@ local card_row = require("./card_row")
 
 describe("card row", function(): unit
     it("centres a three-table_card row on its authored pitch", function(): unit
-        local bounds = entity.rect(0.0, 40.0, 336.0, card.height)
+        local bounds = entity.rect(0.0, 40.0, 324.0, card.height)
         local slots = card_row.slot_rects(3, card_row.flat_pitch, bounds)
 
         expect(#slots):toBe(3)
@@ -19,15 +19,15 @@ describe("card row", function(): unit
         expect(slots[1].x):toBe(116.0)
         expect(slots[2].x):toBe(232.0)
         expect(slots[0].y):toBe(40.0)
-        expect(slots[2].x + slots[2].width):toBe(336.0)
+        expect(slots[2].x + slots[2].width):toBe(324.0)
     end)
 
     it("measures as the span its slots actually occupy", function(): unit
         local three = card_row.intrinsic(3, card_row.flat_pitch)
         local five = card_row.intrinsic(5, card_row.flat_pitch)
 
-        expect(three.preferred_width):toBe(336.0)
-        expect(five.preferred_width):toBe(568.0)
+        expect(three.preferred_width):toBe(324.0)
+        expect(five.preferred_width):toBe(556.0)
         expect(five.preferred_height):toBe(card.height)
     end)
 
@@ -35,9 +35,9 @@ describe("card row", function(): unit
         -- The winner's pair extends the table_card row to five slots on the same
         -- pitch, so the three table cards must not move out from under it.
         local table_cards = card_row.slot_rects(
-            3, card_row.flat_pitch, entity.rect(-168.0, 0.0, 336.0, card.height))
+            3, card_row.flat_pitch, entity.rect(-162.0, 0.0, 324.0, card.height))
         local hand = card_row.slot_rects(
-            5, card_row.flat_pitch, entity.rect(-284.0, 0.0, 568.0, card.height))
+            5, card_row.flat_pitch, entity.rect(-278.0, 0.0, 556.0, card.height))
 
         expect(hand[1].x):toBe(table_cards[0].x)
         expect(hand[2].x):toBe(table_cards[1].x)
@@ -45,11 +45,11 @@ describe("card row", function(): unit
     end)
 
     it("tightens its pitch rather than running off a narrow board", function(): unit
-        local roomy = entity.rect(0.0, 0.0, 336.0, card.height)
+        local roomy = entity.rect(0.0, 0.0, 324.0, card.height)
         local tight = entity.rect(0.0, 0.0, 300.0, card.height)
 
         expect(card_row.pitch_in(roomy, 3, card_row.flat_pitch)):toBe(116.0)
-        expect(card_row.pitch_in(tight, 3, card_row.flat_pitch)):toBe(98.0)
+        expect(card_row.pitch_in(tight, 3, card_row.flat_pitch)):toBe(104.0)
 
         local slots = card_row.slot_rects(
             3, card_row.pitch_in(tight, 3, card_row.flat_pitch), tight)
@@ -58,15 +58,15 @@ describe("card row", function(): unit
     end)
 
     it("overlaps a boss battle's row instead of widening it", function(): unit
-        local bounds = entity.rect(0.0, 0.0, 416.0, card.height)
+        local bounds = entity.rect(0.0, 0.0, 368.0, card.height)
         local pitch = card_row.pitch_in(bounds, 7, card_row.flat_pitch)
-        -- Seven cards over a 312-unit span is a 52 pitch: half a card, so
+        -- Seven cards over a 276-unit span is a 46 pitch: half a card, so
         -- every card covers half of its neighbour.
-        expect(pitch):toBe(52.0)
+        expect(pitch):toBe(46.0)
 
         local slots = card_row.slot_rects(7, pitch, bounds)
         expect(slots[0].x):toBe(0.0)
-        expect(slots[6].x + slots[6].width):toBe(416.0)
-        expect(slots[1].x - slots[0].x):toBe(52.0)
+        expect(slots[6].x + slots[6].width):toBe(368.0)
+        expect(slots[1].x - slots[0].x):toBe(46.0)
     end)
 end)

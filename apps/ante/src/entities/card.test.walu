@@ -1,0 +1,26 @@
+-- DOM-free checks for the authored card grammar. Rendering itself belongs to
+-- the browser stories; these pin the count and proportions that make each
+-- rank a distinct physical relic.
+
+require("waluau:vitest")
+
+local card = require("./card")
+
+describe("the arcane card face", function(): unit
+    it("keeps a traditional playing-card aspect ratio", function(): unit
+        expect(card.width / card.height):toBeCloseTo(2.5 / 3.5, 2)
+    end)
+
+    it("authors one repeated school mark for every number-card value", function(): unit
+        for rank = 2::i32, 10::i32 do
+            expect(#card.rank_marks(rank)):toBe(rank)
+        end
+    end)
+
+    it("reserves the high ranks for figurative face-card plates", function(): unit
+        expect(#card.rank_marks(11)):toBe(0)
+        expect(#card.rank_marks(12)):toBe(0)
+        expect(#card.rank_marks(13)):toBe(0)
+        expect(#card.rank_marks(14)):toBe(0)
+    end)
+end)

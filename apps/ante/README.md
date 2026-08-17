@@ -93,6 +93,16 @@ invalid defeat shader is treated as a visible fixture error rather than falling
 back to an unshaded result. Black-school cards use a separate local-space
 shader: a rotating violet accretion nexus collapsing into a black event horizon.
 
+Relics use a 92-by-128 cut-paper silhouette, close to the traditional playing-
+card ratio, with rounded corners and no printed perimeter stroke. Their dark
+parchment carries rubbed washes and fine fibers rather than a perfectly even
+UI fill. Number cards arrange one small school glyph per rank in celestial
+constellations — a seven visibly carries seven glyphs — while J, Q, and K keep
+their familiar ranks as a hooded adept, orb-bearing seer, and crowned
+hierophant. The Ace is a single major omen. This keeps the deck mechanically
+legible without borrowing the mirrored portraits or suit layout of a poker
+deck.
+
 Cards never simply appear or vanish: every relic and ward is dealt off a
 visible face-down pile beside the board — the opening hands, each round's
 wards, and the two replacements both sides draw after a breach — and when a
