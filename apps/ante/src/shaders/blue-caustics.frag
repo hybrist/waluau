@@ -22,49 +22,67 @@ float caustic_ridge(float wave) {
         * distance_to_light * distance_to_light;
 }
 
-float expanding_ripple(vec2 p, vec2 origin, float phase) {
-    float cycle = fract(u_time * 0.115 + phase);
-    float radius = cycle * 1.22;
-    float ring_distance = abs(length(p - origin) - radius);
-    float ring = 1.0 - smoothstep(0.020, 0.070, ring_distance);
-    return ring * sin(cycle * 3.141593) * (1.0 - cycle);
+float swell_ridge(float wave) {
+    return 1.0 - smoothstep(0.08, 0.42, abs(sin(wave)));
 }
 
 void main() {
     if (rounded_card_distance() > 0.0) discard;
     vec2 p = vec2((v_uv.x - 0.5) * 2.0 * u_aspect, (v_uv.y - 0.5) * 2.0);
 
-    // Two slow refraction currents distort the coordinate field before any
-    // light ridges are measured, producing curved cells instead of stripes.
+    // Slow crossing currents bend the whole light field. The lower frequency
+    // keeps the motion legible at card size instead of turning it into noise.
     vec2 q = p;
-    q.x += sin(p.y * 3.1 + u_time * 0.47) * 0.105;
-    q.x += sin(p.y * 6.7 - u_time * 0.31) * 0.040;
-    q.y += sin(p.x * 2.8 - u_time * 0.39) * 0.090;
-    q.y += sin(p.x * 5.9 + u_time * 0.28) * 0.035;
+    q.x += sin(p.y * 2.7 + u_time * 0.34) * 0.120;
+    q.x += sin(p.y * 5.9 - u_time * 0.23) * 0.042;
+    q.y += sin(p.x * 2.4 - u_time * 0.29) * 0.105;
+    q.y += sin(p.x * 5.1 + u_time * 0.21) * 0.038;
 
-    float ridge1 = caustic_ridge(q.x * 7.2 + q.y * 2.8 + u_time * 0.82
-        + sin(q.y * 5.0 - u_time * 0.43) * 1.15);
-    float ridge2 = caustic_ridge(-q.x * 4.9 + q.y * 8.1 - u_time * 0.66
-        + sin(q.x * 5.7 + u_time * 0.37) * 1.05);
-    float ridge3 = caustic_ridge(q.x * 5.4 + q.y * 6.3 + u_time * 0.51
-        + sin((q.x - q.y) * 4.2 - u_time * 0.29) * 0.82);
-    float network = max(ridge1, max(ridge2, ridge3));
+    // Broad, mostly horizontal wave fronts travel through the card as one
+    // coherent swell. A second offset train breaks the crests into shifting
+    // ribbons instead of a stack of parallel stripes.
+    float wave1 = swell_ridge(
+        q.y * 4.0
+        + sin(q.x * 3.2 + u_time * 0.31) * 1.05
+        - u_time * 0.52
+    );
+    float wave2 = swell_ridge(
+        q.y * 5.4
+        + sin(q.x * 2.2 - u_time * 0.27) * 0.72
+        + u_time * 0.38
+        + 1.7
+    );
+    float crest_break = 0.42 + 0.58 * (
+        0.5 + 0.5 * sin(q.x * 8.0 - q.y * 2.6 + u_time * 0.44)
+    );
+    float swells = max(wave1 * crest_break, wave2 * (1.0 - crest_break * 0.35));
+
+    // Finer caustics sit on the swells. Their unequal directions and broken
+    // intensity make cells rather than the uniformly bright net this effect
+    // used to produce.
+    float ridge1 = caustic_ridge(q.x * 6.1 + q.y * 2.5 + u_time * 0.58
+        + sin(q.y * 4.2 - u_time * 0.31) * 0.90);
+    float ridge2 = caustic_ridge(-q.x * 4.4 + q.y * 6.8 - u_time * 0.46
+        + sin(q.x * 4.8 + u_time * 0.26) * 0.84);
+    float ridge3 = caustic_ridge(q.x * 3.8 + q.y * 5.2 + u_time * 0.35
+        + sin((q.x - q.y) * 3.7 - u_time * 0.19) * 0.62);
+    float network = max(ridge1 * 0.88, max(ridge2 * 0.76, ridge3 * 0.60));
     float intersections = max(ridge1 * ridge2, max(ridge2 * ridge3, ridge1 * ridge3));
 
-    float ripple1 = expanding_ripple(p, vec2(-0.38, 0.18), 0.08);
-    float ripple2 = expanding_ripple(p, vec2(0.46, -0.32), 0.59);
-    float depth = 0.5 + 0.5 * sin(p.y * 2.2 + u_time * 0.24);
-    float shimmer = 0.90 + 0.10 * sin(u_time * 2.0 + p.x * 3.4 - p.y * 2.1);
-    float brightness = 0.065 + depth * 0.035;
-    brightness += network * 0.34 * shimmer;
-    brightness += intersections * 0.22;
-    brightness += (ripple1 + ripple2) * 0.15;
-    brightness += u_selected * 0.08 * network;
-    brightness = clamp(brightness, 0.055, 0.82);
+    float depth = 0.5 + 0.5 * sin(p.y * 1.8 + u_time * 0.17);
+    float shimmer = 0.88 + 0.12 * sin(u_time * 1.7 + p.x * 3.1 - p.y * 1.8);
+    float light = 0.055 + depth * 0.025;
+    light += swells * 0.18;
+    light += network * (0.20 + swells * 0.10) * shimmer;
+    light += intersections * 0.14;
+    light += u_selected * 0.07 * max(swells, network);
+    light = clamp(light, 0.045, 0.72);
 
     vec3 school_blue = vec3(0.219608, 0.741176, 0.972549);
-    vec3 tint = mix(vec3(0.82), school_blue, u_colored);
-    vec4 output_color = vec4(tint * brightness, v_color.a);
+    vec3 deep_water = vec3(0.018, 0.105, 0.170);
+    vec3 shadow = mix(vec3(0.035), deep_water, u_colored);
+    vec3 highlight = mix(vec3(0.82), school_blue, u_colored);
+    vec4 output_color = vec4(mix(shadow, highlight, light), v_color.a);
     if (v_textured > 0.5) output_color *= texture2D(u_texture, v_uv);
     gl_FragColor = output_color;
 }
