@@ -23,23 +23,27 @@ void main() {
     float radius = length(p);
     float angle = atan(p.y, p.x);
     float pulse = 0.92 + 0.08 * sin(u_time * 3.1);
-    float spin = angle * 3.0 - radius * 11.0
-        + 2.5 / (radius + 0.16) + u_time * 2.0;
-    float arm_phase = spin + sin(angle * 2.0 + u_time) * 0.7;
-    float filaments = 1.0 - smoothstep(0.045, 0.145, abs(sin(arm_phase)));
+    // Three broad streams wind out of the lens. Keep the radial winding gentle
+    // enough for their authored width to survive in screen space, then collapse
+    // that width with radius so every stream ends in a point.
+    float spin = angle * 1.5 - radius * 7.0 + u_time * 1.5;
+    float arm_phase = spin + sin(angle * 2.0 + u_time) * 0.25;
+    float arm_progress = smoothstep(0.38, 0.70, radius);
+    float arm_width = mix(0.99, 0.008, arm_progress);
+    float arm_distance = abs(sin(arm_phase));
+    float filaments = 1.0 - smoothstep(
+        arm_width * 0.50, arm_width, arm_distance
+    );
     float fine_filaments = 1.0 - smoothstep(
-        0.030, 0.105,
-        abs(sin(arm_phase * 1.7 + radius * 5.0 - u_time * 0.45))
+        arm_width * 0.08, arm_width * 0.28, arm_distance
     );
     float disk_mask = smoothstep(0.27, 0.34, radius)
-        * (1.0 - smoothstep(0.82, 1.02, radius));
+        * (1.0 - smoothstep(0.68, 0.72, radius));
     filaments *= disk_mask;
     fine_filaments *= disk_mask * (1.0 - smoothstep(0.62, 0.92, radius));
 
-    float lens_ring = 1.0 - smoothstep(0.012, 0.045, abs(radius - 0.335));
-    float outer_ring = 1.0 - smoothstep(0.018, 0.060, abs(radius - 0.68));
-    float wisp_phase = angle * 7.0 - radius * 18.0 + u_time * 1.7;
-    float sharp_wisps = (1.0 - smoothstep(0.040, 0.125, abs(sin(wisp_phase))))
+    float lens_ring = 1.0 - smoothstep(0.010, 0.030, abs(radius - 0.335));
+    float sharp_wisps = (1.0 - smoothstep(0.018, 0.065, arm_distance))
         * smoothstep(0.37, 0.46, radius)
         * (1.0 - smoothstep(0.68, 0.80, radius));
     float intensity = 0.88 * pulse + u_selected * 0.30;
@@ -49,8 +53,7 @@ void main() {
     color += vec3(0.54, 0.08, 0.96) * filaments * intensity;
     color += vec3(0.34, 0.035, 0.72) * fine_filaments * intensity * 0.72;
     color += vec3(0.48, 0.08, 0.88) * sharp_wisps * 0.62;
-    color += vec3(0.78, 0.34, 0.94) * lens_ring * (0.82 + u_selected * 0.24);
-    color += vec3(0.34, 0.06, 0.72) * outer_ring * 0.42;
+    color += vec3(0.78, 0.34, 0.94) * lens_ring * (0.62 + u_selected * 0.18);
 
     // Narrow lensing lines frame a hard, truly black event horizon.
     float outside_void = smoothstep(0.22, 0.275, radius);
