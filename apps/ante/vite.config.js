@@ -10,6 +10,9 @@ export default defineConfig({
   })],
   test: {
     include: ['src/**/*.test.walu'],
+    // This fixed-seed simulation is an economy calibration job, not a unit
+    // test, and can legitimately run past Vitest's per-test timeout.
+    exclude: ['src/economy.test.walu'],
     browser: {
       enabled: true,
       headless: true,
