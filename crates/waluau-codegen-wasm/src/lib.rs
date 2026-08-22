@@ -2556,7 +2556,6 @@ fn coroutine_frame_context(
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
 /// A fully emitted user function body plus the debug names of its Wasm locals
 /// (ascending local index, params included), destined for the `name` section.
 struct EmittedFunction {
@@ -2598,6 +2597,7 @@ fn collect_local_names(
     names.into_iter().collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_function(
     function: &IrFunction,
     symbol_names: &BTreeMap<SymbolId, String>,
