@@ -150,7 +150,7 @@ end
 -- when Firebolt's visual burn lands.
 function apply_power(state: State, kind: i32, target: i32): unit
     if kind < 0 or kind > 4 then return end
-    if target < 0 or target > 2 then return end
+    if target < 0 or target > 4 then return end
     if kind == 0 then state.session.power = nil
     else
         local checked: game.SpellKind? = game.spell_kind_from(kind)
@@ -185,12 +185,26 @@ end
 -- record or the returned table_card, so the rules boundary fires on exactly the
 -- frame it always did — a visual emitter must not be able to move when a card
 -- is replaced.
-function update_power(state: State, dt: f64): i32
+function update_power(state: State, middle_count: i32, dt: f64): i32
     local power: Power? = state.session.power
+    if power ~= nil then
+        local active: Power = power_or_resting(power)
+        if active.target < 0 or active.target >= middle_count then
+            -- The card this condition named left with the prior board. Clear
+            -- it before the next live board tries to draw that old slot.
+            apply_power(state, 0, 0)
+            tick_table_card_ash(state, NOT_BURNING, dt)
+            render.step_spell_particles(
+                state.session.spells, layout.current(), 0, 0.0, 0,
+                middle_count, dt)
+            return -1
+        end
+    end
     if power == nil then
         tick_table_card_ash(state, NOT_BURNING, dt)
         render.step_spell_particles(
-            state.session.spells, layout.current(), 0, 0.0, 0, dt)
+            state.session.spells, layout.current(), 0, 0.0, 0,
+            middle_count, dt)
         return -1
     end
     local active: Power = power_or_resting(power)
@@ -202,7 +216,7 @@ function update_power(state: State, dt: f64): i32
     tick_table_card_ash(state, burning, dt)
     render.step_spell_particles(
         state.session.spells, layout.current(),
-        active.kind::i32, active.clock, active.target, dt)
+        active.kind::i32, active.clock, active.target, middle_count, dt)
     if (active.kind::i32) == game.spell_firebolt
         and render.firebolt_burn_finished(active.clock)
     then
@@ -436,13 +450,14 @@ function firebolt_resolved(
     state: State,
     discarded: game.Card,
     replacement: game.Card,
-    target: i32
+    target: i32,
+    middle_count: i32
 ): unit
     table.insert(state.session.discards, discarded)
     local anims: {render.Anim} = {}
     local finish: f64 = push_deal(
         layout.current(), anims, replacement, render.slot_middle, target,
-        live_hand_count(state), render.faces_flip_up, 0.0)
+        middle_count, render.faces_flip_up, 0.0)
     local ash_finish: f64 = push_ash_reappearance(layout.current(), anims, discarded, 0.0)
     if ash_finish > finish then finish = ash_finish end
     begin_anims(state, anims, finish, "firebolt-replace")
@@ -460,8 +475,10 @@ function opening_deal(view: game.View, state: State): unit
         finish = push_deal(layout.current(), anims, view.computer_hand[i].card, render.slot_computer, i, count, render.faces_down, start)
         start += DEAL_STEP
     end
-    for i = 0::i32, 2::i32 do
-        finish = push_deal(layout.current(), anims, view.middle[i], render.slot_middle, i, count, render.faces_flip_up, start)
+    for i = 0::i32, #view.middle - 1 do
+        finish = push_deal(
+            layout.current(), anims, view.middle[i], render.slot_middle, i,
+            #view.middle, render.faces_flip_up, start)
         start += DEAL_STEP
     end
     begin_anims(state, anims, finish, "deal")
@@ -600,6 +617,19 @@ function record_burned_losers(state: State, trick: readonly<game.Trick>): unit
     table.insert(state.session.discards, loser.cards[1])
 end
 
+-- Freeze Ray can preserve any of the five community cards. The rules pack a
+-- preserved turn or river card into the next round's three-card opening, so
+-- identify it by value rather than assuming it kept its old slot.
+function retained_community(trick: readonly<game.Trick>, candidate: game.Card): bool
+    for index, frozen in trick.frozen_middle do
+        local card: game.Card = trick.middle[index]
+        if frozen and card.rank == candidate.rank and card.suit == candidate.suit then
+            return true
+        end
+    end
+    return false
+end
+
 function resolved_breach_cleanup(view: game.View, trick: readonly<game.Trick>, state: State): unit
     clear_freeze(state)
     -- The trick records the pre-round hands; the live view holds the settled
@@ -620,9 +650,9 @@ function resolved_breach_cleanup(view: game.View, trick: readonly<game.Trick>, s
         -- The taken hand goes the same way the burned pair already did: onto
         -- the one spent pile. Winning a round is worth points, not a keepsake.
         local spent: {game.Card} = state.session.discards
-        for i = 0::i32, 2::i32 do
+        for i = 0::i32, #trick.middle - 1 do
             if not trick.frozen_middle[i] then
-                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos(layout.current(), render.slot_middle, i), row_center, render.slot_aside)
+                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle), row_center, render.slot_aside)
                 table.insert(spent, trick.middle[i])
             end
         end
@@ -632,9 +662,9 @@ function resolved_breach_cleanup(view: game.View, trick: readonly<game.Trick>, s
         table.insert(spent, winner.cards[1])
         ash_finish = push_ash_pair(layout.current(), anims, loser.cards[0], loser.cards[1])
     else
-        for i = 0::i32, 2::i32 do
+        for i = 0::i32, #trick.middle - 1 do
             if not trick.frozen_middle[i] then
-                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos(layout.current(), render.slot_middle, i), row_center, render.slot_aside)
+                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle), row_center, render.slot_aside)
                 table.insert(state.session.discards, trick.middle[i])
             end
         end
@@ -660,9 +690,11 @@ function resolved_breach_cleanup(view: game.View, trick: readonly<game.Trick>, s
             start += DEAL_STEP
         end
     end
-    for i = 0::i32, 2::i32 do
-        if not trick.frozen_middle[i] then
-            finish = push_deal(layout.current(), anims, view.middle[i], render.slot_middle, i, new_count, render.faces_flip_up, start)
+    for i = 0::i32, #view.middle - 1 do
+        if not retained_community(trick, view.middle[i]) then
+            finish = push_deal(
+                layout.current(), anims, view.middle[i], render.slot_middle,
+                i, #view.middle, render.faces_flip_up, start)
             start += DEAL_STEP
         end
     end
@@ -671,7 +703,17 @@ end
 
 function swap(outcome: game.SwapOutcome, state: State): unit
     local count: i32 = #outcome.hand_indices
-    if outcome.winner == 0 or count == 0 then return end
+    if outcome.winner == 0 or count == 0 then
+        local dealt_only: game.Card? = outcome.dealt
+        if dealt_only == nil then return end
+        local deal_anims: {render.Anim} = {}
+        local finish: f64 = push_deal(
+            layout.current(), deal_anims, dealt_only::game.Card,
+            render.slot_middle, outcome.middle_count - 1,
+            outcome.middle_count, render.faces_flip_up, 0.0)
+        begin_anims(state, deal_anims, finish, "deal")
+        return
+    end
     local player_won: bool = outcome.winner > 0
     local hand_kind: render.Slot = hand_slot_kind(outcome.winner::game.Side)
     local last_stagger: f64 = SWAP_STEP * ((count - 1)::f64)
@@ -688,7 +730,9 @@ function swap(outcome: game.SwapOutcome, state: State): unit
         local leave_angle: f64 = slot_tilt_now(state, hand_kind, hand_index)
         local land: render.Point = render.slot_pos_at(layout.current(), hand_kind, hand_index, live_hand_count(state))
         local land_angle: f64 = slot_tilt_at(hand_kind, hand_index, live_hand_count(state))
-        local mid: render.Point = render.slot_pos(layout.current(), render.slot_middle, middle_index)
+        local mid: render.Point = render.slot_pos_at(
+            layout.current(), render.slot_middle, middle_index,
+            outcome.middle_count)
         local hover_lift: f64 = -45.0
         if not player_won then hover_lift = 45.0 end
         local hover: render.Point = render.point(leave.x + (mid.x - leave.x) * 0.35, leave.y + hover_lift)
@@ -773,6 +817,14 @@ function swap(outcome: game.SwapOutcome, state: State): unit
             dest_index = hand_index,
         })
     end
+    local dealt: game.Card? = outcome.dealt
+    if dealt ~= nil then
+        local start: f64 = total + 0.1
+        total = push_deal(
+            layout.current(), anims, dealt::game.Card,
+            render.slot_middle, outcome.middle_count - 1,
+            outcome.middle_count, render.faces_flip_up, start)
+    end
     begin_anims(state, anims, total, "swap")
 end
 
@@ -831,7 +883,7 @@ function restore_snapshot(reader: snapshot_data.Reader): State?
         if power_target ~= 0 then return nil end
     else
         if power_kind < 1 or power_kind > game.spell_kind_count then return nil end
-        if power_target < 0 or power_target > 2 then return nil end
+        if power_target < 0 or power_target > 4 then return nil end
         local checked: game.SpellKind? = game.spell_kind_from(power_kind)
         if checked == nil then return nil end
         state.session.power = {

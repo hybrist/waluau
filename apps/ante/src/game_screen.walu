@@ -288,7 +288,16 @@ function update(state: State, city: city_map.State, dt: f64): i32
     local presentation: choreography.State = state.presentation
     local animating: bool = choreography.is_animating(presentation)
     choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
-    local burned_table_card: i32 = choreography.update_power(presentation, dt)
+    local community_count: i32 = state.rules:community_size()
+    -- Rules rotate or clear the live board as soon as play resolves, while the
+    -- reveal still presents the five cards recorded in the trick. Keep spell
+    -- effects anchored to that revealed board until the reveal is dismissed.
+    if ui.revealing then
+        local revealed: game.Trick? = state.rules:last_trick()
+        if revealed ~= nil then community_count = #(revealed::game.Trick).middle end
+    end
+    local burned_table_card: i32 = choreography.update_power(
+        presentation, community_count, dt)
     if burned_table_card >= 0 then
         local discarded: game.Card? = state.rules:resolve_firebolt(burned_table_card)
         if discarded ~= nil then
@@ -297,7 +306,8 @@ function update(state: State, city: city_map.State, dt: f64): i32
                 presentation,
                 discarded::game.Card,
                 rules_view.middle[burned_table_card],
-                burned_table_card)
+                burned_table_card,
+                #rules_view.middle)
         end
     end
     if ui.revealing then
@@ -501,13 +511,16 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
     end
     local aimed_slot: i32? = ui.cast_slot
     if aimed_slot ~= nil then
+        local community_count: i32 = rules:community_size()
         match control do
         case Key.cancel then ui.cast_slot = nil
         case Key.left then
             ui.table_card_cursor -= 1
-            if ui.table_card_cursor < 0 then ui.table_card_cursor = 2 end
+            if ui.table_card_cursor < 0 then
+                ui.table_card_cursor = community_count - 1
+            end
         case Key.right then
-            ui.table_card_cursor = (ui.table_card_cursor + 1) % 3
+            ui.table_card_cursor = (ui.table_card_cursor + 1) % community_count
         case Key.confirm then
             confirm_cast(state, aimed_slot::i32, ui.table_card_cursor)
         case Key.select then
@@ -526,6 +539,7 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
         return "none"
     end
     if consume_gate(state, city, key_command(control)) then return "none" end
+    local community_count: i32 = rules:community_size()
 
     match control do
     case Key.left then
@@ -534,13 +548,15 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
             if ui.hand_cursor < 0 then ui.hand_cursor = rules:hand_size() - 1 end
         else
             ui.table_card_cursor -= 1
-            if ui.table_card_cursor < 0 then ui.table_card_cursor = 2 end
+            if ui.table_card_cursor < 0 then
+                ui.table_card_cursor = community_count - 1
+            end
         end
     case Key.right then
         if ui.cursor_area == "hand" then
             ui.hand_cursor = (ui.hand_cursor + 1) % rules:hand_size()
         else
-            ui.table_card_cursor = (ui.table_card_cursor + 1) % 3
+            ui.table_card_cursor = (ui.table_card_cursor + 1) % community_count
         end
     case Key.up then
         if rules:swap_open() then toggle_cursor_area(ui) end
@@ -549,9 +565,10 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
     case Key.select then
         if rules:swap_open() then
             if ui.cursor_area == "hand" then
-                flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
+                flow.toggle(ui.swap_hand, ui.hand_cursor, community_count)
             elseif not rules:is_frozen(ui.table_card_cursor) then
-                flow.toggle(ui.swap_table_cards, ui.table_card_cursor, 3)
+                flow.toggle(
+                    ui.swap_table_cards, ui.table_card_cursor, community_count)
             end
         else
             flow.toggle(ui.play_picks, ui.hand_cursor, 2)
@@ -601,7 +618,8 @@ function mousemoved(state: State, x: f64, y: f64): unit
     -- While aiming a cast, the pointer only steers the table_card the spell would
     -- hit; the fan below stays folded and unfocused.
     if ui.cast_slot ~= nil then
-        local target: i32 = render.hit_table_card(viewport, at)
+        local target: i32 = render.hit_table_card(
+            viewport, at, state.rules:community_size())
         if target >= 0 then ui.table_card_cursor = target end
         return
     end
@@ -612,7 +630,8 @@ function mousemoved(state: State, x: f64, y: f64): unit
         return
     end
     if state.rules:swap_open() then
-        local table_card: i32 = render.hit_table_card(viewport, at)
+        local table_card: i32 = render.hit_table_card(
+            viewport, at, state.rules:community_size())
         if table_card >= 0 then
             ui.cursor_area = "table-cards"
             ui.table_card_cursor = table_card
@@ -647,7 +666,8 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     -- keeps targeting open for the keyboard to finish or cancel.
     local aimed_slot: i32? = ui.cast_slot
     if aimed_slot ~= nil then
-        local target: i32 = render.hit_table_card(viewport, at)
+        local target: i32 = render.hit_table_card(
+            viewport, at, rules:community_size())
         if target >= 0 then
             ui.table_card_cursor = target
             confirm_cast(state, aimed_slot::i32, target)
@@ -658,16 +678,21 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     if hand >= 0 then
         ui.cursor_area = "hand"
         ui.hand_cursor = hand
-        if rules:swap_open() then flow.toggle(ui.swap_hand, hand, 3)
+        if rules:swap_open() then
+            flow.toggle(ui.swap_hand, hand, rules:community_size())
         else flow.toggle(ui.play_picks, hand, 2) end
         return
     end
     if rules:swap_open() then
-        local table_card: i32 = render.hit_table_card(viewport, at)
+        local table_card: i32 = render.hit_table_card(
+            viewport, at, rules:community_size())
         if table_card >= 0 then
             ui.cursor_area = "table-cards"
             ui.table_card_cursor = table_card
-            if not rules:is_frozen(table_card) then flow.toggle(ui.swap_table_cards, table_card, 3) end
+            if not rules:is_frozen(table_card) then
+                flow.toggle(
+                    ui.swap_table_cards, table_card, rules:community_size())
+            end
             return
         end
         if render.hit_pass(at) then

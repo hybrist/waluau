@@ -10,14 +10,16 @@ type Winner = -1 | 0 | 1
 type Side = -1 | 1
 
 type Card = readonly<{ rank: i32, suit: Suit }>
-type PairChoice = { first: i32, second: i32, value: i32 }
+type PairChoice = { first: i32, second: i32, value: i32, formation: {Card} }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
 type SwapOutcome = {
     winner: Winner,
     hand_indices: {i32},
     middle_indices: {i32},
     outgoing: {Card},
-    incoming: {Card}
+    incoming: {Card},
+    dealt: Card?,
+    middle_count: i32
 }
 -- One slot of a hand: the card sitting there, plus whether the opponent has
 -- watched it. `known` is set when the card arrived from the middle, which
@@ -31,7 +33,7 @@ type HandSlot = { card: Card, known: bool }
 -- can upgrade the same spell between duels, and two player carrying Firebolt
 -- do not necessarily pay the same for it.
 type Spell = { kind: SpellKind, cost: i32 }
-type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
+type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_formation: {Card}, computer_formation: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
 -- `boss` selects the boss battle variant: both sides start with seven cards
 -- instead of five and never draw replacements, so the hands shrink by two each
 -- round and the third round is fought from a three-card hand.
@@ -71,6 +73,7 @@ type View = readonly<{
 -- and that side's full revealed hand — see trick_side.
 type TrickSide = readonly<{
     cards: readonly<{Card}>,
+    formation: readonly<{Card}>,
     first: i32,
     second: i32,
     value: i32,
@@ -86,6 +89,8 @@ const TWO: i32 = 2
 const MAX_ROUNDS: i32 = 3
 const OPPONENT_WINS_TO_END: i32 = 2
 const HAND_SIZE: i32 = 5
+const OPENING_COMMUNITY_SIZE: i32 = 3
+const MAX_COMMUNITY_SIZE: i32 = 5
 -- Boss hands are never replenished: two cards spent a round, with the last
 -- round fought from a three-card hand, so the opening deal follows from the
 -- round count rather than being its own decision.
@@ -105,7 +110,7 @@ const SPELL_CLONE: i32 = 4
 const SPELL_KIND_COUNT: i32 = 4
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "duel-state-v7"
+const SNAPSHOT_SCHEMA: string = "duel-state-v8"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 -- A spell as it is first learned: full price until something reduces it.
@@ -293,15 +298,261 @@ function rank_five(cards: readonly<{Card}>): i32
     return pack(0, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4])
 end
 
-function value_for_pair(hand: readonly<{Card}>, middle: readonly<{Card}>, first: i32, second: i32): i32
-    return rank_five({ middle[0], middle[1], middle[2], hand[first], hand[second] })
+-- Hold'em evaluation over five to seven available cards. The winning
+-- formation is carried with its score so the reveal can identify the exact
+-- five cards that made it, including hands that play one or neither private
+-- card.
+function best_five(cards: readonly<{Card}>): PairChoice
+    assert(#cards >= 5 and #cards <= 7)
+    local formation: {Card} = {
+        cards[0], cards[1], cards[2], cards[3], cards[4]
+    }
+    local best: PairChoice = {
+        first = 0, second = 1,
+        value = rank_five(formation), formation = formation,
+    }
+    for a = ZERO, #cards - 5 do
+        for b = a + ONE, #cards - 4 do
+            for c = b + ONE, #cards - 3 do
+                for d = c + ONE, #cards - 2 do
+                    for e = d + ONE, #cards - 1 do
+                        local candidate: {Card} = {
+                            cards[a], cards[b], cards[c], cards[d], cards[e]
+                        }
+                        local value: i32 = rank_five(candidate)
+                        if value > best.value then
+                            best.value = value
+                            best.formation = candidate
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
 end
 
-function best_pair(hand: readonly<{Card}>, middle: readonly<{Card}>): PairChoice
-    local best: PairChoice = { first = 0, second = 1, value = value_for_pair(hand, middle, 0, 1) }
+-- Score card counts without constructing every five-card subset. Swap search
+-- reuses one set of counts while trying private pairs; best_five above remains
+-- the formation-producing path used when a trick actually resolves.
+function straight_high_from_counts(counts: readonly<{i32}>): i32
+    for high = 14::i32, 5::i32, -1::i32 do
+        if counts[high] > 0 and counts[high - 1] > 0
+            and counts[high - 2] > 0 and counts[high - 3] > 0
+            and counts[high - 4] > 0
+        then
+            return high
+        end
+    end
+    if counts[14] > 0 and counts[5] > 0 and counts[4] > 0
+        and counts[3] > 0 and counts[2] > 0
+    then
+        return 5
+    end
+    return 0
+end
+
+function empty_rank_counts(): {i32}
+    return {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    }
+end
+
+function empty_suit_rank_counts(): {{i32}}
+    return {
+        empty_rank_counts(), empty_rank_counts(),
+        empty_rank_counts(), empty_rank_counts(),
+    }
+end
+
+function change_card_count(
+    rank_counts: {i32}, suit_counts: {i32}, suit_rank_counts: {{i32}},
+    card: Card, amount: i32
+): unit
+    local suit: i32 = card.suit::i32
+    rank_counts[card.rank] += amount
+    suit_counts[suit] += amount
+    suit_rank_counts[suit][card.rank] += amount
+end
+
+function score_counts(
+    rank_counts: readonly<{i32}>,
+    suit_counts: readonly<{i32}>,
+    suit_rank_counts: readonly<{{i32}}>
+): i32
+
+    for suit = 0::i32, 3::i32 do
+        if suit_counts[suit] >= 5 then
+            local straight_flush: i32 = straight_high_from_counts(
+                suit_rank_counts[suit])
+            if straight_flush > 0 then
+                return pack(8, straight_flush, 0, 0, 0, 0)
+            end
+        end
+    end
+
+    local four: i32 = 0
+    for rank = 14::i32, 2::i32, -1::i32 do
+        if rank_counts[rank] == 4 then four = rank break end
+    end
+    if four > 0 then
+        for rank = 14::i32, 2::i32, -1::i32 do
+            if rank ~= four and rank_counts[rank] > 0 then
+                return pack(7, four, rank, 0, 0, 0)
+            end
+        end
+    end
+
+    local three: i32 = 0
+    local full_pair: i32 = 0
+    for rank = 14::i32, 2::i32, -1::i32 do
+        if rank_counts[rank] >= 3 and three == 0 then
+            three = rank
+        elseif rank_counts[rank] >= 2 and full_pair == 0 then
+            full_pair = rank
+        end
+    end
+    if three > 0 and full_pair > 0 then
+        return pack(6, three, full_pair, 0, 0, 0)
+    end
+
+    for suit = 0::i32, 3::i32 do
+        if suit_counts[suit] >= 5 then
+            local first: i32 = 0
+            local second: i32 = 0
+            local third: i32 = 0
+            local fourth: i32 = 0
+            local fifth: i32 = 0
+            local found: i32 = 0
+            for rank = 14::i32, 2::i32, -1::i32 do
+                local copies: i32 = suit_rank_counts[suit][rank]
+                while copies > 0 and found < 5 do
+                    if found == 0 then first = rank
+                    elseif found == 1 then second = rank
+                    elseif found == 2 then third = rank
+                    elseif found == 3 then fourth = rank
+                    else fifth = rank end
+                    found += 1
+                    copies -= 1
+                end
+                if found == 5 then break end
+            end
+            return pack(5, first, second, third, fourth, fifth)
+        end
+    end
+
+    local straight: i32 = straight_high_from_counts(rank_counts)
+    if straight > 0 then return pack(4, straight, 0, 0, 0, 0) end
+
+    if three > 0 then
+        local first: i32 = 0
+        local second: i32 = 0
+        for rank = 14::i32, 2::i32, -1::i32 do
+            if rank ~= three and rank_counts[rank] > 0 then
+                if first == 0 then first = rank else second = rank break end
+            end
+        end
+        return pack(3, three, first, second, 0, 0)
+    end
+
+    local first_pair: i32 = 0
+    local second_pair: i32 = 0
+    for rank = 14::i32, 2::i32, -1::i32 do
+        if rank_counts[rank] >= 2 then
+            if first_pair == 0 then first_pair = rank
+            elseif second_pair == 0 then second_pair = rank break end
+        end
+    end
+    if second_pair > 0 then
+        for rank = 14::i32, 2::i32, -1::i32 do
+            if rank ~= first_pair and rank ~= second_pair and rank_counts[rank] > 0 then
+                return pack(2, first_pair, second_pair, rank, 0, 0)
+            end
+        end
+    end
+    if first_pair > 0 then
+        local first: i32 = 0
+        local second: i32 = 0
+        local third: i32 = 0
+        for rank = 14::i32, 2::i32, -1::i32 do
+            if rank ~= first_pair and rank_counts[rank] > 0 then
+                if first == 0 then first = rank
+                elseif second == 0 then second = rank
+                else third = rank break end
+            end
+        end
+        return pack(1, first_pair, first, second, third, 0)
+    end
+
+    local first: i32 = 0
+    local second: i32 = 0
+    local third: i32 = 0
+    local fourth: i32 = 0
+    local fifth: i32 = 0
+    local found: i32 = 0
+    for rank = 14::i32, 2::i32, -1::i32 do
+        if rank_counts[rank] > 0 then
+            if found == 0 then first = rank
+            elseif found == 1 then second = rank
+            elseif found == 2 then third = rank
+            elseif found == 3 then fourth = rank
+            else fifth = rank end
+            found += 1
+            if found == 5 then break end
+        end
+    end
+    return pack(0, first, second, third, fourth, fifth)
+end
+
+function best_five_value(cards: readonly<{Card}>): i32
+    assert(#cards >= 5 and #cards <= 7)
+    local rank_counts: {i32} = empty_rank_counts()
+    local suit_counts: {i32} = { 0, 0, 0, 0 }
+    local suit_rank_counts: {{i32}} = empty_suit_rank_counts()
+    for card in cards do
+        change_card_count(rank_counts, suit_counts, suit_rank_counts, card, 1)
+    end
+    return score_counts(rank_counts, suit_counts, suit_rank_counts)
+end
+
+function formation_for_pair(
+    hand: readonly<{Card}>, middle: readonly<{Card}>, first: i32, second: i32
+): PairChoice
+    local available: {Card} = clone_cards(middle)
+    table.insert(available, hand[first])
+    table.insert(available, hand[second])
+    return best_five(available)
+end
+
+function value_for_pair(hand: readonly<{Card}>, middle: readonly<{Card}>, first: i32, second: i32): i32
+    local available: {Card} = clone_cards(middle)
+    table.insert(available, hand[first])
+    table.insert(available, hand[second])
+    return best_five_value(available)
+end
+
+function best_pair_indices(hand: readonly<{Card}>, middle: readonly<{Card}>): PairChoice
+    local rank_counts: {i32} = empty_rank_counts()
+    local suit_counts: {i32} = { 0, 0, 0, 0 }
+    local suit_rank_counts: {{i32}} = empty_suit_rank_counts()
+    for card in middle do
+        change_card_count(rank_counts, suit_counts, suit_rank_counts, card, 1)
+    end
+    local best: PairChoice = {
+        first = 0, second = 1, value = -1, formation = {},
+    }
     for first = ZERO, #hand - TWO do
         for second = first + ONE, #hand - ONE do
-            local value: i32 = value_for_pair(hand, middle, first, second)
+            change_card_count(
+                rank_counts, suit_counts, suit_rank_counts, hand[first], 1)
+            change_card_count(
+                rank_counts, suit_counts, suit_rank_counts, hand[second], 1)
+            local value: i32 = score_counts(
+                rank_counts, suit_counts, suit_rank_counts)
+            change_card_count(
+                rank_counts, suit_counts, suit_rank_counts, hand[first], -1)
+            change_card_count(
+                rank_counts, suit_counts, suit_rank_counts, hand[second], -1)
             if value > best.value then
                 best.first = first
                 best.second = second
@@ -312,9 +563,26 @@ function best_pair(hand: readonly<{Card}>, middle: readonly<{Card}>): PairChoice
     return best
 end
 
+function best_pair_value(hand: readonly<{Card}>, middle: readonly<{Card}>): i32
+    return best_pair_indices(hand, middle).value
+end
+
+function best_pair(hand: readonly<{Card}>, middle: readonly<{Card}>): PairChoice
+    local best: PairChoice = best_pair_indices(hand, middle)
+    best.formation = formation_for_pair(
+        hand, middle, best.first, best.second).formation
+    return best
+end
+
 function clone_cards(cards: readonly<{Card}>): {Card}
     local copy: {Card} = {}
     for card in cards do table.insert(copy, card) end
+    return copy
+end
+
+function clone_flags(flags: readonly<{bool}>): {bool}
+    local copy: {bool} = {}
+    for flag in flags do table.insert(copy, flag) end
     return copy
 end
 
@@ -366,6 +634,25 @@ function rank_three(cards: readonly<{Card}>): i32
     return pack(0, ranks[0], ranks[1], ranks[2], 0, 0)
 end
 
+-- Equal-sized swap proposals are compared by the strongest three-card hand
+-- visible in the community. At the turn and river this searches all public
+-- triples rather than making slot order affect the bid.
+function community_value(cards: readonly<{Card}>): i32
+    assert(#cards >= OPENING_COMMUNITY_SIZE and #cards <= MAX_COMMUNITY_SIZE)
+    local best: i32 = rank_three({ cards[0], cards[1], cards[2] })
+    for first = ZERO, #cards - 3 do
+        for second = first + ONE, #cards - 2 do
+            for third = second + ONE, #cards - 1 do
+                local value: i32 = rank_three({
+                    cards[first], cards[second], cards[third]
+                })
+                if value > best then best = value end
+            end
+        end
+    end
+    return best
+end
+
 function swap_priority(player_wager: i32, player_community: i32, computer_wager: i32, computer_community: i32): Winner
     if player_wager <= 0 and computer_wager <= 0 then return 0 end
     if player_wager > computer_wager then return 1 end
@@ -382,12 +669,12 @@ function proposed_swap(hand: readonly<{Card}>, middle: readonly<{Card}>, hand_in
     return {
         hand_indices = hand_indices,
         middle_indices = middle_indices,
-        community_value = rank_three(proposed_middle),
-        hand_value = best_pair(proposed_hand, proposed_middle).value,
+        community_value = community_value(proposed_middle),
+        hand_value = best_pair_value(proposed_hand, proposed_middle),
     }
 end
 
--- Every way to pull one, two, or three cards out of a hand of `count` cards.
+-- Every way to pull one through five cards out of a hand of `count` cards.
 -- The five-card hand's twenty-five options used to be a literal table; boss
 -- battle hands run up to seven cards, so the options are enumerated instead.
 function swap_hand_options(count: i32): {{i32}}
@@ -407,6 +694,28 @@ function swap_hand_options(count: i32): {{i32}}
             end
         end
     end
+    for first = ZERO, count - 4 do
+        for second = first + ONE, count - 3 do
+            for third = second + ONE, count - 2 do
+                for fourth = third + ONE, count - 1 do
+                    table.insert(options, { first, second, third, fourth })
+                end
+            end
+        end
+    end
+    for first = ZERO, count - 5 do
+        for second = first + ONE, count - 4 do
+            for third = second + ONE, count - 3 do
+                for fourth = third + ONE, count - 2 do
+                    for fifth = fourth + ONE, count - 1 do
+                        table.insert(options, {
+                            first, second, third, fourth, fifth
+                        })
+                    end
+                end
+            end
+        end
+    end
     return options
 end
 
@@ -416,10 +725,11 @@ function best_available_swap(
     frozen_middle: readonly<{bool}>,
     minimum_count: i32
 ): SwapChoice
-    local baseline: i32 = best_pair(hand, middle).value
-    local best: SwapChoice = { hand_indices = {}, middle_indices = {}, community_value = rank_three(middle), hand_value = baseline }
+    local baseline: i32 = best_pair_value(hand, middle)
+    local best: SwapChoice = { hand_indices = {}, middle_indices = {}, community_value = community_value(middle), hand_value = baseline }
+    if minimum_count > #hand or minimum_count > #middle then return best end
     local hand_options: {{i32}} = swap_hand_options(#hand)
-    local middle_options: {{i32}} = { { 0 }, { 1 }, { 2 }, { 0, 1 }, { 0, 2 }, { 1, 2 }, { 0, 1, 2 } }
+    local middle_options: {{i32}} = swap_hand_options(#middle)
     for hand_indices in hand_options do
         for middle_indices in middle_options do
             local available: bool = true
@@ -442,13 +752,21 @@ function best_available_swap(
     if best.hand_value <= baseline then
         best.hand_indices = {}
         best.middle_indices = {}
-        best.community_value = rank_three(middle)
+        best.community_value = community_value(middle)
     end
     return best
 end
 
+function best_swap_at_least(
+    hand: readonly<{Card}>, middle: readonly<{Card}>, minimum_count: i32
+): SwapChoice
+    local available: {bool} = {}
+    for _ in middle do table.insert(available, false) end
+    return best_available_swap(hand, middle, available, minimum_count)
+end
+
 function best_swap(hand: readonly<{Card}>, middle: readonly<{Card}>): SwapChoice
-    return best_available_swap(hand, middle, { false, false, false }, 1)
+    return best_swap_at_least(hand, middle, 1)
 end
 
 -- Spend two slots of a hand; the watched marks travel inside their slots.
@@ -463,19 +781,44 @@ function remove_pair(hand: {HandSlot}, first: i32, second: i32): unit
 end
 
 function State:reveal_middle(): unit
-    self.middle = { draw(self.deck), draw(self.deck), draw(self.deck) }
+    self.middle = {}
+    self.frozen_middle = {}
+    for _ = 1, OPENING_COMMUNITY_SIZE do
+        table.insert(self.middle, draw(self.deck))
+        table.insert(self.frozen_middle, false)
+    end
 end
 
 -- Replace only table cards that are free to rotate. A post-swap Freeze Ray keeps
 -- its table_card in the same slot for the next round while the other slots turn.
 function State:rotate_middle(): unit
-    for index = 0::i32, #self.middle - ONE do
-        if not self.frozen_middle[index] then self.middle[index] = draw(self.deck) end
+    local retained: Card = self.middle[0]
+    local has_retained: bool = false
+    local retained_index: i32 = 0
+    for index, card in self.middle do
+        if self.frozen_middle[index] then
+            retained = card
+            has_retained = true
+            retained_index = index
+            if retained_index >= OPENING_COMMUNITY_SIZE then
+                retained_index = OPENING_COMMUNITY_SIZE - 1
+            end
+        end
     end
+    local next_middle: {Card} = {}
+    for index = 0::i32, OPENING_COMMUNITY_SIZE - 1 do
+        if has_retained and index == retained_index then
+            table.insert(next_middle, retained)
+        else
+            table.insert(next_middle, draw(self.deck))
+        end
+    end
+    self.middle = next_middle
 end
 
 function State:clear_frozen(): unit
-    self.frozen_middle = { false, false, false }
+    self.frozen_middle = {}
+    for _ in self.middle do table.insert(self.frozen_middle, false) end
 end
 
 function State:middle_indices_available(indices: {i32}): bool
@@ -547,13 +890,10 @@ function State:divine_intervention(target: i32): bool
     return false
 end
 
--- A side must raise its own previous proposal while at least matching the
--- other side's largest proposal. Four means that side has exhausted the
--- three-card ceiling and can only pass.
+-- Every swap must be larger than the last. If the max is larger than the number of
+-- cards in the community, the players can only pass.
 function next_swap_min(own_max: i32, opponent_max: i32): i32
-    local minimum: i32 = own_max + 1
-    if opponent_max > minimum then minimum = opponent_max end
-    return minimum
+    return math.max(own_max, opponent_max)::i32 + 1
 end
 
 function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOutcome?
@@ -561,7 +901,8 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
     local player_wager: i32 = #hand_indices
     local player_minimum: i32 = next_swap_min(
         self.player_swap_max, self.computer_swap_max)
-    local valid_player_swap: bool = player_wager <= 3
+    local valid_player_swap: bool = player_wager <= #self.middle
+        and player_wager <= #self.player_hand
         and player_wager <= self.player_points
         and player_wager == #middle_indices
         and self:middle_indices_available(middle_indices)
@@ -608,11 +949,6 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
         self.swap_hand_indices = computer.hand_indices
         self.swap_middle_indices = computer.middle_indices
     end
-    self.swap_open = not (
-        (player_wager == 0 and computer_wager == 0)
-        or (self.player_swap_max == 3 and self.computer_swap_max == 3)
-    )
-    self:clear_frozen()
     local outgoing: {Card} = {}
     local incoming: {Card} = {}
     if self.swap_winner ~= 0 then
@@ -624,12 +960,25 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
             else table.insert(incoming, self.computer_hand[hand_index].card) end
         end
     end
+    self:clear_frozen()
+    local dealt: Card? = nil
+    if #self.middle < MAX_COMMUNITY_SIZE then
+        local next_card: Card = draw(self.deck)
+        dealt = next_card
+        table.insert(self.middle, next_card)
+        table.insert(self.frozen_middle, false)
+        self.swap_open = true
+    else
+        self.swap_open = false
+    end
     return {
         winner = self.swap_winner,
         hand_indices = self.swap_hand_indices,
         middle_indices = self.swap_middle_indices,
         outgoing = outgoing,
         incoming = incoming,
+        dealt = dealt,
+        middle_count = #self.middle,
     }
 end
 
@@ -639,7 +988,9 @@ function State:play(first: i32, second: i32): Trick?
     end
 
     local computer: PairChoice = best_pair(hand_cards(self.computer_hand), self.middle)
-    self.last_player_value = value_for_pair(hand_cards(self.player_hand), self.middle, first, second)
+    local player: PairChoice = formation_for_pair(
+        hand_cards(self.player_hand), self.middle, first, second)
+    self.last_player_value = player.value
     self.last_computer_value = computer.value
     self.last_winner = 0
     local trick_points: i32 = 0
@@ -658,10 +1009,8 @@ function State:play(first: i32, second: i32): Trick?
 
     local trick: Trick = {
         round = self.round,
-        middle = { self.middle[0], self.middle[1], self.middle[2] },
-        frozen_middle = {
-            self.frozen_middle[0], self.frozen_middle[1], self.frozen_middle[2]
-        },
+        middle = clone_cards(self.middle),
+        frozen_middle = clone_flags(self.frozen_middle),
         -- Resolution runs after the live hands have been compacted and
         -- refilled. Copy every original slot and its watched mark so
         -- replacement cards do not appear until their deal animation starts.
@@ -669,6 +1018,8 @@ function State:play(first: i32, second: i32): Trick?
         computer_hand = clone_slots(self.computer_hand),
         player_cards = { self.player_hand[first].card, self.player_hand[second].card },
         computer_cards = { self.computer_hand[computer.first].card, self.computer_hand[computer.second].card },
+        player_formation = player.formation,
+        computer_formation = computer.formation,
         -- Hand slots both sides played, so the presentation can resolve the
         -- trick in place on the board after the hands have been refilled.
         player_first = first,
@@ -761,6 +1112,8 @@ function append_trick(parts: {string}, trick: Trick): unit
     append_slots(parts, trick.computer_hand)
     append_cards(parts, trick.player_cards)
     append_cards(parts, trick.computer_cards)
+    append_cards(parts, trick.player_formation)
+    append_cards(parts, trick.computer_formation)
     snapshot_data.append_i32(parts, trick.player_first)
     snapshot_data.append_i32(parts, trick.player_second)
     snapshot_data.append_i32(parts, trick.computer_first)
@@ -857,6 +1210,8 @@ function next_trick(reader: snapshot_data.Reader): Trick
     local computer_hand: {HandSlot} = next_slots(reader)
     local player_cards: {Card} = next_cards(reader)
     local computer_cards: {Card} = next_cards(reader)
+    local player_formation: {Card} = next_cards(reader)
+    local computer_formation: {Card} = next_cards(reader)
     local player_first: i32 = reader:next_i32()
     local player_second: i32 = reader:next_i32()
     local computer_first: i32 = reader:next_i32()
@@ -878,6 +1233,8 @@ function next_trick(reader: snapshot_data.Reader): Trick
         computer_hand = computer_hand,
         player_cards = player_cards,
         computer_cards = computer_cards,
+        player_formation = player_formation,
+        computer_formation = computer_formation,
         player_first = player_first,
         player_second = player_second,
         computer_first = computer_first,
@@ -926,11 +1283,18 @@ end
 
 function valid_trick(trick: Trick): bool
     if trick.round < 1 or trick.round > MAX_ROUNDS then return false end
-    if #trick.middle ~= 3 or #trick.frozen_middle ~= 3 then return false end
+    if #trick.middle ~= MAX_COMMUNITY_SIZE
+        or #trick.frozen_middle ~= MAX_COMMUNITY_SIZE
+    then
+        return false
+    end
     if #trick.player_cards ~= 2 or #trick.computer_cards ~= 2 then return false end
+    if #trick.player_formation ~= 5 or #trick.computer_formation ~= 5 then return false end
     if not valid_cards(trick.middle)
         or not valid_cards(trick.player_cards)
         or not valid_cards(trick.computer_cards)
+        or not valid_cards(trick.player_formation)
+        or not valid_cards(trick.computer_formation)
         or not valid_slots(trick.player_hand)
         or not valid_slots(trick.computer_hand)
     then
@@ -962,7 +1326,12 @@ function valid_trick(trick: Trick): bool
         return false
     end
     if trick.pot ~= trick.player_wager + trick.computer_wager then return false end
-    if trick.swap_count < 0 or trick.swap_count > 3 then return false end
+    if rank_five(trick.player_formation) ~= trick.player_value
+        or rank_five(trick.computer_formation) ~= trick.computer_value
+    then
+        return false
+    end
+    if trick.swap_count < 0 or trick.swap_count > MAX_COMMUNITY_SIZE then return false end
     return true
 end
 
@@ -1004,12 +1373,13 @@ function restore(snapshot_value: string): State?
     then
         return nil
     end
-    if #frozen_middle ~= 3 then return nil end
+    if #frozen_middle ~= #middle then return nil end
     if finished then
         if #middle ~= 0 or swap_open then return nil end
-    elseif #middle ~= 3 then
+    elseif #middle < OPENING_COMMUNITY_SIZE or #middle > MAX_COMMUNITY_SIZE then
         return nil
     end
+    if not finished and not swap_open and #middle ~= MAX_COMMUNITY_SIZE then return nil end
     if #history > MAX_ROUNDS or round < 1 or round > MAX_ROUNDS then return nil end
     for trick in history do
         if not valid_trick(trick) then return nil end
@@ -1021,20 +1391,21 @@ function restore(snapshot_value: string): State?
     then
         return nil
     end
-    if player_swap_max < 0 or player_swap_max > 3
-        or computer_swap_max < 0 or computer_swap_max > 3
+    if player_swap_max < 0 or player_swap_max > MAX_COMMUNITY_SIZE
+        or computer_swap_max < 0 or computer_swap_max > MAX_COMMUNITY_SIZE
         or player_wager < player_swap_max or computer_wager < computer_swap_max
         or (player_swap_max == 0 and player_wager ~= 0)
         or (computer_swap_max == 0 and computer_wager ~= 0)
-        or (swap_open and player_swap_max == 3 and computer_swap_max == 3)
+        or (swap_open and player_swap_max == #middle
+            and computer_swap_max == #middle)
     then
         return nil
     end
-    if swap_count < 0 or swap_count > 3
+    if swap_count < 0 or swap_count > MAX_COMMUNITY_SIZE
         or #swap_hand_indices ~= swap_count
         or #swap_middle_indices ~= swap_count
         or not valid_indices(swap_hand_indices, BOSS_HAND_SIZE)
-        or not valid_indices(swap_middle_indices, 3)
+        or not valid_indices(swap_middle_indices, MAX_COMMUNITY_SIZE)
     then
         return nil
     end
@@ -1162,6 +1533,8 @@ function test_arrange_round(
     computer_hand: {Card}
 ): unit
     state.middle = clone_cards(middle)
+    state.frozen_middle = {}
+    for _ in middle do table.insert(state.frozen_middle, false) end
     state.player_hand = test_fresh_slots(player_hand)
     state.computer_hand = test_fresh_slots(computer_hand)
 end
@@ -1172,6 +1545,8 @@ function test_arrange_opponent(
     computer_hand: {Card}
 ): unit
     state.middle = clone_cards(middle)
+    state.frozen_middle = {}
+    for _ in middle do table.insert(state.frozen_middle, false) end
     state.computer_hand = test_fresh_slots(computer_hand)
 end
 
@@ -1214,7 +1589,7 @@ function State:is_finished(): bool
 end
 
 -- The verdict of a finished duel, asked the same way of live rules and of a
--- board view: the Opponent ends the duel by holding three table cards, and any
+-- board view: the Opponent ends the duel by taking enough tricks, and any
 -- other finish means the duel opened.
 function held_by_arch_mage(computer_tricks: i32): bool
     return computer_tricks >= OPPONENT_WINS_TO_END
@@ -1242,6 +1617,10 @@ end
 
 function State:minimum_swap(): i32
     return next_swap_min(self.player_swap_max, self.computer_swap_max)
+end
+
+function State:community_size(): i32
+    return #self.middle
 end
 
 function State:gold(): i32
@@ -1287,7 +1666,10 @@ function State:cast_spell(slot: i32, table_card: i32): bool
     local spell: Spell = self.spells[slot]
     self.player_points -= spell.cost
     self.cast_kind = spell.kind
-    if spell.kind == SPELL_FREEZE_RAY then self.frozen_middle[table_card] = true end
+    if spell.kind == SPELL_FREEZE_RAY then
+        self:clear_frozen()
+        self.frozen_middle[table_card] = true
+    end
     return true
 end
 
@@ -1323,6 +1705,7 @@ function trick_side(trick: readonly<Trick>, owner: Side): TrickSide
     if owner > 0 then
         return {
             cards = trick.player_cards,
+            formation = trick.player_formation,
             first = trick.player_first,
             second = trick.player_second,
             value = trick.player_value,
@@ -1331,6 +1714,7 @@ function trick_side(trick: readonly<Trick>, owner: Side): TrickSide
     end
     return {
         cards = trick.computer_cards,
+        formation = trick.computer_formation,
         first = trick.computer_first,
         second = trick.computer_second,
         value = trick.computer_value,
@@ -1496,6 +1880,28 @@ function scoring_cards(cards: readonly<{Card}>, value: i32, other_value: i32): {
     return marked
 end
 
+-- Mark exactly the five cards selected by Hold'em evaluation inside the
+-- seven-card pool shown at resolution. Cards are matched as a multiset so a
+-- spell-created duplicate cannot color more copies than the formation uses.
+function formation_marks(
+    cards: readonly<{Card}>, formation: readonly<{Card}>
+): {bool}
+    local marked: {bool} = {}
+    for _ in cards do table.insert(marked, false) end
+    for wanted in formation do
+        for index, candidate in cards do
+            if not marked[index]
+                and candidate.rank == wanted.rank
+                and candidate.suit == wanted.suit
+            then
+                marked[index] = true
+                break
+            end
+        end
+    end
+    return marked
+end
+
 return {
     new = new,
     view = view,
@@ -1506,6 +1912,8 @@ return {
     hand_cards = hand_cards,
     make_deck = make_deck,
     rank_five = rank_five,
+    best_five = best_five,
+    best_five_value = best_five_value,
     value_for_pair = value_for_pair,
     best_pair = best_pair,
     hand_bonus = hand_bonus,
@@ -1514,11 +1922,13 @@ return {
     next_swap_min = next_swap_min,
     proposed_swap = proposed_swap,
     best_swap = best_swap,
+    best_swap_at_least = best_swap_at_least,
     rank_name = rank_name,
     card_name = card_name,
     category_name = category_name,
     formation_cards = formation_cards,
     scoring_cards = scoring_cards,
+    formation_marks = formation_marks,
     snapshot = snapshot,
     restore = restore,
     new_spell = new_spell,

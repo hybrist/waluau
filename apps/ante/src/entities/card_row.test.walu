@@ -31,17 +31,17 @@ describe("card row", function(): unit
         expect(five.preferred_height):toBe(card.height)
     end)
 
-    it("keeps the table cards where they were when the hand grows", function(): unit
-        -- The winner's pair extends the table_card row to five slots on the same
-        -- pitch, so the three table cards must not move out from under it.
+    it("keeps the community cards where they were when the reveal pair arrives", function(): unit
+        -- The winner's pair flanks the five-card community on the same pitch,
+        -- so the public cards must not move out from under the reveal.
         local table_cards = card_row.slot_rects(
-            3, card_row.flat_pitch, entity.rect(-162.0, 0.0, 324.0, card.height))
-        local hand = card_row.slot_rects(
             5, card_row.flat_pitch, entity.rect(-278.0, 0.0, 556.0, card.height))
+        local hand = card_row.slot_rects(
+            7, card_row.flat_pitch, entity.rect(-394.0, 0.0, 788.0, card.height))
 
         expect(hand[1].x):toBe(table_cards[0].x)
-        expect(hand[2].x):toBe(table_cards[1].x)
         expect(hand[3].x):toBe(table_cards[2].x)
+        expect(hand[5].x):toBe(table_cards[4].x)
     end)
 
     it("tightens its pitch rather than running off a narrow board", function(): unit
