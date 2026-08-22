@@ -2744,3 +2744,147 @@ fn literal_unions_emit_valid_wasm_at_their_representation_types() {
         .validate_all(&wasm)
         .expect("emitted literal-union module should validate");
 }
+
+/// Decode the `name` custom section: function names plus per-function local names.
+fn wasm_debug_names(
+    wasm: &[u8],
+) -> (
+    std::collections::BTreeMap<u32, String>,
+    std::collections::BTreeMap<u32, std::collections::BTreeMap<u32, String>>,
+) {
+    let mut function_names = std::collections::BTreeMap::new();
+    let mut local_names = std::collections::BTreeMap::new();
+    for payload in Parser::new(0).parse_all(wasm) {
+        let payload = payload.expect("wasm should parse");
+        let Payload::CustomSection(reader) = payload else {
+            continue;
+        };
+        let wasmparser::KnownCustom::Name(name_reader) = reader.as_known() else {
+            continue;
+        };
+        for name in name_reader {
+            match name.expect("name subsection should decode") {
+                wasmparser::Name::Function(map) => {
+                    for naming in map {
+                        let naming = naming.expect("function name should decode");
+                        function_names.insert(naming.index, naming.name.to_string());
+                    }
+                }
+                wasmparser::Name::Local(indirect) => {
+                    for entry in indirect {
+                        let entry = entry.expect("local name entry should decode");
+                        let mut names = std::collections::BTreeMap::new();
+                        for naming in entry.names {
+                            let naming = naming.expect("local name should decode");
+                            names.insert(naming.index, naming.name.to_string());
+                        }
+                        local_names.insert(entry.index, names);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (function_names, local_names)
+}
+
+#[test]
+fn emits_debug_names_for_functions_params_and_locals() {
+    let source = r#"
+        function accumulate(seed: i32, count: i32): i32
+            local total: i32 = seed
+            for step = 1, count do
+                total += step
+            end
+            return total
+        end
+
+        assert(accumulate(2, 3) == 8)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+
+    let (function_names, local_names) = wasm_debug_names(&wasm);
+    let accumulate_index = *function_names
+        .iter()
+        .find(|(_, name)| name.as_str() == "accumulate")
+        .expect("accumulate should be named in the name section")
+        .0;
+    assert!(
+        function_names
+            .values()
+            .any(|name| name == "__waluau_top_level_init"),
+        "top-level init should be named, got: {function_names:?}"
+    );
+    let export_index =
+        wasm_export_func_index(&wasm, "accumulate").expect("accumulate should be exported");
+    assert_eq!(accumulate_index, export_index);
+
+    let locals = local_names
+        .get(&accumulate_index)
+        .expect("accumulate should have local names");
+    assert_eq!(locals.get(&0).map(String::as_str), Some("seed"));
+    assert_eq!(locals.get(&1).map(String::as_str), Some("count"));
+    let named: Vec<&str> = locals.values().map(String::as_str).collect();
+    assert!(
+        named.contains(&"total"),
+        "expected a local named 'total', got: {named:?}"
+    );
+    assert!(
+        named.contains(&"step"),
+        "expected a local named 'step', got: {named:?}"
+    );
+}
+
+#[test]
+fn incremental_emit_preserves_the_name_section() {
+    let source_v1 = r#"
+        function answer(base: i32): i32
+            local result: i32 = base + 41
+            result += 1
+            return result
+        end
+
+        assert(answer(0) == 42)
+    "#;
+    // Same shape, numeric literals only: stays on the incremental emit path.
+    let source_v2 = r#"
+        function answer(base: i32): i32
+            local result: i32 = base + 40
+            result += 1
+            return result
+        end
+
+        assert(answer(0) == 42)
+    "#;
+    let mut cache = super::EmitCache::default();
+    let build = |source: &str| {
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+        waluau_ir::build(&typed).expect("ir should succeed")
+    };
+    super::emit_cached(&build(source_v1), &mut cache).expect("full emit should succeed");
+    assert!(!cache.last_emit_was_incremental());
+    let incremental =
+        super::emit_cached(&build(source_v2), &mut cache).expect("incremental emit should succeed");
+    assert!(
+        cache.last_emit_was_incremental(),
+        "numeric-literal-only change should re-emit incrementally"
+    );
+
+    let (function_names, local_names) = wasm_debug_names(&incremental.wasm);
+    let answer_index = *function_names
+        .iter()
+        .find(|(_, name)| name.as_str() == "answer")
+        .expect("answer should stay named after an incremental emit")
+        .0;
+    let locals = local_names
+        .get(&answer_index)
+        .expect("answer should keep local names after an incremental emit");
+    assert!(
+        locals.values().any(|name| name == "result"),
+        "expected a local named 'result', got: {locals:?}"
+    );
+}

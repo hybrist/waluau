@@ -11,6 +11,10 @@ pub struct Module {
     pub declared_imports: Vec<DeclaredImport>,
     pub start: Option<usize>,
     pub tag_ids: std::collections::BTreeMap<String, i32>,
+    /// Source name of each resolved symbol. Debug metadata only: Wasm emission
+    /// combines this with [`Function::value_symbols`] to label locals in the
+    /// emitted `name` custom section.
+    pub symbol_names: BTreeMap<SymbolId, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

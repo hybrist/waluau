@@ -1192,7 +1192,9 @@ mod tests {
 
         let result = super::compile_sources(&files, "main.walu").expect("compile should succeed");
         assert!(result.wat.contains("(export \"main\""));
-        assert!(!result.wat.contains("__waluau_m"));
+        // Linked module functions keep their mangled internal names in the
+        // debug name section, but must not be exported.
+        assert!(!result.wat.contains("(export \"__waluau_m"));
     }
 
     #[test]

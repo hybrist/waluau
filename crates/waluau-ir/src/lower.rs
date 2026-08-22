@@ -359,7 +359,11 @@ fn build_inner(
         }
         return Ok(module);
     }
-    let monomorphic = Monomorphizer::new(&erased).run(&erased)?;
+    let mut monomorphic = Monomorphizer::new(&erased).run(&erased)?;
+    // Monomorphization already resolved the specialized program; re-resolving
+    // is deterministic and re-stamps the same ids, so this pass only exists to
+    // capture the symbol-name table for Wasm debug-name emission.
+    let symbol_names = waluau_ast::resolve_symbols(&mut monomorphic)?;
     let monomorphic_at = started.elapsed();
     let globals = collect_module_globals(&monomorphic)?;
     let global_indices = globals
@@ -532,6 +536,7 @@ fn build_inner(
         declared_imports,
         start,
         tag_ids,
+        symbol_names,
     };
     if CompilerTimer::enabled() {
         eprintln!(
@@ -617,7 +622,7 @@ fn try_build_incremental(
         .expect("cached monomorphic program");
     monomorphic.functions[monomorphic_index] = rewritten;
     monomorphic.sources = erased.sources.clone();
-    waluau_ast::resolve_symbols(&mut monomorphic)?;
+    let symbol_names = waluau_ast::resolve_symbols(&mut monomorphic)?;
     let resolved_at = started.elapsed();
 
     let tag_ids = collect_variant_tag_ids(&monomorphic, &resolved.type_declarations);
@@ -735,6 +740,12 @@ fn try_build_incremental(
     }
     let mut module = cache.module.take().expect("cached IR module");
     module.functions[module_index] = lowered.into_iter().next().expect("one lowered function");
+    // The relowered function carries symbol ids from the fresh resolution, so
+    // the module-wide debug-name table must come from that resolution too.
+    // Unchanged functions keep their old ids; if the edit shifted ids their
+    // debug names can go stale until the next full build, which is acceptable
+    // for name-section metadata.
+    module.symbol_names = symbol_names;
     let names = HashSet::from([name]);
     verify::verify_functions(&module, &names)?;
     if CompilerTimer::enabled() {

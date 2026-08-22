@@ -1230,6 +1230,8 @@ use waluau_diagnostics::Diagnostic;
 struct Resolver {
     scopes: Vec<HashMap<String, SymbolId>>,
     next_symbol_id: usize,
+    /// Source name of every declared symbol, for Wasm debug-name emission.
+    symbol_names: std::collections::BTreeMap<SymbolId, String>,
 }
 
 impl Resolver {
@@ -1238,6 +1240,7 @@ impl Resolver {
         let mut resolver = Self {
             scopes: Vec::new(),
             next_symbol_id: 1,
+            symbol_names: std::collections::BTreeMap::new(),
         };
 
         // Populate builtins
@@ -1287,6 +1290,7 @@ impl Resolver {
         if let Some(current) = self.scopes.last_mut() {
             current.insert(name.to_string(), id);
         }
+        self.symbol_names.insert(id, name.to_string());
         id
     }
 
@@ -1675,7 +1679,12 @@ impl Resolver {
     }
 }
 
-pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
+/// Resolve every name in `program` to a [`SymbolId`], stamping the ids into
+/// the AST in place. Returns the source name of each declared symbol so later
+/// stages can label Wasm locals in the emitted `name` section.
+pub fn resolve_symbols(
+    program: &mut Program,
+) -> Result<std::collections::BTreeMap<SymbolId, String>, Diagnostic> {
     let mut resolver = Resolver::new();
 
     // Declare all top-level functions first
@@ -1725,7 +1734,7 @@ pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
         }
     }
 
-    Ok(())
+    Ok(resolver.symbol_names)
 }
 
 #[cfg(test)]
