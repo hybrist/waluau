@@ -1,5 +1,5 @@
 -- Cards laid flat in a centred row on one pitch: the Opponent's sealed hand,
--- the duel's three table cards, and the five-card hand a resolved round
+-- the duel's growing community, and the seven-card pool a resolved round
 -- leaves standing. All three are the same object at different widths, so they
 -- are the same entity.
 --

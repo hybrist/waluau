@@ -34,7 +34,7 @@ end
 local function force_player_win(state: game.State): unit
     game_fixture.arrange_breach(
         state,
-        { card(10, 0), card(11, 0), card(12, 0) },
+        { card(10, 0), card(11, 0), card(12, 0), card(2, 1), card(3, 2) },
         { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) },
         { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) }
     )
@@ -43,7 +43,7 @@ end
 local function force_computer_win(state: game.State): unit
     game_fixture.arrange_breach(
         state,
-        { card(10, 0), card(11, 0), card(12, 0) },
+        { card(10, 0), card(11, 0), card(12, 0), card(2, 1), card(3, 2) },
         { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) },
         { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
     )
@@ -52,7 +52,7 @@ end
 local function force_stalemate(state: game.State): unit
     game_fixture.arrange_breach(
         state,
-        { card(7, 3), card(2, 3), card(8, 2) },
+        { card(7, 3), card(2, 3), card(8, 2), card(10, 0), card(11, 1) },
         { card(13, 0), card(13, 1), card(4, 0), card(5, 1), card(6, 0) },
         { card(13, 2), card(13, 3), card(4, 2), card(5, 3), card(6, 2) }
     )
@@ -141,6 +141,39 @@ describe("Ante Magic scoring", function()
         expect(six_high):toBeGreaterThan(wheel)
     end)
 
+    it("chooses the best five cards from the seven-card Hold'em pool", function()
+        local pool: {game.Card} = {
+            card(10, 0), card(11, 0), card(12, 0), card(13, 0), card(14, 0),
+            card(2, 1), card(3, 2),
+        }
+        local choice: game.PairChoice = game.best_five(pool)
+        local marks: {bool} = game.formation_marks(pool, choice.formation)
+
+        expect(game.category_name(choice.value)):toBe("straight flush")
+        expect(marks[0]):toBe(true)
+        expect(marks[4]):toBe(true)
+        expect(marks[5]):toBe(false)
+        expect(marks[6]):toBe(false)
+    end)
+
+    it("keeps the fast Hold'em score identical to exhaustive formation scoring", function()
+        local deck: {game.Card} = game.make_deck()
+        math.randomseed(73051)
+        for _ = 1, 300 do
+            local pool: {game.Card} = {}
+            local used: {bool} = {}
+            for _ in deck do table.insert(used, false) end
+            while #pool < 7 do
+                local index: i32 = math.random(#deck) - 1
+                if not used[index] then
+                    used[index] = true
+                    table.insert(pool, deck[index])
+                end
+            end
+            expect(game.best_five_value(pool)):toBe(game.best_five(pool).value)
+        end
+    end)
+
     it("ranks three-card bids and resolves their priority", function()
         local three_straight_flush: i32 = game.rank_three({ card(10, 2), card(11, 2), card(12, 2) })
         local three_kind: i32 = game.rank_three({ card(8, 0), card(8, 1), card(8, 2) })
@@ -159,7 +192,7 @@ describe("Ante Magic scoring", function()
 end)
 
 describe("Ante Magic swaps", function()
-    it("ends when both sides pass", function()
+    it("deals the turn and river after passes, then ends the swap phase", function()
         local state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
@@ -167,14 +200,34 @@ describe("Ante Magic swaps", function()
             { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
         )
 
-        local outcome: game.SwapOutcome? = state:resolve_swap({}, {})
-        expect(outcome == nil):toBe(false)
+        local flop: game.SwapOutcome? = state:resolve_swap({}, {})
+        expect(flop == nil):toBe(false)
+        assert(flop ~= nil)
+        local resolved_flop: game.SwapOutcome = flop::game.SwapOutcome
         expect(game.view(state).player_swap_max):toBe(0)
         expect(game.view(state).computer_swap_max):toBe(0)
+        expect(game.view(state).swap_open):toBe(true)
+        expect(#game.view(state).middle):toBe(4)
+        expect(resolved_flop.dealt == nil):toBe(false)
+
+        local turn: game.SwapOutcome? = state:resolve_swap({}, {})
+        expect(turn == nil):toBe(false)
+        assert(turn ~= nil)
+        local resolved_turn: game.SwapOutcome = turn::game.SwapOutcome
+        expect(game.view(state).swap_open):toBe(true)
+        expect(#game.view(state).middle):toBe(5)
+        expect(resolved_turn.dealt == nil):toBe(false)
+
+        local river: game.SwapOutcome? = state:resolve_swap({}, {})
+        expect(river == nil):toBe(false)
+        assert(river ~= nil)
+        local resolved_river: game.SwapOutcome = river::game.SwapOutcome
         expect(game.view(state).swap_open):toBe(false)
+        expect(#game.view(state).middle):toBe(5)
+        expect(resolved_river.dealt == nil):toBe(true)
     end)
 
-    it("exchanges a winning proposal once without consuming the deck", function()
+    it("exchanges a winning proposal once, then deals the next community card", function()
         math.randomseed(7)
         local state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
@@ -218,9 +271,11 @@ describe("Ante Magic swaps", function()
         expect(game.view(state).player_hand[0].card.suit):toBe(old_middle.suit)
         expect(game.view(state).middle[0].rank):toBe(old_hand.rank)
         expect(game.view(state).middle[0].suit):toBe(old_hand.suit)
-        expect(game.view(state).deck_count):toBe(old_deck_size)
+        expect(won_feint.dealt == nil):toBe(false)
+        expect(#game.view(state).middle):toBe(4)
+        expect(game.view(state).deck_count):toBe(old_deck_size - 1)
         local visible_deck_count: i32 = game.view(state).deck_count
-        expect(visible_deck_count):toBe(old_deck_size)
+        expect(visible_deck_count):toBe(old_deck_size - 1)
         expect(game.view(state).player_hand[0].known):toBe(true)
         expect(game.view(state).player_hand[1].known):toBe(false)
         expect(game.view(state).player_hand[2].known):toBe(false)
@@ -367,7 +422,7 @@ describe("Ante Magic swaps", function()
         expect(marked_slots):toBe(3)
     end)
 
-    it("requires raises to match the opponent and closes at the three-card ceiling", function()
+    it("carries a maxed flop into four- and five-card swap opportunities", function()
         local state = game.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
@@ -377,19 +432,30 @@ describe("Ante Magic swaps", function()
 
         state:resolve_swap({}, {})
         expect(game.view(state).computer_swap_max):toBe(3)
-        expect(state:minimum_swap()):toBe(3)
+        expect(#game.view(state).middle):toBe(4)
+        expect(state:minimum_swap()):toBe(4)
         expect(state:resolve_swap({ 0, 1 }, { 0, 1 }) == nil):toBe(true)
         expect(game.view(state).player_wager):toBe(0)
 
-        local final_raise: game.SwapOutcome? = state:resolve_swap(
-            { 0, 1, 2 }, { 0, 1, 2 })
-        expect(final_raise == nil):toBe(false)
-        expect(game.view(state).player_swap_max):toBe(3)
+        local turn_raise: game.SwapOutcome? = state:resolve_swap(
+            { 0, 1, 2, 3 }, { 0, 1, 2, 3 })
+        expect(turn_raise == nil):toBe(false)
+        expect(game.view(state).player_swap_max):toBe(4)
         expect(game.view(state).computer_swap_max):toBe(3)
-        expect(game.view(state).swap_open):toBe(false)
-        expect(game.view(state).player_wager):toBe(3)
+        expect(game.view(state).swap_open):toBe(true)
+        expect(#game.view(state).middle):toBe(5)
+        expect(state:minimum_swap()):toBe(5)
+        expect(game.view(state).player_wager):toBe(4)
         expect(game.view(state).computer_wager):toBe(3)
-        expect(game.view(state).pot):toBe(6)
+        expect(game.view(state).pot):toBe(7)
+
+        local river_raise: game.SwapOutcome? = state:resolve_swap(
+            { 0, 1, 2, 3, 4 }, { 0, 1, 2, 3, 4 })
+        expect(river_raise == nil):toBe(false)
+        expect(game.view(state).player_swap_max):toBe(5)
+        expect(game.view(state).swap_open):toBe(false)
+        expect(game.view(state).player_wager):toBe(9)
+        expect(game.view(state).pot):toBe(12)
 
         force_player_win(state)
         expect(state:play(0, 1) == nil):toBe(false)
@@ -401,7 +467,7 @@ describe("Ante Magic swaps", function()
 
     it("computes each legal raise from both sides' previous swaps", function()
         expect(game.next_swap_min(0, 0)):toBe(1)
-        expect(game.next_swap_min(0, 2)):toBe(2)
+        expect(game.next_swap_min(0, 2)):toBe(3)
         expect(game.next_swap_min(2, 2)):toBe(3)
         expect(game.next_swap_min(3, 3)):toBe(4)
     end)
@@ -616,7 +682,9 @@ local function force_boss_player_win(state: game.State): unit
     local computer: {game.Card} = {}
     for rank = 2, count + 1 do table.insert(computer, card(rank, 2)) end
     game_fixture.arrange_breach(
-        state, { card(10, 0), card(11, 0), card(12, 0) }, player, computer)
+        state, {
+            card(10, 0), card(11, 0), card(12, 0), card(2, 1), card(3, 2)
+        }, player, computer)
 end
 
 describe("Ante Magic boss battle", function()
@@ -655,7 +723,7 @@ describe("Ante Magic boss battle", function()
         expect(#game.view(state).player_hand):toBe(3)
         expect(#game.view(state).computer_hand):toBe(3)
         expect(#game.view(state).middle):toBe(0)
-        expect(game.view(state).deck_count):toBe(32)
+        expect(game.view(state).deck_count):toBe(28)
     end)
 
     it("keeps the standard game's five-card deal and replacements", function()
@@ -843,6 +911,8 @@ describe("Ante Magic spell casting", function()
         expect(resolved.frozen_middle[0]):toBe(false)
         expect(resolved.frozen_middle[1]):toBe(true)
         expect(resolved.frozen_middle[2]):toBe(false)
+        expect(resolved.frozen_middle[3]):toBe(false)
+        expect(resolved.frozen_middle[4]):toBe(false)
         expect(game.view(state).middle[1].rank):toBe(retained.rank)
         expect(game.view(state).middle[1].suit):toBe(retained.suit)
         expect(game.view(state).middle[0].rank == replaced_left.rank and game.view(state).middle[0].suit == replaced_left.suit):toBe(false)

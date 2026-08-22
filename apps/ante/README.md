@@ -13,10 +13,17 @@ formations such as a bound pair, arcane sequence, and perfect convergence.
 The Arch Mage can commit any valid feint without a mana balance. Either side's
 second breach win ends the vault: the Arch Mage's ends the heist, the player's
 settles the vault as won.
-During a feint, both sides may propose more than once. A new proposal must use
-more cards than that side's previous proposal and at least as many as the other
-side's largest proposal, up to three. The feint ends when both pass or when both
-have reached three; proposal history resets for the next breach.
+Each breach has exactly three feint opportunities. The first follows a
+three-card community deal, then a fourth card and a fifth card are dealt before
+the second and third opportunities. Both sides propose once per opportunity;
+the stronger proposal executes, and every non-pass proposal must use strictly
+more cards than either side's previous maximum. The ceiling is the current
+community size, so a three-card flop swap can still be followed by swaps of four
+and five. Proposal history resets for the next breach.
+
+After the river feint, each side commits two private cards and the strongest
+five-card poker hand among those two and the five community cards wins. As in
+Texas Hold'em, the winning five may use both, one, or neither committed card.
 
 A vault is one heist inside a longer roguelike run of nine, and clearing one
 costs its ante: the vault takes a cut of the mana the robbers are holding, and
@@ -77,9 +84,9 @@ and footers—place themselves from those live dimensions, so additional width
 or height becomes game space rather than a fixed board or letterbox. Trick
 results remain on the board, where
 color identifies the winning formation and any decisive kickers.
-After the reveal flips, the winner's two cards fly out of their row and flank
-the three wards, completing the five-card formation in the middle of the
-board; a single golden halo then ignites around the whole set while the losing
+After the reveal flips, the winner's two committed cards fly out of their row
+and flank the five community cards. The best five are marked within that
+seven-card pool; a single golden halo then ignites around the whole set while the losing
 pair ignites at its centre, chars through along a ragged ember front, and
 crumbles into drifting ash. When play advances, those ashes gather at the
 neutral pile and the two burned faces reform there instead of returning to
@@ -105,11 +112,11 @@ deck.
 
 Cards never simply appear or vanish: every relic and ward is dealt off a
 visible face-down pile beside the board — the opening hands, each round's
-wards, and the two replacements both sides draw after a breach — and when a
+flop, turn, river, and the two replacements both sides draw after a breach — and when a
 breach's continue press ends the round, the resolved formation is scooped up:
 its cards slide together into one pile, which then carries to a face-up
 spent pile at the board's right edge, mirroring the draw pile on the left.
-While the pile carries off, the three surviving cards in each hand slide down
+While the pile carries off, the surviving cards in each hand slide down
 into the slots the spent pair vacated, so the hands are settled before the
 replacements are dealt beside them. A
 won feint plays out in three beats: the winner's relics rise out of the hand,

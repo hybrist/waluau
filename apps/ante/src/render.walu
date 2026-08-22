@@ -89,8 +89,8 @@ const SLOT_MIDDLE: Slot = Slot.middle
 const SLOT_DECK: Slot = Slot.deck
 -- The one spent pile, mid-height on the right edge opposite the deck. Every
 -- card a round is finished with lands here, whoever it belonged to: the losing
--- pair reduced to embers during the reveal, and the whole five-card hand the
--- winner took — the three table cards plus the pair that settled it. Nobody
+-- pair reduced to embers during the reveal, and the whole seven-card pool the
+-- winner took — the five community cards plus the pair that settled it. Nobody
 -- keeps their tricks; the score already says who took what.
 const SLOT_ASIDE: Slot = Slot.aside
 
@@ -121,7 +121,7 @@ const THROW_OVERSHOOT: f64 = 0.3
 const THROW_RISE: f64 = 270.0
 
 -- Once both flips have landed, the winner's pair flies out of its row and
--- joins the three table cards, so the whole five-card hand stands together in
+-- joins the five community cards, so all seven candidates stand together in
 -- the middle of the board. FLY_START leaves a beat after the second flip
 -- (which finishes at 0.2 + FLIP_SECONDS * 1.7), and the second card trails
 -- the first by FLY_STAGGER so the pair arrives as two beats rather than a
@@ -129,10 +129,9 @@ const THROW_RISE: f64 = 270.0
 const FLY_START: f64 = 1.3
 const FLY_SECONDS: f64 = 0.45
 const FLY_STAGGER: f64 = 0.12
--- The hand the pair lands in: the table_card row extended to five slots on the
--- same pitch, so the table cards do not move and the flanks arrive on the rhythm the
--- row already has.
-const FORMATION_SLOTS: i32 = 5
+-- The two committed private cards flank the five-card community at reveal.
+-- Hold'em highlights the strongest five among these seven cards.
+const FORMATION_SLOTS: i32 = 7
 const WIN_LIFT_SCALE: f64 = 1.14
 const WIN_LIFT_Y: f64 = 10.0
 
@@ -332,7 +331,7 @@ end
 -- Top-left of a board slot's card box. The player's row reads off the closed
 -- fan; the spent pile stands on the right edge, one card column opposite the
 -- deck at the height of the table_card row.
--- The count parameter sizes the two hand rows; every other slot ignores it.
+-- The count parameter sizes hand rows and the live community row.
 function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32): Point
     match kind do
     case Slot.player then
@@ -342,7 +341,7 @@ function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32)
         return top_left(card_row.slot_rect(
             count, card_row.pitch_in(band, count, card_row.flat_pitch),
             band, index))
-    case Slot.middle then return top_left(row_slot(viewport, 3, index))
+    case Slot.middle then return top_left(row_slot(viewport, count, index))
     case Slot.deck then return point(viewport.side_left, viewport.table_card_y)
     case Slot.none then
         return point(
@@ -355,9 +354,8 @@ function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32)
     end
 end
 
--- Countless slots — the table cards, the deck, and the spent pile — never move
--- with the hand layout; this shorthand names them without inventing a count.
--- The two hand rows must go through slot_pos_at with their real size.
+-- Slots with no varying row size use this shorthand. Hand and community rows
+-- must go through slot_pos_at with their real size.
 function slot_pos(viewport: layout.State, kind: Slot, index: i32): Point
     return slot_pos_at(viewport, kind, index, 5)
 end
@@ -368,9 +366,7 @@ function slot_center(viewport: layout.State, kind: Slot, index: i32, count: i32)
     return point(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
 end
 
--- The two flanks of the resolved five-card hand, where the winner's pair
--- lands. They are the outer slots of the same row the table cards are the middle
--- three of, so nothing has to move to make room for them.
+-- The two flanks of the seven-card reveal pool, where the committed pair lands.
 function row_left(viewport: layout.State): Point
     return top_left(row_slot(viewport, FORMATION_SLOTS, 0))
 end
@@ -434,9 +430,9 @@ function hit_hand(viewport: layout.State, at: Point, parts: {f64}): i32
 end
 
 -- The table_card under a point, or -1. Table cards lie square to the board.
-function hit_table_card(viewport: layout.State, at: Point): i32
-    for index = 0::i32, 2::i32 do
-        if entity.contains(row_slot(viewport, 3, index), at.x, at.y) then
+function hit_table_card(viewport: layout.State, at: Point, count: i32): i32
+    for index = 0::i32, count - 1 do
+        if entity.contains(row_slot(viewport, count, index), at.x, at.y) then
             return index
         end
     end
@@ -846,9 +842,15 @@ end
 -- is drawn from.
 function step_spell_particles(
     spells: SpellParticles, viewport: layout.State,
-    kind: i32, clock: f64, target: i32, dt: f64
+    kind: i32, clock: f64, target: i32, middle_count: i32, dt: f64
 ): unit
-    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
+    -- A resolved terminal trick has already cleared the live community while
+    -- its reveal is beginning. Likewise, a turn/river condition can briefly
+    -- outlive the five-card board it named. Neither state has a card slot to
+    -- index until choreography clears or retargets the condition.
+    if middle_count <= 0 or target < 0 or target >= middle_count then return end
+    local slot: Point = slot_pos_at(
+        viewport, SLOT_MIDDLE, target, middle_count)
     spell_launch.step(
         spells.sparks, kind, clock, dt,
         slot.x + card.width * 0.5, slot.y + card.height * 0.5)
@@ -858,9 +860,12 @@ end
 
 function draw_spell_launch(
     surface: entity.Surface, viewport: layout.State,
-    kind: i32, clock: f64, target: i32, sparks: spell_cast.Sparks
+    kind: i32, clock: f64, target: i32, middle_count: i32,
+    sparks: spell_cast.Sparks
 ): unit
-    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
+    if middle_count <= 0 or target < 0 or target >= middle_count then return end
+    local slot: Point = slot_pos_at(
+        viewport, SLOT_MIDDLE, target, middle_count)
     spell_launch.draw(
         surface.graphics, surface.effects, kind, clock,
         slot.x + card.width * 0.5, slot.y + card.height * 0.5, sparks)
@@ -929,16 +934,18 @@ function table_card_node(frame: Frame, value: game.Card, index: i32, selected: b
 end
 
 function trick_scoring(trick: readonly<game.Trick>): {bool}
-    if trick.winner == 0 then return { false, false, false, false, false } end
+    if trick.winner == 0 then
+        return { false, false, false, false, false, false, false }
+    end
     local winner: game.TrickSide = game.trick_side(trick, trick.winner::game.Side)
-    local loser: game.TrickSide = game.trick_side(
-        trick, game.opposite_side(trick.winner::game.Side))
-    return game.scoring_cards(
-        { trick.middle[0], trick.middle[1], trick.middle[2], winner.cards[0], winner.cards[1] },
-        winner.value, loser.value)
+    return game.formation_marks({
+        trick.middle[0], trick.middle[1], trick.middle[2],
+        trick.middle[3], trick.middle[4],
+        winner.cards[0], winner.cards[1],
+    }, winner.formation)
 end
 
--- The three table cards on their field: a panel, and the row of slots standing on
+-- The live community cards on their field: a panel, and the row of slots standing on
 -- it. Both take the same band, so the field is always exactly as wide as the
 -- row it backs.
 function draw_table_card_band(surface: entity.Surface, viewport: layout.State, slots: {entity.Node}): unit
@@ -1026,7 +1033,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                 else
                     draw_flipping_card(
                         surface, trick.computer_cards[0], slot.x, slot.y,
-                        reveal_clock, 0.2, trick.winner < 0 and scoring[3])
+                        reveal_clock, 0.2, trick.winner < 0 and scoring[5])
                 end
             end
         elseif i == trick.computer_second then
@@ -1039,7 +1046,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                     draw_flipping_card(
                         surface, trick.computer_cards[1], slot.x, slot.y,
                         reveal_clock, 0.2 + FLIP_SECONDS * 0.7,
-                        trick.winner < 0 and scoring[4])
+                        trick.winner < 0 and scoring[6])
                 end
             end
         else
@@ -1050,18 +1057,18 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
         end
     end
 
-    -- The panel marks the landing zone, sized for the whole hand. Before
-    -- the halo ignites, the three table cards remain part of this ordinary table
+    -- The panel marks the landing zone, sized for the whole reveal pool. Before
+    -- the halo ignites, the five table cards remain part of this ordinary table
     -- layer; once the hand is complete, they move into the foreground
     -- layer with the winning pair.
     local hand: box.Rect = table_card_band(viewport, FORMATION_SLOTS)
     table_card_panel.node().paint(surface, hand)
     if glow <= 0.0 then
-        for i = 0::i32, 2::i32 do
+        for i = 0::i32, 4::i32 do
             table_card_node(
                 frame, trick.middle[i], i, false, false,
                 trick.winner ~= 0 and scoring[i]
-            ).paint(surface, row_slot(viewport, 3, i))
+            ).paint(surface, row_slot(viewport, 5, i))
         end
     end
 
@@ -1086,7 +1093,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                         surface,
                         card.look(
                             trick.player_cards[0], true, false, false,
-                            trick.winner > 0 and scoring[3], false),
+                            trick.winner > 0 and scoring[5], false),
                         fan, i, fan_parts[i], hand_count)
                 end
             end
@@ -1101,7 +1108,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                         surface,
                         card.look(
                             trick.player_cards[1], true, false, false,
-                            trick.winner > 0 and scoring[4], false),
+                            trick.winner > 0 and scoring[6], false),
                         fan, i, fan_parts[i], hand_count)
                 end
             end
@@ -1129,9 +1136,9 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
         graphics:apply_transform(scale, 0.0, 0.0, scale, 0.0, 0.0)
         graphics:translate(-center_x, -center_y)
         draw_result_field(surface, hand, glow, trick.winner > 0)
-        for i = 0::i32, 2::i32 do
+        for i = 0::i32, 4::i32 do
             table_card_node(frame, trick.middle[i], i, false, false, scoring[i])
-                .paint(surface, row_slot(viewport, 3, i))
+                .paint(surface, row_slot(viewport, FORMATION_SLOTS, i + 1))
         end
     end
 
@@ -1143,11 +1150,11 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
         draw_winner_flight(
             surface, trick.computer_cards[0],
             slot_center(viewport, SLOT_COMPUTER, trick.computer_first, hand_count),
-            0.0, row_left(viewport), fly0, scoring[3])
+            0.0, row_left(viewport), fly0, scoring[5])
         draw_winner_flight(
             surface, trick.computer_cards[1],
             slot_center(viewport, SLOT_COMPUTER, trick.computer_second, hand_count),
-            0.0, row_right(viewport), fly1, scoring[4])
+            0.0, row_right(viewport), fly1, scoring[6])
     elseif trick.winner > 0 then
         local angle0: f64 = hand_fan.angle_at(
             trick.player_first, fan_parts[trick.player_first], hand_count)
@@ -1157,17 +1164,17 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
             surface, trick.player_cards[0],
             bound_hand_center(
                 viewport, trick.player_first, fan_parts[trick.player_first], hand_count),
-            angle0, row_left(viewport), fly0, scoring[3])
+            angle0, row_left(viewport), fly0, scoring[5])
         draw_winner_flight(
             surface, trick.player_cards[1],
             bound_hand_center(
                 viewport, trick.player_second, fan_parts[trick.player_second], hand_count),
-            angle1, row_right(viewport), fly1, scoring[4])
+            angle1, row_right(viewport), fly1, scoring[6])
     end
     if foreground then graphics:pop() end
     draw_spell_launch(
         surface, viewport, frame.spell.kind, frame.spell.clock,
-        frame.spell.target, frame.spells.sparks)
+        frame.spell.target, #trick.middle, frame.spells.sparks)
 end
 
 -- The Opponent's sealed row. Slots claimed by an in-flight card stay empty
@@ -1254,7 +1261,9 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
             state.player_swap_max, state.computer_swap_max)
         local swap_prompt: string = "SWAP AT LEAST " .. tostring(minimum_swap)
             .. ": SELECT MATCHING CARDS + TABLE CARDS"
-        if minimum_swap > 3 then swap_prompt = "NO SWAP REMAINS: SKIP" end
+        if minimum_swap > #state.middle then
+            swap_prompt = "NO SWAP REMAINS: SKIP"
+        end
         centered_line(
             surface, viewport, swap_prompt,
             viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE, "#fbbf24")
@@ -1336,7 +1345,7 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
     draw_anims(surface, anims, anim_clock, frame.sheet)
     draw_spell_launch(
         surface, viewport, frame.spell.kind, frame.spell.clock,
-        frame.spell.target, frame.spells.sparks)
+        frame.spell.target, #state.middle, frame.spells.sparks)
 end
 
 function draw_help(surface: entity.Surface, viewport: layout.State): unit
