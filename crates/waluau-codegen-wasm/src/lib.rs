@@ -1685,7 +1685,13 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
         exports.export(LUA_ERROR_TAG_EXPORT, ExportKind::Tag, ERROR_TAG_INDEX);
     }
     let mut codes = CodeSection::new();
+    // Debug names for the `name` custom section: every defined function gets
+    // an entry (ascending index order, matching emission order), and each user
+    // function's locals are labeled from its local plan.
+    let mut function_names: Vec<(u32, String)> = Vec::new();
+    let mut local_names: Vec<(u32, Vec<(u32, String)>)> = Vec::new();
     for (index, function) in module.functions.iter().enumerate() {
+        function_names.push((import_func_count + index as u32, function.name.clone()));
         // User function type indices come after array, host, and coroutine types.
         let params = function
             .params
@@ -1714,6 +1720,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
         .map(|function| {
             emit_function(
                 function,
+                &module.symbol_names,
                 &signatures,
                 &signature_registry,
                 &array_registry,
@@ -1743,6 +1750,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             .functions
             .chunks(chunk_size)
             .map(|chunk| {
+                let symbol_names = &module.symbol_names;
                 let signatures = &signatures;
                 let signature_registry = &signature_registry;
                 let array_registry = &array_registry;
@@ -1759,6 +1767,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
                         .map(|function| {
                             emit_function(
                                 function,
+                                symbol_names,
                                 signatures,
                                 signature_registry,
                                 array_registry,
@@ -1786,13 +1795,21 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             .flat_map(|handle| handle.join().expect("Wasm emission worker panicked"))
             .collect::<Vec<_>>()
     });
-    for emitted in emitted_functions {
-        codes.function(&emitted?);
+    for (index, emitted) in emitted_functions.into_iter().enumerate() {
+        let emitted = emitted?;
+        codes.function(&emitted.body);
+        if !emitted.local_names.is_empty() {
+            local_names.push((import_func_count + index as u32, emitted.local_names));
+        }
     }
     let user_functions_at = started.elapsed();
     if let Some(start) = start_thunk {
         let thunk_sig_index = signature_registry.get(&[], &Type::Unit).unwrap();
         functions.function(user_type_base + thunk_sig_index);
+        function_names.push((
+            import_func_count + module.functions.len() as u32,
+            format!("{MAIN_EXPORT}$thunk"),
+        ));
         exports.export(
             MAIN_EXPORT,
             ExportKind::Func,
@@ -1847,7 +1864,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             import_func_count,
         )?;
         codes.function(&wrapper_fn);
-        let _ = wrapper_idx;
+        function_names.push((
+            import_func_count + module.functions.len() as u32 + thunk_offset + wrapper_idx as u32,
+            format!("{name}$wrapper"),
+        ));
     }
 
     let mut helper_func_idx_counter =
@@ -1859,6 +1879,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT.to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_callback_event_unit_trampoline(
             &signature_registry,
@@ -1873,6 +1897,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT.to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_callback_f64_unit_trampoline(
             &signature_registry,
@@ -1887,6 +1915,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT.to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_callback_unit_extern_trampoline(
             &signature_registry,
@@ -1901,6 +1933,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            CALLBACK_UNIT_TRAMPOLINE_EXPORT.to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_callback_unit_trampoline(
             &signature_registry,
@@ -1915,6 +1951,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            PROMISE_RESUME_TRAMPOLINE_EXPORT.to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_promise_resume_trampoline(
             &coroutine_plan,
@@ -1934,6 +1974,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            PROMISE_RESET_ACTIVE_EXPORT.to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_reset_active_coroutine(
             &coroutine_plan,
@@ -1948,6 +1992,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             coroutine_push_frame_func,
             Some(import_func_count + helper_func_idx_counter)
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            "__waluau_coroutine_push_frame".to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_coroutine_push_frame(
             &coroutine_plan,
@@ -1974,6 +2022,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            format!("__waluau_new_record_{}", info.record_idx),
+        ));
         helper_func_idx_counter += 1;
 
         let mut constructor_fn = Function::new(Vec::new());
@@ -1992,6 +2044,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
                 ExportKind::Func,
                 import_func_count + helper_func_idx_counter,
             );
+            function_names.push((
+                import_func_count + helper_func_idx_counter,
+                format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
+            ));
             helper_func_idx_counter += 1;
 
             let mut getter_fn = Function::new(Vec::new());
@@ -2013,6 +2069,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            format!("__waluau_box_nullable_{}", helper.kind.export_suffix()),
+        ));
         helper_func_idx_counter += 1;
         let mut box_fn = Function::new(Vec::new());
         box_fn.instruction(&Instruction::LocalGet(0));
@@ -2026,6 +2086,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             ExportKind::Func,
             import_func_count + helper_func_idx_counter,
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            format!("__waluau_unbox_nullable_{}", helper.kind.export_suffix()),
+        ));
         helper_func_idx_counter += 1;
         let mut unbox_fn = Function::new(Vec::new());
         unbox_fn.instruction(&Instruction::LocalGet(0));
@@ -2045,6 +2109,10 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             Some(import_func_count + helper_func_idx_counter),
             "pre-computed buffer alloc index must match emission order"
         );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            "__waluau_buffer_alloc".to_string(),
+        ));
         helper_func_idx_counter += 1;
         codes.function(&emit_buffer_alloc_function(buffer_heap_ptr_global));
         exports.export(MEMORY_EXPORT_NAME, ExportKind::Memory, 0);
@@ -2101,6 +2169,28 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
         name: host::BYTES_CUSTOM_SECTION_NAME.into(),
         data: Cow::Owned(host::encode_bytes_constants_section(&bytes_constants)),
     });
+    // Standard `name` custom section: function names for every defined
+    // function plus local names (params and named `let` bindings) for user
+    // functions, so browser devtools and stack traces show source names.
+    // Host imports keep the descriptive names of the import section itself.
+    {
+        let mut names = wasm_encoder::NameSection::new();
+        let mut funcs = wasm_encoder::NameMap::new();
+        for (index, name) in &function_names {
+            funcs.append(*index, name);
+        }
+        names.functions(&funcs);
+        let mut locals = wasm_encoder::IndirectNameMap::new();
+        for (func_index, entries) in &local_names {
+            let mut map = wasm_encoder::NameMap::new();
+            for (local_index, name) in entries {
+                map.append(*local_index, name);
+            }
+            locals.append(*func_index, &map);
+        }
+        names.locals(&locals);
+        wasm.section(&names);
+    }
 
     let assembled_at = started.elapsed();
     let bytes = wasm.finish();
@@ -2233,6 +2323,7 @@ fn try_emit_incremental(
 
     let emitted = emit_function(
         function,
+        &previous.symbol_names,
         &context.signatures,
         &context.signature_registry,
         &context.array_registry,
@@ -2466,8 +2557,50 @@ fn coroutine_frame_context(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// A fully emitted user function body plus the debug names of its Wasm locals
+/// (ascending local index, params included), destined for the `name` section.
+struct EmittedFunction {
+    body: Function,
+    local_names: Vec<(u32, String)>,
+}
+
+impl EmittedFunction {
+    fn into_raw_body(self) -> Vec<u8> {
+        self.body.into_raw_body()
+    }
+}
+
+/// Best-effort debug names for a function's Wasm locals: params carry their
+/// declared names, and every slot the local plan assigns to a value with a
+/// known source symbol is labeled with that symbol's name. Slots shared by
+/// several values (live-range reuse) keep the first name.
+fn collect_local_names(
+    function: &IrFunction,
+    local_plan: &LocalPlan,
+    symbol_names: &BTreeMap<SymbolId, String>,
+) -> Vec<(u32, String)> {
+    let mut names: BTreeMap<u32, String> = BTreeMap::new();
+    for (index, (name, _)) in function.params.iter().enumerate() {
+        names.insert(index as u32, name.clone());
+    }
+    for (value, slot) in &local_plan.slots {
+        if (*slot as usize) < function.params.len() {
+            continue;
+        }
+        let Some(symbol) = function.value_symbols.get(value) else {
+            continue;
+        };
+        let Some(name) = symbol_names.get(symbol) else {
+            continue;
+        };
+        names.entry(*slot).or_insert_with(|| name.clone());
+    }
+    names.into_iter().collect()
+}
+
 fn emit_function(
     function: &IrFunction,
+    symbol_names: &BTreeMap<SymbolId, String>,
     signatures: &HashMap<String, FunctionSignature>,
     signature_registry: &SignatureRegistry,
     array_registry: &ArrayTypeRegistry,
@@ -2484,7 +2617,7 @@ fn emit_function(
     import_func_count: u32,
     buffer_plan: &BufferPlan,
     buffer_alloc_func: Option<u32>,
-) -> Result<Function, Diagnostic> {
+) -> Result<EmittedFunction, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
         signature_registry,
@@ -2511,6 +2644,7 @@ fn emit_function(
         None
     };
     let local_plan = build_local_plan(function, &value_types, array_registry, suspend_frame_type)?;
+    let local_names = collect_local_names(function, &local_plan, symbol_names);
     let value_defs = build_value_definition_map(function);
     let locals = compress_locals(local_plan.extra_locals.clone());
     let mut out = Function::new(locals);
@@ -2525,7 +2659,10 @@ fn emit_function(
         )?
     {
         out.instruction(&Instruction::End);
-        return Ok(out);
+        return Ok(EmittedFunction {
+            body: out,
+            local_names,
+        });
     }
 
     let pc_local = local_plan.pc_local;
@@ -2646,7 +2783,10 @@ fn emit_function(
     out.instruction(&Instruction::End);
     out.instruction(&Instruction::Unreachable);
     out.instruction(&Instruction::End);
-    Ok(out)
+    Ok(EmittedFunction {
+        body: out,
+        local_names,
+    })
 }
 
 /// Emit a closure wrapper function for `target_fn`.
