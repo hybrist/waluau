@@ -167,8 +167,9 @@ fn development_dwarf_is_explicit_and_preserves_default_bytes() {
 
     let existing = super::emit(&ir).expect("default emit should succeed").wasm;
     let explicit_default = super::emit_with_options(&ir, super::EmitOptions::default())
-        .expect("explicit default emit should succeed")
-        .wasm;
+        .expect("explicit default emit should succeed");
+    assert!(explicit_default.development_sources.is_empty());
+    let explicit_default = explicit_default.wasm;
     assert_eq!(
         existing, explicit_default,
         "default output bytes must not change"
@@ -215,7 +216,7 @@ fn development_dwarf_is_explicit_and_preserves_default_bytes() {
         &info,
         "waluau compiler (development DWARF)"
     ));
-    assert!(contains_cstring(&line, "source"));
+    assert!(contains_cstring(&line, "__waluau/sources/virtual/s-source"));
     assert!(custom_section(&debug, ".debug_str").is_none());
     assert!(custom_section(&emitted.wasm, "name").is_some());
     assert!(custom_section(&debug, "name").is_some());
@@ -236,6 +237,38 @@ fn development_dwarf_is_explicit_and_preserves_default_bytes() {
             "DWARF address {address} must be a final Wasm instruction boundary"
         );
     }
+}
+
+#[test]
+fn development_dwarf_rewrites_package_sources_to_relative_browser_paths() {
+    let source = "function draw(): i32\n    return 1\nend\n";
+    let program =
+        waluau_parser::parse_with_path(source, "package:waluau-engine/v1/graphics#debug?100%.walu")
+            .expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let emitted = super::emit_with_options(
+        &ir,
+        super::EmitOptions {
+            development_dwarf: true,
+            ..Default::default()
+        },
+    )
+    .expect("development emit should succeed");
+
+    assert_eq!(emitted.development_sources.len(), 1);
+    assert_eq!(
+        emitted.development_sources[0].path,
+        "__waluau/sources/packages/s-waluau-engine/s-v1/s-graphics~23debug~3F100~25.walu"
+    );
+    assert_eq!(emitted.development_sources[0].source, source);
+    let debug = emitted.development_dwarf.expect("DWARF companion");
+    let line = custom_section(&debug, ".debug_line").expect(".debug_line");
+    assert!(contains_cstring(
+        &line,
+        "__waluau/sources/packages/s-waluau-engine/s-v1/s-graphics~23debug~3F100~25.walu"
+    ));
+    assert!(!contains_cstring(&line, "package:waluau-engine"));
 }
 
 #[test]
@@ -262,6 +295,10 @@ fn incremental_development_dwarf_matches_a_cold_emit() {
     assert_eq!(
         incremental.development_dwarf, cold.development_dwarf,
         "external DWARF bytes must be equivalent"
+    );
+    assert_eq!(
+        incremental.development_sources, cold.development_sources,
+        "development source snapshots must be equivalent"
     );
 }
 
