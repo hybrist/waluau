@@ -343,7 +343,7 @@ describe('browser conformance', () => {
       type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
       type Category = "spells"
       type Slot = { category: Category, goods: Goods, price: i32 }
-      type State = { slots: {Slot}, cursor: i32 }
+      export type State = { slots: {Slot}, cursor: i32 }
 
       function new_state(): State
           return { slots = {}, cursor = 0 }
@@ -474,7 +474,7 @@ describe('browser conformance', () => {
 
   it('passes opaque records through module operations without exposing fields', async () => {
     const counter = `
-      opaque type Counter = { value: i32 }
+      export opaque type Counter = { value: i32 }
       local shared: Counter = { value = 10::i32 }
 
       function new(value: i32): Counter
@@ -520,7 +520,7 @@ describe('browser conformance', () => {
 
   it('passes type aliases imported across require boundaries', async () => {
     const state = `
-      type State = { score: i32 }
+      export type State = { score: i32 }
 
       function new_state(): State
           return { score = 41::i32 }
