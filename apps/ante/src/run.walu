@@ -8,7 +8,8 @@
 -- every duel is fought with — and nothing about the duel inside a duel.
 -- Whether the live duel was won or lost is the rules module's answer, so
 -- nothing here duplicates it. What the intermission between duels sells is the
--- shop's answer; this module only applies the purchase to the run.
+-- shop's answer; item effects use this module's mutable run state to apply the
+-- purchase.
 
 local game = require("./game")
 local snapshot_data = require("./snapshot")

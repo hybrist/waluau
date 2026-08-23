@@ -38,6 +38,7 @@ local function stock_slots(
         table.insert(slots, {
             category = "spells",
             goods = item,
+            item = shop.item_for(item),
             price = shop.price_of(item, state),
             sold = false,
         })

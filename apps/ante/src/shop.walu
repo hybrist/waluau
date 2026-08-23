@@ -10,9 +10,8 @@
 --
 -- What is for sale is a `Goods` value, and each kind of goods carries the
 -- metadata that kind has rather than a shared row of fields most of them would
--- leave empty. Something new the shop can sell is a variant, the functions that
--- price it, judge it, apply it, and say where it goes, and a slot in the layout
--- — not a wider enum threaded through every branch here.
+-- leave empty. Its mutation is a separate `Item`: this module selects and
+-- commits an offer, while shop_item owns what using it does to the run.
 --
 -- This module owns what is on offer, what it costs, and which line the cursor is
 -- on. The loadout limits and the purse belong to the run module, which applies
@@ -21,6 +20,7 @@
 
 local game = require("./game")
 local run_module = require("./run")
+local shop_item = require("./shop_item")
 local snapshot_data = require("./snapshot")
 
 -- What a slot has for sale. Both of these name the spell they are about rather
@@ -40,7 +40,13 @@ type Category = "spells"
 --
 -- A category with less stock than it has slots simply fills fewer of them, so an
 -- unfilled slot is a slot that is not here rather than one holding nothing.
-type Slot = { category: Category, goods: Goods, price: i32, sold: bool }
+type Slot = {
+    category: Category,
+    goods: Goods,
+    item: shop_item.Item,
+    price: i32,
+    sold: bool
+}
 
 -- The question a purchase asks when what it would give the run has nowhere to
 -- go: which of `choices` gets displaced. `slot` is the shop slot being bought,
@@ -162,23 +168,35 @@ function choices_for(goods: Goods, run: run_module.State): {i32}
     return keys
 end
 
--- Apply the purchase. `key` is the loadout key a new spell takes, which is the
--- open one unless a full loadout has named what it trades away; goods that do
--- not go into the loadout ignore it. Gold leaves the purse only once the run
--- accepts the goods, so a refused purchase costs nothing.
-function buy(goods: Goods, run: run_module.State, key: i32, price: i32): bool
+-- Pair selection metadata with the independently implemented effect it buys.
+-- Restoring a visit uses the same mapping, so executable behavior is rebuilt
+-- rather than written into the snapshot.
+function item_for(goods: Goods): shop_item.Item
     if Upgrade(upgrade) = goods then
-        local slot: i32 = run:slot_of(upgrade.kind)
-        if not run:can_sharpen(slot) then return false end
-        if not run:spend(price) then return false end
-        return run:upgrade(slot)
+        return shop_item.sharpen(upgrade.kind)
     end
     if Spell(spell) = goods then
-        if run.gold < price then return false end
-        if not run:learn(spell.kind, key) then return false end
-        return run:spend(price)
+        return shop_item.learn(spell.kind)
     end
-    return false
+    assert(false)
+    return shop_item.new(function(state: shop_item.UseState): unit end)
+end
+
+-- Commit payment, then hand the mutation to the item. `key` is the loadout key
+-- a new spell takes, which is the open one unless a full loadout has named what
+-- it trades away; items that do not need a destination ignore it. Availability
+-- is checked before any mutation, so a refused purchase costs nothing.
+function buy(
+    goods: Goods,
+    item: shop_item.Item,
+    run: run_module.State,
+    key: i32,
+    price: i32
+): bool
+    if not goods_available(goods, run) then return false end
+    if not run:spend(price) then return false end
+    item:use({ run = run, key = key })
+    return true
 end
 
 -- The spell a goods is about, or 0 for goods that are about no spell. Drawing
@@ -203,6 +221,7 @@ function roll_slots(run: run_module.State): {Slot}
             table.insert(slots, {
                 category = category,
                 goods = goods,
+                item = item_for(goods),
                 price = price_of(goods, run),
                 sold = false,
             })
@@ -337,7 +356,7 @@ function commit(state: State, run: run_module.State, slot: i32, key: i32): unit
     if slot < 0 or slot >= #state.slots then return end
     local sale: Slot = state.slots[slot]
     if sale.sold then return end
-    if not buy(sale.goods, run, key, sale.price) then return end
+    if not buy(sale.goods, sale.item, run, key, sale.price) then return end
     sale.sold = true
     state.pending = nil
     state.cursor = slot
@@ -466,6 +485,7 @@ function restore(snapshot_value: string): State?
         table.insert(slots, {
             category = category::Category,
             goods = goods,
+            item = item_for(goods),
             price = price,
             sold = reader:next_bool(),
         })
@@ -510,6 +530,7 @@ return {
     goods_available = goods_available,
     destination = destination,
     choices_for = choices_for,
+    item_for = item_for,
     spell_kind_of = spell_kind_of,
     rows = rows,
     row_count = row_count,
