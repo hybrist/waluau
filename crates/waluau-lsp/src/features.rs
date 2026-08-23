@@ -44,6 +44,7 @@ mod completion_kind {
     pub const MODULE: i64 = 9;
     pub const PROPERTY: i64 = 10;
     pub const KEYWORD: i64 = 14;
+    pub const ENUM_MEMBER: i64 = 20;
     pub const CONSTANT: i64 = 21;
 }
 
@@ -445,9 +446,10 @@ fn module_exports(file: &Path, load: Loader) -> Vec<DefinitionSite> {
         .definitions
         .iter()
         .filter(|definition| {
-            definition.kind == DefinitionKind::Function
+            (definition.kind == DefinitionKind::Function
                 && !definition.name.contains('.')
-                && !definition.name.contains(':')
+                && !definition.name.contains(':'))
+                || (definition.kind == DefinitionKind::TypeName && definition.exported)
         })
         .cloned()
         .collect()
@@ -528,6 +530,11 @@ fn type_name_scope(name: &str, scope: &TypeScope, load: Loader) -> Option<(Strin
         let raw = alias_def.require_path.as_ref()?;
         let file = resolve_require_path(&scope.file, raw)?;
         let module = module_scope(&file, load)?;
+        module.definitions.iter().find(|definition| {
+            definition.kind == DefinitionKind::TypeName
+                && definition.name == member
+                && definition.exported
+        })?;
         Some((member.to_string(), module))
     } else {
         Some((name.to_string(), scope.clone()))
@@ -761,12 +768,19 @@ fn namespace_step(standing: &Standing, name: &str) -> Option<Standing> {
     let Standing::Module(module) = standing else {
         return None;
     };
+    if let Some(type_definition) = module
+        .definitions
+        .iter()
+        .find(|definition| definition.kind == DefinitionKind::TypeName && definition.name == name)
+    {
+        return type_definition
+            .exported
+            .then(|| Standing::Namespace(name.to_string(), module.clone()));
+    }
     let dotted = format!("{name}.");
     let method = format!("{name}:");
     let is_namespace = module.definitions.iter().any(|definition| {
-        (definition.kind == DefinitionKind::TypeName && definition.name == name)
-            || definition.name.starts_with(&dotted)
-            || definition.name.starts_with(&method)
+        definition.name.starts_with(&dotted) || definition.name.starts_with(&method)
     });
     is_namespace.then(|| Standing::Namespace(name.to_string(), module.clone()))
 }
@@ -977,6 +991,8 @@ fn resolve_target(
                     name: raw.clone(),
                     name_span: Span { start: 0, end: 0 },
                     kind: DefinitionKind::Local,
+                    exported: false,
+                    enum_variants: None,
                     ty: None,
                     detail: Some(format!("module {raw}")),
                     visible_from: 0,
@@ -1237,6 +1253,7 @@ fn completion_kind_for(definition: &DefinitionSite) -> i64 {
     match definition.kind {
         DefinitionKind::Function | DefinitionKind::DeclaredFunction => completion_kind::FUNCTION,
         DefinitionKind::DeclaredConstant => completion_kind::CONSTANT,
+        DefinitionKind::EnumVariant => completion_kind::ENUM_MEMBER,
         DefinitionKind::Property => completion_kind::PROPERTY,
         DefinitionKind::TypeName => completion_kind::CLASS,
         _ => completion_kind::VARIABLE,
@@ -1380,7 +1397,12 @@ pub fn completion(text: &str, path: &Path, offset: u32, load: Loader) -> Vec<Com
                     if let Some(file) = resolve_require_path(path, raw) {
                         for export in module_exports(&file, load) {
                             let detail = Some(definition_summary(&export));
-                            push_item(&mut items, &export.name, completion_kind::FUNCTION, detail);
+                            push_item(
+                                &mut items,
+                                &export.name,
+                                completion_kind_for(&export),
+                                detail,
+                            );
                         }
                     }
                     return items;

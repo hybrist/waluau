@@ -151,7 +151,11 @@ impl Parser {
     }
 
     fn parse_top_level_item(&mut self) -> Result<Node, Diagnostic> {
-        if self.at_kw("enum") && self.at_n(1, &ident()) && self.at_n(2, &TokenKind::LBrace) {
+        let export_offset = usize::from(self.at_kw("export"));
+        if self.kw_n(export_offset, "enum")
+            && self.at_n(export_offset + 1, &ident())
+            && self.at_n(export_offset + 2, &TokenKind::LBrace)
+        {
             return self.parse_enum_decl();
         }
         if self.is_type_decl_start() {
@@ -174,6 +178,9 @@ impl Parser {
 
     fn parse_enum_decl(&mut self) -> Result<Node, Diagnostic> {
         let mut c = Vec::new();
+        if self.at_kw("export") {
+            self.bump(&mut c);
+        }
         self.bump(&mut c); // enum
         self.expect(&ident(), &mut c, "expected enum name")?;
         self.expect(&TokenKind::LBrace, &mut c, "expected '{' after enum name")?;
@@ -194,17 +201,23 @@ impl Parser {
     }
 
     fn is_type_decl_start(&self) -> bool {
-        (self.at_kw("type")
-            && self.at_n(1, &ident())
-            && (self.at_n(2, &TokenKind::Equal) || self.at_n(2, &TokenKind::Less)))
-            || (self.at_kw("opaque")
-                && self.kw_n(1, "type")
-                && self.at_n(2, &ident())
-                && (self.at_n(3, &TokenKind::Equal) || self.at_n(3, &TokenKind::Less)))
+        let offset = usize::from(self.at_kw("export"));
+        (self.kw_n(offset, "type")
+            && self.at_n(offset + 1, &ident())
+            && (self.at_n(offset + 2, &TokenKind::Equal)
+                || self.at_n(offset + 2, &TokenKind::Less)))
+            || (self.kw_n(offset, "opaque")
+                && self.kw_n(offset + 1, "type")
+                && self.at_n(offset + 2, &ident())
+                && (self.at_n(offset + 3, &TokenKind::Equal)
+                    || self.at_n(offset + 3, &TokenKind::Less)))
     }
 
     fn parse_type_decl(&mut self) -> Result<Node, Diagnostic> {
         let mut c = Vec::new();
+        if self.at_kw("export") {
+            self.bump(&mut c);
+        }
         if self.at_kw("opaque") {
             self.bump(&mut c);
         }
@@ -393,7 +406,11 @@ impl Parser {
             let mut pattern = Vec::new();
             self.expect(&ident(), &mut pattern, "expected enum name")?;
             self.expect(&TokenKind::Dot, &mut pattern, "expected '.' in match case")?;
-            self.expect(&ident(), &mut pattern, "expected enum variant")?;
+            self.expect(&ident(), &mut pattern, "expected enum name or variant")?;
+            if self.at(&TokenKind::Dot) {
+                self.bump(&mut pattern);
+                self.expect(&ident(), &mut pattern, "expected enum variant")?;
+            }
             arm.push(Self::tree(SyntaxKind::FieldExpr, pattern));
             self.expect(
                 &TokenKind::Then,

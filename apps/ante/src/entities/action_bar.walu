@@ -18,7 +18,7 @@ const PROMPT_INK: string = "#fbbf24"
 
 -- One control the band can offer. `active` is whether committing it now would
 -- be accepted, which is the screen's rule to state, not the bar's to guess.
-type Action = { text: string, active: bool }
+export type Action = { text: string, active: bool }
 
 function action(text: string, active: bool): Action
     return { text = text, active = active }

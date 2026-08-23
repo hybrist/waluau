@@ -4,15 +4,15 @@
 
 local snapshot_data = require("./snapshot")
 
-type Suit = 0 | 1 | 2 | 3
-type SpellKind = 1 | 2 | 3 | 4
+export type Suit = 0 | 1 | 2 | 3
+export type SpellKind = 1 | 2 | 3 | 4
 type Winner = -1 | 0 | 1
-type Side = -1 | 1
+export type Side = -1 | 1
 
-type Card = readonly<{ rank: i32, suit: Suit }>
-type PairChoice = { first: i32, second: i32, value: i32, formation: {Card} }
-type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
-type SwapOutcome = {
+export type Card = readonly<{ rank: i32, suit: Suit }>
+export type PairChoice = { first: i32, second: i32, value: i32, formation: {Card} }
+export type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
+export type SwapOutcome = {
     winner: Winner,
     hand_indices: {i32},
     middle_indices: {i32},
@@ -27,13 +27,13 @@ type SwapOutcome = {
 -- deck are secret, and only an exchange leaks one. Keeping the mark on the
 -- slot means removal, sorting, and snapshots can never desynchronize a card
 -- from its mark.
-type HandSlot = { card: Card, known: bool }
+export type HandSlot = { card: Card, known: bool }
 -- One spell the player carry, with the gold a single cast of it burns. The
 -- cost travels with the spell rather than being a constant of the kind: a run
 -- can upgrade the same spell between duels, and two player carrying Firebolt
 -- do not necessarily pay the same for it.
-type Spell = { kind: SpellKind, cost: i32 }
-type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_formation: {Card}, computer_formation: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
+export type Spell = { kind: SpellKind, cost: i32 }
+export type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_formation: {Card}, computer_formation: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
 -- `boss` selects the boss battle variant: both sides start with seven cards
 -- instead of five and never draw replacements, so the hands shrink by two each
 -- round and the third round is fought from a three-card hand.
@@ -44,8 +44,8 @@ type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {
 -- their gold, both the wager stake and the resource each cast burns. Both the
 -- loadout and the gold are dealt in rather than fixed, so a run can hand one
 -- duel what the previous one left standing and whatever it bought since.
-opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: Winner, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, player_swap_max: i32, computer_swap_max: i32, swap_winner: Winner, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: SpellKind? }
-type View = readonly<{
+export opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: Winner, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, player_swap_max: i32, computer_swap_max: i32, swap_winner: Winner, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: SpellKind? }
+export type View = readonly<{
     deck_count: i32,
     player_hand: {HandSlot},
     computer_hand: {HandSlot},
@@ -71,7 +71,7 @@ type View = readonly<{
 }>
 -- The pair one side committed to a resolved trick, the hand slots it left,
 -- and that side's full revealed hand — see trick_side.
-type TrickSide = readonly<{
+export type TrickSide = readonly<{
     cards: readonly<{Card}>,
     formation: readonly<{Card}>,
     first: i32,

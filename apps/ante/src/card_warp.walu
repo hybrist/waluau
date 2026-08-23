@@ -32,7 +32,7 @@ const DIFFUSE: f64 = 0.5
 type Offset = { x: f64, y: f64 }
 type Space = { x: f64, y: f64, z: f64 }
 
-type Pose = {
+export type Pose = {
     -- The card's own size, in logical pixels.
     width: f64,
     height: f64,
@@ -91,7 +91,7 @@ type Pose = {
 -- sixty times a second is not sixty allocations. `xs` and `ys` are what
 -- draw_sprite_mesh takes; the three point arrays behind them hold the same
 -- points before they were projected, which is where the shading comes from.
-type Mesh = {
+export type Mesh = {
     columns: i32,
     rows: i32,
     xs: {f64},

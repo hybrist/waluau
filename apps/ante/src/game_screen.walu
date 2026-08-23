@@ -32,7 +32,7 @@ local layout = require("./layout")
 local entity = require("./entity")
 local divine_intervention = require("./divine_intervention")
 
-type State = {
+export type State = {
     run: run_module.State,
     rules: game.State,
     ui: flow.State,

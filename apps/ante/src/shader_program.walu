@@ -7,7 +7,7 @@ local shader_sources = require("waluau:engine/shader_sources")
 
 type Graphics = engine.Graphics
 type Source = shader_sources.Source
-type State = {
+export type State = {
     label: string,
     required: bool,
     source: Source,

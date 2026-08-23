@@ -5,7 +5,7 @@ use waluau_ast::{
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
-use super::Parser;
+use super::{Parser, tokens::is_linker_internal_identifier};
 
 /// The narrowest integer numeric type covering every member, mirroring the
 /// nominal-enum choice of i32 for ordinal-sized values.
@@ -256,6 +256,21 @@ impl Parser {
                 params,
                 return_type: Box::new(return_type),
             });
+        }
+
+        if let Some(Token {
+            kind: TokenKind::Identifier(name),
+            span,
+        }) = self.peek()
+            && is_linker_internal_identifier(name)
+        {
+            let name = name.clone();
+            let span = *span;
+            self.advance();
+            return Err(Diagnostic::new(format!(
+                "identifier '{name}' uses a reserved linker prefix"
+            ))
+            .with_span(span));
         }
 
         let token = self.advance();

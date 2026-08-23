@@ -303,16 +303,17 @@ impl Parser {
             if case != "case" {
                 return Err(Diagnostic::new("expected 'case' or 'end' in match"));
             }
-            let arm_enum = self.expect_identifier()?;
+            let first = self.expect_identifier()?;
             self.expect_simple(TokenKind::Dot, "expected '.' in enum match case")?;
-            let variant = self.expect_identifier()?;
+            let second = self.expect_identifier()?;
+            let (arm_enum, variant) = if self.check_simple(&TokenKind::Dot) {
+                self.advance();
+                (format!("{first}.{second}"), self.expect_identifier()?)
+            } else {
+                (first, second)
+            };
             self.expect_simple(TokenKind::Then, "expected 'then' after match case")?;
 
-            let Some(variants) = self.enums.get(&arm_enum) else {
-                return Err(Diagnostic::new(format!(
-                    "unknown enum '{arm_enum}' in match"
-                )));
-            };
             if let Some(expected) = &enum_name {
                 if expected != &arm_enum {
                     return Err(Diagnostic::new(format!(
@@ -322,9 +323,21 @@ impl Parser {
             } else {
                 enum_name = Some(arm_enum.clone());
             }
-            let Some(ordinal) = variants.iter().position(|name| name == &variant) else {
+            let ordinal = if let Some(variants) = self.enums.get(&arm_enum) {
+                let Some(ordinal) = variants.iter().position(|name| name == &variant) else {
+                    return Err(Diagnostic::new(format!(
+                        "unknown enum variant '{arm_enum}.{variant}'"
+                    )));
+                };
+                ordinal as i32
+            } else if arm_enum.contains('.') {
+                // Imported enum metadata is available only after the module
+                // graph is loaded. The linker validates the variant and fills
+                // its declaration-order ordinal before HIR.
+                -1
+            } else {
                 return Err(Diagnostic::new(format!(
-                    "unknown enum variant '{arm_enum}.{variant}'"
+                    "unknown enum '{arm_enum}' in match"
                 )));
             };
             if arms.iter().any(|arm: &EnumMatchArm| arm.variant == variant) {
@@ -343,7 +356,7 @@ impl Parser {
             self.close_definition_scope(scope_mark, self.current_scope_boundary());
             arms.push(EnumMatchArm {
                 variant,
-                ordinal: ordinal as i32,
+                ordinal,
                 body,
             });
         }
@@ -351,17 +364,18 @@ impl Parser {
         let Some(enum_name) = enum_name else {
             return Err(Diagnostic::new("match must contain at least one case"));
         };
-        let variants = self.enums.get(&enum_name).expect("arm enum checked");
-        let missing = variants
-            .iter()
-            .filter(|variant| !arms.iter().any(|arm| &arm.variant == *variant))
-            .map(|variant| format!("{enum_name}.{variant}"))
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            return Err(Diagnostic::new(format!(
-                "non-exhaustive match for enum '{enum_name}'; missing: {}",
-                missing.join(", ")
-            )));
+        if let Some(variants) = self.enums.get(&enum_name) {
+            let missing = variants
+                .iter()
+                .filter(|variant| !arms.iter().any(|arm| &arm.variant == *variant))
+                .map(|variant| format!("{enum_name}.{variant}"))
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                return Err(Diagnostic::new(format!(
+                    "non-exhaustive match for enum '{enum_name}'; missing: {}",
+                    missing.join(", ")
+                )));
+            }
         }
         Ok(Stmt::Match {
             value,

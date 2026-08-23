@@ -9,17 +9,17 @@ local snapshot_data = require("./snapshot")
 -- cancels. While it holds, ordinary binding input is suspended. Its value is
 -- the loadout slot being aimed — one cast key per slot.
 type Modal = "none" | "history" | "help" | "final"
-type Command = "none" | "advance" | "restart" | "history" | "help" | "primary"
+export type Command = "none" | "advance" | "restart" | "history" | "help" | "primary"
 -- What `gate` decided about an input. "live" is the only result that permits
 -- an adapter to interpret board-specific input. "advance" means the verdict
 -- is up and the player asked for what comes next; which duel that is — the
 -- next duel of the run, or the first duel of a fresh one — is the run's
 -- decision, not this module's.
-type GateResult =
+export type GateResult =
     "live" | "consumed" | "reset" | "refill" | "skip" | "finish-reveal" | "advance"
 type CursorArea = "hand" | "table-cards"
 
-type State = {
+export type State = {
     hand_cursor: i32,
     table_card_cursor: i32,
     cursor_area: CursorArea,

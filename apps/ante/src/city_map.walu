@@ -16,7 +16,7 @@
 -- random stream keeps generation and animation timing from changing the duel's
 -- deck shuffle.
 
-type Building = {
+export type Building = {
     x: f64,
     y: f64,
     width: f64,
@@ -26,9 +26,9 @@ type Building = {
 }
 -- One place the duel stops. `duel` tells the two kinds apart: a house with a
 -- duel in it, or the street vendor standing between two of them.
-type Stop = { x: f64, y: f64, duel: bool }
-type Point = { x: f64, y: f64 }
-type State = {
+export type Stop = { x: f64, y: f64, duel: bool }
+export type Point = { x: f64, y: f64 }
+export type State = {
     vertical_streets: {f64},
     horizontal_streets: {f64},
     buildings: {Building},

@@ -55,6 +55,8 @@ impl Parser {
             name: name.into(),
             name_span,
             kind,
+            exported: false,
+            enum_variants: None,
             ty,
             detail: None,
             visible_from,
@@ -290,6 +292,8 @@ impl Parser {
                 name: "self".to_string(),
                 name_span,
                 kind: DefinitionKind::Param,
+                exported: false,
+                enum_variants: None,
                 ty: Some(Type::Named {
                     name: table.clone(),
                     type_args: Vec::new(),
@@ -583,11 +587,15 @@ impl Parser {
     }
 
     fn is_type_decl_start(&self) -> bool {
+        let offset = usize::from(matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Identifier(keyword)) if keyword == "export"
+        ));
         let plain = matches!(
             (
-                self.peek().map(|token| &token.kind),
-                self.peek_n(1).map(|token| &token.kind),
-                self.peek_n(2).map(|token| &token.kind),
+                self.peek_n(offset).map(|token| &token.kind),
+                self.peek_n(offset + 1).map(|token| &token.kind),
+                self.peek_n(offset + 2).map(|token| &token.kind),
             ),
             (
                 Some(TokenKind::Identifier(keyword)),
@@ -597,10 +605,10 @@ impl Parser {
         );
         let opaque = matches!(
             (
-                self.peek().map(|token| &token.kind),
-                self.peek_n(1).map(|token| &token.kind),
-                self.peek_n(2).map(|token| &token.kind),
-                self.peek_n(3).map(|token| &token.kind),
+                self.peek_n(offset).map(|token| &token.kind),
+                self.peek_n(offset + 1).map(|token| &token.kind),
+                self.peek_n(offset + 2).map(|token| &token.kind),
+                self.peek_n(offset + 3).map(|token| &token.kind),
             ),
             (
                 Some(TokenKind::Identifier(opaque)),
@@ -613,11 +621,15 @@ impl Parser {
     }
 
     fn is_enum_decl_start(&self) -> bool {
+        let offset = usize::from(matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Identifier(keyword)) if keyword == "export"
+        ));
         matches!(
             (
-                self.peek().map(|token| &token.kind),
-                self.peek_n(1).map(|token| &token.kind),
-                self.peek_n(2).map(|token| &token.kind),
+                self.peek_n(offset).map(|token| &token.kind),
+                self.peek_n(offset + 1).map(|token| &token.kind),
+                self.peek_n(offset + 2).map(|token| &token.kind),
             ),
             (
                 Some(TokenKind::Identifier(keyword)),
@@ -633,6 +645,13 @@ impl Parser {
     /// enums an efficient i32 Wasm representation without sacrificing their
     /// source-level identity.
     fn parse_enum_decl(&mut self) -> Result<TypeDeclaration, Diagnostic> {
+        let exported = matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Identifier(keyword)) if keyword == "export"
+        );
+        if exported {
+            self.advance();
+        }
         let keyword = self.expect_identifier()?;
         debug_assert_eq!(keyword, "enum");
         let (name, name_span) = self.expect_identifier_spanned()?;
@@ -651,8 +670,8 @@ impl Parser {
                     "duplicate enum variant '{name}.{variant}'"
                 )));
             }
-            variants.push(variant);
             variant_spans.push(variant_span);
+            variants.push(variant);
             if self.check_simple(&TokenKind::Comma) {
                 self.advance();
             } else if !self.check_simple(&TokenKind::RBrace) {
@@ -675,17 +694,20 @@ impl Parser {
             0,
         );
         self.definitions[index].detail = Some(format!("enum {name} {{ {} }}", variants.join(", ")));
+        self.definitions[index].exported = exported;
+        self.definitions[index].enum_variants = Some(variants.clone());
         for (variant, variant_span) in variants.iter().zip(&variant_spans) {
             let index = self.record_definition(
                 format!("{name}.{variant}"),
                 *variant_span,
-                DefinitionKind::DeclaredConstant,
+                DefinitionKind::EnumVariant,
                 Some(Type::Named {
                     name: name.clone(),
                     type_args: Vec::new(),
                 }),
                 0,
             );
+            self.definitions[index].exported = exported;
             self.definitions[index].detail = Some(format!("{name}.{variant}: {name}"));
         }
         Ok(TypeDeclaration {
@@ -693,12 +715,21 @@ impl Parser {
             name,
             type_params: Vec::new(),
             ty,
+            exported,
+            enum_variants: Some(variants),
             module_opaque: false,
             file_path: self.file_path.clone(),
         })
     }
 
     fn parse_type_decl(&mut self) -> Result<TypeDeclaration, Diagnostic> {
+        let exported = matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Identifier(keyword)) if keyword == "export"
+        );
+        if exported {
+            self.advance();
+        }
         let first = self.expect_identifier()?;
         let module_opaque = first == "opaque";
         let keyword = if module_opaque {
@@ -719,6 +750,8 @@ impl Parser {
             name,
             type_params,
             ty,
+            exported,
+            enum_variants: None,
             module_opaque,
             file_path: self.file_path.clone(),
         });
@@ -737,7 +770,8 @@ impl Parser {
                 0,
             );
             self.definitions[index].detail = Some(format!(
-                "{}type {}{rendered_params} = {}",
+                "{}{}type {}{rendered_params} = {}",
+                if declaration.exported { "export " } else { "" },
                 if declaration.module_opaque {
                     "opaque "
                 } else {
@@ -746,6 +780,7 @@ impl Parser {
                 declaration.name,
                 declaration.ty
             ));
+            self.definitions[index].exported = declaration.exported;
         }
         parsed
     }

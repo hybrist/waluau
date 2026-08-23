@@ -30,17 +30,17 @@ type Graphics = engine.Graphics
 
 -- Everything an entity needs to put ink on the board. Nothing here says where
 -- the board is; that arrives with the rectangle.
-type Surface = {
+export type Surface = {
     graphics: Graphics,
     effects: effect_shaders.EffectShaders,
     card_back: graphics_module.Texture?
 }
 
-type Metrics = { graphics: Graphics? }
+export type Metrics = { graphics: Graphics? }
 
 -- grow and shrink belong to a node's relationship with the flow around it,
 -- exactly as they do in the box layout this forwards them to.
-type Node = {
+export type Node = {
     measure: (Metrics) -> box.Intrinsic,
     paint: (Surface, box.Rect) -> unit,
     grow: f64,

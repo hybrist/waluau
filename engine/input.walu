@@ -5,7 +5,7 @@
 -- feeds in: 1 = left, 2 = right, 3 = middle.
 
 type Button = { key: string, down: bool, pressed: bool, released: bool }
-type Input = {
+export type Input = {
     buttons: {Button},
     mouse_buttons: {Button},
     mouse_x: f64,
