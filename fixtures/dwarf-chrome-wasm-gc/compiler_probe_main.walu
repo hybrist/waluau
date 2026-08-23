@@ -1,0 +1,9 @@
+local helper = require("./compiler_probe_helper")
+
+function run(value: i32): i32
+    return helper.inner(value)
+end
+
+function throw_probe(): unit
+    helper.trap_inner()
+end

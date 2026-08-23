@@ -23,10 +23,10 @@
     } catch (error) {
       window.lastProbeError = error;
       console.error(error);
-      output.textContent = error.stack;
+      output.textContent = error.stack ?? String(error);
     }
   });
   document.querySelector('#uncaught').addEventListener('click', () => {
-    exports.throw_probe();
+    queueMicrotask(() => exports.throw_probe());
   });
 </script>
