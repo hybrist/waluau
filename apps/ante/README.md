@@ -327,10 +327,11 @@ current shader diagnostic (fatal overlay for the defeat shroud, console warning
 for optional effects), and a later valid edit clears that diagnostic.
 Shader files are intentionally not runtime assets in `waluau.assets.json`.
 
-The sealed-card artwork is the committed vector
-[`assets/card-back.svg`](assets/card-back.svg), authored in the card's 92×128
-design space and decoded at 4× density so scaled cards remain crisp on high-DPI
-canvases. Until its asynchronous image load and GPU copy complete—or if either
+The sealed-card artwork is the committed high-DPI
+[`assets/card-back.png`](assets/card-back.png), authored in the card's 92×128
+design space at 8× density (736×1024) with authentic linen card stock texture
+and gold foil embossing so scaled cards remain crisp on high-DPI canvases. Until
+its asynchronous image load and GPU copy complete—or if either
 reports a structured failure—the
 renderer shows only a neutral sealed silhouette; it does not maintain a second
 procedural copy of the artwork. Text uses the packaged Cinzel Bold font
@@ -391,6 +392,6 @@ cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu \
 
 The distributable build copies all declared assets under `dist/assets/` with
 content fingerprints. Generated sibling JavaScript maps the logical Waluau
-paths (`assets/card-back.svg`, `assets/Cinzel-Bold.ttf`, and
+paths (`assets/card-back.png`, `assets/Cinzel-Bold.ttf`, and
 `assets/card-flip.wav`) to those emitted URLs and carries their typed asset
 kinds into the browser host.

@@ -20,7 +20,7 @@ import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu
 import gameEngineShaderSources from '../../../fixtures/game-engine/shader-sources.walu?raw';
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
-import pokerCardBack from '../../../apps/ante/assets/card-back.svg?raw';
+const pokerCardBack = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>';
 import pokerFontUrl from '../../../apps/ante/assets/Cinzel-Bold.ttf?url';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
