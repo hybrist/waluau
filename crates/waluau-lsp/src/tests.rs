@@ -670,6 +670,58 @@ fn completion_after_dot_lists_enum_variants() {
 }
 
 #[test]
+fn completion_chases_dotted_receivers_through_module_aliases() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("lib.walu");
+    std::fs::write(
+        &lib,
+        "export enum SpellType { Fireball, Freeze }\n\
+export type Point = { x: i32, y: i32 }\n\
+function Point.new(): Point\n    return { x = 0, y = 0 }\nend\n\
+function Point:shift(dx: i32): unit\nend\n",
+    )
+    .expect("write fixture");
+    let main = dir.path().join("main.walu");
+    let base = "local m = require(\"./lib\")\n";
+    std::fs::write(&main, base).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, base);
+    let last_line = base.matches('\n').count() as u32;
+    let mut complete_after = |text: &str| -> Vec<String> {
+        let extended = format!("{base}{text}");
+        change(&mut server, &main, &extended);
+        let result = request(
+            &mut server,
+            "textDocument/completion",
+            &main,
+            last_line,
+            text.len() as u32,
+        );
+        result
+            .as_array()
+            .expect("completion items")
+            .iter()
+            .filter_map(|item| item["label"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    // Variants of an enum reached through the require alias.
+    let labels = complete_after("local t = m.SpellType.");
+    assert_eq!(labels, vec!["Fireball", "Freeze"]);
+
+    // Members hung off an exported type namespace behind the alias.
+    let labels = complete_after("local p = m.Point.");
+    assert!(labels.contains(&"new".to_string()), "{labels:?}");
+    assert!(labels.contains(&"shift".to_string()), "{labels:?}");
+    assert!(!labels.contains(&"double".to_string()), "{labels:?}");
+
+    // A call-chain receiver: methods of the constructed value's type.
+    let labels = complete_after("m.Point.new():");
+    assert!(labels.contains(&"shift".to_string()), "{labels:?}");
+}
+
+#[test]
 fn completion_after_colon_offers_type_names_in_annotations() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
