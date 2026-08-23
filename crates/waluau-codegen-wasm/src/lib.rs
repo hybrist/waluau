@@ -321,6 +321,14 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
     false
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevelopmentSource {
+    /// Browser-resolvable path encoded into development DWARF.
+    pub path: String,
+    /// Exact source text used to compile this Wasm generation.
+    pub source: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct EmitResult {
     pub wasm: Vec<u8>,
@@ -328,6 +336,9 @@ pub struct EmitResult {
     /// The runtime module references this artifact through
     /// `external_debug_info`; it never contains `.debug_*` sections itself.
     pub development_dwarf: Option<Vec<u8>>,
+    /// Exact authored inputs named by development DWARF. Empty unless
+    /// `EmitOptions::development_dwarf` is enabled.
+    pub development_sources: Vec<DevelopmentSource>,
     pub record_type_indices: HashMap<String, u32>,
     /// Exact imports emitted into the Wasm module. Browser consumers can use
     /// this metadata instead of reflecting on or parsing the binary.
@@ -2301,6 +2312,11 @@ fn emit_inner(
     } else {
         None
     };
+    let development_sources = if options.development_dwarf {
+        dwarf::development_sources(module)
+    } else {
+        Vec::new()
+    };
     let encoded_at = started.elapsed();
     let features = WasmFeatures::all();
     Validator::new_with_features(features)
@@ -2327,6 +2343,7 @@ fn emit_inner(
     let result = EmitResult {
         wasm: bytes,
         development_dwarf,
+        development_sources,
         record_type_indices,
         required_imports,
         bytes_constants,
@@ -2474,6 +2491,11 @@ fn try_emit_incremental(
     } else {
         None
     };
+    let development_sources = if options.development_dwarf {
+        dwarf::development_sources(module)
+    } else {
+        Vec::new()
+    };
     Validator::new_with_features(WasmFeatures::all())
         .validate_all(&wasm)
         .map_err(|err| Diagnostic::new(format!("incrementally emitted invalid wasm: {err}")))?;
@@ -2492,6 +2514,7 @@ fn try_emit_incremental(
     Ok(Some(EmitResult {
         wasm,
         development_dwarf,
+        development_sources,
         record_type_indices: cache.record_type_indices.clone(),
         required_imports: cache.required_imports.clone(),
         bytes_constants: cache.bytes_constants.clone(),

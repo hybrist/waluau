@@ -26,18 +26,26 @@ The command writes `main.wasm` and `main.debug.wasm`. Library callers use
 `waluau_driver::CompileOptions { development_dwarf: true }` with
 `compile_source_artifacts_with_options`, `compile_file_artifacts_with_options`,
 or `CompilerSession::build_root_with_options`; the returned artifacts contain
-the runtime Wasm and optional companion separately. Bytes-only helpers reject
-the option because one byte vector cannot represent both required files.
-Codegen-only callers receive the same two fields in `EmitResult`.
+the runtime Wasm, optional companion, and exact development source snapshots.
+Bytes-only helpers reject the option because one byte vector cannot represent
+the required files. Codegen-only callers receive the same fields in
+`EmitResult`.
 
 The Vite plugin passes the option automatically for dev-server and test
 compiles. It serves the sibling from `.waluau/` through Vite's normal file
-serving. Production builds do not pass the option. Loading the game fetches
-only the runtime Wasm; Chrome resolves and fetches the companion when DevTools
-attaches. The generated JavaScript uses `WebAssembly.compileStreaming` for its
-URL-based path so Chrome retains the module's HTTP URL and can resolve that
-relative sibling; callers supplying bytes directly must preserve an equivalent
-resolvable debug-symbol URL themselves.
+serving and materializes the compiler-reported authored source snapshots beside
+it at the relative paths recorded in DWARF. This includes embedded compiler
+packages, so an internal identifier such as
+`package:waluau-engine/v1/graphics.walu` is recorded and served as
+`__waluau/sources/packages/s-waluau-engine/s-v1/s-graphics.walu` instead of
+leaking a URL scheme that the browser cannot fetch. Production builds do not
+pass the option.
+Loading the game fetches only the runtime Wasm; Chrome resolves and fetches the
+companion and authored sources when DevTools attaches. The generated JavaScript
+uses `WebAssembly.compileStreaming` for its URL-based path so Chrome retains the
+module's HTTP URL and can resolve those relative files; callers supplying bytes
+directly must preserve equivalent resolvable debug-symbol and source URLs
+themselves.
 
 The runtime Wasm contains `external_debug_info` naming its relative sibling and
 never contains `.debug_*`. The standalone companion is a valid Wasm container
@@ -60,12 +68,17 @@ bytes for the debugger-only companion. The companion was not requested by the
 ordinary page. Run the verifier to measure current output rather than treating
 one fixture as an artifact-size budget.
 
-The compiler derives browser-resolvable, slash-separated paths relative to the
-common authored source directory and records `.` as `DW_AT_comp_dir`. It never
-embeds the absolute build directory. Line rows use final instruction offsets
-relative to the Code section contents and only include IR operations marked
-`SourceOrigin::Authored`; synthetic helpers have Wasm names but no line rows or
-subprogram DIEs.
+The compiler derives browser-resolvable, slash-separated filesystem paths
+relative to the common authored source directory. It places filesystem,
+embedded-package, and other virtual sources in separate namespaces beneath
+`__waluau/sources/`. Each path segment has an `s-` tag, and every UTF-8 byte
+outside `[A-Za-z0-9._-]` (including the `~` escape marker) becomes `~XX`. This
+makes the mapping collision-free and keeps filenames containing URL syntax
+such as `#`, `?`, `%`, or `:` fetchable. It records `.` as `DW_AT_comp_dir` and
+never embeds the absolute build directory or a non-HTTP source scheme. Line rows use final
+instruction offsets relative to the Code section contents and only include IR
+operations marked `SourceOrigin::Authored`; synthetic helpers have Wasm names
+but no line rows or subprogram DIEs.
 
 ## Minimum emission contract
 
@@ -125,8 +138,13 @@ type formatting are not Waluau semantics.
 ### Source paths
 
 Store URL-resolvable, slash-separated relative paths and use `.` as the compile
-directory. The probe's `dwarf_chrome_probe.walu` path resolved relative to the
-Wasm URL and Chrome fetched the authored file over HTTP. The extension worker
+directory. Never put compiler-internal `package:` identifiers in DWARF; map
+them into the reserved package namespace beneath `__waluau/sources/` and serve
+the exact embedded source snapshot there. Keep filesystem and other virtual
+sources in their own reserved namespaces, and encode every tagged segment so
+URL syntax cannot change the request. The probe's `dwarf_chrome_probe.walu`
+path resolved relative to the Wasm URL and Chrome fetched the authored file
+over HTTP. The extension worker
 reports that HTTP URL, while the full DevTools Sources workspace can present it
 as a `wasm://wasm/<relative-path>` source. Absolute build-machine paths require
 a user-configured path substitution in the extension and should not be the

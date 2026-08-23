@@ -166,12 +166,15 @@ test('emits external DWARF in dev but leaves production builds unchanged', async
   }
 });
 
-test('serves the compiler DWARF companion beside dev Wasm', async () => {
+test('serves the compiler DWARF companion and authored sources beside dev Wasm', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   let server;
   try {
     const entry = join(root, 'main.walu');
+    const dependency = join(root, 'cards', 'card#burn?100% café:wide.walu');
     await writeFile(entry, 'function main() end\n');
+    await mkdir(dirname(dependency), { recursive: true });
+    await writeFile(dependency, 'return function() end\n');
     const script = `
       const fs = require('node:fs');
       const args = process.argv.slice(1);
@@ -181,7 +184,15 @@ test('serves the compiler DWARF companion beside dev Wasm', async () => {
       fs.writeFileSync(wasm.replace(/\\.wasm$/, '.js'), 'export const placeholder = true;');
       fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
         success: true,
-        involvedFiles: [args[0]],
+        involvedFiles: [args[0], ${JSON.stringify(dependency)}],
+        developmentSources: [
+          { path: '__waluau/sources/files/s-main.walu', source: fs.readFileSync(args[0], 'utf8') },
+          { path: '__waluau/sources/files/s-cards/s-card%23burn%3F100%25%20caf%C3%A9%3Awide.walu', source: fs.readFileSync(${JSON.stringify(dependency)}, 'utf8') },
+          {
+            path: '__waluau/sources/packages/s-waluau-engine/s-v1/s-graphics.walu',
+            source: 'function clear() end\\n',
+          },
+        ],
         diagnostics: [],
       }));
     `;
@@ -191,18 +202,116 @@ test('serves the compiler DWARF companion beside dev Wasm', async () => {
     server = await createViteServer({
       root,
       logLevel: 'silent',
+      plugins: [plugin],
       server: { host: '127.0.0.1', port: 0 },
     });
     await server.listen();
 
     const key = createHash('sha256').update(entry).digest('hex').slice(0, 12);
-    const debugPath = join(root, '.waluau', key, 'game.debug.wasm');
     const origin = server.resolvedUrls.local[0];
-    const response = await fetch(new URL(`/@fs${debugPath}`, origin));
-    assert.equal(response.status, 200);
-    assert.equal(await response.text(), 'external dwarf');
+    const cachedUrl = (path) => new URL(`/.waluau/${key}/${path}`, origin);
+
+    const debugResponse = await fetch(cachedUrl('game.debug.wasm'));
+    assert.equal(debugResponse.status, 200);
+    assert.equal(await debugResponse.text(), 'external dwarf');
+
+    const entryResponse = await fetch(cachedUrl('__waluau/sources/files/s-main.walu'));
+    assert.equal(entryResponse.status, 200);
+    assert.equal(await entryResponse.text(), 'function main() end\n');
+
+    const dependencyResponse = await fetch(cachedUrl(
+      '__waluau/sources/files/s-cards/s-card%23burn%3F100%25%20caf%C3%A9%3Awide.walu',
+    ));
+    assert.equal(dependencyResponse.status, 200);
+    assert.equal(await dependencyResponse.text(), 'return function() end\n');
+
+    const engineResponse = await fetch(cachedUrl(
+      '__waluau/sources/packages/s-waluau-engine/s-v1/s-graphics.walu',
+    ));
+    assert.equal(engineResponse.status, 200);
+    assert.equal(await engineResponse.text(), 'function clear() end\n');
   } finally {
     await server?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects escaping and duplicate compiler development source paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+    await writeFile(entry, 'function main() end\n');
+
+    const compileWithSources = async (developmentSources) => {
+      const script = `
+        const fs = require('node:fs');
+        const args = process.argv.slice(1);
+        const wasm = args[args.indexOf('-o') + 1];
+        fs.writeFileSync(wasm, Buffer.from([]));
+        fs.writeFileSync(wasm.replace(/\\.wasm$/, '.js'), 'export const placeholder = true;');
+        fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+          success: true,
+          involvedFiles: [args[0]],
+          developmentSources: ${JSON.stringify(developmentSources)},
+          diagnostics: [],
+        }));
+      `;
+      const plugin = waluau({ compiler: { command: process.execPath, args: ['-e', script] } });
+      plugin.configResolved({ root, command: 'serve' });
+      return plugin.transform.call({ addWatchFile() {} }, '', entry);
+    };
+
+    await assert.rejects(
+      compileWithSources([{
+        path: '__waluau/sources/files/%2E%2E/%2E%2E/game.wasm',
+        source: 'escape',
+      }]),
+      /escapes its reserved directory/,
+    );
+    await assert.rejects(
+      compileWithSources([
+        { path: '__waluau/sources/files/s-cards%2Fs-card.walu', source: 'first' },
+        { path: '__waluau/sources/files/s-cards/s-card.walu', source: 'second' },
+      ]),
+      /duplicate development source destination/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('copies filesystem DWARF sources reported by older custom compilers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+    const dependency = join(root, 'cards', 'card.walu');
+    await mkdir(dirname(dependency), { recursive: true });
+    await writeFile(entry, 'function main() end\n');
+    await writeFile(dependency, 'return function() end\n');
+    const script = `
+      const fs = require('node:fs');
+      const args = process.argv.slice(1);
+      const wasm = args[args.indexOf('-o') + 1];
+      fs.writeFileSync(wasm, Buffer.from([]));
+      fs.writeFileSync(wasm.replace(/\\.wasm$/, '.js'), 'export const placeholder = true;');
+      fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+        success: true,
+        involvedFiles: [args[0], ${JSON.stringify(dependency)}],
+        diagnostics: [],
+      }));
+    `;
+    const plugin = waluau({ compiler: { command: process.execPath, args: ['-e', script] } });
+    plugin.configResolved({ root, command: 'serve' });
+    await plugin.transform.call({ addWatchFile() {} }, '', entry);
+
+    const key = createHash('sha256').update(entry).digest('hex').slice(0, 12);
+    const cache = join(root, '.waluau', key);
+    assert.equal(await readFile(join(cache, 'main.walu'), 'utf8'), 'function main() end\n');
+    assert.equal(
+      await readFile(join(cache, 'cards', 'card.walu'), 'utf8'),
+      'return function() end\n',
+    );
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
