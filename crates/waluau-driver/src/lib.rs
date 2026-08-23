@@ -3004,6 +3004,13 @@ end
         fs::write(
             tempdir.path().join("config.walu"),
             r#"
+                -- Keep declarations beyond the importing file's length. This
+                -- catches copied constants retaining cross-file source spans.
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
                 local CELL_SIZE <const>: f64 = 16.0
                 local TITLE <const> = "snake"
                 local NEGATIVE_INDEX <const>: i32 = -1
@@ -3051,8 +3058,17 @@ end
         )
         .expect("main module should write");
 
-        let wasm = super::compile_file(&input_path).expect("compile should succeed");
-        assert!(!wasm.is_empty());
+        let artifacts = super::compile_file_artifacts_with_options(
+            &input_path,
+            "program.wasm",
+            super::CompileOptions {
+                development_dwarf: true,
+                ..super::CompileOptions::default()
+            },
+        )
+        .expect("compile with external DWARF should succeed");
+        assert!(!artifacts.wasm.is_empty());
+        assert!(artifacts.development_dwarf.is_some());
     }
 
     #[test]

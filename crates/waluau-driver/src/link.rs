@@ -21,8 +21,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use waluau_ast::{
-    DeclaredConstant, DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Stmt,
-    TableField, Type, TypeDeclaration,
+    DeclaredConstant, DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Span,
+    Stmt, TableField, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -944,6 +944,135 @@ fn is_named_const(stmt: &Stmt, names: &HashSet<String>) -> bool {
     )
 }
 
+/// Clone an inlined module constant at the source location where it is used.
+///
+/// Linked functions have one source file, so retaining spans from the module
+/// that declared a copied constant would attribute its generated instructions
+/// to offsets in the wrong file. Constants are side-effect-free expressions;
+/// their useful stepping location is the use site that causes the instructions
+/// to execute.
+fn inline_constant_at(value: &Expr, use_span: Option<Span>) -> Expr {
+    let mut value = value.clone();
+    set_constant_spans(&mut value, use_span);
+    value
+}
+
+fn set_constant_spans(expr: &mut Expr, span: Option<Span>) {
+    match expr {
+        Expr::Number(_, expr_span)
+        | Expr::Bool(_, expr_span)
+        | Expr::Nil(expr_span)
+        | Expr::String(_, expr_span)
+        | Expr::Bytes(_, expr_span)
+        | Expr::Name(_, _, expr_span)
+        | Expr::Vararg(expr_span)
+        | Expr::Require(_, expr_span) => *expr_span = span,
+        Expr::Unary {
+            expr,
+            span: expr_span,
+            ..
+        }
+        | Expr::Cast {
+            expr,
+            span: expr_span,
+            ..
+        }
+        | Expr::IsVariant {
+            expr,
+            span: expr_span,
+            ..
+        } => {
+            *expr_span = span;
+            set_constant_spans(expr, span);
+        }
+        Expr::Binary {
+            left,
+            right,
+            span: expr_span,
+            ..
+        } => {
+            *expr_span = span;
+            set_constant_spans(left, span);
+            set_constant_spans(right, span);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            span: expr_span,
+        } => {
+            *expr_span = span;
+            set_constant_spans(condition, span);
+            set_constant_spans(then_expr, span);
+            set_constant_spans(else_expr, span);
+        }
+        Expr::Call {
+            callee,
+            args,
+            span: expr_span,
+            ..
+        } => {
+            *expr_span = span;
+            set_constant_spans(callee, span);
+            for arg in args {
+                set_constant_spans(arg, span);
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            args,
+            span: expr_span,
+            ..
+        } => {
+            *expr_span = span;
+            set_constant_spans(receiver, span);
+            for arg in args {
+                set_constant_spans(arg, span);
+            }
+        }
+        Expr::ArrayLiteral {
+            elements,
+            span: expr_span,
+        } => {
+            *expr_span = span;
+            for element in elements {
+                set_constant_spans(element, span);
+            }
+        }
+        Expr::TableLiteral {
+            fields,
+            span: expr_span,
+        } => {
+            *expr_span = span;
+            for field in fields {
+                set_constant_spans(&mut field.value, span);
+            }
+        }
+        Expr::Field {
+            base,
+            span: expr_span,
+            ..
+        } => {
+            *expr_span = span;
+            set_constant_spans(base, span);
+        }
+        Expr::Index {
+            base,
+            index,
+            span: expr_span,
+        } => {
+            *expr_span = span;
+            set_constant_spans(base, span);
+            set_constant_spans(index, span);
+        }
+        Expr::Function(function) => {
+            // Function expressions are not valid module constants. Keep this
+            // branch total so malformed input cannot turn linking into a panic.
+            function.span = span;
+        }
+    }
+}
+
 fn compute_module_export(
     modules: &[LoadedModule],
     id: usize,
@@ -1833,6 +1962,7 @@ impl Rewriter<'_> {
     }
 
     fn rewrite_expr(&mut self, expr: &mut Expr, bound: &HashSet<String>) {
+        let use_span = expr.span();
         if let Expr::Field {
             base, name: field, ..
         } = expr
@@ -1844,7 +1974,7 @@ impl Rewriter<'_> {
                         return;
                     }
                     if let Some(value) = fields.constants.get(field) {
-                        *expr = value.clone();
+                        *expr = inline_constant_at(value, use_span);
                         self.rewrite_expr_types(expr);
                         return;
                     }
@@ -1874,7 +2004,7 @@ impl Rewriter<'_> {
                                 })
                                 .chain(namespace.constants.iter().map(|(name, value)| TableField {
                                     name: name.clone(),
-                                    value: value.clone(),
+                                    value: inline_constant_at(value, *span),
                                 }))
                                 .collect(),
                             span: *span,
@@ -1888,7 +2018,7 @@ impl Rewriter<'_> {
                     if let Some(resolved) = self.re_exports.get(name) {
                         *expr = Expr::Name(resolved.clone(), None, None);
                     } else if let Some(alias) = self.value_aliases.get(name) {
-                        *expr = alias.clone();
+                        *expr = inline_constant_at(alias, use_span);
                         self.rewrite_expr_types(expr);
                     } else if self.func_names.contains(name) || self.global_names.contains(name) {
                         *name = format!("{}{name}", self.prefix);

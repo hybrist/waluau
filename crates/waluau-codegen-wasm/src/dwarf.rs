@@ -220,7 +220,13 @@ fn encode_info(
 
     for (index, function, location) in authored {
         let range = ranges[index];
-        let (line, _) = line_column(&source_file(module, location.file)?.source, location)?;
+        let (line, _) =
+            line_column(source_file(module, location.file)?, location).map_err(|error| {
+                Diagnostic::new(format!(
+                    "invalid source location for DWARF function '{}': {error}",
+                    function.name
+                ))
+            })?;
         uleb(2, &mut unit);
         cstring(&function.name, &mut unit);
         let file_index = location
@@ -282,8 +288,13 @@ fn encode_line(
         let mut line = 1u32;
         let mut file = 1u32;
         for (row_address, location) in by_address {
-            let (row_line, column) =
-                line_column(&source_file(module, location.file)?.source, location)?;
+            let (row_line, column) = line_column(source_file(module, location.file)?, location)
+                .map_err(|error| {
+                    Diagnostic::new(format!(
+                        "invalid source row for DWARF function '{}': {error}",
+                        module.functions[function_index].name
+                    ))
+                })?;
             let row_file = location
                 .file
                 .0
@@ -342,13 +353,20 @@ fn extended_set_address(address: u32, out: &mut Vec<u8>) {
     out.extend_from_slice(&address.to_le_bytes());
 }
 
-fn line_column(source: &str, location: SourceLocation) -> Result<(u32, u32), Diagnostic> {
+fn line_column(
+    source_file: &SourceFile,
+    location: SourceLocation,
+) -> Result<(u32, u32), Diagnostic> {
     let start = location.span.start as usize;
-    let chars = source.chars().collect::<Vec<_>>();
+    let chars = source_file.source.chars().collect::<Vec<_>>();
     if start > chars.len() {
-        return Err(Diagnostic::new(
-            "source span is outside its DWARF source file",
-        ));
+        return Err(Diagnostic::new(format!(
+            "source span {}..{} is outside DWARF source file '{}' ({} characters)",
+            location.span.start,
+            location.span.end,
+            source_file.path,
+            chars.len(),
+        )));
     }
     let preceding = &chars[..start];
     let line = preceding
