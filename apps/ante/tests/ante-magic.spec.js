@@ -275,15 +275,13 @@ test('stops on the fatal audio diagnostic when the flip sound cannot load', asyn
     .toBeGreaterThan(5000);
 });
 
-// Amber ink in the PASS capsule, which is drawn for exactly as long as the
-// feint is open. It is how these tests tell the two halves of a breach apart
-// without reaching into game state. Only the capsule's right half is sampled:
-// the breach phase writes its own amber prompt across the band, and that
-// prompt stops short of where the capsule ends.
+// Amber ink in the swap phase prompt, which is drawn for exactly as long as
+// the feint/swap is open. It is how these tests tell the two halves of a
+// breach apart without reaching into game state.
 function countPassInk(canvas) {
   return countDesignInk(
     canvas,
-    { centerOffsetX: 108, actionOffsetY: 0, width: 40, height: 26 },
+    { centerOffsetX: -160, wardOffsetY: -48, width: 80, height: 16 },
     [251, 191, 36],
     [40, 40, 60],
   );
