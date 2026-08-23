@@ -95,7 +95,7 @@ export function countCardBackInk(canvas) {
     canvas,
     { x: 56, wardOffsetY: 0, width: 92, height: 128 },
     [232, 223, 189],
-    [12, 12, 12],
+    [35, 35, 35],
   );
 }
 
