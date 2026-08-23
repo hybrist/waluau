@@ -102,6 +102,7 @@ test('passes a resolved asset manifest to the compiler', async () => {
 
     assert.deepEqual(watched, [entry, manifest, asset]);
     const args = JSON.parse(await readFile(invocation, 'utf8'));
+    assert(args.includes('--development-dwarf'));
     const key = createHash('sha256').update(entry).digest('hex').slice(0, 12);
     const report = join(root, '.waluau', key, 'report.json');
     assert.deepEqual(args.slice(-4), ['--manifest', manifest, '--report', report]);
@@ -135,6 +136,73 @@ test('requests minimal exports only for production game builds', async () => {
     assert.ok(!(await compiledArgs('build', 'main.test.walu')).includes('--minimal-exports'));
     assert.ok(!(await compiledArgs('build', 'main.stories.walu')).includes('--minimal-exports'));
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('emits external DWARF in dev but leaves production builds unchanged', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+    const devInvocation = join(root, 'dev.json');
+    const buildInvocation = join(root, 'build.json');
+    const compiler = invocation => ({
+      command: process.execPath,
+      args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(invocation)}, JSON.stringify(process.argv.slice(1)))`],
+    });
+
+    const devPlugin = waluau({ compiler: compiler(devInvocation) });
+    devPlugin.configResolved({ root, command: 'serve' });
+    await devPlugin.transform.call({ addWatchFile() {} }, '', entry);
+
+    const buildPlugin = waluau({ optimize: false, compiler: compiler(buildInvocation) });
+    buildPlugin.configResolved({ root, command: 'build' });
+    await buildPlugin.transform.call({ addWatchFile() {} }, '', entry);
+
+    assert(JSON.parse(await readFile(devInvocation, 'utf8')).includes('--development-dwarf'));
+    assert(!JSON.parse(await readFile(buildInvocation, 'utf8')).includes('--development-dwarf'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('serves the compiler DWARF companion beside dev Wasm', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  let server;
+  try {
+    const entry = join(root, 'main.walu');
+    await writeFile(entry, 'function main() end\n');
+    const script = `
+      const fs = require('node:fs');
+      const args = process.argv.slice(1);
+      const wasm = args[args.indexOf('-o') + 1];
+      fs.writeFileSync(wasm, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+      fs.writeFileSync(wasm.replace(/\\.wasm$/, '.debug.wasm'), Buffer.from('external dwarf'));
+      fs.writeFileSync(wasm.replace(/\\.wasm$/, '.js'), 'export const placeholder = true;');
+      fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+        success: true,
+        involvedFiles: [args[0]],
+        diagnostics: [],
+      }));
+    `;
+    const plugin = waluau({ compiler: { command: process.execPath, args: ['-e', script] } });
+    plugin.configResolved({ root, command: 'serve' });
+    await plugin.transform.call({ addWatchFile() {} }, '', entry);
+    server = await createViteServer({
+      root,
+      logLevel: 'silent',
+      server: { host: '127.0.0.1', port: 0 },
+    });
+    await server.listen();
+
+    const key = createHash('sha256').update(entry).digest('hex').slice(0, 12);
+    const debugPath = join(root, '.waluau', key, 'game.debug.wasm');
+    const origin = server.resolvedUrls.local[0];
+    const response = await fetch(new URL(`/@fs${debugPath}`, origin));
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'external dwarf');
+  } finally {
+    await server?.close();
     await rm(root, { recursive: true, force: true });
   }
 });

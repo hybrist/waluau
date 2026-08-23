@@ -52,12 +52,12 @@ struct SourceRow {
     location: SourceLocation,
 }
 
-pub(crate) fn append_sections(
-    wasm: &mut Vec<u8>,
+pub(crate) fn encode_external_module(
+    runtime_wasm: &[u8],
     module: &Module,
     bodies: &[Vec<u8>],
     function_maps: &[FunctionDebugMap],
-) -> Result<(), Diagnostic> {
+) -> Result<Vec<u8>, Diagnostic> {
     if function_maps.len() != module.functions.len() || bodies.len() < function_maps.len() {
         return Err(Diagnostic::new(
             "internal error: incomplete function layout for DWARF emission",
@@ -112,9 +112,19 @@ pub(crate) fn append_sections(
     let debug_abbrev = encode_abbrev();
     let debug_info = encode_info(module, &source_paths, &ranges)?;
     let debug_line = encode_line(module, &source_paths, &ranges, &rows_by_function)?;
-    append_custom(wasm, ".debug_abbrev", debug_abbrev);
-    append_custom(wasm, ".debug_info", debug_info);
-    append_custom(wasm, ".debug_line", debug_line);
+    let mut wasm = runtime_wasm.to_vec();
+    append_custom(&mut wasm, ".debug_abbrev", debug_abbrev);
+    append_custom(&mut wasm, ".debug_info", debug_info);
+    append_custom(&mut wasm, ".debug_line", debug_line);
+    Ok(wasm)
+}
+
+pub(crate) fn append_external_reference(wasm: &mut Vec<u8>, url: &str) -> Result<(), Diagnostic> {
+    let url_len = u32::try_from(url.len())
+        .map_err(|_| Diagnostic::new("external DWARF URL is too long for a Wasm string"))?;
+    let mut data = Vec::with_capacity(u32_len(url_len) + url.len());
+    url.encode(&mut data);
+    append_custom(wasm, "external_debug_info", data);
     Ok(())
 }
 

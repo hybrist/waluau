@@ -10,10 +10,17 @@
   const expectedSourceNames = parameters.getAll('source');
   if (expectedSourceNames.length === 0) expectedSourceNames.push('dwarf_chrome_probe.walu');
   const moduleUrl = new URL(`/fixture/${moduleName}`, location.href).href;
-  const code = await fetch(moduleUrl).then(response => response.arrayBuffer());
+  const symbolsName = parameters.get('symbols');
+  const symbolsUrl = symbolsName
+    ? new URL(`/fixture/${symbolsName}`, location.href).href
+    : '';
+  const code = symbolsUrl
+    ? undefined
+    : await fetch(moduleUrl).then(response => response.arrayBuffer());
   const plugin = await WorkerPlugin.create();
   const rawModuleId = 'waluau-dwarf-chrome-probe';
-  const sources = await plugin.addRawModule(rawModuleId, '', { url: moduleUrl, code });
+  const rawModule = code ? { url: moduleUrl, code } : { url: moduleUrl };
+  const sources = await plugin.addRawModule(rawModuleId, symbolsUrl, rawModule);
   const sourceResults = {};
   for (const sourceName of expectedSourceNames) {
     const sourceFileURL = sources.find(url => url.endsWith(`/${sourceName}`));

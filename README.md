@@ -50,9 +50,9 @@ Compile a program to Wasm plus JavaScript glue:
 cargo run -- fixtures/snake/main.walu -o /tmp/snake.wasm --emit-js
 ```
 
-For a development artifact with embedded DWARF source mappings for browser
-DevTools, add `--development-dwarf`. Default builds omit all `.debug_*`
-sections and retain only the lightweight Wasm `name` section.
+For browser DevTools mappings, add `--development-dwarf`. For `main.wasm`, it
+writes a separate `main.debug.wasm` companion and adds only its URL to the runtime Wasm.
+The Vite plugin enables this automatically in dev and omits it in production.
 
 ```bash
 cargo run -- fixtures/snake/main.walu -o /tmp/snake.wasm --emit-js --development-dwarf

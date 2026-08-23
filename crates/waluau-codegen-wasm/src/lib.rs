@@ -324,6 +324,10 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
 #[derive(Clone, Debug)]
 pub struct EmitResult {
     pub wasm: Vec<u8>,
+    /// A debugger-only Wasm snapshot holding development-only DWARF sections.
+    /// The runtime module references this artifact through
+    /// `external_debug_info`; it never contains `.debug_*` sections itself.
+    pub development_dwarf: Option<Vec<u8>>,
     pub record_type_indices: HashMap<String, u32>,
     /// Exact imports emitted into the Wasm module. Browser consumers can use
     /// this metadata instead of reflecting on or parsing the binary.
@@ -652,14 +656,17 @@ function compilerOptions() {\n\
 }\n\n\
 async function loadModule(source, url) {\n\
   if (source instanceof WebAssembly.Module) return source;\n\
-  let bytes = source;\n\
-  if (bytes == null) {\n\
+  if (source == null) {\n\
     if (!url) throw new Error('No Wasm bytes or sibling Wasm URL were provided');\n\
     const response = await fetch(url);\n\
     if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);\n\
-    bytes = await response.arrayBuffer();\n\
+    try {\n\
+      return await WebAssembly.compileStreaming(response.clone(), compilerOptions());\n\
+    } catch {\n\
+      return WebAssembly.compile(await response.arrayBuffer(), compilerOptions());\n\
+    }\n\
   }\n\
-  return WebAssembly.compile(bytes, compilerOptions());\n\
+  return WebAssembly.compile(source, compilerOptions());\n\
 }\n\n\
 export async function instantiate(options = {}) {\n\
   const resolvedWasmUrl = options.wasmUrl ?? wasmUrl;\n\
@@ -725,7 +732,15 @@ pub fn emit_cached(module: &Module, cache: &mut EmitCache) -> Result<EmitResult,
 }
 
 pub fn emit_with_options(module: &Module, options: EmitOptions) -> Result<EmitResult, Diagnostic> {
-    emit_inner(module, options, None)
+    emit_with_options_and_debug_url(module, options, "program.debug.wasm")
+}
+
+pub fn emit_with_options_and_debug_url(
+    module: &Module,
+    options: EmitOptions,
+    debug_url: &str,
+) -> Result<EmitResult, Diagnostic> {
+    emit_inner(module, options, debug_url, None)
 }
 
 pub fn emit_cached_with_options(
@@ -733,17 +748,27 @@ pub fn emit_cached_with_options(
     cache: &mut EmitCache,
     options: EmitOptions,
 ) -> Result<EmitResult, Diagnostic> {
+    emit_cached_with_options_and_debug_url(module, cache, options, "program.debug.wasm")
+}
+
+pub fn emit_cached_with_options_and_debug_url(
+    module: &Module,
+    cache: &mut EmitCache,
+    options: EmitOptions,
+    debug_url: &str,
+) -> Result<EmitResult, Diagnostic> {
     cache.last_incremental = false;
-    if let Some(emitted) = try_emit_incremental(module, cache, options)? {
+    if let Some(emitted) = try_emit_incremental(module, cache, options, debug_url)? {
         cache.last_incremental = true;
         return Ok(emitted);
     }
-    emit_inner(module, options, Some(cache))
+    emit_inner(module, options, debug_url, Some(cache))
 }
 
 fn emit_inner(
     module: &Module,
     options: EmitOptions,
+    debug_url: &str,
     cache: Option<&mut EmitCache>,
 ) -> Result<EmitResult, Diagnostic> {
     let started = CompilerTimer::start();
@@ -2264,19 +2289,28 @@ fn emit_inner(
     } else {
         None
     };
-    if options.development_dwarf {
-        dwarf::append_sections(
-            &mut bytes,
+    let development_dwarf = if options.development_dwarf {
+        let external = dwarf::encode_external_module(
+            &bytes,
             module,
             &code_image.as_ref().expect("debug code image").bodies,
             &debug_maps,
         )?;
-    }
+        dwarf::append_external_reference(&mut bytes, debug_url)?;
+        Some(external)
+    } else {
+        None
+    };
     let encoded_at = started.elapsed();
     let features = WasmFeatures::all();
     Validator::new_with_features(features)
         .validate_all(&bytes)
         .map_err(|err| Diagnostic::new(format!("emitted invalid wasm: {err}")))?;
+    if let Some(debug_wasm) = &development_dwarf {
+        Validator::new_with_features(features)
+            .validate_all(debug_wasm)
+            .map_err(|err| Diagnostic::new(format!("emitted invalid debug wasm: {err}")))?;
+    }
     if CompilerTimer::enabled() {
         eprintln!(
             "waluau wasm timings: setup={:?} user-functions={:?} helpers+sections={:?} encode={:?} validate={:?}",
@@ -2292,6 +2326,7 @@ fn emit_inner(
 
     let result = EmitResult {
         wasm: bytes,
+        development_dwarf,
         record_type_indices,
         required_imports,
         bytes_constants,
@@ -2365,6 +2400,7 @@ fn try_emit_incremental(
     module: &Module,
     cache: &mut EmitCache,
     options: EmitOptions,
+    debug_url: &str,
 ) -> Result<Option<EmitResult>, Diagnostic> {
     let started = CompilerTimer::start();
     let (Some(previous), Some(context)) = (&cache.module, &cache.context) else {
@@ -2429,13 +2465,25 @@ fn try_emit_incremental(
     let mut updated_image = cache.image.take().expect("cached Wasm code image");
     updated_image.bodies[index] = emitted.into_raw_body();
     let mut wasm = updated_image.encode();
-    if options.development_dwarf {
+    let development_dwarf = if options.development_dwarf {
         cache.debug_maps[index] = debug_map;
-        dwarf::append_sections(&mut wasm, module, &updated_image.bodies, &cache.debug_maps)?;
-    }
+        let external =
+            dwarf::encode_external_module(&wasm, module, &updated_image.bodies, &cache.debug_maps)?;
+        dwarf::append_external_reference(&mut wasm, debug_url)?;
+        Some(external)
+    } else {
+        None
+    };
     Validator::new_with_features(WasmFeatures::all())
         .validate_all(&wasm)
         .map_err(|err| Diagnostic::new(format!("incrementally emitted invalid wasm: {err}")))?;
+    if let Some(debug_wasm) = &development_dwarf {
+        Validator::new_with_features(WasmFeatures::all())
+            .validate_all(debug_wasm)
+            .map_err(|err| {
+                Diagnostic::new(format!("incrementally emitted invalid debug wasm: {err}"))
+            })?;
+    }
     cache.module = Some(module.clone());
     cache.image = Some(updated_image);
     if CompilerTimer::enabled() {
@@ -2443,6 +2491,7 @@ fn try_emit_incremental(
     }
     Ok(Some(EmitResult {
         wasm,
+        development_dwarf,
         record_type_indices: cache.record_type_indices.clone(),
         required_imports: cache.required_imports.clone(),
         bytes_constants: cache.bytes_constants.clone(),
