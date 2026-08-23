@@ -437,11 +437,9 @@ enum Resolved {
     },
 }
 
-/// Exported members of a required module: its file-visible functions.
-fn module_exports(file: &Path, load: Loader) -> Vec<DefinitionSite> {
-    let Some(scope) = module_scope(file, load) else {
-        return Vec::new();
-    };
+/// Exported members of a required module's scope: its file-visible
+/// functions plus exported type names.
+fn scope_exports(scope: &TypeScope) -> Vec<DefinitionSite> {
     scope
         .definitions
         .iter()
@@ -1194,13 +1192,13 @@ pub fn references(
 
 /// What kind of completion the cursor position asks for.
 enum CompletionContext {
-    /// `base.` — members of a namespace, module, or record.
+    /// `receiver.` — members of a namespace, module, or record.
     Member {
-        base: String,
+        receiver: Receiver,
     },
-    /// `base:` — methods of a receiver, or a type annotation.
+    /// `receiver:` — methods of a receiver, or a type annotation.
     Method {
-        base: String,
+        receiver: Receiver,
     },
     Plain,
 }
@@ -1236,16 +1234,18 @@ fn completion_context(index: &DocumentIndex, offset: u32) -> CompletionContext {
         TokenKind::Colon => true,
         _ => return CompletionContext::Plain,
     };
-    let Some(TokenKind::Identifier(base)) = separator_index
+    // The whole receiver path before the separator (`m.SpellType.` chases
+    // `m` then `.SpellType`), not just the last identifier.
+    let Some(receiver) = separator_index
         .checked_sub(1)
-        .map(|index_before| &index.tokens[index_before].kind)
+        .and_then(|end| receiver_before(&index.tokens, end))
     else {
         return CompletionContext::Plain;
     };
     if is_method {
-        CompletionContext::Method { base: base.clone() }
+        CompletionContext::Method { receiver }
     } else {
-        CompletionContext::Member { base: base.clone() }
+        CompletionContext::Member { receiver }
     }
 }
 
@@ -1275,14 +1275,14 @@ fn push_item(items: &mut Vec<CompletionItem>, label: &str, kind: i64, detail: Op
 /// intrinsics), labeled by member name. `methods_only` restricts to the
 /// `ns:member` form, for completion after `:`.
 fn namespace_member_items(
-    index: &DocumentIndex,
+    definitions: &[DefinitionSite],
     namespace: &str,
     methods_only: bool,
     items: &mut Vec<CompletionItem>,
 ) {
     let dotted_prefix = format!("{namespace}.");
     let method_prefix = format!("{namespace}:");
-    for definition in index.definitions.iter().chain(prelude_definitions()) {
+    for definition in definitions.iter().chain(prelude_definitions()) {
         if is_internal_name(&definition.name) {
             continue;
         }
@@ -1312,26 +1312,18 @@ fn namespace_member_items(
     }
 }
 
-/// Completion items derived from a base definition's static type: record
-/// fields (unless `methods_only`) plus `T:`/`T.` members of a named type,
-/// plus string builtins for string-typed bases. Returns whether anything was
-/// produced.
+/// Completion items derived from a value's static type: record fields
+/// (unless `methods_only`) plus `T:`/`T.` members of a named type, plus
+/// string builtins for string-typed bases.
 fn typed_member_items(
-    base_def: &DefinitionSite,
-    index: &DocumentIndex,
-    path: &Path,
+    ty: &Type,
+    type_scope: &TypeScope,
     load: Loader,
     methods_only: bool,
     items: &mut Vec<CompletionItem>,
-) -> bool {
-    let scope = TypeScope::current(index, path);
-    let Some((ty, type_scope)) = definition_static_type(base_def, &scope, load, TYPE_CHASE_DEPTH)
-    else {
-        return false;
-    };
-    let before = items.len();
+) {
     if !methods_only
-        && let Some(record) = resolve_type_to_record(&ty, &type_scope, load, TYPE_CHASE_DEPTH)
+        && let Some(record) = resolve_type_to_record(ty, type_scope, load, TYPE_CHASE_DEPTH)
     {
         for (name, field_ty) in &record.fields {
             let detail =
@@ -1339,8 +1331,8 @@ fn typed_member_items(
             push_item(items, name, completion_kind::FIELD, detail);
         }
     }
-    if let Type::Named { name, .. } = &ty
-        && let Some((type_name, declaring_scope)) = type_name_scope(name, &type_scope, load)
+    if let Type::Named { name, .. } = ty
+        && let Some((type_name, declaring_scope)) = type_name_scope(name, type_scope, load)
     {
         let method_prefix = format!("{type_name}:");
         let dotted_prefix = format!("{type_name}.");
@@ -1367,7 +1359,61 @@ fn typed_member_items(
             }
         }
     }
-    items.len() > before
+}
+
+/// Completion items for the members of a receiver path, resolved through the
+/// same standing machinery hover and go-to-definition use: a `require` alias
+/// offers its module's exports, a namespace (a type, an enum, a builtin
+/// table — possibly reached through a module, as in `m.SpellType.`) offers
+/// its `ns.member`/`ns:member` definitions in the scope that declares it,
+/// and a typed value offers its fields and type members.
+fn standing_member_items(
+    receiver: &Receiver,
+    index: &DocumentIndex,
+    path: &Path,
+    offset: u32,
+    load: Loader,
+    methods_only: bool,
+    items: &mut Vec<CompletionItem>,
+) {
+    let scope = TypeScope::current(index, path);
+    let standing =
+        receiver_standing(receiver, offset, &scope, load, TYPE_CHASE_DEPTH).or_else(|| {
+            // The written path may not chase statically — an incomplete
+            // expression earlier in the buffer can even glue onto the
+            // receiver, since tokens ignore line breaks. Fall back to the
+            // name right before the separator as its own root.
+            let base = receiver.qualifier()?;
+            (!receiver.accesses.is_empty())
+                .then(|| root_standing(base, offset, &scope, load, TYPE_CHASE_DEPTH))
+        });
+    match standing {
+        Some(Standing::Module(module)) => {
+            if !methods_only {
+                for export in scope_exports(&module) {
+                    let detail = Some(definition_summary(&export));
+                    push_item(items, &export.name, completion_kind_for(&export), detail);
+                }
+            }
+            return;
+        }
+        Some(Standing::Namespace(namespace, ns_scope)) => {
+            namespace_member_items(&ns_scope.definitions, &namespace, methods_only, items);
+            if ns_scope.file == scope.file {
+                return;
+            }
+        }
+        Some(Standing::Value(ty, type_scope)) => {
+            typed_member_items(&ty, &type_scope, load, methods_only, items);
+        }
+        None => {}
+    }
+    // Value-level members hung directly off the written qualifier
+    // (`function point:bump_x` on an inferred-type table) live in the
+    // current file's definitions; merge them in.
+    if let Some(base) = receiver.qualifier() {
+        namespace_member_items(&index.definitions, base, methods_only, items);
+    }
 }
 
 fn type_name_items(index: &DocumentIndex, items: &mut Vec<CompletionItem>) {
@@ -1390,37 +1436,11 @@ pub fn completion(text: &str, path: &Path, offset: u32, load: Loader) -> Vec<Com
     let index = index_document(text, path);
     let mut items = Vec::new();
     match completion_context(&index, offset) {
-        CompletionContext::Member { base } => {
-            // Module members for `require`d namespaces.
-            if let Some(base_def) = resolve_name(&index.definitions, &base, offset) {
-                if let Some(raw) = &base_def.require_path {
-                    if let Some(file) = resolve_require_path(path, raw) {
-                        for export in module_exports(&file, load) {
-                            let detail = Some(definition_summary(&export));
-                            push_item(
-                                &mut items,
-                                &export.name,
-                                completion_kind_for(&export),
-                                detail,
-                            );
-                        }
-                    }
-                    return items;
-                }
-                // A statically typed base contributes its record fields and
-                // type members; value-level methods (`function point:m`)
-                // live as namespaced definitions and are merged in below.
-                typed_member_items(base_def, &index, path, load, false, &mut items);
-            }
-            namespace_member_items(&index, &base, false, &mut items);
+        CompletionContext::Member { receiver } => {
+            standing_member_items(&receiver, &index, path, offset, load, false, &mut items);
         }
-        CompletionContext::Method { base } => {
-            if let Some(base_def) = resolve_name(&index.definitions, &base, offset).cloned() {
-                typed_member_items(&base_def, &index, path, load, true, &mut items);
-            }
-            // Value-level methods declared directly on the base
-            // (`function point:bump_x`).
-            namespace_member_items(&index, &base, true, &mut items);
+        CompletionContext::Method { receiver } => {
+            standing_member_items(&receiver, &index, path, offset, load, true, &mut items);
             // Still nothing: this is most likely a type annotation position
             // (`local x: ...`).
             if items.is_empty() {
