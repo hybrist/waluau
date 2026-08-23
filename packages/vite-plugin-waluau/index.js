@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rename } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,6 +25,43 @@ function run(command, args, cwd) {
       }
     });
   });
+}
+
+// wasm-opt must not run with `-all`: binaryen 132 then enables post-MVP
+// features (shared-everything threads among them) and produces a module V8
+// rejects with "unknown import kind 0x7e". Enable exactly the features the
+// compiler emits; exception handling is required because Waluau throws with
+// a Wasm tag.
+const wasmOptArgs = [
+  '--enable-gc',
+  '--enable-reference-types',
+  '--enable-bulk-memory',
+  '--enable-nontrapping-float-to-int',
+  '--enable-sign-ext',
+  '--enable-mutable-globals',
+  '--enable-multivalue',
+  '--enable-exception-handling',
+  '-Oz',
+];
+
+// The binaryen package ships wasm-opt as a Node script; resolve it from the
+// package's own location rather than assuming a node_modules/.bin layout.
+function wasmOptCommand() {
+  const require = createRequire(import.meta.url);
+  const binaryenRoot = dirname(require.resolve('binaryen/package.json'));
+  return resolve(binaryenRoot, 'bin', 'wasm-opt');
+}
+
+async function optimizeWasm(wasmPath) {
+  // The emitted game.js references the Wasm by its original name, so the
+  // optimized module replaces it in place via a sibling temp file.
+  const optimizedPath = `${wasmPath}.opt`;
+  await run(
+    process.execPath,
+    [wasmOptCommand(), wasmPath, ...wasmOptArgs, '-o', optimizedPath],
+    dirname(wasmPath),
+  );
+  await rename(optimizedPath, wasmPath);
 }
 
 function isInside(parent, child) {
@@ -260,19 +298,25 @@ function importManifestAssets(code) {
  * @param {{
  *   fullScreen?: boolean,
  *   manifest?: string,
+ *   optimize?: boolean,
  *   shaderSources?: Record<string, string>,
  *   workspaceRoot?: string,
  *   compiler?: { command: string, args?: string[], persistent?: boolean }
  * }} options
+ *   `optimize` (default true) runs binaryen's wasm-opt over the compiled Wasm
+ *   in production builds, roughly halving the module size. Dev-server and
+ *   vitest builds never optimize; hot-reload latency wins there.
  */
 export function waluau(options = {}) {
   let appRoot = process.cwd();
   let cacheRoot = resolve(appRoot, '.waluau');
   let server;
   let compilerHost;
+  let productionBuild = false;
 
   const workspaceRoot = resolve(options.workspaceRoot ?? repositoryRoot);
   const fullScreen = options.fullScreen ?? true;
+  const optimize = options.optimize ?? true;
   if (
     options.shaderSources != null
     && (Array.isArray(options.shaderSources) || typeof options.shaderSources !== 'object')
@@ -454,6 +498,10 @@ export function waluau(options = {}) {
         const buildArgs = compilerBuildArgs(entryPath, artifacts.wasm, artifacts.report);
         try {
           await executeCompiler(buildArgs);
+          // Only production builds pay for wasm-opt (a few seconds per
+          // module); the dev-server/HMR path always serves the compiler's
+          // direct output.
+          if (productionBuild && optimize) await optimizeWasm(artifacts.wasm);
           state.version += 1;
           state.fresh = true;
         } finally {
@@ -528,6 +576,9 @@ export function waluau(options = {}) {
     enforce: 'pre',
     configResolved(config) {
       resolvePaths(config.root);
+      // `vite build` and `build-storybook` resolve with command 'build'; the
+      // dev server and vitest resolve with 'serve'.
+      productionBuild = config.command === 'build';
     },
     async transform(code, id) {
       const file = id.split('?')[0];

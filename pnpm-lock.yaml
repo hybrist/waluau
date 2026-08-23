@@ -144,6 +144,9 @@ importers:
 
   packages/vite-plugin-waluau:
     dependencies:
+      binaryen:
+        specifier: ^132.0.0
+        version: 132.0.0
       vitest:
         specifier: ^4.0.0
         version: 4.1.7(@types/node@25.9.3)(@vitest/browser-playwright@4.1.7)(vite@8.0.14(@types/node@25.9.3)(esbuild@0.28.1))
@@ -1102,6 +1105,10 @@ packages:
   baseline-browser-mapping@2.10.33:
     resolution: {integrity: sha512-bA6+tcSLpz2tIEdDXZPpPTIuxBcC4+w6SieaYyfigIa4h8GlFxbA17v22Vx3JUtuZQj9SgOsnbK+aTBzyDyEuw==}
     engines: {node: '>=6.0.0'}
+    hasBin: true
+
+  binaryen@132.0.0:
+    resolution: {integrity: sha512-4Usg7yEvwO3FMso3Oov6qkOOHSod1IEv+boKkh77kTljM+eNBouqCTbqWswGzbG+vDNO/b/v2C4gfEh1WgB9Lg==}
     hasBin: true
 
   brace-expansion@2.1.2:
@@ -2938,6 +2945,8 @@ snapshots:
   balanced-match@4.0.4: {}
 
   baseline-browser-mapping@2.10.33: {}
+
+  binaryen@132.0.0: {}
 
   brace-expansion@2.1.2:
     dependencies:

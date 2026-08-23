@@ -454,6 +454,75 @@ test('delivers a real Vite shader HMR update without replacing the running game'
   }
 });
 
+// A module whose only content is one private, unused function. wasm-opt -Oz
+// deletes the function, so the optimized module is exactly the 8-byte header.
+const unoptimizedWasm = [
+  0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // \0asm, version 1
+  0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type section: () -> ()
+  0x03, 0x02, 0x01, 0x00, // function section: one function of type 0
+  0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b, // code section: empty body
+];
+
+function wasmWritingCompiler() {
+  const script = `
+    const fs = require('node:fs');
+    const args = process.argv.slice(1);
+    fs.writeFileSync(args[args.indexOf('-o') + 1], Buffer.from(${JSON.stringify(unoptimizedWasm)}));
+    fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+      success: true,
+      involvedFiles: [args[0]],
+      diagnostics: [],
+    }));
+  `;
+  return { command: process.execPath, args: ['-e', script] };
+}
+
+async function compiledWasm(root, entry) {
+  const key = createHash('sha256').update(entry).digest('hex').slice(0, 12);
+  return readFile(join(root, '.waluau', key, 'game.wasm'));
+}
+
+test('optimizes compiled Wasm with wasm-opt in production builds only', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+
+    const devPlugin = waluau({ compiler: wasmWritingCompiler() });
+    devPlugin.configResolved({ root, command: 'serve' });
+    await devPlugin.transform.call({ addWatchFile() {} }, '', entry);
+    assert.deepEqual(
+      Array.from(await compiledWasm(root, entry)),
+      unoptimizedWasm,
+      'the dev server should serve the compiler output untouched',
+    );
+
+    const buildPlugin = waluau({ compiler: wasmWritingCompiler() });
+    buildPlugin.configResolved({ root, command: 'build' });
+    await buildPlugin.transform.call({ addWatchFile() {} }, '', entry);
+    const optimized = await compiledWasm(root, entry);
+    assert.deepEqual(
+      Array.from(optimized),
+      unoptimizedWasm.slice(0, 8),
+      'wasm-opt should have removed the unused function',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('leaves production Wasm untouched when optimize is disabled', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+    const plugin = waluau({ optimize: false, compiler: wasmWritingCompiler() });
+    plugin.configResolved({ root, command: 'build' });
+    await plugin.transform.call({ addWatchFile() {} }, '', entry);
+    assert.deepEqual(Array.from(await compiledWasm(root, entry)), unoptimizedWasm);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('turns generated manifest URLs into Vite asset imports', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {
