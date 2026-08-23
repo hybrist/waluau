@@ -212,6 +212,9 @@ impl Parser {
                     fields.insert(name, field_ty);
                     if self.check_simple(&TokenKind::Comma) {
                         self.advance();
+                        if self.check_simple(&TokenKind::RBrace) {
+                            break;
+                        }
                     } else {
                         break;
                     }
