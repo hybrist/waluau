@@ -114,7 +114,22 @@ impl CompilerSession {
     /// all diagnostics and the involved files even when the build fails (so
     /// watch mode can still register the whole graph).
     pub fn build_root(&mut self, root: &Path, wasm_file_name: &str) -> BuildOutcome {
-        self.build_root_with_assets(root, wasm_file_name, crate::empty_asset_manifest(), None)
+        self.build_root_with_options(root, wasm_file_name, crate::CompileOptions::default())
+    }
+
+    pub fn build_root_with_options(
+        &mut self,
+        root: &Path,
+        wasm_file_name: &str,
+        options: crate::CompileOptions,
+    ) -> BuildOutcome {
+        self.build_root_with_assets(
+            root,
+            wasm_file_name,
+            crate::empty_asset_manifest(),
+            None,
+            options,
+        )
     }
 
     pub(crate) fn build_root_with_assets(
@@ -123,6 +138,7 @@ impl CompilerSession {
         wasm_file_name: &str,
         assets: &std::collections::BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
         asset_module_source: Option<&str>,
+        options: crate::CompileOptions,
     ) -> BuildOutcome {
         let discovered_asset_module;
         let asset_module_source = match asset_module_source {
@@ -170,6 +186,7 @@ impl CompilerSession {
             outcome.program,
             wasm_file_name,
             assets,
+            options,
             Some(hir_cache),
             Some(ir_cache),
             Some(wasm_cache),
@@ -466,6 +483,58 @@ mod tests {
             wasmprinter::print_bytes(&changed_wasm).expect("incremental Wasm should print"),
             wasmprinter::print_bytes(&cold_wasm).expect("cold Wasm should print"),
             "incremental and cold builds should be semantically identical"
+        );
+    }
+
+    #[test]
+    fn development_dwarf_is_equivalent_across_incremental_and_cold_builds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let initial = "function answer(): i32\n    return 41\nend\n";
+        let changed_source = "function answer(): i32\n    return 42\nend\n";
+        let main = write(dir.path(), "main.walu", initial);
+        let options = crate::CompileOptions {
+            development_dwarf: true,
+        };
+        let mut session = CompilerSession::new();
+        assert!(
+            session
+                .build_root_with_options(&main, "program.wasm", options)
+                .artifacts
+                .is_some()
+        );
+        let canonical_main = main.canonicalize().expect("canonicalize");
+        session.set_overlay(&canonical_main, changed_source);
+        let incremental = session
+            .build_root_with_options(&main, "program.wasm", options)
+            .artifacts
+            .expect("incremental artifacts")
+            .wasm;
+        assert!(session.incremental_stats(&main).2);
+
+        fs::write(&main, changed_source).expect("changed fixture should write");
+        let cold = CompilerSession::new()
+            .build_root_with_options(&main, "program.wasm", options)
+            .artifacts
+            .expect("cold artifacts")
+            .wasm;
+        assert_eq!(
+            incremental, cold,
+            "debug metadata must use final cached offsets"
+        );
+
+        let production = session
+            .build_root_with_options(&main, "program.wasm", crate::CompileOptions::default())
+            .artifacts
+            .expect("option change should rebuild")
+            .wasm;
+        assert!(
+            !production
+                .windows(b".debug_info".len())
+                .any(|window| window == b".debug_info")
+        );
+        assert!(
+            !session.incremental_stats(&main).2,
+            "debug configuration must participate in cache identity"
         );
     }
 

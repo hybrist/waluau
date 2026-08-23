@@ -31,6 +31,240 @@ fn wasm_has_start_section(wasm: &[u8]) -> bool {
     })
 }
 
+fn custom_section(wasm: &[u8], name: &str) -> Option<Vec<u8>> {
+    Parser::new(0).parse_all(wasm).find_map(|payload| {
+        let payload = payload.expect("wasm should parse");
+        match payload {
+            Payload::CustomSection(section) if section.name() == name => {
+                Some(section.data().to_vec())
+            }
+            _ => None,
+        }
+    })
+}
+
+fn contains_cstring(bytes: &[u8], value: &str) -> bool {
+    let mut encoded = value.as_bytes().to_vec();
+    encoded.push(0);
+    bytes.windows(encoded.len()).any(|window| window == encoded)
+}
+
+fn read_uleb(bytes: &[u8], cursor: &mut usize) -> u64 {
+    let mut value = 0u64;
+    let mut shift = 0;
+    loop {
+        let byte = bytes[*cursor];
+        *cursor += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+        shift += 7;
+    }
+}
+
+fn read_sleb(bytes: &[u8], cursor: &mut usize) -> i64 {
+    let mut value = 0i64;
+    let mut shift = 0;
+    let mut byte;
+    loop {
+        byte = bytes[*cursor];
+        *cursor += 1;
+        value |= i64::from(byte & 0x7f) << shift;
+        shift += 7;
+        if byte & 0x80 == 0 {
+            break;
+        }
+    }
+    if shift < 64 && byte & 0x40 != 0 {
+        value |= !0 << shift;
+    }
+    value
+}
+
+fn dwarf_line_rows(section: &[u8]) -> Vec<(u32, u32, u32, u32)> {
+    let header_length = u32::from_le_bytes(section[6..10].try_into().unwrap()) as usize;
+    let mut cursor = 10 + header_length;
+    let mut address = 0u32;
+    let mut file = 1u32;
+    let mut line = 1u32;
+    let mut column = 0u32;
+    let mut rows = Vec::new();
+    while cursor < section.len() {
+        match section[cursor] {
+            0 => {
+                cursor += 1;
+                let length = read_uleb(section, &mut cursor) as usize;
+                let end = cursor + length;
+                match section[cursor] {
+                    1 => {
+                        address = 0;
+                        file = 1;
+                        line = 1;
+                        column = 0;
+                    }
+                    2 => {
+                        address =
+                            u32::from_le_bytes(section[cursor + 1..cursor + 5].try_into().unwrap());
+                    }
+                    other => panic!("unexpected extended line opcode {other}"),
+                }
+                cursor = end;
+            }
+            1 => {
+                cursor += 1;
+                rows.push((address, file, line, column));
+            }
+            2 => {
+                cursor += 1;
+                address += read_uleb(section, &mut cursor) as u32;
+            }
+            3 => {
+                cursor += 1;
+                line = (i64::from(line) + read_sleb(section, &mut cursor)) as u32;
+            }
+            4 => {
+                cursor += 1;
+                file = read_uleb(section, &mut cursor) as u32;
+            }
+            5 => {
+                cursor += 1;
+                column = read_uleb(section, &mut cursor) as u32;
+            }
+            other => panic!("unexpected standard/special line opcode {other}"),
+        }
+    }
+    rows
+}
+
+fn wasm_instruction_offsets(wasm: &[u8]) -> std::collections::BTreeSet<u32> {
+    let mut code_start = None;
+    let mut offsets = std::collections::BTreeSet::new();
+    for payload in Parser::new(0).parse_all(wasm) {
+        match payload.expect("wasm should parse") {
+            Payload::CodeSectionStart { range, .. } => code_start = Some(range.start),
+            Payload::CodeSectionEntry(body) => {
+                let mut reader = body.get_operators_reader().expect("operators should parse");
+                while !reader.eof() {
+                    offsets.insert(
+                        (reader.original_position() - code_start.expect("code section")) as u32,
+                    );
+                    reader.read().expect("instruction should parse");
+                }
+            }
+            _ => {}
+        }
+    }
+    offsets
+}
+
+#[test]
+fn development_dwarf_is_explicit_and_preserves_default_bytes() {
+    let source = "function answer(): i32\n    return 42\nend\nanswer()\n";
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+
+    let existing = super::emit(&ir).expect("default emit should succeed").wasm;
+    let explicit_default = super::emit_with_options(&ir, super::EmitOptions::default())
+        .expect("explicit default emit should succeed")
+        .wasm;
+    assert_eq!(
+        existing, explicit_default,
+        "default output bytes must not change"
+    );
+    assert!(
+        Parser::new(0).parse_all(&existing).all(|payload| !matches!(
+            payload.expect("default Wasm should parse"),
+            Payload::CustomSection(section) if section.name().starts_with(".debug_")
+        )),
+        "default output must omit DWARF"
+    );
+
+    let debug = super::emit_with_options(
+        &ir,
+        super::EmitOptions {
+            development_dwarf: true,
+        },
+    )
+    .expect("development emit should succeed")
+    .wasm;
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&debug)
+        .expect("debug Wasm should validate");
+    let abbrev = custom_section(&debug, ".debug_abbrev").expect(".debug_abbrev");
+    let info = custom_section(&debug, ".debug_info").expect(".debug_info");
+    let line = custom_section(&debug, ".debug_line").expect(".debug_line");
+    assert!(!abbrev.is_empty());
+    assert_eq!(&info[4..6], &4u16.to_le_bytes(), "DWARF v4 info unit");
+    assert_eq!(&line[4..6], &4u16.to_le_bytes(), "DWARF v4 line unit");
+    assert!(contains_cstring(&info, "answer"));
+    assert!(contains_cstring(
+        &info,
+        "waluau compiler (development DWARF)"
+    ));
+    assert!(contains_cstring(&line, "source"));
+    assert!(custom_section(&debug, ".debug_str").is_none());
+    assert!(custom_section(&debug, "name").is_some());
+    assert!(
+        !contains_cstring(&info, "__waluau_top_level_init"),
+        "synthetic top-level helper must not receive a subprogram DIE"
+    );
+    let rows = dwarf_line_rows(&line);
+    assert!(!rows.is_empty(), "authored instructions need line rows");
+    let instruction_offsets = wasm_instruction_offsets(&debug);
+    for (address, _file, _line, column) in rows {
+        assert!(
+            column > 0,
+            "Chrome reverse mapping requires nonzero columns"
+        );
+        assert!(
+            instruction_offsets.contains(&address),
+            "DWARF address {address} must be a final Wasm instruction boundary"
+        );
+    }
+}
+
+#[test]
+fn incremental_development_dwarf_matches_a_cold_emit() {
+    fn lower(source: &str) -> waluau_ir::Module {
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+        waluau_ir::build(&typed).expect("ir should succeed")
+    }
+
+    let options = super::EmitOptions {
+        development_dwarf: true,
+    };
+    let first = lower("function answer(): i32\n    return 41\nend\n");
+    let changed = lower("function answer(): i32\n    return 42\nend\n");
+    let mut cache = super::EmitCache::default();
+    super::emit_cached_with_options(&first, &mut cache, options).expect("cold cached emit");
+    let incremental = super::emit_cached_with_options(&changed, &mut cache, options)
+        .expect("incremental emit")
+        .wasm;
+    assert!(cache.last_emit_was_incremental());
+    let cold = super::emit_with_options(&changed, options)
+        .expect("cold comparison emit")
+        .wasm;
+    assert_eq!(incremental, cold, "DWARF and code bytes must be equivalent");
+}
+
+#[test]
+fn development_dwarf_rejects_malformed_function_layouts() {
+    let program =
+        waluau_parser::parse("function answer(): i32 return 42 end").expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let mut maps = vec![super::dwarf::FunctionDebugMap::default(); ir.functions.len()];
+    maps[0].instruction_start = 2;
+    let bodies = vec![vec![0]; ir.functions.len()];
+    let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+    let error = super::dwarf::append_sections(&mut wasm, &ir, &bodies, &maps)
+        .expect_err("out-of-body instruction start should fail");
+    assert!(error.to_string().contains("invalid instruction start"));
+}
+
 #[test]
 fn recursive_record_arrays_emit_finite_valid_wasm_types() {
     let source = r#"

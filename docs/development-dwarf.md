@@ -1,7 +1,7 @@
 # Development DWARF contract for Chrome
 
-Status: compatibility contract established by `waluau-fdhp.2`. Production
-emission remains separate work.
+Status: compatibility contract established by `waluau-fdhp.2`; development
+emission is available behind an explicit compiler option.
 
 Waluau development builds can use conventional embedded DWARF for source-level
 debugging of browser Wasm GC. Chrome's language-extension API associates a
@@ -12,6 +12,34 @@ not come for free.
 
 The reproducible probe is in
 [`fixtures/dwarf-chrome-wasm-gc`](../fixtures/dwarf-chrome-wasm-gc/README.md).
+
+## Enabling development mappings
+
+The CLI flag is `--development-dwarf`:
+
+```sh
+cargo run -p waluau-cli -- path/to/main.walu \
+  -o path/to/main.wasm --emit-js --development-dwarf
+```
+
+Library callers use `waluau_driver::CompileOptions { development_dwarf: true }`
+with `compile_source_with_options`, `compile_file_with_options`,
+`compile_file_artifacts_with_options`, or
+`CompilerSession::build_root_with_options`. Codegen-only callers use the
+corresponding `waluau_codegen_wasm::EmitOptions` APIs.
+
+The option is compiler configuration, not a Rust build profile. It emits
+`.debug_abbrev`, `.debug_info`, and `.debug_line`; inline strings make
+`.debug_str` unnecessary. With the option omitted, no `.debug_*` sections are
+emitted and the output follows the unchanged default encoding path. The Wasm
+`name` section is present in both modes.
+
+The compiler derives browser-resolvable, slash-separated paths relative to the
+common authored source directory and records `.` as `DW_AT_comp_dir`. It never
+embeds the absolute build directory. Line rows use final instruction offsets
+relative to the Code section contents and only include IR operations marked
+`SourceOrigin::Authored`; synthetic helpers have Wasm names but no line rows or
+subprogram DIEs.
 
 ## Minimum emission contract
 

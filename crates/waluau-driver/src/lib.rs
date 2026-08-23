@@ -41,19 +41,36 @@ pub mod session;
 pub use link::{LinkOutcome, ModuleProvider};
 pub use session::{Analysis, BuildOutcome, CompilerSession};
 
+pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]\n\n  --development-dwarf  Embed development-only DWARF v4 source mappings for browser DevTools";
+
+/// Explicit controls for compiler output. Defaults preserve the production
+/// artifact format exactly.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CompileOptions {
+    /// Embed source line mappings for browser DevTools development sessions.
+    pub development_dwarf: bool,
+}
+
 /// Compile a single source string with no module resolution.
 ///
 /// Any `require(...)` in the source is rejected, since relative imports can only
 /// be resolved against a file path. Use [`compile_file`] for programs that use
 /// `require`.
 pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
+    compile_source_with_options(source, CompileOptions::default())
+}
+
+pub fn compile_source_with_options(
+    source: &str,
+    options: CompileOptions,
+) -> Result<Vec<u8>, Diagnostic> {
     let mut program = waluau_parser::parse(source)?;
 
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program)?;
 
     Ok(
-        compile_program(program, "program.wasm", empty_asset_manifest())
+        compile_program(program, "program.wasm", empty_asset_manifest(), options)
             .map_err(|mut errors| errors.remove(0))?
             .wasm,
     )
@@ -75,12 +92,25 @@ pub fn compile_source_collect(source: &str) -> Result<Vec<u8>, Vec<Diagnostic>> 
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program).map_err(|error| vec![error])?;
 
-    Ok(compile_program(program, "program.wasm", empty_asset_manifest())?.wasm)
+    Ok(compile_program(
+        program,
+        "program.wasm",
+        empty_asset_manifest(),
+        CompileOptions::default(),
+    )?
+    .wasm)
 }
 
 /// Compile `path`, resolving and linking any modules it imports with `require`.
 pub fn compile_file(path: &Path) -> Result<Vec<u8>, Diagnostic> {
     Ok(compile_file_artifacts(path, "program.wasm")?.wasm)
+}
+
+pub fn compile_file_with_options(
+    path: &Path,
+    options: CompileOptions,
+) -> Result<Vec<u8>, Diagnostic> {
+    Ok(compile_file_artifacts_with_options(path, "program.wasm", options)?.wasm)
 }
 
 #[derive(Debug)]
@@ -97,15 +127,24 @@ pub fn compile_file_artifacts(
     path: &Path,
     wasm_file_name: &str,
 ) -> Result<CompileArtifacts, Diagnostic> {
-    compile_file_artifacts_with_assets(path, wasm_file_name, &BTreeMap::new())
+    compile_file_artifacts_with_options(path, wasm_file_name, CompileOptions::default())
+}
+
+pub fn compile_file_artifacts_with_options(
+    path: &Path,
+    wasm_file_name: &str,
+    options: CompileOptions,
+) -> Result<CompileArtifacts, Diagnostic> {
+    compile_file_artifacts_with_assets(path, wasm_file_name, &BTreeMap::new(), options)
 }
 
 fn compile_file_artifacts_with_assets(
     path: &Path,
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+    options: CompileOptions,
 ) -> Result<CompileArtifacts, Diagnostic> {
-    compile_file_artifacts_with_assets_collect(path, wasm_file_name, assets)
+    compile_file_artifacts_with_assets_collect(path, wasm_file_name, assets, options)
         .map_err(|mut errors| errors.remove(0))
 }
 
@@ -118,13 +157,19 @@ pub fn compile_file_artifacts_collect(
     path: &Path,
     wasm_file_name: &str,
 ) -> Result<CompileArtifacts, Vec<Diagnostic>> {
-    compile_file_artifacts_with_assets_collect(path, wasm_file_name, &BTreeMap::new())
+    compile_file_artifacts_with_assets_collect(
+        path,
+        wasm_file_name,
+        &BTreeMap::new(),
+        CompileOptions::default(),
+    )
 }
 
 fn compile_file_artifacts_with_assets_collect(
     path: &Path,
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+    options: CompileOptions,
 ) -> Result<CompileArtifacts, Vec<Diagnostic>> {
     let asset_module_source = discover_asset_module(path).map_err(|error| vec![error])?;
     let outcome = link::link_program_collect_with_assets(
@@ -136,21 +181,23 @@ fn compile_file_artifacts_with_assets_collect(
     if !outcome.diagnostics.is_empty() {
         return Err(outcome.diagnostics);
     }
-    compile_program(outcome.program, wasm_file_name, assets)
+    compile_program(outcome.program, wasm_file_name, assets, options)
 }
 
 fn compile_program(
     program: waluau_ast::Program,
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+    options: CompileOptions,
 ) -> Result<CompileArtifacts, Vec<Diagnostic>> {
-    compile_program_with_cache(program, wasm_file_name, assets, None, None, None)
+    compile_program_with_cache(program, wasm_file_name, assets, options, None, None, None)
 }
 
 fn compile_program_with_cache(
     program: waluau_ast::Program,
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+    options: CompileOptions,
     hir_cache: Option<&mut waluau_hir::TypeCheckCache>,
     ir_cache: Option<&mut waluau_ir::BuildCache>,
     wasm_cache: Option<&mut waluau_codegen_wasm::EmitCache>,
@@ -199,8 +246,19 @@ fn compile_program_with_cache(
     };
     let lowered = started.elapsed();
     let emitted = match wasm_cache {
-        Some(cache) => waluau_codegen_wasm::emit_cached(ir, cache),
-        None => waluau_codegen_wasm::emit(ir),
+        Some(cache) => waluau_codegen_wasm::emit_cached_with_options(
+            ir,
+            cache,
+            waluau_codegen_wasm::EmitOptions {
+                development_dwarf: options.development_dwarf,
+            },
+        ),
+        None => waluau_codegen_wasm::emit_with_options(
+            ir,
+            waluau_codegen_wasm::EmitOptions {
+                development_dwarf: options.development_dwarf,
+            },
+        ),
     }
     .map_err(|error| vec![error])?;
     let emitted_at = started.elapsed();
@@ -286,8 +344,15 @@ where
     let asset_module_source = asset_package
         .as_ref()
         .map(|package| package.module_source.as_str());
-    let outcome =
-        session.build_root_with_assets(&options.input, wasm_file_name, assets, asset_module_source);
+    let outcome = session.build_root_with_assets(
+        &options.input,
+        wasm_file_name,
+        assets,
+        asset_module_source,
+        CompileOptions {
+            development_dwarf: options.development_dwarf,
+        },
+    );
     if let Some(report_path) = &options.report {
         write_build_report(report_path, &outcome).map_err(|error| vec![error])?;
     }
@@ -430,6 +495,7 @@ struct CliOptions {
     emit_js: bool,
     manifest: Option<PathBuf>,
     report: Option<PathBuf>,
+    development_dwarf: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -449,6 +515,7 @@ where
     let mut report = None;
     let mut pending_path = None;
     let mut emit_js = false;
+    let mut development_dwarf = false;
 
     for arg in args {
         if let Some(pending) = pending_path.take() {
@@ -465,15 +532,16 @@ where
             Some("--manifest") => pending_path = Some(PendingPath::Manifest),
             Some("--report") => pending_path = Some(PendingPath::Report),
             Some("--emit-js") => emit_js = true,
+            Some("--development-dwarf") => development_dwarf = true,
             Some(flag) if flag.starts_with('-') => {
                 return Err(Diagnostic::new(format!(
-                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]"
+                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]"
                 )));
             }
             _ if input.is_none() => input = Some(PathBuf::from(arg)),
             _ => {
                 return Err(Diagnostic::new(
-                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]",
+                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]",
                 ));
             }
         }
@@ -486,13 +554,13 @@ where
             PendingPath::Report => "--report",
         };
         return Err(Diagnostic::new(format!(
-            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]"
+            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]"
         )));
     }
 
     let input = input.ok_or_else(|| {
         Diagnostic::new(
-            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]",
+            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]",
         )
     })?;
     let output = output.unwrap_or_else(|| default_output_path(&input));
@@ -503,6 +571,7 @@ where
         emit_js,
         manifest,
         report,
+        development_dwarf,
     })
 }
 
@@ -912,6 +981,125 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps")
             .join(relative)
+    }
+
+    fn read_u32_leb(bytes: &[u8], cursor: &mut usize) -> u32 {
+        let mut value = 0u32;
+        let mut shift = 0;
+        loop {
+            let byte = bytes[*cursor];
+            *cursor += 1;
+            value |= u32::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+    }
+
+    fn custom_section(wasm: &[u8], target: &str) -> Option<Vec<u8>> {
+        let mut cursor = 8;
+        while cursor < wasm.len() {
+            let id = wasm[cursor];
+            cursor += 1;
+            let payload_len = read_u32_leb(wasm, &mut cursor) as usize;
+            let end = cursor + payload_len;
+            if id == 0 {
+                let name_len = read_u32_leb(wasm, &mut cursor) as usize;
+                let name_end = cursor + name_len;
+                if &wasm[cursor..name_end] == target.as_bytes() {
+                    return Some(wasm[name_end..end].to_vec());
+                }
+            }
+            cursor = end;
+        }
+        None
+    }
+
+    fn contains_cstring(bytes: &[u8], value: &str) -> bool {
+        let mut encoded = value.as_bytes().to_vec();
+        encoded.push(0);
+        bytes.windows(encoded.len()).any(|window| window == encoded)
+    }
+
+    fn dwarf_line_row_files(section: &[u8]) -> std::collections::BTreeSet<u32> {
+        let header_length = u32::from_le_bytes(section[6..10].try_into().unwrap()) as usize;
+        let mut cursor = 10 + header_length;
+        let mut file = 1u32;
+        let mut files = std::collections::BTreeSet::new();
+        while cursor < section.len() {
+            match section[cursor] {
+                0 => {
+                    cursor += 1;
+                    let length = read_u32_leb(section, &mut cursor) as usize;
+                    cursor += length;
+                }
+                1 => {
+                    cursor += 1;
+                    files.insert(file);
+                }
+                2 | 3 | 5 => {
+                    cursor += 1;
+                    let _ = read_u32_leb(section, &mut cursor);
+                }
+                4 => {
+                    cursor += 1;
+                    file = read_u32_leb(section, &mut cursor);
+                }
+                other => panic!("unexpected line opcode {other}"),
+            }
+        }
+        files
+    }
+
+    #[test]
+    fn cli_development_dwarf_maps_linked_sources_and_is_gated() {
+        assert!(super::CLI_HELP.contains("--development-dwarf"));
+        let tempdir = tempdir().expect("tempdir should exist");
+        let lib_path = tempdir.path().join("lib.walu");
+        let entry_path = tempdir.path().join("entry.walu");
+        let default_output = tempdir.path().join("default.wasm");
+        let debug_output = tempdir.path().join("debug.wasm");
+        fs::write(
+            &lib_path,
+            "local function increment(value: i32): i32\n    return value + 1\nend\nreturn increment\n",
+        )
+        .expect("library fixture should write");
+        fs::write(
+            &entry_path,
+            "local increment = require(\"./lib\")\nfunction entry(): i32\n    local function twice(value: i32): i32\n        return value * 2\n    end\n    return twice(increment(20))\nend\n",
+        )
+        .expect("entry fixture should write");
+
+        super::run_with_args([os(&entry_path), OsString::from("-o"), os(&default_output)])
+            .expect("default CLI build should succeed");
+        let default_wasm = fs::read(&default_output).expect("default output");
+        assert!(custom_section(&default_wasm, ".debug_info").is_none());
+
+        super::run_with_args([
+            os(&entry_path),
+            OsString::from("-o"),
+            os(&debug_output),
+            OsString::from("--development-dwarf"),
+        ])
+        .expect("development CLI build should succeed");
+        let debug_wasm = fs::read(&debug_output).expect("debug output");
+        let info = custom_section(&debug_wasm, ".debug_info").expect(".debug_info");
+        let line = custom_section(&debug_wasm, ".debug_line").expect(".debug_line");
+        assert!(custom_section(&debug_wasm, ".debug_abbrev").is_some());
+        assert!(custom_section(&debug_wasm, "name").is_some());
+        assert!(contains_cstring(&info, "entry"));
+        assert!(contains_cstring(&line, "entry.walu"));
+        assert!(contains_cstring(&line, "lib.walu"));
+        assert_eq!(
+            dwarf_line_row_files(&line),
+            std::collections::BTreeSet::from([1, 2]),
+            "linked entry and lifted library function both need line mappings"
+        );
+        assert!(
+            !String::from_utf8_lossy(&line).contains(tempdir.path().to_string_lossy().as_ref()),
+            "debug paths must not contain the absolute build directory"
+        );
     }
 
     #[test]
