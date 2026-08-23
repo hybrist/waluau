@@ -153,9 +153,7 @@ end
 function advance_run(state: State, city: city_map.State): unit
     local outcome: run_module.Outcome = state.run:settle(
         state.rules:is_victory(), state.rules:gold())
-    if outcome == "advance"
-        or outcome == "won"
-    then
+    if run_module.outcome_walks_on(outcome) then
         shop.open_for(state.shop, state.run)
         state.leaving_fence = false
         return
@@ -242,10 +240,17 @@ end
 -- from the same classifier the settle uses is what keeps the screen and the
 -- movement it announces in agreement. A live duel has no verdict yet.
 function run_outcome(state: State): run_module.Outcome
-    if not state.rules:is_finished() then return "none" end
+    if not state.rules:is_finished() and state.run.hearts > 0 then return "none" end
     local run: run_module.State = state.run
     return run_module.outcome_of(
-        run.duel, run.rush, state.rules:is_victory(), state.rules:gold())
+        run.duel, run.rush, run.hearts,
+        state.rules:is_victory(), state.rules:gold())
+end
+
+-- Losing the last heart finishes the screen's live duel immediately even when
+-- the duel rules have not reached their own best-of-three verdict yet.
+function vault_finished(state: State): bool
+    return state.run.hearts <= 0 or state.rules:is_finished()
 end
 
 function key_command(key: Key): flow.Command
@@ -339,6 +344,7 @@ function draw_vault(state: State, surface: entity.Surface): unit
             swap_table_cards = ui.swap_table_cards,
             modal = ui.modal,
             revealing = ui.revealing,
+            finished = vault_finished(state),
             casting = aimed_slot ~= nil,
             cast_slot = aimed_slot or 0,
         })
@@ -397,6 +403,7 @@ function submit_round(state: State): unit
     local trick: game.Trick? = state.rules:play(ui.play_picks[0], ui.play_picks[1])
     if trick == nil then return end
     local resolved: game.Trick = trick::game.Trick
+    if resolved.winner < 0 then state.run:lose_hand() end
     choreography.record_burned_losers(state.presentation, resolved)
     flow.begin_reveal(ui)
     -- A stalemate leaves both pairs standing, so this reveal has no pair to
@@ -416,7 +423,7 @@ end
 
 function consume_gate(state: State, city: city_map.State, command: flow.Command): bool
     local result: flow.GateResult = flow.gate(
-        state.ui, state.rules:is_finished(),
+        state.ui, vault_finished(state),
         choreography.is_animating(state.presentation),
         choreography.reveal_finished(state.presentation), command)
     if result == "live" then return false end
@@ -472,7 +479,7 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
     -- belongs to the invocation, not to one last cursor movement. Earlier
     -- arrows remain normal play until the full hidden sequence is known.
     if state.intervention.active then return "none" end
-    if not rules:is_finished()
+    if not vault_finished(state)
         and not ui.revealing
         and ui.modal == "none"
         and not choreography.firebolt_pending(presentation)
@@ -490,7 +497,7 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
     if choreography.firebolt_pending(presentation) then return "none" end
     local cast_slot: i32 = cast_slot_for(key, rules:spell_count())
     if cast_slot >= 0 then
-        if ui.modal ~= "none" or ui.revealing or rules:is_finished() then
+        if ui.modal ~= "none" or ui.revealing or vault_finished(state) then
             return "none"
         end
         -- A cast key toggles: pressing the aimed spell's own key again calls it
@@ -610,7 +617,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
     if state.intervention.active then return end
     local ui: flow.State = state.ui
     if flow.gate(
-        ui, state.rules:is_finished(),
+        ui, vault_finished(state),
         choreography.is_animating(state.presentation),
         choreography.reveal_finished(state.presentation), "none"
     ) ~= "live" then return end

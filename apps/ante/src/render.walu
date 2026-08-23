@@ -189,6 +189,7 @@ type Interaction = {
     swap_table_cards: {i32},
     modal: "none" | "history" | "help" | "final",
     revealing: bool,
+    finished: bool,
     casting: bool,
     -- The loadout slot being aimed while `casting` holds: which spell the aim
     -- prompt names, and whose price it quotes.
@@ -1372,8 +1373,9 @@ function draw(surface: entity.Surface, frame: Frame): unit
     clear_targets()
     draw_backdrop(surface, viewport)
     -- The terminal round still flips on the board, so keep the playfield up
-    -- while a reveal is running even after the game finishes.
-    if not state.finished or frame.interaction.revealing then
+    -- while a reveal is running even after the duel or run finishes. Health
+    -- can finish the run before the duel reaches its own normal verdict.
+    if not frame.interaction.finished or frame.interaction.revealing then
         draw_playfield(surface, frame)
     else
         draw_hud(surface, viewport, state, frame.run)

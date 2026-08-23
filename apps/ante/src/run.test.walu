@@ -49,6 +49,7 @@ describe("Ante Magic run cadence", function()
         expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
         expect(state.gold):toBe(game.starting_gold)
+        expect(state.hearts):toBe(run.max_hearts)
         -- The menu's pick is the whole opening loadout, at full price and on
         -- the first cast key.
         expect(state:spell_count()):toBe(1)
@@ -76,6 +77,19 @@ describe("Ante Magic run cadence", function()
         expect(state:boss()):toBe(true)
     end)
 
+    it("carries lost hearts across cleared duels and refills only on restart", function()
+        local state: run.State = run.new(game.spell_firebolt, false)
+        expect(state:lose_hand()):toBe(false)
+        expect(state.hearts):toBe(run.max_hearts - 1)
+
+        state:settle(true, 31)
+        expect(state.duel):toBe(2)
+        expect(state.hearts):toBe(run.max_hearts - 1)
+
+        state:restart(game.spell_firebolt, false)
+        expect(state.hearts):toBe(run.max_hearts)
+    end)
+
     it("ends the run on a lost duel, gold and all", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         state:settle(true, 31)
@@ -92,16 +106,19 @@ describe("Ante Magic run cadence", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         state:settle(true, 31)
         state:settle(true, 18)
+        state:lose_hand()
         state:restart(game.spell_freeze_ray, true)
         expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
         expect(state.gold):toBe(game.starting_gold)
+        expect(state.hearts):toBe(run.max_hearts)
         expect(state.start_spell):toBe(game.spell_freeze_ray)
         expect(state:boss()):toBe(true)
     end)
 
     it("round-trips run state through development snapshots", function()
         local state: run.State = run.new(game.spell_raise_card, true)
+        state:lose_hand()
         state:settle(true, 27)
         local encoded: string = run.snapshot(state)
         local restored: run.State? = run.restore(encoded)
@@ -110,6 +127,7 @@ describe("Ante Magic run cadence", function()
             expect(restored.duel):toBe(2)
             expect(restored.cleared):toBe(1)
             expect(restored.gold):toBe(27 - run.target_at(1, true))
+            expect(restored.hearts):toBe(run.max_hearts - 1)
             expect(restored.spells[0].kind):toBe(game.spell_raise_card)
             expect(restored.start_spell):toBe(game.spell_raise_card)
             expect(restored.rush):toBe(true)
@@ -117,6 +135,8 @@ describe("Ante Magic run cadence", function()
         end
 
         expect(run.restore("duel-run-v1,1,10,0,1,0") == nil):toBe(true)
+        expect(run.restore("duel-run-v2,1,10,0,1,3,5,3,1") == nil):toBe(true)
+        expect(run.restore("duel-run-v3,1,10,0,4,1,1,5,1,0") == nil):toBe(true)
         expect(run.restore(encoded .. ",unexpected") == nil):toBe(true)
     end)
 
@@ -292,25 +312,50 @@ describe("Ante Magic target", function()
 end)
 
 describe("Ante Magic run outcomes", function()
-    it("names the four things a fought duel can turn out to be", function()
+    it("names the things a fought duel or exhausted heart pool can become", function()
         local target: i32 = run.target_at(1, false)
-        expect(tostring(run.outcome_of(1, false, false, 99))):toBe("lost-vault")
+        expect(tostring(run.outcome_of(1, false, run.max_hearts, false, 99)))
+            :toBe("lost-vault")
         -- Holding exactly the target clears; a single gold short does not.
-        expect(tostring(run.outcome_of(1, false, true, target))):toBe("advance")
-        expect(tostring(run.outcome_of(1, false, true, target - 1))):toBe("lost-target")
+        expect(tostring(run.outcome_of(
+            1, false, run.max_hearts, true, target))):toBe("advance")
+        expect(tostring(run.outcome_of(
+            1, false, run.max_hearts, true, target - 1))):toBe("lost-target")
         -- The Opponent holding the duel outranks the purse: a run that lost
         -- the run is over for that reason, whatever it was carrying.
-        expect(tostring(run.outcome_of(1, false, false, 0))):toBe("lost-vault")
+        expect(tostring(run.outcome_of(
+            1, false, run.max_hearts, false, 0))):toBe("lost-vault")
+        -- The last heart can disappear before the duel has otherwise ended.
+        expect(tostring(run.outcome_of(1, false, 0, false, 99)))
+            :toBe("lost-health")
+    end)
+
+    it("loses and restarts the run when the last heart is gone", function()
+        local state: run.State = run.new(game.spell_clone, false)
+        for _ = 1, run.max_hearts do state:lose_hand() end
+        expect(state.hearts):toBe(0)
+        -- Repeated terminal signals clamp rather than manufacturing negative
+        -- health while the final reveal waits to be dismissed.
+        expect(state:lose_hand()):toBe(true)
+        expect(state.hearts):toBe(0)
+        expect(tostring(state:settle(false, 99))):toBe("lost-health")
+        expect(state.duel):toBe(1)
+        expect(state.hearts):toBe(run.max_hearts)
+        expect(state.start_spell):toBe(game.spell_clone)
     end)
 
     it("passes through the finish line once and walks on", function()
         local finish: i32 = run.run_length(false)
-        expect(tostring(run.outcome_of(finish, false, true, 999))):toBe("won")
-        expect(tostring(run.outcome_of(finish - 1, false, true, 999))):toBe("advance")
+        expect(tostring(run.outcome_of(
+            finish, false, run.max_hearts, true, 999))):toBe("won")
+        expect(tostring(run.outcome_of(
+            finish - 1, false, run.max_hearts, true, 999))):toBe("advance")
         -- Not a state the run stays in: the duel after the finish is an
         -- ordinary one again, however far past the table it is.
-        expect(tostring(run.outcome_of(finish + 1, false, true, 999))):toBe("advance")
-        expect(tostring(run.outcome_of(finish + 7, false, true, 999))):toBe("advance")
+        expect(tostring(run.outcome_of(
+            finish + 1, false, run.max_hearts, true, 999))):toBe("advance")
+        expect(tostring(run.outcome_of(
+            finish + 7, false, run.max_hearts, true, 999))):toBe("advance")
     end)
 
     it("takes the last duel of the table and keeps the run going", function()
