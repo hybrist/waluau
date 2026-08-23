@@ -18,7 +18,7 @@ test.describe('record (table) function calling', () => {
       'Compilation Succeeded',
       { timeout: COMPILER_READY_TIMEOUT },
     );
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
   });
 
   test('renders point_sum and point_mutation signature correctly', async ({ page }) => {

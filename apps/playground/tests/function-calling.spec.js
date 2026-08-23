@@ -10,7 +10,7 @@ test.describe('function calling tab', () => {
       'Compilation Succeeded',
       { timeout: COMPILER_READY_TIMEOUT },
     );
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
   });
 
   test('shows the add function card with two parameter inputs', async ({ page }) => {
@@ -91,7 +91,7 @@ test.describe('function calling tab', () => {
       'Compilation Succeeded',
       { timeout: COMPILER_READY_TIMEOUT },
     );
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
 
     // Verify top-level print output is outside of individual function cards
     await expect(page.locator('.init-logs-box')).toBeVisible();

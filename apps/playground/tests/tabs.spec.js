@@ -13,7 +13,7 @@ test.describe('output tabs', () => {
   });
 
   test('Run tab is active by default and lists exported functions', async ({ page }) => {
-    await expect(page.getByRole('button', { name: 'Run' })).toHaveClass(/active/);
+    await expect(page.getByRole('button', { name: 'Run', exact: true })).toHaveClass(/active/);
     await expect(page.locator('.func-card')).toBeVisible();
     await expect(page.locator('.func-signature-name').first()).toHaveText('add');
   });
@@ -52,7 +52,7 @@ test.describe('output tabs', () => {
   });
 
   test('Run tab lists exported functions', async ({ page }) => {
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
     await expect(page.locator('.func-card')).toBeVisible();
     await expect(page.locator('.func-signature-name').first()).toHaveText('add');
   });

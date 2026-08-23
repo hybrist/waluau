@@ -47,11 +47,11 @@ export function typedAssetModule(assetManifest) {
 local resources = require("waluau:engine/resources")
 local audio = require("waluau:engine/audio")
 
-type Bundle = {
+export type Bundle = {
     owner: resources.Owner,
 ${fields.join(',\n')}
 }
-type LoadResult = { bundle: Bundle, errors: {resources.ResourceError} }
+export type LoadResult = { bundle: Bundle, errors: {resources.ResourceError} }
 
 function load(): LoadResult
     local owner: resources.Owner = resources.new_owner()

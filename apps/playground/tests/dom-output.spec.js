@@ -161,7 +161,7 @@ test.describe('DOM Output in Run tab', () => {
       'Compilation Succeeded',
       { timeout: COMPILER_READY_TIMEOUT },
     );
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
   });
 
   test('omits DOM Output for non-DOM programs', async ({ page }) => {
