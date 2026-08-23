@@ -11,6 +11,9 @@
     "./storybook": "./storybook.js",
     "./testing": "./testing.js"
   },
+  "dependencies": {
+    "binaryen": "^132.0.0"
+  },
   "peerDependencies": {
     "vite": "^8.0.0",
     "vitest": "^4.0.0"
