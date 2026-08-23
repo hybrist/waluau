@@ -606,6 +606,7 @@ impl<'a> Monomorphizer<'a> {
                 .map(|ty| substitute_type(ty, subst)),
             body: self.rewrite_stmts(&function.body, subst, active, &mut types)?,
             file_path: function.file_path.clone(),
+            span: function.span,
         })
     }
 

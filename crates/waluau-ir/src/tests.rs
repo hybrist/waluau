@@ -1,11 +1,158 @@
 use std::collections::BTreeMap;
 
 use super::{
-    BasicBlock, BlockId, Function, Instruction, Module, Terminator, ValueId, build, verify,
+    BasicBlock, BlockId, BuildCache, Function, FunctionSourceMap, Instruction, Module,
+    SourceFileId, SourceLocation, SourceOrigin, Terminator, ValueId, build,
+    build_cached_with_changes, verify,
 };
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
 use waluau_diagnostics::DiagnosticCategory;
-use waluau_parser::parse;
+use waluau_parser::{parse, parse_with_path};
+
+fn authored(origin: SourceOrigin) -> SourceLocation {
+    match origin {
+        SourceOrigin::Authored(location) => location,
+        SourceOrigin::Synthetic => panic!("expected authored source location"),
+    }
+}
+
+#[test]
+fn preserves_function_instruction_and_terminator_locations() {
+    let source = "function entry(x: i32): i32\n    return x + 42\nend\n";
+    let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");
+    let module = build(&program).expect("IR build should succeed");
+    assert_eq!(
+        module.source_files,
+        vec![super::SourceFile {
+            path: "src/main.walu".to_string(),
+            source: source.to_string(),
+        }]
+    );
+
+    let function = &module.functions[0];
+    assert_eq!(
+        authored(function.source_map.definition).file,
+        SourceFileId(0)
+    );
+    let entry = &function.blocks[&function.entry];
+    let (param, _) = entry
+        .instructions
+        .iter()
+        .find(|(_, instruction)| matches!(instruction, Instruction::Param(0)))
+        .expect("parameter instruction");
+    assert_eq!(
+        function.source_map.instruction_origin(*param),
+        SourceOrigin::Synthetic,
+        "ABI parameter setup is compiler-generated"
+    );
+    let (literal, _) = entry
+        .instructions
+        .iter()
+        .find(|(_, instruction)| matches!(instruction, Instruction::Number { literal, .. } if literal.raw == "42"))
+        .expect("number instruction");
+    let literal_location = authored(function.source_map.instruction_origin(*literal));
+    assert_eq!(literal_location.file, SourceFileId(0));
+    assert_eq!(
+        &source[literal_location.span.start as usize..literal_location.span.end as usize],
+        "42"
+    );
+    let return_location = authored(function.source_map.terminator_origin(function.entry));
+    assert_eq!(return_location.file, SourceFileId(0));
+    assert_eq!(
+        &source[return_location.span.start as usize..return_location.span.end as usize],
+        "x + 42"
+    );
+}
+
+#[test]
+fn leaves_compiler_generated_function_bodies_unmapped() {
+    let source = "local value: i32 = 42\n";
+    let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    let init = module
+        .functions
+        .iter()
+        .find(|function| function.name == "__waluau_top_level_init")
+        .expect("synthetic top-level initializer");
+    assert_eq!(init.source_map.definition, SourceOrigin::Synthetic);
+    assert!(init.blocks.values().all(|block| {
+        block
+            .instructions
+            .iter()
+            .all(|(value, _)| init.source_map.instruction_origin(*value) == SourceOrigin::Synthetic)
+            && init.source_map.terminator_origin(block.id) == SourceOrigin::Synthetic
+    }));
+}
+
+#[test]
+fn preserves_files_for_linked_and_lifted_functions() {
+    let alpha_source = "function alpha(): i32\n    return 11\nend\n";
+    let beta_source = concat!(
+        "function beta(): i32\n",
+        "    local inner: () -> i32 = function(): i32\n",
+        "        return 22\n",
+        "    end\n",
+        "    return inner()\n",
+        "end\n",
+    );
+    let mut program = parse_with_path(alpha_source, "src/alpha.walu").expect("alpha should parse");
+    let beta = parse_with_path(beta_source, "src/beta.walu").expect("beta should parse");
+    program.functions.extend(beta.functions);
+    program.sources.extend(beta.sources);
+
+    let module = build(&program).expect("linked IR build should succeed");
+    assert_eq!(module.source_files[0].path, "src/alpha.walu");
+    assert_eq!(module.source_files[1].path, "src/beta.walu");
+    for name in ["alpha", "beta", "beta$lambda0"] {
+        let function = module
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        let expected_file = if name == "alpha" {
+            SourceFileId(0)
+        } else {
+            SourceFileId(1)
+        };
+        assert_eq!(authored(function.source_map.definition).file, expected_file);
+        assert!(function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(value, _)| {
+                matches!(
+                    function.source_map.instruction_origin(*value),
+                    SourceOrigin::Authored(location) if location.file == expected_file
+                )
+            })
+        }));
+    }
+}
+
+#[test]
+fn incremental_rebuild_refreshes_source_table_and_spans() {
+    let source_v1 = "function entry(): i32\n    return 1\nend\n";
+    let source_v2 = "function entry(): i32\n    return 200\nend\n";
+    let program_v1 = parse_with_path(source_v1, "src/main.walu").expect("v1 should parse");
+    let program_v2 = parse_with_path(source_v2, "src/main.walu").expect("v2 should parse");
+    let mut cache = BuildCache::default();
+    build_cached_with_changes(&program_v1, &mut cache, &[0]).expect("full build should succeed");
+    let module = build_cached_with_changes(&program_v2, &mut cache, &[0])
+        .expect("incremental build should succeed")
+        .clone();
+    assert!(cache.last_build_was_incremental());
+    assert_eq!(module.source_files[0].source, source_v2);
+    let function = &module.functions[0];
+    let (value, _) = function
+        .blocks
+        .values()
+        .flat_map(|block| &block.instructions)
+        .find(|(_, instruction)| matches!(instruction, Instruction::Number { literal, .. } if literal.raw == "200"))
+        .expect("updated number instruction");
+    let location = authored(function.source_map.instruction_origin(*value));
+    assert_eq!(
+        &source_v2[location.span.start as usize..location.span.end as usize],
+        "200"
+    );
+}
 
 #[test]
 fn inserts_phi_after_if_merge() {
@@ -1342,6 +1489,7 @@ fn rejects_non_bool_branch_condition() {
         capture_count: 0,
         value_symbols: BTreeMap::new(),
         symbol_id: None,
+        source_map: FunctionSourceMap::synthetic(),
         blocks: BTreeMap::from([
             (
                 BlockId(0),
@@ -1384,6 +1532,7 @@ fn rejects_non_bool_branch_condition() {
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
         symbol_names: std::collections::BTreeMap::new(),
+        source_files: Vec::new(),
     })
     .expect_err("expected verifier to reject non-bool branch");
     assert!(err.to_string().contains("branch condition"));
@@ -1400,6 +1549,7 @@ fn rejects_return_type_mismatch() {
         capture_count: 0,
         value_symbols: BTreeMap::new(),
         symbol_id: None,
+        source_map: FunctionSourceMap::synthetic(),
         blocks: BTreeMap::from([(
             BlockId(0),
             BasicBlock {
@@ -1422,6 +1572,7 @@ fn rejects_return_type_mismatch() {
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
         symbol_names: std::collections::BTreeMap::new(),
+        source_files: Vec::new(),
     })
     .expect_err("expected verifier to reject return type mismatch");
     assert!(err.to_string().contains("return in block"));
@@ -1477,6 +1628,7 @@ fn rejects_phi_predecessor_order_mismatch() {
         capture_count: 0,
         value_symbols: BTreeMap::new(),
         symbol_id: None,
+        source_map: FunctionSourceMap::synthetic(),
         blocks: BTreeMap::from([
             (
                 BlockId(0),
@@ -1538,6 +1690,7 @@ fn rejects_phi_predecessor_order_mismatch() {
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
         symbol_names: std::collections::BTreeMap::new(),
+        source_files: Vec::new(),
     })
     .expect_err("expected verifier to reject phi predecessor ordering");
     assert!(err.to_string().contains("predecessor order mismatch"));
@@ -1821,6 +1974,8 @@ fn verifies_loop_with_break_and_continue() {
     let host_import_names = std::collections::HashMap::new();
     let declared_constants = std::collections::HashMap::new();
     let globals = std::collections::HashMap::new();
+    let source_file_ids =
+        std::collections::HashMap::from([(program.entry_file_path.clone(), SourceFileId(0))]);
     let mut lowered = super::build_function(
         &program.functions[0],
         &signatures,
@@ -1830,6 +1985,7 @@ fn verifies_loop_with_break_and_continue() {
         &declared_constants,
         &globals,
         &program.sources,
+        &source_file_ids,
         &tag_ids,
     )
     .expect("ir lowering should succeed");
@@ -1843,6 +1999,14 @@ fn verifies_loop_with_break_and_continue() {
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
         symbol_names: std::collections::BTreeMap::new(),
+        source_files: program
+            .sources
+            .iter()
+            .map(|(path, source)| super::SourceFile {
+                path: path.clone(),
+                source: source.clone(),
+            })
+            .collect(),
     };
 
     let function = &module.functions[0];
@@ -2843,6 +3007,7 @@ fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
         capture_count: 0,
         value_symbols: BTreeMap::new(),
         symbol_id: None,
+        source_map: FunctionSourceMap::synthetic(),
         blocks: BTreeMap::from([(
             BlockId(0),
             BasicBlock {
@@ -2868,6 +3033,7 @@ fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
         symbol_names: std::collections::BTreeMap::new(),
+        source_files: Vec::new(),
     })
     .expect("a nullable record and its inner record should match through the union naming");
 }

@@ -4,6 +4,75 @@ pub struct BlockId(pub usize);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ValueId(pub usize);
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SourceFileId(pub u32);
+
+/// One authored input, stored once per IR module. Instruction locations refer
+/// to this table instead of copying paths or source text into every record.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceFile {
+    pub path: String,
+    pub source: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SourceLocation {
+    pub file: SourceFileId,
+    pub span: waluau_ast::Span,
+}
+
+/// Whether generated code can be attributed to authored Waluau source.
+///
+/// Lowering records authored locations in its compact maps. Instructions that
+/// directly implement an authored expression or statement intentionally share
+/// that construct's span, including control-flow scaffolding needed to
+/// implement it. Emission outside an authored construct has no entry and
+/// resolves to `Synthetic`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceOrigin {
+    Authored(SourceLocation),
+    Synthetic,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FunctionSourceMap {
+    pub definition: SourceOrigin,
+    pub(crate) instruction_locations: BTreeMap<ValueId, SourceLocation>,
+    pub(crate) terminator_locations: BTreeMap<BlockId, SourceLocation>,
+}
+
+impl FunctionSourceMap {
+    pub fn synthetic() -> Self {
+        Self {
+            definition: SourceOrigin::Synthetic,
+            instruction_locations: BTreeMap::new(),
+            terminator_locations: BTreeMap::new(),
+        }
+    }
+
+    pub fn instruction_origin(&self, value: ValueId) -> SourceOrigin {
+        self.instruction_locations
+            .get(&value)
+            .copied()
+            .map_or(SourceOrigin::Synthetic, SourceOrigin::Authored)
+    }
+
+    pub fn terminator_origin(&self, block: BlockId) -> SourceOrigin {
+        self.terminator_locations
+            .get(&block)
+            .copied()
+            .map_or(SourceOrigin::Synthetic, SourceOrigin::Authored)
+    }
+
+    pub(crate) fn record_instruction(&mut self, value: ValueId, location: SourceLocation) {
+        self.instruction_locations.insert(value, location);
+    }
+
+    pub(crate) fn record_terminator(&mut self, block: BlockId, location: SourceLocation) {
+        self.terminator_locations.insert(block, location);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub functions: Vec<Function>,
@@ -15,6 +84,8 @@ pub struct Module {
     /// combines this with [`Function::value_symbols`] to label locals in the
     /// emitted `name` custom section.
     pub symbol_names: BTreeMap<SymbolId, String>,
+    /// Authored files referenced by function source maps, interned by index.
+    pub source_files: Vec<SourceFile>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,6 +118,7 @@ pub struct Function {
     pub capture_count: usize,
     pub value_symbols: BTreeMap<ValueId, SymbolId>,
     pub symbol_id: Option<SymbolId>,
+    pub source_map: FunctionSourceMap,
 }
 
 #[derive(Clone, Debug, PartialEq)]

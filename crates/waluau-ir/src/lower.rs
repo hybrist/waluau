@@ -372,6 +372,12 @@ fn build_inner(
         .map(|(index, global)| (global.symbol_id, (index, global.ty.clone())))
         .collect::<HashMap<_, _>>();
     let tag_ids = collect_variant_tag_ids(&monomorphic, &resolved.type_declarations);
+    let source_files = collect_source_files(&monomorphic.sources);
+    let source_file_ids = source_files
+        .iter()
+        .enumerate()
+        .map(|(index, file)| (file.path.clone(), SourceFileId(index as u32)))
+        .collect::<HashMap<_, _>>();
     let mut signatures = HashMap::new();
     let mut field_call_signatures = HashMap::new();
     let mut declared_imports = Vec::new();
@@ -469,6 +475,7 @@ fn build_inner(
                 &declared_constants,
                 &global_indices,
                 &monomorphic.sources,
+                &source_file_ids,
                 &tag_ids,
             )
         })
@@ -490,6 +497,7 @@ fn build_inner(
                 let declared_constants = &declared_constants;
                 let global_indices = &global_indices;
                 let sources = &monomorphic.sources;
+                let source_file_ids = &source_file_ids;
                 let tag_ids = &tag_ids;
                 scope.spawn(move || {
                     chunk
@@ -504,6 +512,7 @@ fn build_inner(
                                 declared_constants,
                                 global_indices,
                                 sources,
+                                source_file_ids,
                                 tag_ids,
                             )
                         })
@@ -537,6 +546,7 @@ fn build_inner(
         start,
         tag_ids,
         symbol_names,
+        source_files,
     };
     if CompilerTimer::enabled() {
         eprintln!(
@@ -578,6 +588,20 @@ fn incremental_context_matches(current: &Program, previous: &Program) -> bool {
                     && current.return_type == previous.return_type
                     && current.file_path == previous.file_path
             })
+}
+
+fn collect_source_files(sources: &BTreeMap<String, String>) -> Vec<SourceFile> {
+    assert!(
+        u32::try_from(sources.len()).is_ok(),
+        "source file table exceeds u32 indices"
+    );
+    sources
+        .iter()
+        .map(|(path, source)| SourceFile {
+            path: path.clone(),
+            source: source.clone(),
+        })
+        .collect()
 }
 
 /// Rebuild one ordinary function while preserving the previously verified IR
@@ -708,6 +732,19 @@ fn try_build_incremental(
         .enumerate()
         .map(|(index, global)| (global.symbol_id, (index, global.ty.clone())))
         .collect::<HashMap<_, _>>();
+    let source_files = collect_source_files(&monomorphic.sources);
+    if source_files
+        .iter()
+        .map(|file| &file.path)
+        .ne(previous_module.source_files.iter().map(|file| &file.path))
+    {
+        return Ok(None);
+    }
+    let source_file_ids = source_files
+        .iter()
+        .enumerate()
+        .map(|(index, file)| (file.path.clone(), SourceFileId(index as u32)))
+        .collect::<HashMap<_, _>>();
     let lowered = build_function(
         &monomorphic.functions[monomorphic_index],
         &signatures,
@@ -717,6 +754,7 @@ fn try_build_incremental(
         &declared_constants,
         &global_indices,
         &monomorphic.sources,
+        &source_file_ids,
         &tag_ids,
     )?;
     let lowered_at = started.elapsed();
@@ -746,6 +784,7 @@ fn try_build_incremental(
     // debug names can go stale until the next full build, which is acceptable
     // for name-section metadata.
     module.symbol_names = symbol_names;
+    module.source_files = source_files;
     let names = HashSet::from([name]);
     verify::verify_functions(&module, &names)?;
     if CompilerTimer::enabled() {
@@ -814,6 +853,7 @@ fn wrap_async_top_level_init_if_needed(
         capture_count: 0,
         value_symbols: std::collections::BTreeMap::new(),
         symbol_id: None,
+        source_map: FunctionSourceMap::synthetic(),
     });
     (functions, Some(new_start))
 }
@@ -1225,6 +1265,7 @@ fn erase_function_opaque_types(function: &AstFunction) -> AstFunction {
             .map(erase_type_opaque_types),
         body: function.body.iter().map(erase_stmt_opaque_types).collect(),
         file_path: function.file_path.clone(),
+        span: function.span,
     }
 }
 
@@ -1629,8 +1670,13 @@ pub(crate) fn build_function(
     declared_constants: &HashMap<String, (Type, NumberLiteral)>,
     globals: &HashMap<SymbolId, (usize, Type)>,
     sources: &BTreeMap<String, String>,
+    source_file_ids: &HashMap<String, SourceFileId>,
     tag_ids: &BTreeMap<String, i32>,
 ) -> Result<Vec<Function>, Diagnostic> {
+    let source_file = source_file_ids
+        .get(&function.file_path)
+        .copied()
+        .expect("lowered function source must be interned");
     let return_type = function.return_type.clone().ok_or_else(|| {
         inference_diagnostic(
             "inference/unsupported",
@@ -1665,6 +1711,16 @@ pub(crate) fn build_function(
         capture_count: 0,
         value_symbols: BTreeMap::new(),
         symbol_id: function.symbol_id,
+        source_map: FunctionSourceMap {
+            definition: function.span.map_or(SourceOrigin::Synthetic, |span| {
+                SourceOrigin::Authored(SourceLocation {
+                    file: source_file,
+                    span,
+                })
+            }),
+            instruction_locations: BTreeMap::new(),
+            terminator_locations: BTreeMap::new(),
+        },
     };
 
     out.blocks.insert(
@@ -1734,6 +1790,9 @@ pub(crate) fn build_function(
         cell_names: captured_symbols,
         sources,
         file_path: function.file_path.clone(),
+        source_file: function.span.map(|_| source_file),
+        source_file_ids,
+        current_span: None,
         tag_ids,
         vararg_value,
         discriminants: HashMap::new(),
@@ -1767,6 +1826,29 @@ pub(crate) fn build_function(
 
 const DEAD_BLOCK: BlockId = BlockId(usize::MAX);
 
+/// Statements do not yet carry their own delimiter-to-delimiter spans, so use
+/// the primary authored expression as their stable line-program location.
+/// Break/continue have no expression span and therefore remain synthetic until
+/// the AST grows statement spans.
+fn primary_stmt_span(stmt: &Stmt) -> Option<waluau_ast::Span> {
+    match stmt {
+        Stmt::Let { value, .. }
+        | Stmt::Assign { value, .. }
+        | Stmt::Return(value)
+        | Stmt::Expr(value) => value.span(),
+        Stmt::IndexAssign { base, .. } | Stmt::FieldAssign { base, .. } => base.span(),
+        Stmt::If { condition, .. } | Stmt::While { condition, .. } => condition.span(),
+        Stmt::IfCast { value, .. } | Stmt::Match { value, .. } => value.span(),
+        Stmt::Repeat { condition, .. } => condition.span(),
+        Stmt::NumericFor { start, .. } => start.span(),
+        Stmt::ForIn { iterator, .. } => iterator.span(),
+        Stmt::ReturnMulti(values)
+        | Stmt::LetMulti { values, .. }
+        | Stmt::AssignMulti { values, .. } => values.first().and_then(Expr::span),
+        Stmt::Break | Stmt::Continue => None,
+    }
+}
+
 struct Builder<'a> {
     function: Function,
     current_block: BlockId,
@@ -1786,6 +1868,11 @@ struct Builder<'a> {
     cell_names: HashSet<SymbolId>,
     sources: &'a BTreeMap<String, String>,
     file_path: String,
+    source_file: Option<SourceFileId>,
+    source_file_ids: &'a HashMap<String, SourceFileId>,
+    /// Current authored expression/statement. `None` means emitted scaffolding
+    /// is compiler-synthesized and must remain unmapped.
+    current_span: Option<waluau_ast::Span>,
     /// Stable discriminant IDs for tagged-union variant names, shared across the
     /// whole module so constructors and checks in different functions agree.
     tag_ids: &'a BTreeMap<String, i32>,
@@ -2312,6 +2399,12 @@ impl Builder<'_> {
         block_mut(&mut self.function, self.current_block)
             .instructions
             .push((value, instruction));
+        if let (Some(span), Some(file)) = (self.current_span, self.source_file) {
+            self.function.source_map.record_instruction(
+                value,
+                SourceLocation { file, span },
+            );
+        }
         value
     }
 
@@ -2403,6 +2496,12 @@ impl Builder<'_> {
         block_mut(&mut self.function, block)
             .instructions
             .push((value, instruction));
+        if let (Some(span), Some(file)) = (self.current_span, self.source_file) {
+            self.function.source_map.record_instruction(
+                value,
+                SourceLocation { file, span },
+            );
+        }
         value
     }
 
@@ -2562,6 +2661,12 @@ impl Builder<'_> {
 
     fn set_terminator(&mut self, block: BlockId, terminator: Terminator) {
         block_mut(&mut self.function, block).terminator = terminator;
+        if let (Some(span), Some(file)) = (self.current_span, self.source_file) {
+            self.function.source_map.record_terminator(
+                block,
+                SourceLocation { file, span },
+            );
+        }
     }
 
     fn lower_break(&mut self, env: &HashMap<SymbolId, ValueId>) -> Result<(), Diagnostic> {
@@ -2628,6 +2733,18 @@ impl Builder<'_> {
     }
 
     fn lower_stmt(
+        &mut self,
+        stmt: &Stmt,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        let previous = std::mem::replace(&mut self.current_span, primary_stmt_span(stmt));
+        let result = self.lower_stmt_inner(stmt, env, types);
+        self.current_span = previous;
+        result
+    }
+
+    fn lower_stmt_inner(
         &mut self,
         stmt: &Stmt,
         env: &mut HashMap<SymbolId, ValueId>,
@@ -4876,6 +4993,19 @@ impl Builder<'_> {
         types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
+        let previous = std::mem::replace(&mut self.current_span, expr.span());
+        let result = self.lower_expr_inner(expr, env, types, expected);
+        self.current_span = previous;
+        result
+    }
+
+    fn lower_expr_inner(
+        &mut self,
+        expr: &Expr,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
         let value = match expr {
             Expr::Number(number, _) => {
                 let ty = match self.infer_expr_type(expr, types, expected)? {
@@ -6366,6 +6496,11 @@ impl Builder<'_> {
         self.lambda_counter += 1;
 
         let capture_count = captures.len();
+        let source_file = self
+            .source_file_ids
+            .get(&function.file_path)
+            .copied()
+            .expect("lifted function source must be interned");
         let mut lifted = Function {
             name: lifted_name.clone(),
             params: Vec::new(),
@@ -6376,6 +6511,16 @@ impl Builder<'_> {
             capture_count,
             value_symbols: BTreeMap::new(),
             symbol_id: function.symbol_id,
+            source_map: FunctionSourceMap {
+                definition: function.span.map_or(SourceOrigin::Synthetic, |span| {
+                    SourceOrigin::Authored(SourceLocation {
+                        file: source_file,
+                        span,
+                    })
+                }),
+                instruction_locations: BTreeMap::new(),
+                terminator_locations: BTreeMap::new(),
+            },
         };
         lifted.blocks.insert(
             lifted.entry,
@@ -6429,6 +6574,7 @@ impl Builder<'_> {
             return_type: Some(return_ty.clone()),
             body: function.body.clone(),
             file_path: function.file_path.clone(),
+            span: function.span,
         });
 
         let captures_count = captures.len();
@@ -6481,6 +6627,9 @@ impl Builder<'_> {
             cell_names: capture_param_symbols,
             sources: self.sources,
             file_path: function.file_path.clone(),
+            source_file: function.span.map(|_| source_file),
+            source_file_ids: self.source_file_ids,
+            current_span: None,
             tag_ids: self.tag_ids,
             vararg_value: None,
             discriminants: HashMap::new(),
