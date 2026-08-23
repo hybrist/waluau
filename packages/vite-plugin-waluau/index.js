@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, rename } from 'node:fs/promises';
+import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ import { parseStories } from './stories.js';
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(packageRoot, '../..');
 const shaderModulePrefix = 'virtual:waluau-shader-sources:';
+const developmentSourcePath = /^__waluau\/sources\/(?:files|packages|virtual)\/s-(?:[A-Za-z0-9._-]|~[0-9A-F]{2})*(?:\/s-(?:[A-Za-z0-9._-]|~[0-9A-F]{2})*)*$/;
 
 function run(command, args, cwd) {
   return new Promise((resolveRun, rejectRun) => {
@@ -355,6 +356,68 @@ export function waluau(options = {}) {
     };
   }
 
+  function commonSourceDirectory(files) {
+    const sourceFiles = Array.from(files);
+    if (sourceFiles.length === 0) return null;
+    let common = dirname(sourceFiles[0]);
+    for (const file of sourceFiles.slice(1)) {
+      const directory = dirname(file);
+      while (!isInside(common, directory)) {
+        const parent = dirname(common);
+        if (parent === common) return null;
+        common = parent;
+      }
+    }
+    return common;
+  }
+
+  async function materializeDwarfSources(outDir, developmentSources, involvedFiles) {
+    if (Array.isArray(developmentSources)) {
+      const sourceRoot = resolve(outDir, '__waluau', 'sources');
+      const snapshots = developmentSources.map(({ path, source }) => {
+        if (typeof path !== 'string' || typeof source !== 'string') {
+          throw new Error('developmentSources entries require string path and source fields');
+        }
+        // Only the compiler's canonical, unreserved-only encoding is accepted.
+        // Vite leaves these paths byte-for-byte unchanged at its filesystem
+        // boundary, so distinct authored filenames cannot alias one another.
+        if (!developmentSourcePath.test(path)) {
+          throw new Error(`invalid development source path: ${path}`);
+        }
+        const destination = resolve(outDir, path);
+        if (destination === sourceRoot || !isInside(sourceRoot, destination)) {
+          throw new Error(`development source path escapes its reserved directory: ${path}`);
+        }
+        return { destination, path, source };
+      });
+      const destinations = new Set();
+      for (const { destination, path } of snapshots) {
+        if (destinations.has(destination)) {
+          throw new Error(`duplicate development source destination: ${path}`);
+        }
+        destinations.add(destination);
+      }
+      await Promise.all(snapshots.map(async ({ destination, source }) => {
+        await mkdir(dirname(destination), { recursive: true });
+        await writeFile(destination, source);
+      }));
+      return;
+    }
+    // A file can disappear between a successful compile and this snapshot
+    // from an older/custom compiler's build report. This fallback preserves
+    // filesystem source debugging, but only the developmentSources contract
+    // can provide embedded package inputs and in-memory overlays exactly.
+    const sourceFiles = Array.from(involvedFiles).filter((file) => existsSync(file));
+    const sourceRoot = commonSourceDirectory(sourceFiles);
+    if (sourceRoot == null) return;
+    await Promise.all(sourceFiles.map(async (file) => {
+      const destination = resolve(outDir, relative(sourceRoot, file));
+      if (!isInside(outDir, destination)) return;
+      await mkdir(dirname(destination), { recursive: true });
+      await copyFile(file, destination);
+    }));
+  }
+
   function resolvedShaderSources() {
     return configuredShaderSources.map(({ name, path }) => {
       const file = resolve(appRoot, path);
@@ -498,6 +561,7 @@ export function waluau(options = {}) {
         inFlight: null,
         queued: false,
         involvedFiles: null,
+        developmentSources: null,
         version: 0,
       };
       compileStates.set(entryPath, state);
@@ -524,8 +588,6 @@ export function waluau(options = {}) {
           // module); the dev-server/HMR path always serves the compiler's
           // direct output.
           if (productionBuild && optimize) await optimizeWasm(artifacts.wasm);
-          state.version += 1;
-          state.fresh = true;
         } finally {
           // The report is written even for failed builds, so watch mode can
           // still track every file in the entry's require graph.
@@ -533,7 +595,25 @@ export function waluau(options = {}) {
           if (Array.isArray(report?.involvedFiles)) {
             state.involvedFiles = new Set(report.involvedFiles.map((file) => resolve(file)));
           }
+          state.developmentSources = Array.isArray(report?.developmentSources)
+            ? report.developmentSources
+            : null;
         }
+        // DWARF paths are relative to the common authored source directory and
+        // Chrome resolves them beside the Wasm URL. Snapshot the successful
+        // dev build's source graph there so Vite can serve those exact URLs.
+        if (
+          !productionBuild
+          && (state.developmentSources != null || state.involvedFiles != null)
+        ) {
+          await materializeDwarfSources(
+            artifacts.outDir,
+            state.developmentSources,
+            state.involvedFiles,
+          );
+        }
+        state.version += 1;
+        state.fresh = true;
       } while (state.queued);
     })().finally(() => {
       state.inFlight = null;
@@ -596,6 +676,11 @@ export function waluau(options = {}) {
   return {
     name: 'waluau-game',
     enforce: 'pre',
+    config(config) {
+      const root = resolve(config.root ?? process.cwd());
+      const cacheRoot = resolve(root, '.waluau').split(sep).join('/');
+      return { server: { watch: { ignored: [`${cacheRoot}/**`] } } };
+    },
     configResolved(config) {
       resolvePaths(config.root);
       // `vite build` and `build-storybook` resolve with command 'build'; the
