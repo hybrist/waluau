@@ -57,9 +57,10 @@ createServer((request, response) => {
     'cross-origin-opener-policy': 'same-origin',
   });
   createReadStream(path).pipe(response);
-}).listen(port, '127.0.0.1', () => {
-  process.stdout.write(`runtime: http://127.0.0.1:${port}/fixture/probe.html\n`);
+}).listen(port, '127.0.0.1', function () {
+  const actualPort = this.address().port;
+  process.stdout.write(`runtime: http://127.0.0.1:${actualPort}/fixture/probe.html\n`);
   if (extensionDir) {
-    process.stdout.write(`extension parser: http://127.0.0.1:${port}/extension/extension-harness.html\n`);
+    process.stdout.write(`extension parser: http://127.0.0.1:${actualPort}/extension/extension-harness.html\n`);
   }
 });

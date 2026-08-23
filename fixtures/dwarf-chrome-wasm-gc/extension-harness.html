@@ -5,35 +5,49 @@
 <script type="module">
   import { WorkerPlugin } from '/extension/DevToolsPluginHost.bundle.js';
 
-  const moduleName = new URLSearchParams(location.search).get('module') ?? 'dwarf_chrome_probe.wasm';
+  const parameters = new URLSearchParams(location.search);
+  const moduleName = parameters.get('module') ?? 'dwarf_chrome_probe.wasm';
+  const expectedSourceNames = parameters.getAll('source');
+  if (expectedSourceNames.length === 0) expectedSourceNames.push('dwarf_chrome_probe.walu');
   const moduleUrl = new URL(`/fixture/${moduleName}`, location.href).href;
   const code = await fetch(moduleUrl).then(response => response.arrayBuffer());
   const plugin = await WorkerPlugin.create();
   const rawModuleId = 'waluau-dwarf-chrome-probe';
   const sources = await plugin.addRawModule(rawModuleId, '', { url: moduleUrl, code });
-  const sourceFileURL = sources.find(url => url.endsWith('/dwarf_chrome_probe.walu'));
-  if (!sourceFileURL) throw new Error(`authored Waluau source not found in ${sources}`);
+  const sourceResults = {};
+  for (const sourceName of expectedSourceNames) {
+    const sourceFileURL = sources.find(url => url.endsWith(`/${sourceName}`));
+    if (!sourceFileURL) throw new Error(`authored Waluau source ${sourceName} not found in ${sources}`);
 
-  const mappedLines = await plugin.getMappedLines(rawModuleId, sourceFileURL);
-  const rawRanges = {};
-  for (const lineNumber of mappedLines) {
-    const ranges = [];
-    for (let columnNumber = 0; columnNumber <= 80; columnNumber += 1) {
-      const atColumn = await plugin.sourceLocationToRawLocation({
-        rawModuleId,
-        sourceFileURL,
-        lineNumber,
-        columnNumber,
-      });
-      for (const range of atColumn) {
-        if (!ranges.some(item => item.startOffset === range.startOffset && item.endOffset === range.endOffset)) {
-          ranges.push({ columnNumber, ...range });
+    const mappedLines = await plugin.getMappedLines(rawModuleId, sourceFileURL);
+    const rawRanges = {};
+    for (const lineNumber of mappedLines) {
+      const ranges = [];
+      for (let columnNumber = 0; columnNumber <= 80; columnNumber += 1) {
+        const atColumn = await plugin.sourceLocationToRawLocation({
+          rawModuleId,
+          sourceFileURL,
+          lineNumber,
+          columnNumber,
+        });
+        for (const range of atColumn) {
+          if (!ranges.some(item => item.startOffset === range.startOffset && item.endOffset === range.endOffset)) {
+            ranges.push({ columnNumber, ...range });
+          }
         }
       }
+      rawRanges[lineNumber + 1] = ranges;
     }
-    rawRanges[lineNumber + 1] = ranges;
+    sourceResults[sourceName] = {
+      sourceFileURL,
+      mappedLinesOneBased: mappedLines.map(line => line + 1),
+      rawRanges,
+    };
   }
-  const firstRange = Object.values(rawRanges).flat()[0];
+
+  const firstRange = Object.values(sourceResults)[0]
+    ? Object.values(Object.values(sourceResults)[0].rawRanges).flat()[0]
+    : undefined;
   const firstRawMapping = firstRange
     ? await plugin.rawLocationToSourceLocation({
         rawModuleId,
@@ -48,23 +62,18 @@
         inlineFrameIndex: 0,
       })
     : null;
-  // The checked-in probe's synthetic GC helper begins at Code-section-relative
-  // offset 162. It intentionally has no DWARF DIE or line row.
-  const syntheticRawLocation = {
-    rawModuleId,
-    codeOffset: 162,
-    inlineFrameIndex: 0,
-  };
+  const syntheticOffset = Number(parameters.get('syntheticOffset') ?? 162);
+  const syntheticRawLocation = { rawModuleId, codeOffset: syntheticOffset, inlineFrameIndex: 0 };
   const syntheticSourceMapping = await plugin.rawLocationToSourceLocation(syntheticRawLocation);
   const syntheticFunction = await plugin.getFunctionInfo(syntheticRawLocation);
 
   const result = {
     extensionWorkerLoaded: true,
     sources,
-    mappedLinesOneBased: mappedLines.map(line => line + 1),
-    rawRanges,
+    sourceResults,
     firstRawMapping,
     firstFunction,
+    syntheticOffset,
     syntheticSourceMapping,
     syntheticFunction,
   };

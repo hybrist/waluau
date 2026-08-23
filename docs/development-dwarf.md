@@ -10,7 +10,7 @@ restricted to a source language. Google's supported extension is branded for
 C/C++, so line mapping works for Waluau while rich Waluau value semantics do
 not come for free.
 
-The reproducible probe is in
+The reproducible compatibility and compiler-output probes are in
 [`fixtures/dwarf-chrome-wasm-gc`](../fixtures/dwarf-chrome-wasm-gc/README.md).
 
 ## Enabling development mappings
@@ -33,6 +33,16 @@ The option is compiler configuration, not a Rust build profile. It emits
 `.debug_str` unnecessary. With the option omitted, no `.debug_*` sections are
 emitted and the output follows the unchanged default encoding path. The Wasm
 `name` section is present in both modes.
+
+This gate is independent of the Rust profile used to build the compiler:
+neither a debug nor a release `waluau` executable emits DWARF unless the caller
+sets `development_dwarf` or passes `--development-dwarf`. Compiler tests compare
+the pre-option API with explicit default options byte for byte, and the browser
+verifier builds the same two-file program in both modes before launching
+Chrome. On 2026-08-22 that small fixture was 876 bytes by default and 1,450
+bytes with DWARF, an opt-in increase of 574 bytes (65.5%). The percentage is
+workload-dependent; run the verifier to measure current output rather than
+treating it as an artifact-size budget.
 
 The compiler derives browser-resolvable, slash-separated paths relative to the
 common authored source directory and records `.` as `DW_AT_comp_dir`. It never
@@ -98,9 +108,11 @@ type formatting are not Waluau semantics.
 
 Store URL-resolvable, slash-separated relative paths and use `.` as the compile
 directory. The probe's `dwarf_chrome_probe.walu` path resolved relative to the
-Wasm URL and Chrome fetched the authored file over HTTP. Absolute build-machine
-paths require a user-configured path substitution in the extension and should
-not be the default. The development server must serve every referenced source.
+Wasm URL and Chrome fetched the authored file over HTTP. The extension worker
+reports that HTTP URL, while the full DevTools Sources workspace can present it
+as a `wasm://wasm/<relative-path>` source. Absolute build-machine paths require
+a user-configured path substitution in the extension and should not be the
+default. The development server must serve every referenced source.
 
 ### Authored and synthetic functions
 
@@ -124,7 +136,7 @@ the extension when validating the production emitter.
 | Surface | Result | Observation |
 | --- | --- | --- |
 | Wasm GC validation and execution | Pass in stable Chrome 151 | The module validated; `struct.new`/`struct.get` returned 42. |
-| Authored source discovery | Pass in stable extension worker; pass in full Chrome for Testing UI | The extension returned and the Sources workspace registered the HTTP `.walu` URL. |
+| Authored source discovery | Pass in stable extension worker; pass in full Chrome for Testing UI | The worker returned the HTTP `.walu` URL; the Sources workspace registered the authored relative path. |
 | Line breakpoint binding | Pass in full UI | A line-4 gutter-equivalent breakpoint normalized to column 14 and bound to the Wasm module. |
 | Source stepping | Pass in full UI | Step-over moved from Waluau line 4 to line 5. |
 | Paused call-frame source mapping | Pass in full UI | `inner` mapped to line 4 and its caller `run` mapped to line 13; both pointed at the authored `.walu` URL. |
@@ -137,7 +149,34 @@ the extension when validating the production emitter.
 
 The stack surfaces are intentionally separate: DWARF improves the debugger's
 paused Call Stack, breakpoints, and stepping, but it does not mutate JavaScript
-`Error.stack` strings or Console stack serialization.
+`Error.stack` strings or Console stack serialization. `console.error`,
+`Error.stack`, and uncaught Console-rendered Wasm stack strings therefore keep
+name-section function names plus Wasm offsets when Chrome supplies a stack
+string. Chrome for Testing 148 returned `null`/empty stacks for the compiler's
+tagged `WebAssembly.Exception`; that absence is also not repaired by DWARF.
+
+### Production-emitter browser verification
+
+The opt-in verifier documented in the fixture README was run on 2026-08-22 with
+Chrome for Testing 148.0.7778.96 and official extension 0.2.5854.1 against
+fresh `waluau --development-dwarf` output. It automated source discovery and
+both mapping directions for two linked authored files, breakpoint binding in a
+lifted helper, mapped paused helper and caller frames, stepping to the next
+authored line, and mapped exception-path frames entered from a browser
+microtask. It also confirmed that the lifted-call wrapper and an exported
+compiler-generated record helper remain unmapped.
+
+The full UI showed the lifted helper's Wasm name
+`$__waluau_top_level_init$lambda0`, its wrapper's generated name, and `$run`.
+This is expected: with `DW_LANG_lo_user`, the official C/C++ extension maps
+source locations but returns no DWARF function frame, so removing the Wasm
+`name` section would regress call-stack usefulness. Wasm GC record locals in
+the helper still cannot be serialized or expanded by the extension bridge.
+
+The verifier uses Chrome for Testing because it honors temporary unpacked
+extensions and isolated profiles. A stable-Chrome UI check remains the short,
+explicit manual procedure in the fixture README; do not point automation at a
+personal profile or claim that check without running it.
 
 ## Primary references
 
