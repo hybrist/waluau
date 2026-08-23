@@ -310,6 +310,7 @@ impl Parser {
             return_type: function_expr.return_type,
             body: function_expr.body,
             file_path: self.file_path.clone(),
+            span: function_expr.span,
         })
     }
 

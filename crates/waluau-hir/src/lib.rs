@@ -577,6 +577,7 @@ fn top_level_functions_for_check(program: &Program, resolved_body: &[Stmt]) -> V
             return_type: Some(Type::Unit),
             body: resolved_body[start..end].to_vec(),
             file_path: file_path.clone(),
+            span: None,
         });
         start = end;
     }
@@ -2626,6 +2627,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                     return_type: function.return_type.clone(),
                     body: function.body.clone(),
                     file_path: function.file_path.clone(),
+                    span: function.span,
                 });
             }
             FunctionName::Method { table, method } => {
@@ -4148,6 +4150,7 @@ fn type_check_and_infer_collect_inner(
                 body
             },
             file_path: typed.entry_file_path.clone(),
+            span: None,
         });
     }
 

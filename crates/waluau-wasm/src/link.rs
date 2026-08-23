@@ -864,6 +864,7 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
         return_type: function.return_type.clone(),
         body: function.body.clone(),
         file_path: function.file_path.clone(),
+        span: function.span,
     }
 }
 

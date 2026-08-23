@@ -174,6 +174,8 @@ pub struct Function {
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub file_path: String,
+    /// Full authored declaration span. Synthetic functions have no span.
+    pub span: Option<Span>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

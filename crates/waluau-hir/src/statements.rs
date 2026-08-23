@@ -1671,6 +1671,7 @@ fn check_stmt_inner(
                             return_type: function.return_type.clone(),
                             body: function.body.clone(),
                             file_path: function.file_path.clone(),
+                            span: function.span,
                         };
                         check_function(&synthetic, fn_signatures, active_type_params)?;
                         seal_record_locals_in_expr(value, vars);
