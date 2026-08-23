@@ -29,7 +29,7 @@ local input_module = require("./input")
 -- everything else is for a story that is not a still life. `load` runs once
 -- each time the story is mounted, so a scene that builds GPU resources or
 -- seeds a simulation starts over on every visit.
-type Scene = {
+export type Scene = {
     draw: (graphics_module.Graphics, f64) -> unit,
     load: (() -> unit)?,
     update: ((f64, input_module.Input) -> unit)?,
