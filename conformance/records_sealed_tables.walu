@@ -84,3 +84,11 @@ assert(#state.items + 1 == 3)
 
 local nested: { inner: { items: {string} } } = { inner = { items = {"a", "b"} } }
 assert(#nested.inner.items == 2)
+
+-- Record types accept a trailing comma after the last field.
+type Vec2d = {
+    x: i32,
+    y: i32,
+}
+local trailing: Vec2d = { x = 4, y = 5 }
+assert(trailing.x + trailing.y == 9)
