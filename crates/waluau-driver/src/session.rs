@@ -578,6 +578,12 @@ mod tests {
             incremental.development_dwarf, cold.development_dwarf,
             "external debug metadata must use final cached offsets"
         );
+        assert_eq!(
+            incremental.development_sources, cold.development_sources,
+            "incremental snapshots must contain the compiled overlay text"
+        );
+        assert_eq!(incremental.development_sources.len(), 1);
+        assert_eq!(incremental.development_sources[0].source, changed_source);
 
         let production = session
             .build_root_with_options(&main, "program.wasm", crate::CompileOptions::default())
@@ -590,6 +596,7 @@ mod tests {
                 .any(|window| window == b".debug_info")
         );
         assert!(production.development_dwarf.is_none());
+        assert!(production.development_sources.is_empty());
         assert!(
             !session.incremental_stats(&main).2,
             "debug configuration must participate in cache identity"

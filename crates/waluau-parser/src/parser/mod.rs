@@ -643,14 +643,16 @@ impl Parser {
         }
         self.expect_simple(TokenKind::LBrace, "expected '{' after enum name")?;
         let mut variants = Vec::new();
+        let mut variant_spans = Vec::new();
         while !self.check_simple(&TokenKind::RBrace) {
-            let variant = self.expect_identifier()?;
+            let (variant, variant_span) = self.expect_identifier_spanned()?;
             if variants.contains(&variant) {
                 return Err(Diagnostic::new(format!(
                     "duplicate enum variant '{name}.{variant}'"
                 )));
             }
             variants.push(variant);
+            variant_spans.push(variant_span);
             if self.check_simple(&TokenKind::Comma) {
                 self.advance();
             } else if !self.check_simple(&TokenKind::RBrace) {
@@ -673,6 +675,19 @@ impl Parser {
             0,
         );
         self.definitions[index].detail = Some(format!("enum {name} {{ {} }}", variants.join(", ")));
+        for (variant, variant_span) in variants.iter().zip(&variant_spans) {
+            let index = self.record_definition(
+                format!("{name}.{variant}"),
+                *variant_span,
+                DefinitionKind::DeclaredConstant,
+                Some(Type::Named {
+                    name: name.clone(),
+                    type_args: Vec::new(),
+                }),
+                0,
+            );
+            self.definitions[index].detail = Some(format!("{name}.{variant}: {name}"));
+        }
         Ok(TypeDeclaration {
             source_name: name.clone(),
             name,

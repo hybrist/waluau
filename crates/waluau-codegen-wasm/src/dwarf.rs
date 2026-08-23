@@ -6,6 +6,8 @@ use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Module, SourceFile, SourceLocation, SourceOrigin};
 use wasm_encoder::{CustomSection, Encode};
 
+use crate::DevelopmentSource;
+
 const DW_TAG_COMPILE_UNIT: u64 = 0x11;
 const DW_TAG_SUBPROGRAM: u64 = 0x2e;
 const DW_CHILDREN_NO: u8 = 0;
@@ -405,12 +407,52 @@ fn browser_source_paths(module: &Module) -> Vec<String> {
         .source_files
         .iter()
         .map(|source| {
+            if let Some(package_path) = source.path.strip_prefix("package:") {
+                return namespaced_browser_path("packages", package_path);
+            }
             let path = Path::new(&source.path);
-            let relative = common_dir
-                .as_deref()
-                .and_then(|prefix| path.strip_prefix(prefix).ok())
-                .unwrap_or(path);
-            slash_path(relative)
+            if path.is_absolute() {
+                let relative = common_dir
+                    .as_deref()
+                    .and_then(|prefix| path.strip_prefix(prefix).ok())
+                    .unwrap_or(path);
+                namespaced_browser_path("files", &slash_path(relative))
+            } else {
+                namespaced_browser_path("virtual", &slash_path(path))
+            }
+        })
+        .collect()
+}
+
+fn namespaced_browser_path(namespace: &str, slash_separated: &str) -> String {
+    let segments = slash_separated
+        .split('/')
+        .map(encode_browser_segment)
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("__waluau/sources/{namespace}/{segments}")
+}
+
+fn encode_browser_segment(segment: &str) -> String {
+    let mut encoded = String::from("s-");
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            write!(&mut encoded, "~{byte:02X}").expect("writing to a String cannot fail");
+        }
+    }
+    encoded
+}
+
+pub(crate) fn development_sources(module: &Module) -> Vec<DevelopmentSource> {
+    browser_source_paths(module)
+        .into_iter()
+        .zip(&module.source_files)
+        .map(|(path, source)| DevelopmentSource {
+            path,
+            source: source.source.clone(),
         })
         .collect()
 }

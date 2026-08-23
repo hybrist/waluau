@@ -600,6 +600,40 @@ fn completion_after_dot_lists_namespace_and_module_members() {
 }
 
 #[test]
+fn completion_after_dot_lists_enum_variants() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let text = "enum SpellType {\n    Fireball,\n    Freeze,\n    RaiseCard,\n    Clone,\n}\nlocal t = SpellType.\n";
+    std::fs::write(&path, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, text);
+
+    let (line, character) = position_of(text, "SpellType.");
+    let result = request(
+        &mut server,
+        "textDocument/completion",
+        &path,
+        line,
+        character + "SpellType.".len() as u32,
+    );
+    let items = result.as_array().expect("completion items");
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect();
+    assert_eq!(labels, vec!["Clone", "Fireball", "Freeze", "RaiseCard"]);
+    let fireball = items
+        .iter()
+        .find(|item| item["label"] == "Fireball")
+        .expect("Fireball item");
+    assert_eq!(
+        fireball["detail"].as_str(),
+        Some("SpellType.Fireball: SpellType")
+    );
+}
+
+#[test]
 fn completion_after_colon_offers_type_names_in_annotations() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");

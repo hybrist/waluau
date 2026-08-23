@@ -1478,6 +1478,33 @@ fn parses_record_type_annotations_and_function_signature_types() {
 }
 
 #[test]
+fn parses_record_type_with_trailing_comma() {
+    let source = r#"
+        type Vec2d = {
+            x: number,
+            y: number,
+        }
+
+        function entry(): number
+            local p: Vec2d = { x = 1, y = 2 }
+            return p.x + p.y
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.type_declarations[0].ty,
+        Type::Record(fields) if fields.len() == 2
+    ));
+}
+
+#[test]
+fn rejects_record_type_with_double_trailing_comma() {
+    let source = "type T = { x: number,, }\n";
+    assert!(parse(source).is_err());
+}
+
+#[test]
 fn parses_tagged_union_type_annotations_and_is_checks() {
     let source = r#"
         type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)

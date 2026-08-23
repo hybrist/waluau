@@ -136,6 +136,7 @@ pub fn compile_file_with_options(
 pub struct CompileArtifacts {
     pub wasm: Vec<u8>,
     pub development_dwarf: Option<Vec<u8>>,
+    pub development_sources: Vec<waluau_codegen_wasm::DevelopmentSource>,
     pub js: String,
     pub required_imports: Vec<waluau_codegen_wasm::RequiredImport>,
     pub bytes_constants: Vec<Vec<u8>>,
@@ -302,6 +303,7 @@ fn compile_program_with_cache(
     Ok(CompileArtifacts {
         wasm: emitted.wasm,
         development_dwarf: emitted.development_dwarf,
+        development_sources: emitted.development_sources,
         js,
         required_imports: emitted.required_imports,
         bytes_constants: emitted.bytes_constants,
@@ -524,6 +526,18 @@ fn write_build_report(path: &Path, outcome: &session::BuildOutcome) -> Result<()
             .iter()
             .map(|file| file.display().to_string())
             .collect::<Vec<_>>(),
+        "developmentSources": outcome
+            .artifacts
+            .as_ref()
+            .map(|artifacts| artifacts
+                .development_sources
+                .iter()
+                .map(|source| serde_json::json!({
+                    "path": source.path,
+                    "source": source.source,
+                }))
+                .collect::<Vec<_>>())
+            .unwrap_or_default(),
         "diagnostics": diagnostics,
     });
     let serialized = serde_json::to_string_pretty(&report)
@@ -1114,6 +1128,7 @@ mod tests {
         let default_output = tempdir.path().join("default.wasm");
         let debug_output = tempdir.path().join("debug.wasm");
         let debug_companion = tempdir.path().join("debug.debug.wasm");
+        let debug_report = tempdir.path().join("debug-report.json");
         fs::write(
             &lib_path,
             "local function increment(value: i32): i32\n    return value + 1\nend\nreturn increment\n",
@@ -1136,6 +1151,8 @@ mod tests {
             os(&debug_output),
             OsString::from("--emit-js"),
             OsString::from("--development-dwarf"),
+            OsString::from("--report"),
+            os(&debug_report),
         ])
         .expect("development CLI build should succeed");
         let runtime_wasm = fs::read(&debug_output).expect("runtime output");
@@ -1160,8 +1177,11 @@ mod tests {
         let line = custom_section(&debug_wasm, ".debug_line").expect(".debug_line");
         assert!(custom_section(&debug_wasm, ".debug_abbrev").is_some());
         assert!(contains_cstring(&info, "entry"));
-        assert!(contains_cstring(&line, "entry.walu"));
-        assert!(contains_cstring(&line, "lib.walu"));
+        assert!(contains_cstring(
+            &line,
+            "__waluau/sources/files/s-entry.walu"
+        ));
+        assert!(contains_cstring(&line, "__waluau/sources/files/s-lib.walu"));
         assert_eq!(
             dwarf_line_row_files(&line),
             std::collections::BTreeSet::from([1, 2]),
@@ -1172,12 +1192,99 @@ mod tests {
             "debug paths must not contain the absolute build directory"
         );
 
-        super::run_with_args([os(&entry_path), OsString::from("-o"), os(&debug_output)])
-            .expect("production rebuild should succeed");
+        let report: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&debug_report).expect("development build report"),
+        )
+        .expect("development build report should be valid JSON");
+        let development_sources = report["developmentSources"]
+            .as_array()
+            .expect("developmentSources array");
+        assert_eq!(development_sources.len(), 2, "{development_sources:?}");
+        assert!(development_sources.iter().any(|source| {
+            source["path"] == "__waluau/sources/files/s-entry.walu"
+                && source["source"].as_str()
+                    == Some(
+                        "local increment = require(\"./lib\")\nfunction entry(): i32\n    local function twice(value: i32): i32\n        return value * 2\n    end\n    return twice(increment(20))\nend\n",
+                    )
+        }));
+        assert!(
+            development_sources
+                .iter()
+                .any(|source| source["path"] == "__waluau/sources/files/s-lib.walu")
+        );
+
+        super::run_with_args([
+            os(&entry_path),
+            OsString::from("-o"),
+            os(&debug_output),
+            OsString::from("--report"),
+            os(&debug_report),
+        ])
+        .expect("production rebuild should succeed");
         assert!(
             !debug_companion.exists(),
             "production rebuild must remove a stale DWARF companion"
         );
+        let report: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&debug_report).expect("production build report"),
+        )
+        .expect("production build report should be valid JSON");
+        assert_eq!(report["developmentSources"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn cli_development_report_carries_browser_paths_for_embedded_engine_sources() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let entry_path = tempdir.path().join("entry.walu");
+        let output = tempdir.path().join("game.wasm");
+        let report_path = tempdir.path().join("report.json");
+        fs::write(
+            &entry_path,
+            "local graphics = require(\"waluau:engine/graphics\")\nfunction entry() end\n",
+        )
+        .expect("entry fixture should write");
+
+        super::run_with_args([
+            os(&entry_path),
+            OsString::from("-o"),
+            os(&output),
+            OsString::from("--development-dwarf"),
+            OsString::from("--report"),
+            os(&report_path),
+        ])
+        .expect("engine development build should succeed");
+
+        let report: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&report_path).expect("development build report"),
+        )
+        .expect("development build report should be valid JSON");
+        let development_sources = report["developmentSources"]
+            .as_array()
+            .expect("developmentSources array");
+        let graphics = development_sources
+            .iter()
+            .find(|source| {
+                source["path"] == "__waluau/sources/packages/s-waluau-engine/s-v1/s-graphics.walu"
+            })
+            .expect("embedded graphics source snapshot");
+        assert_eq!(
+            graphics["source"],
+            include_str!("../../../engine/graphics.walu")
+        );
+        assert!(development_sources.iter().all(|source| {
+            !source["path"]
+                .as_str()
+                .expect("source path")
+                .contains("package:")
+        }));
+
+        let debug_wasm = fs::read(output.with_extension("debug.wasm")).expect("DWARF companion");
+        let line = custom_section(&debug_wasm, ".debug_line").expect(".debug_line");
+        assert!(contains_cstring(
+            &line,
+            "__waluau/sources/packages/s-waluau-engine/s-v1/s-graphics.walu"
+        ));
+        assert!(!contains_cstring(&line, "package:waluau-engine"));
     }
 
     #[test]
