@@ -888,9 +888,12 @@ function draw_hud(
     band.paint(surface, header_band(entity.metrics_of(surface), band, viewport))
 end
 
-function draw_footer(surface: entity.Surface, viewport: layout.State, state: game.View): unit
+function draw_footer(
+    surface: entity.Surface, viewport: layout.State,
+    state: game.View, run: run_module.View
+): unit
     local metrics: entity.Metrics = entity.metrics_of(surface)
-    local strip: entity.Node = footer.node(state)
+    local strip: entity.Node = footer.node(state, run)
     local bounds: box.Rect = footer_band(metrics, strip, viewport)
     strip.paint(surface, bounds)
 end
@@ -1120,7 +1123,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                 fan, i, fan_parts[i], hand_count)
         end
     end
-    draw_footer(surface, viewport, state)
+    draw_footer(surface, viewport, state, frame.run)
 
     -- Once complete, the entire winning hand becomes a foreground layer:
     -- it eases toward the viewer around its shared centre, rises slightly, and
@@ -1279,8 +1282,7 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
             and #interaction.swap_hand <= state.player_points
             and (#interaction.swap_hand == 0 or #interaction.swap_hand >= minimum_swap)
         draw_actions(surface, {
-            action_bar.action("MAKE SWAP", balanced),
-            action_bar.action("SKIP", true),
+            action_bar.action("CONFIRM", balanced),
         }, band)
         return
     end
@@ -1342,7 +1344,7 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
 
     draw_action_band(surface, frame)
     draw_player_fan(surface, frame)
-    draw_footer(surface, viewport, state)
+    draw_footer(surface, viewport, state, frame.run)
     draw_anims(surface, anims, anim_clock, frame.sheet)
     draw_spell_launch(
         surface, viewport, frame.spell.kind, frame.spell.clock,

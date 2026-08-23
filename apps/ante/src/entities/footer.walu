@@ -1,9 +1,11 @@
--- The strip along the bottom of the duel: the way back to the menu stays
--- centred while the player's four ready-ability sockets occupy the lower
--- right. The diamond owns spell identity, affordability, and key hints; this
--- strip only places it against the same board edge on every viewport.
+-- The strip along the bottom of the duel: the player's health and gold occupy
+-- the lower left, the way back to the menu stays centred, and the player's four
+-- ready-ability sockets occupy the lower right. The diamond owns spell identity,
+-- affordability, and key hints; this strip only places it against the same board
+-- edge on every viewport.
 
 local game = require("../game")
+local run_module = require("../run")
 local box = require("../box_layout")
 local entity = require("../entity")
 local label = require("./label")
@@ -14,6 +16,8 @@ const CAPTION_PAD_X: f64 = 8.0
 const CAPTION_PAD_Y: f64 = 7.0
 
 const QUIET_INK: string = "#8a8a92"
+const GOLD_INK: string = "#67e8f9"
+const HEART_INK: string = "#fb7185"
 
 -- Keep the keyboard reminder off the canvas edge and carry its baseline down
 -- with the padding so it remains stable inside the taller diamond band.
@@ -25,17 +29,32 @@ function menu(): entity.Node
     return padded_caption(label.centered("M MENU", HINT_SIZE, QUIET_INK))
 end
 
-function node(state: game.View): entity.Node
+function stats(state: game.View, run: run_module.View): entity.Node
+    return padded_caption(entity.down({ gap = 4.0, align = "start" }, {
+        label.left(
+            "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
+            HINT_SIZE, HEART_INK),
+        label.left(
+            "GOLD " .. tostring(state.player_points),
+            HINT_SIZE, GOLD_INK),
+    }))
+end
+
+function node(state: game.View, run: run_module.View): entity.Node
     return entity.layer({
         entity.across(
-            { justify = "end", align = "end" },
-            { ability_diamond.node(state) }),
+            { justify = "start", align = "end" },
+            { stats(state, run) }),
         entity.across(
             { justify = "center", align = "end" },
             { menu() }),
+        entity.across(
+            { justify = "end", align = "end" },
+            { ability_diamond.node(state) }),
     })
 end
 
 return {
     node = node,
 }
+

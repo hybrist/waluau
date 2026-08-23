@@ -1,24 +1,19 @@
 -- The sealed draw pile every dealt card and table_card flies out of. The stack
--- silhouette thins as the run burns down; the label tracks the exact count.
+-- silhouette thins as the run burns down.
 --
--- Its box is the top card plus the caption underneath, because that caption is
--- part of what the deck is: a board tight enough to clip it has not left room
--- for the deck at all. The two shadow cards behind the stack deliberately hang
--- past the box — they are depth, not content, and giving them width would
+-- Its box is the top card. The two shadow cards behind the stack deliberately
+-- hang past the box — they are depth, not content, and giving them width would
 -- shove the whole board over by six units for a thick deck and not for a thin
 -- one.
 
 local box = require("../box_layout")
 local entity = require("../entity")
-local ink = require("../ink")
 local card = require("./card")
 
--- Distance from the top card's own top edge down to the caption's baseline.
-const CAPTION_DROP: f64 = 26.0
-const CAPTION_SIZE: f64 = 10.0
+const CAPTION_DROP: f64 = 0.0
 
 function intrinsic(): box.Intrinsic
-    return box.fixed(card.width, card.height + CAPTION_DROP)
+    return box.fixed(card.width, card.height)
 end
 
 function draw_at(surface: entity.Surface, count: i32, x: f64, y: f64): unit
@@ -31,10 +26,6 @@ function draw_at(surface: entity.Surface, count: i32, x: f64, y: f64): unit
         card.fill_silhouette(graphics, x + 3.0, y + 3.0, "#15151c")
     end
     card.draw_back(surface, x, y, false)
-    ink.text_centered(
-        graphics, tostring(count) .. " SEALED",
-        x + card.width * 0.5, y + card.height + CAPTION_DROP,
-        CAPTION_SIZE, "#8a8a92")
 end
 
 function node(count: i32): entity.Node
@@ -52,3 +43,4 @@ return {
     draw_at = draw_at,
     caption_drop = CAPTION_DROP,
 }
+
