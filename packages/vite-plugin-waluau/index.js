@@ -366,12 +366,25 @@ export function waluau(options = {}) {
     return resolvedShaderSources().some((source) => source.file === file);
   }
 
+  // Production game modules only need the runtime entry points; the broad
+  // per-function export surface exists for the playground, and for test and
+  // story modules whose functions are reached from the host. Tests and
+  // stories keep full exports even in `vite build` (build-storybook).
+  function usesMinimalExports(entryPath) {
+    return (
+      productionBuild
+      && !entryPath.endsWith('.test.walu')
+      && !entryPath.endsWith('.stories.walu')
+    );
+  }
+
   function compilerBuildArgs(entryPath, wasmOutput, reportOutput) {
     const manifestArgs = options.manifest == null
       ? []
       : ['--manifest', resolve(appRoot, options.manifest)];
     const reportArgs = ['--report', reportOutput];
-    return [entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs, ...reportArgs];
+    const exportArgs = usesMinimalExports(entryPath) ? ['--minimal-exports'] : [];
+    return [entryPath, '-o', wasmOutput, '--emit-js', ...exportArgs, ...manifestArgs, ...reportArgs];
   }
 
   function compilerCommand(buildArgs) {

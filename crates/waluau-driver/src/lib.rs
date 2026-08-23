@@ -41,7 +41,7 @@ pub mod session;
 pub use link::{LinkOutcome, ModuleProvider};
 pub use session::{Analysis, BuildOutcome, CompilerSession};
 
-pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]\n\n  --development-dwarf  Embed development-only DWARF v4 source mappings for browser DevTools";
+pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]\n\n  --development-dwarf  Embed development-only DWARF v4 source mappings for browser DevTools\n  --minimal-exports    Export only the runtime entry points so wasm-opt can remove unused code";
 
 /// Explicit controls for compiler output. Defaults preserve the production
 /// artifact format exactly.
@@ -49,6 +49,10 @@ pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emi
 pub struct CompileOptions {
     /// Embed source line mappings for browser DevTools development sessions.
     pub development_dwarf: bool,
+    /// Export only the runtime entry points, leaving the playground's
+    /// per-function and record-marshalling exports out so a post-link
+    /// optimizer can remove unused code.
+    pub minimal_exports: bool,
 }
 
 /// Compile a single source string with no module resolution.
@@ -251,12 +255,14 @@ fn compile_program_with_cache(
             cache,
             waluau_codegen_wasm::EmitOptions {
                 development_dwarf: options.development_dwarf,
+                minimal_exports: options.minimal_exports,
             },
         ),
         None => waluau_codegen_wasm::emit_with_options(
             ir,
             waluau_codegen_wasm::EmitOptions {
                 development_dwarf: options.development_dwarf,
+                minimal_exports: options.minimal_exports,
             },
         ),
     }
@@ -351,6 +357,7 @@ where
         asset_module_source,
         CompileOptions {
             development_dwarf: options.development_dwarf,
+            minimal_exports: options.minimal_exports,
         },
     );
     if let Some(report_path) = &options.report {
@@ -496,6 +503,7 @@ struct CliOptions {
     manifest: Option<PathBuf>,
     report: Option<PathBuf>,
     development_dwarf: bool,
+    minimal_exports: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -516,6 +524,7 @@ where
     let mut pending_path = None;
     let mut emit_js = false;
     let mut development_dwarf = false;
+    let mut minimal_exports = false;
 
     for arg in args {
         if let Some(pending) = pending_path.take() {
@@ -533,15 +542,16 @@ where
             Some("--report") => pending_path = Some(PendingPath::Report),
             Some("--emit-js") => emit_js = true,
             Some("--development-dwarf") => development_dwarf = true,
+            Some("--minimal-exports") => minimal_exports = true,
             Some(flag) if flag.starts_with('-') => {
                 return Err(Diagnostic::new(format!(
-                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]"
+                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]"
                 )));
             }
             _ if input.is_none() => input = Some(PathBuf::from(arg)),
             _ => {
                 return Err(Diagnostic::new(
-                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]",
+                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]",
                 ));
             }
         }
@@ -554,13 +564,13 @@ where
             PendingPath::Report => "--report",
         };
         return Err(Diagnostic::new(format!(
-            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]"
+            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]"
         )));
     }
 
     let input = input.ok_or_else(|| {
         Diagnostic::new(
-            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--manifest <waluau.assets.json>] [--report <report.json>]",
+            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]",
         )
     })?;
     let output = output.unwrap_or_else(|| default_output_path(&input));
@@ -572,6 +582,7 @@ where
         manifest,
         report,
         development_dwarf,
+        minimal_exports,
     })
 }
 

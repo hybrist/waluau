@@ -110,6 +110,35 @@ test('passes a resolved asset manifest to the compiler', async () => {
   }
 });
 
+test('requests minimal exports only for production game builds', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const invocation = join(root, 'invocation.json');
+    const script = `require('node:fs').writeFileSync(${JSON.stringify(invocation)}, JSON.stringify(process.argv.slice(1)))`;
+    const context = { addWatchFile: () => {} };
+    const compiledArgs = async (command, entryName) => {
+      // optimize: false — the stub compiler writes no Wasm for wasm-opt to
+      // consume; this test only observes the compiler invocation.
+      const plugin = waluau({ optimize: false, compiler: { command: process.execPath, args: ['-e', script] } });
+      plugin.configResolved({ root, command });
+      await plugin.transform.call(context, '', join(root, entryName));
+      return JSON.parse(await readFile(invocation, 'utf8'));
+    };
+
+    assert.ok(
+      (await compiledArgs('build', 'main.walu')).includes('--minimal-exports'),
+      'a production game build should prune the playground export surface',
+    );
+    // The dev server, vitest, and non-build entries keep the full export
+    // surface: test functions and story args are reached through it.
+    assert.ok(!(await compiledArgs('serve', 'main.walu')).includes('--minimal-exports'));
+    assert.ok(!(await compiledArgs('build', 'main.test.walu')).includes('--minimal-exports'));
+    assert.ok(!(await compiledArgs('build', 'main.stories.walu')).includes('--minimal-exports'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reuses one persistent compiler process across Vite rebuilds', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   let plugin;
