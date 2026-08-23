@@ -1,0 +1,120 @@
+# Development DWARF contract for Chrome
+
+Status: compatibility contract established by `waluau-fdhp.2`. Production
+emission remains separate work.
+
+Waluau development builds can use conventional embedded DWARF for source-level
+debugging of browser Wasm GC. Chrome's language-extension API associates a
+Wasm module with an extension that understands `EmbeddedDWARF`; the API is not
+restricted to a source language. Google's supported extension is branded for
+C/C++, so line mapping works for Waluau while rich Waluau value semantics do
+not come for free.
+
+The reproducible probe is in
+[`fixtures/dwarf-chrome-wasm-gc`](../fixtures/dwarf-chrome-wasm-gc/README.md).
+
+## Minimum emission contract
+
+Use DWARF 4 for the first implementation. DWARF 4 and 5 both loaded in the
+official extension, but version 4 needs fewer section and form variants.
+
+Emit each DWARF payload as a Wasm custom section with its conventional name.
+The line-debugging baseline is:
+
+- `.debug_abbrev` and `.debug_info`, with a compile-unit DIE that references
+  the line program and subprogram DIEs for authored functions;
+- `.debug_line`, with rows at WebAssembly instruction boundaries for every
+  breakable authored statement; and
+- `.debug_str` only when DIEs use string-table forms. Inline `DW_FORM_string`
+  can avoid it. Likewise, `.debug_ranges` is unnecessary for contiguous
+  functions represented by `DW_AT_low_pc` and `DW_AT_high_pc`.
+
+Removing any of `.debug_info`, `.debug_abbrev`, or `.debug_line` made the
+official extension discover no authored sources. Removing `.debug_ranges`
+preserved discovery, bidirectional mapping, and function names in the probe.
+Removing `.debug_str` preserved line mapping but erased function names because
+the carrier's DIEs used string-table references.
+
+Keep the existing Wasm `name` section. It remains the source of useful names in
+raw stacks and in unmapped generated code.
+
+### Addresses and line rows
+
+Every DWARF code address is the byte offset of the instruction's first byte
+relative to the start of the **Code section contents**. It is not a function
+index, function-relative offset, linear-memory address, or absolute file
+offset. Chrome adds the Code section's module offset when setting its raw Wasm
+breakpoint. Rewriting function bodies after DWARF is generated invalidates all
+following mappings, even if the Wasm remains valid.
+
+Emit a useful, nonzero source column for each statement row. In the probe,
+Clang's normal column rows let a gutter breakpoint with an unspecified column
+normalize to the first mapped expression and bind. A `-gno-column-info`
+variant still appeared in `getMappedLines`, but reverse source-to-raw queries
+returned no ranges.
+
+### Compile-unit language
+
+Waluau has no assigned DWARF language code. Use `DW_LANG_lo_user` (`0x8000`)
+for the compile unit until a code is assigned, and identify Waluau in
+`DW_AT_producer`. Do not claim C or C++ merely to match the extension's name.
+Changing the probe from `DW_LANG_C11` to `DW_LANG_lo_user` preserved source
+discovery and bidirectional line mapping in extension 0.2.5854.1. The extension
+did not return a DWARF-derived function frame for the user-range language code,
+so the Wasm `name` section remains necessary for useful raw frame names.
+
+This policy intentionally promises mapping only. C/C++ expression parsing and
+type formatting are not Waluau semantics.
+
+### Source paths
+
+Store URL-resolvable, slash-separated relative paths and use `.` as the compile
+directory. The probe's `dwarf_chrome_probe.walu` path resolved relative to the
+Wasm URL and Chrome fetched the authored file over HTTP. Absolute build-machine
+paths require a user-configured path substitution in the extension and should
+not be the default. The development server must serve every referenced source.
+
+### Authored and synthetic functions
+
+Give authored functions subprogram DIEs and line rows. Keep compiler-generated
+helpers out of the authored line table and give them descriptive Wasm names.
+The probe's GC helper executes successfully, but the extension reports no
+source location or DWARF function frame for its offset. DevTools therefore
+falls back to raw Wasm if execution steps into it, which is preferable to
+attributing generated instructions to a misleading authored line.
+
+## Observed Chrome behavior
+
+Tests on 2026-08-22 used stable Chrome 151.0.7922.173 and the official C/C++
+DevTools Support extension 0.2.5854.1. The exact extension worker was exercised
+inside stable Chrome. Full DevTools UI automation used Chrome for Testing
+148.0.7778.96 because the extension was not installed in the personal stable
+profile and branded Chrome ignored the temporary `--load-extension` request.
+Repeat the README's short manual procedure in stable Chrome after installing
+the extension when validating the production emitter.
+
+| Surface | Result | Observation |
+| --- | --- | --- |
+| Wasm GC validation and execution | Pass in stable Chrome 151 | The module validated; `struct.new`/`struct.get` returned 42. |
+| Authored source discovery | Pass in stable extension worker; pass in full Chrome for Testing UI | The extension returned and the Sources workspace registered the HTTP `.walu` URL. |
+| Line breakpoint binding | Pass in full UI | A line-4 gutter-equivalent breakpoint normalized to column 14 and bound to the Wasm module. |
+| Source stepping | Pass in full UI | Step-over moved from Waluau line 4 to line 5. |
+| Paused call-frame source mapping | Pass in full UI | `inner` mapped to line 4 and its caller `run` mapped to line 13; both pointed at the authored `.walu` URL. |
+| `console.error(error)` | Raw stack in stable Chrome 151 | Frames used name-section names plus `wasm-function[N]:0x…`; DWARF did not rewrite the rendered stack. |
+| `Error.stack` | Raw stack in stable Chrome 151 | Same Wasm names and byte offsets as the Console error. |
+| Uncaught-exception presentation | Raw stack in stable Chrome 151 | The Console/page-error text stayed raw. If DevTools pauses on the exception, the paused frames can still be source-mapped separately. |
+| Primitive C-carrier locals | Not a Waluau result | The carrier can expose C values, but that is not evidence of Waluau value semantics. |
+| Wasm GC locals and aggregates | Blocked by the extension bridge | The extension serializes numeric/vector Wasm values, rejects reference values, and exposes aggregate objects through linear-memory addresses rather than GC-object traversal. No inspection pass is claimed. |
+| Synthetic GC helper | Deliberately unmapped | It remains executable and named at the Wasm layer; source and DWARF-function queries return empty results. |
+
+The stack surfaces are intentionally separate: DWARF improves the debugger's
+paused Call Stack, breakpoints, and stepping, but it does not mutate JavaScript
+`Error.stack` strings or Console stack serialization.
+
+## Primary references
+
+- [WebAssembly tool conventions: DWARF embedding and Code-section-relative addresses](https://github.com/WebAssembly/tool-conventions/blob/main/Dwarf.md)
+- [Chrome DevTools: Debug C/C++ WebAssembly](https://developer.chrome.com/docs/devtools/wasm/)
+- [Chrome DevTools language-extension API](https://chromium.googlesource.com/devtools/devtools-frontend/+/refs/heads/main/docs/language_extension_api.md)
+- [Official C/C++ extension source](https://chromium.googlesource.com/devtools/devtools-frontend/+/refs/heads/main/extensions/cxx_debugging/)
+- [DWARF language-code assignments](https://dwarfstd.org/languages.html)

@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Waluau Wasm GC DWARF probe</title>
+<button id="run" type="button">Run mapped call</button>
+<button id="console-error" type="button">Log caught error</button>
+<button id="uncaught" type="button">Throw uncaught error</button>
+<pre id="output">Loading...</pre>
+<script type="module">
+  const output = document.querySelector('#output');
+  const { instance } = await WebAssembly.instantiateStreaming(
+    fetch('./dwarf_chrome_probe.wasm'),
+  );
+
+  window.dwarfProbe = instance.exports;
+  output.textContent = `run(41) = ${instance.exports.run(41)}\n` +
+    `GC round trip = ${instance.exports.__synthetic_gc_round_trip(42)}`;
+
+  document.querySelector('#run').addEventListener('click', () => {
+    output.textContent = `run(41) = ${instance.exports.run(41)}`;
+  });
+  document.querySelector('#console-error').addEventListener('click', () => {
+    try {
+      instance.exports.throw_probe();
+    } catch (error) {
+      window.lastProbeError = error;
+      console.error(error);
+      output.textContent = error.stack;
+    }
+  });
+  document.querySelector('#uncaught').addEventListener('click', () => {
+    instance.exports.throw_probe();
+  });
+</script>

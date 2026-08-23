@@ -1,0 +1,18 @@
+type ProbeBox = { value: i32 }
+
+local function inner(value: i32): i32
+    local boxed: ProbeBox = { value = value + 1 }
+    return boxed.value
+end
+
+local function trap_inner(): unit
+    assert(false, "DWARF probe trap")
+end
+
+function run(value: i32): i32
+    return inner(value)
+end
+
+function throw_probe(): unit
+    trap_inner()
+end
