@@ -37,6 +37,25 @@ inside the intentionally unmapped synthetic GC helper and must not resolve.
 
 ## Verify in Chrome DevTools
 
+To exercise the production Waluau emitter rather than the checked-in carrier,
+first generate sibling Wasm and JavaScript artifacts:
+
+```sh
+cargo run -p waluau-cli -- \
+  fixtures/dwarf-chrome-wasm-gc/dwarf_chrome_probe.walu \
+  -o fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.wasm \
+  --emit-js --development-dwarf
+
+wasm-tools validate --features all \
+  fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.wasm
+```
+
+The generated files are ignored build artifacts. After starting the server,
+open `/fixture/compiler-probe.html` for the runtime UI. When an unpacked
+official extension is supplied, open
+`/extension/extension-harness.html?module=compiler_dwarf_probe.wasm` to run its
+exact parser against compiler output.
+
 1. Install Google's
    [C/C++ DevTools Support (DWARF) extension](https://chromewebstore.google.com/detail/cc-devtools-support-dwarf/pdcpmagijalfljmkmjngeonclgbbannb).
 2. Start `node fixtures/dwarf-chrome-wasm-gc/serve-probe.mjs` and open the

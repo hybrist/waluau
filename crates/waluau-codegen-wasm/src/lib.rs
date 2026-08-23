@@ -5,7 +5,7 @@ use waluau_ast::{BinaryOp, NumberLiteral, NumericType, SymbolId, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{
     BasicBlock, BitwiseIntrinsic, DeclaredImport, Function as IrFunction,
-    Instruction as IrInstruction, MathIntrinsic, Module, Terminator, ValueId,
+    Instruction as IrInstruction, MathIntrinsic, Module, SourceOrigin, Terminator, ValueId,
 };
 use wasm_encoder::{
     AbstractHeapType, BlockType, Catch, CodeSection, ConstExpr, CustomSection, ElementSection,
@@ -46,6 +46,7 @@ impl CompilerTimer {
 mod arrays;
 mod buffers;
 mod coroutines;
+mod dwarf;
 pub mod host;
 mod locals;
 mod signatures;
@@ -66,6 +67,7 @@ use coroutines::{
     STATE_FRAMES_FIELD, STATE_REPLAYING_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD,
     TAG_AWAITING_PROMISE, TAG_ERROR, TAG_FINISHED, TAG_SUSPENDED, coroutine_state_ref_type,
 };
+use dwarf::FunctionDebugMap;
 use locals::{
     LocalPlan, array_scratch_local, build_local_plan, build_value_definition_map,
     emit_value_operand, emit_value_store, infer_value_types, local,
@@ -338,6 +340,8 @@ pub struct EmitCache {
     record_type_indices: HashMap<String, u32>,
     required_imports: Vec<RequiredImport>,
     bytes_constants: Vec<Vec<u8>>,
+    options: EmitOptions,
+    debug_maps: Vec<FunctionDebugMap>,
     last_incremental: bool,
 }
 
@@ -372,6 +376,15 @@ struct CodeImage {
     prefix: Vec<u8>,
     bodies: Vec<Vec<u8>>,
     suffix: Vec<u8>,
+}
+
+/// Explicit output controls for Wasm emission.
+///
+/// Development DWARF is opt-in so normal browser artifacts keep their exact
+/// historical bytes and do not disclose authored source paths.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EmitOptions {
+    pub development_dwarf: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -698,19 +711,35 @@ fn used_declared_imports(module: &Module) -> Vec<&DeclaredImport> {
 }
 
 pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
-    emit_inner(module, None)
+    emit_with_options(module, EmitOptions::default())
 }
 
 pub fn emit_cached(module: &Module, cache: &mut EmitCache) -> Result<EmitResult, Diagnostic> {
+    emit_cached_with_options(module, cache, EmitOptions::default())
+}
+
+pub fn emit_with_options(module: &Module, options: EmitOptions) -> Result<EmitResult, Diagnostic> {
+    emit_inner(module, options, None)
+}
+
+pub fn emit_cached_with_options(
+    module: &Module,
+    cache: &mut EmitCache,
+    options: EmitOptions,
+) -> Result<EmitResult, Diagnostic> {
     cache.last_incremental = false;
-    if let Some(emitted) = try_emit_incremental(module, cache)? {
+    if let Some(emitted) = try_emit_incremental(module, cache, options)? {
         cache.last_incremental = true;
         return Ok(emitted);
     }
-    emit_inner(module, Some(cache))
+    emit_inner(module, options, Some(cache))
 }
 
-fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResult, Diagnostic> {
+fn emit_inner(
+    module: &Module,
+    options: EmitOptions,
+    cache: Option<&mut EmitCache>,
+) -> Result<EmitResult, Diagnostic> {
     let started = CompilerTimer::start();
     let declared_imports = used_declared_imports(module);
     let array_types = collect_array_types(module);
@@ -1690,6 +1719,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
     // function's locals are labeled from its local plan.
     let mut function_names: Vec<(u32, String)> = Vec::new();
     let mut local_names: Vec<(u32, Vec<(u32, String)>)> = Vec::new();
+    let mut debug_maps = Vec::with_capacity(module.functions.len());
     for (index, function) in module.functions.iter().enumerate() {
         function_names.push((import_func_count + index as u32, function.name.clone()));
         // User function type indices come after array, host, and coroutine types.
@@ -1737,6 +1767,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
                 import_func_count,
                 &buffer_plan,
                 buffer_alloc_func,
+                options.development_dwarf,
             )
         })
         .collect::<Vec<_>>();
@@ -1784,6 +1815,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
                                 import_func_count,
                                 buffer_plan,
                                 buffer_alloc_func,
+                                options.development_dwarf,
                             )
                         })
                         .collect::<Vec<_>>()
@@ -1799,8 +1831,12 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
         let emitted = emitted?;
         codes.function(&emitted.body);
         if !emitted.local_names.is_empty() {
-            local_names.push((import_func_count + index as u32, emitted.local_names));
+            local_names.push((
+                import_func_count + index as u32,
+                emitted.local_names.clone(),
+            ));
         }
+        debug_maps.push(emitted.debug_map);
     }
     let user_functions_at = started.elapsed();
     if let Some(start) = start_thunk {
@@ -2193,7 +2229,24 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
     }
 
     let assembled_at = started.elapsed();
-    let bytes = wasm.finish();
+    let mut bytes = wasm.finish();
+    // Cache and DWARF both operate on final encoded function bodies. Capture
+    // the code image before appending debug custom sections so an incremental
+    // rebuild can regenerate address-bearing metadata instead of retaining
+    // stale offsets in the suffix.
+    let code_image = if cache.is_some() || options.development_dwarf {
+        Some(split_code_image(&bytes)?)
+    } else {
+        None
+    };
+    if options.development_dwarf {
+        dwarf::append_sections(
+            &mut bytes,
+            module,
+            &code_image.as_ref().expect("debug code image").bodies,
+            &debug_maps,
+        )?;
+    }
     let encoded_at = started.elapsed();
     let features = WasmFeatures::all();
     Validator::new_with_features(features)
@@ -2238,10 +2291,12 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             buffer_plan,
             buffer_alloc_func,
         });
-        cache.image = Some(split_code_image(&result.wasm)?);
+        cache.image = code_image;
         cache.record_type_indices = result.record_type_indices.clone();
         cache.required_imports = result.required_imports.clone();
         cache.bytes_constants = result.bytes_constants.clone();
+        cache.options = options;
+        cache.debug_maps = debug_maps;
     }
     Ok(result)
 }
@@ -2284,6 +2339,7 @@ fn numeric_literal_only_change(current: &IrFunction, previous: &IrFunction) -> b
 fn try_emit_incremental(
     module: &Module,
     cache: &mut EmitCache,
+    options: EmitOptions,
 ) -> Result<Option<EmitResult>, Diagnostic> {
     let started = CompilerTimer::start();
     let (Some(previous), Some(context)) = (&cache.module, &cache.context) else {
@@ -2292,10 +2348,12 @@ fn try_emit_incremental(
     if cache.image.is_none() {
         return Ok(None);
     }
-    if module.declared_imports != previous.declared_imports
+    if options != cache.options
+        || module.declared_imports != previous.declared_imports
         || module.start != previous.start
         || module.globals != previous.globals
         || module.tag_ids != previous.tag_ids
+        || module.symbol_names != previous.symbol_names
         || module.functions.len() != previous.functions.len()
     {
         return Ok(None);
@@ -2340,14 +2398,20 @@ fn try_emit_incremental(
         context.import_func_count,
         &context.buffer_plan,
         context.buffer_alloc_func,
+        options.development_dwarf,
     )?;
+    let debug_map = emitted.debug_map.clone();
     let mut updated_image = cache.image.take().expect("cached Wasm code image");
     updated_image.bodies[index] = emitted.into_raw_body();
-    let wasm = updated_image.encode();
+    let mut wasm = updated_image.encode();
+    if options.development_dwarf {
+        cache.debug_maps[index] = debug_map;
+        dwarf::append_sections(&mut wasm, module, &updated_image.bodies, &cache.debug_maps)?;
+    }
     Validator::new_with_features(WasmFeatures::all())
         .validate_all(&wasm)
         .map_err(|err| Diagnostic::new(format!("incrementally emitted invalid wasm: {err}")))?;
-    cache.module.as_mut().expect("cached module").functions[index] = function.clone();
+    cache.module = Some(module.clone());
     cache.image = Some(updated_image);
     if CompilerTimer::enabled() {
         eprintln!("waluau wasm timings: incremental={:?}", started.elapsed());
@@ -2561,6 +2625,7 @@ fn coroutine_frame_context(
 struct EmittedFunction {
     body: Function,
     local_names: Vec<(u32, String)>,
+    debug_map: FunctionDebugMap,
 }
 
 impl EmittedFunction {
@@ -2617,6 +2682,7 @@ fn emit_function(
     import_func_count: u32,
     buffer_plan: &BufferPlan,
     buffer_alloc_func: Option<u32>,
+    development_dwarf: bool,
 ) -> Result<EmittedFunction, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
@@ -2648,7 +2714,10 @@ fn emit_function(
     let value_defs = build_value_definition_map(function);
     let locals = compress_locals(local_plan.extra_locals.clone());
     let mut out = Function::new(locals);
-    if !suspending
+    let instruction_start = out.byte_len() as u32;
+    let mut debug_rows = Vec::new();
+    if !development_dwarf
+        && !suspending
         && try_emit_structured_fast_path(
             &mut out,
             function,
@@ -2662,6 +2731,7 @@ fn emit_function(
         return Ok(EmittedFunction {
             body: out,
             local_names,
+            debug_map: FunctionDebugMap::default(),
         });
     }
 
@@ -2740,15 +2810,28 @@ fn emit_function(
         out.instruction(&Instruction::I32Const(block.id.0 as i32));
         out.instruction(&Instruction::I32Eq);
         out.instruction(&Instruction::If(BlockType::Empty));
-        emit_block(
-            &mut out,
-            function,
-            block,
-            &ctx,
-            &value_types,
-            &local_plan,
-            &value_defs,
-        )?;
+        if development_dwarf {
+            emit_block_debug(
+                &mut out,
+                function,
+                block,
+                &ctx,
+                &value_types,
+                &local_plan,
+                &value_defs,
+                &mut debug_rows,
+            )?;
+        } else {
+            emit_block(
+                &mut out,
+                function,
+                block,
+                &ctx,
+                &value_types,
+                &local_plan,
+                &value_defs,
+            )?;
+        }
         out.instruction(&Instruction::End);
     }
 
@@ -2766,16 +2849,30 @@ fn emit_function(
         // The re-executed suspended call below walks the resume one level
         // deeper: mark the next suspending entry as a replay.
         emit_active_state_field_set_const(&mut out, &ctx, STATE_REPLAYING_FIELD, 1)?;
-        emit_block_from_instruction(
-            &mut out,
-            function,
-            block,
-            point.instruction_index,
-            &ctx,
-            &value_types,
-            &local_plan,
-            &value_defs,
-        )?;
+        if development_dwarf {
+            emit_block_from_instruction_debug(
+                &mut out,
+                function,
+                block,
+                point.instruction_index,
+                &ctx,
+                &value_types,
+                &local_plan,
+                &value_defs,
+                &mut debug_rows,
+            )?;
+        } else {
+            emit_block_from_instruction(
+                &mut out,
+                function,
+                block,
+                point.instruction_index,
+                &ctx,
+                &value_types,
+                &local_plan,
+                &value_defs,
+            )?;
+        }
         out.instruction(&Instruction::End);
     }
 
@@ -2786,6 +2883,10 @@ fn emit_function(
     Ok(EmittedFunction {
         body: out,
         local_names,
+        debug_map: FunctionDebugMap {
+            instruction_start,
+            rows: debug_rows,
+        },
     })
 }
 
@@ -3696,7 +3797,7 @@ fn emit_block(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
-    emit_block_from_instruction(
+    emit_block_from_instruction_inner(
         out,
         function,
         block,
@@ -3705,6 +3806,31 @@ fn emit_block(
         value_types,
         local_plan,
         value_defs,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_block_debug(
+    out: &mut Function,
+    function: &IrFunction,
+    block: &BasicBlock,
+    ctx: &EmissionContext<'_>,
+    value_types: &BTreeMap<ValueId, Type>,
+    local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
+    debug_rows: &mut Vec<(u32, SourceOrigin)>,
+) -> Result<(), Diagnostic> {
+    emit_block_from_instruction_inner(
+        out,
+        function,
+        block,
+        0,
+        ctx,
+        value_types,
+        local_plan,
+        value_defs,
+        Some(debug_rows),
     )
 }
 
@@ -3719,7 +3845,7 @@ fn emit_block_from_instruction(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
-    emit_block_instructions(
+    emit_block_from_instruction_inner(
         out,
         function,
         block,
@@ -3728,7 +3854,64 @@ fn emit_block_from_instruction(
         value_types,
         local_plan,
         value_defs,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_block_from_instruction_debug(
+    out: &mut Function,
+    function: &IrFunction,
+    block: &BasicBlock,
+    start_index: usize,
+    ctx: &EmissionContext<'_>,
+    value_types: &BTreeMap<ValueId, Type>,
+    local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
+    debug_rows: &mut Vec<(u32, SourceOrigin)>,
+) -> Result<(), Diagnostic> {
+    emit_block_from_instruction_inner(
+        out,
+        function,
+        block,
+        start_index,
+        ctx,
+        value_types,
+        local_plan,
+        value_defs,
+        Some(debug_rows),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_block_from_instruction_inner(
+    out: &mut Function,
+    function: &IrFunction,
+    block: &BasicBlock,
+    start_index: usize,
+    ctx: &EmissionContext<'_>,
+    value_types: &BTreeMap<ValueId, Type>,
+    local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
+    mut debug_rows: Option<&mut Vec<(u32, SourceOrigin)>>,
+) -> Result<(), Diagnostic> {
+    emit_block_instructions_inner(
+        out,
+        function,
+        block,
+        start_index,
+        ctx,
+        value_types,
+        local_plan,
+        value_defs,
+        debug_rows.as_deref_mut(),
     )?;
+    if let Some(rows) = debug_rows {
+        let origin = function.source_map.terminator_origin(block.id);
+        if matches!(origin, SourceOrigin::Authored(_)) {
+            rows.push((out.byte_len() as u32, origin));
+        }
+    }
     match &block.terminator {
         Terminator::Jump(target) => {
             emit_phi_copies(out, function, block.id, *target, local_plan)?;
@@ -3902,7 +4085,33 @@ fn emit_block_instructions(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
+    emit_block_instructions_inner(
+        out,
+        function,
+        block,
+        start_index,
+        ctx,
+        value_types,
+        local_plan,
+        value_defs,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_block_instructions_inner(
+    out: &mut Function,
+    function: &IrFunction,
+    block: &BasicBlock,
+    start_index: usize,
+    ctx: &EmissionContext<'_>,
+    value_types: &BTreeMap<ValueId, Type>,
+    local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
+    mut debug_rows: Option<&mut Vec<(u32, SourceOrigin)>>,
+) -> Result<(), Diagnostic> {
     for (value, instruction) in block.instructions.iter().skip(start_index) {
+        let instruction_offset = out.byte_len() as u32;
         match instruction {
             IrInstruction::Param(_) | IrInstruction::Phi(_) => {}
             IrInstruction::GlobalGet { global, .. } => {
@@ -5486,6 +5695,14 @@ fn emit_block_instructions(
                 })?;
                 out.instruction(&Instruction::LocalGet(slot));
                 emit_value_store(out, local_plan, *value)?;
+            }
+        }
+        if out.byte_len() as u32 > instruction_offset
+            && let Some(rows) = debug_rows.as_deref_mut()
+        {
+            let origin = function.source_map.instruction_origin(*value);
+            if matches!(origin, SourceOrigin::Authored(_)) {
+                rows.push((instruction_offset, origin));
             }
         }
     }

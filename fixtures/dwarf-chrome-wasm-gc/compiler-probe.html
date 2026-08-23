@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Waluau compiler DWARF probe</title>
+<button id="run" type="button">Run mapped call</button>
+<button id="console-error" type="button">Log caught error</button>
+<button id="uncaught" type="button">Throw uncaught error</button>
+<pre id="output">Loading compiler output...</pre>
+<script type="module">
+  import { instantiate } from './compiler_dwarf_probe.js';
+
+  const output = document.querySelector('#output');
+  const { exports } = await instantiate();
+  exports.__waluau_main?.();
+  window.dwarfProbe = exports;
+  output.textContent = `compiler run(41) = ${exports.run(41)}`;
+
+  document.querySelector('#run').addEventListener('click', () => {
+    output.textContent = `compiler run(41) = ${exports.run(41)}`;
+  });
+  document.querySelector('#console-error').addEventListener('click', () => {
+    try {
+      exports.throw_probe();
+    } catch (error) {
+      window.lastProbeError = error;
+      console.error(error);
+      output.textContent = error.stack;
+    }
+  });
+  document.querySelector('#uncaught').addEventListener('click', () => {
+    exports.throw_probe();
+  });
+</script>

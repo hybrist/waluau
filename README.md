@@ -50,6 +50,14 @@ Compile a program to Wasm plus JavaScript glue:
 cargo run -- fixtures/snake/main.walu -o /tmp/snake.wasm --emit-js
 ```
 
+For a development artifact with embedded DWARF source mappings for browser
+DevTools, add `--development-dwarf`. Default builds omit all `.debug_*`
+sections and retain only the lightweight Wasm `name` section.
+
+```bash
+cargo run -- fixtures/snake/main.walu -o /tmp/snake.wasm --emit-js --development-dwarf
+```
+
 Run the Rust checks (format, build, tests, clippy):
 
 ```bash
