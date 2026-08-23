@@ -185,6 +185,7 @@ fn development_dwarf_is_explicit_and_preserves_default_bytes() {
         &ir,
         super::EmitOptions {
             development_dwarf: true,
+            ..Default::default()
         },
     )
     .expect("development emit should succeed")
@@ -235,6 +236,7 @@ fn incremental_development_dwarf_matches_a_cold_emit() {
 
     let options = super::EmitOptions {
         development_dwarf: true,
+        ..Default::default()
     };
     let first = lower("function answer(): i32\n    return 41\nend\n");
     let changed = lower("function answer(): i32\n    return 42\nend\n");
@@ -315,6 +317,78 @@ fn exports_top_level_code_as_main_without_a_start_section() {
     assert!(
         !wasm_has_start_section(&wasm),
         "top-level code must not execute during module instantiation"
+    );
+}
+
+fn wasm_has_export_with_prefix(wasm: &[u8], prefix: &str) -> bool {
+    for payload in Parser::new(0).parse_all(wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::ExportSection(reader) = payload {
+            for export in reader {
+                if export
+                    .expect("export should decode")
+                    .name
+                    .starts_with(prefix)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+#[test]
+fn minimal_exports_keep_only_the_entry_points() {
+    let source = r#"
+        type Point = {x: i32, y: i32}
+
+        function helper(point: Point): i32
+            return point.x + point.y
+        end
+
+        assert(helper({x = 1, y = 2}) == 3)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+
+    let full = emit(&ir).expect("emit should succeed");
+    assert!(
+        wasm_export_func_index(&full, "helper").is_some(),
+        "default emission keeps the playground/debugging exports"
+    );
+    assert!(
+        wasm_has_export_with_prefix(&full, "__waluau_new_record_")
+            && wasm_has_export_with_prefix(&full, "__waluau_get_record_"),
+        "default emission keeps the record marshalling helpers"
+    );
+
+    let minimal = super::emit_with_options(
+        &ir,
+        super::EmitOptions {
+            minimal_exports: true,
+            ..Default::default()
+        },
+    )
+    .expect("minimal emit should succeed")
+    .wasm;
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&minimal)
+        .expect("minimal-export module should validate");
+    assert!(
+        wasm_export_func_index(&minimal, "helper").is_none(),
+        "user functions must not pin unreachable code in minimal-export builds"
+    );
+    assert!(
+        !wasm_has_export_with_prefix(&minimal, "__waluau_new_record_")
+            && !wasm_has_export_with_prefix(&minimal, "__waluau_get_record_"),
+        "record marshalling helpers must not pin record types in minimal-export builds"
+    );
+    assert!(
+        wasm_export_func_index(&minimal, "main").is_some()
+            && wasm_export_func_index(&minimal, "__waluau_main").is_some(),
+        "the runtime entry points must survive minimal-export builds"
     );
 }
 

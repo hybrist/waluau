@@ -487,6 +487,63 @@ mod tests {
     }
 
     #[test]
+    fn emit_option_changes_invalidate_the_incremental_wasm_cache() {
+        fn has_export(wasm: &[u8], name: &str) -> bool {
+            wasmprinter::print_bytes(wasm)
+                .expect("wasm should print")
+                .contains(&format!("(export \"{name}\""))
+        }
+        fn build(session: &mut CompilerSession, root: &Path, minimal: bool) -> Vec<u8> {
+            let outcome = session.build_root_with_options(
+                root,
+                "program.wasm",
+                crate::CompileOptions {
+                    minimal_exports: minimal,
+                    ..Default::default()
+                },
+            );
+            assert!(outcome.diagnostics.is_empty(), "{:?}", outcome.diagnostics);
+            outcome.artifacts.expect("artifacts").wasm
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let main = write(
+            dir.path(),
+            "main.walu",
+            "function helper(x: i32): i32\n    return x + 1\nend\nassert(helper(1) >= 0)\n",
+        );
+        let canonical_main = main.canonicalize().expect("canonicalize");
+
+        let mut session = CompilerSession::new();
+        assert!(has_export(&build(&mut session, &main, false), "helper"));
+
+        // A single-body edit is exactly the shape the incremental emitter
+        // patches; flipping the options at the same time must not let it
+        // reuse the cached (full-export) section image.
+        session.set_overlay(
+            &canonical_main,
+            "function helper(x: i32): i32\n    return x + 2\nend\nassert(helper(1) >= 0)\n",
+        );
+        let minimal = build(&mut session, &main, true);
+        assert!(!has_export(&minimal, "helper"));
+        assert!(has_export(&minimal, "main"));
+
+        // With options stable again, the next single-body edit may patch
+        // incrementally — and must stay minimal.
+        session.set_overlay(
+            &canonical_main,
+            "function helper(x: i32): i32\n    return x + 3\nend\nassert(helper(1) >= 0)\n",
+        );
+        let patched = build(&mut session, &main, true);
+        assert!(!has_export(&patched, "helper"));
+        let (_, _, incremental_wasm) = session.incremental_stats(&main);
+        assert!(
+            incremental_wasm,
+            "same-option rebuilds should keep incremental emission"
+        );
+    }
+
+    #[test]
     fn development_dwarf_is_equivalent_across_incremental_and_cold_builds() {
         let dir = tempfile::tempdir().expect("tempdir");
         let initial = "function answer(): i32\n    return 41\nend\n";
@@ -494,6 +551,7 @@ mod tests {
         let main = write(dir.path(), "main.walu", initial);
         let options = crate::CompileOptions {
             development_dwarf: true,
+            ..Default::default()
         };
         let mut session = CompilerSession::new();
         assert!(

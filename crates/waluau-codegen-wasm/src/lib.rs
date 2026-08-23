@@ -385,6 +385,12 @@ struct CodeImage {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EmitOptions {
     pub development_dwarf: bool,
+    /// Export only the runtime entry points: `main`/`__waluau_main` plus the
+    /// explicit `__waluau_*` helper exports the JS runtime calls (trampolines,
+    /// error tag). The per-user-function and record-marshalling exports exist
+    /// for the playground and debugging; skipping them leaves unused code
+    /// unreachable so a post-link optimizer (wasm-opt) can remove it.
+    pub minimal_exports: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1732,9 +1738,15 @@ fn emit_inner(
             .get(&params, &function.return_type)
             .unwrap();
         functions.function(user_type_base + sig_index);
-        if should_export_function(&function.name)
-            && !(start_thunk.is_some() && function.name == MAIN_EXPORT)
-        {
+        // Minimal-export builds keep only `main` from the user functions;
+        // the playground/debugging exports of every other function would pin
+        // otherwise-unreachable code against wasm-opt's dead-code removal.
+        let export_user_function = if options.minimal_exports {
+            function.name == MAIN_EXPORT
+        } else {
+            should_export_function(&function.name)
+        };
+        if export_user_function && !(start_thunk.is_some() && function.name == MAIN_EXPORT) {
             exports.export(
                 &function.name,
                 ExportKind::Func,
@@ -2053,11 +2065,18 @@ fn emit_inner(
 
         // 1. Emit constructor
         functions.function(info.constructor_type_idx);
-        exports.export(
-            &format!("__waluau_new_record_{}", info.record_idx),
-            ExportKind::Func,
-            import_func_count + helper_func_idx_counter,
-        );
+        // Record metadata helpers serve the playground/story-args marshalling
+        // (`constructArg`/`executeCall` in the JS runtime), not the game
+        // runtime. Minimal-export builds still emit the bodies — helper
+        // function indices are precomputed — but leave them unexported so
+        // wasm-opt can drop them along with otherwise-unreferenced types.
+        if !options.minimal_exports {
+            exports.export(
+                &format!("__waluau_new_record_{}", info.record_idx),
+                ExportKind::Func,
+                import_func_count + helper_func_idx_counter,
+            );
+        }
         function_names.push((
             import_func_count + helper_func_idx_counter,
             format!("__waluau_new_record_{}", info.record_idx),
@@ -2075,11 +2094,13 @@ fn emit_inner(
         // 2. Emit getters
         for (field_idx, _field_name) in fields.keys().enumerate() {
             functions.function(info.getter_type_indices[field_idx]);
-            exports.export(
-                &format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
-                ExportKind::Func,
-                import_func_count + helper_func_idx_counter,
-            );
+            if !options.minimal_exports {
+                exports.export(
+                    &format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
+                    ExportKind::Func,
+                    import_func_count + helper_func_idx_counter,
+                );
+            }
             function_names.push((
                 import_func_count + helper_func_idx_counter,
                 format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
@@ -2100,11 +2121,13 @@ fn emit_inner(
     // Emit nullable box JS interop helpers (constructor + payload reader).
     for helper in &nullable_box_helpers {
         functions.function(helper.box_fn_type_idx);
-        exports.export(
-            &format!("__waluau_box_nullable_{}", helper.kind.export_suffix()),
-            ExportKind::Func,
-            import_func_count + helper_func_idx_counter,
-        );
+        if !options.minimal_exports {
+            exports.export(
+                &format!("__waluau_box_nullable_{}", helper.kind.export_suffix()),
+                ExportKind::Func,
+                import_func_count + helper_func_idx_counter,
+            );
+        }
         function_names.push((
             import_func_count + helper_func_idx_counter,
             format!("__waluau_box_nullable_{}", helper.kind.export_suffix()),
@@ -2117,11 +2140,13 @@ fn emit_inner(
         codes.function(&box_fn);
 
         functions.function(helper.unbox_fn_type_idx);
-        exports.export(
-            &format!("__waluau_unbox_nullable_{}", helper.kind.export_suffix()),
-            ExportKind::Func,
-            import_func_count + helper_func_idx_counter,
-        );
+        if !options.minimal_exports {
+            exports.export(
+                &format!("__waluau_unbox_nullable_{}", helper.kind.export_suffix()),
+                ExportKind::Func,
+                import_func_count + helper_func_idx_counter,
+            );
+        }
         function_names.push((
             import_func_count + helper_func_idx_counter,
             format!("__waluau_unbox_nullable_{}", helper.kind.export_suffix()),
