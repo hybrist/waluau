@@ -3,6 +3,17 @@ use waluau_lexer::{Token, TokenKind};
 
 use super::Parser;
 
+pub(super) fn is_linker_internal_identifier(name: &str) -> bool {
+    let Some(suffix) = name.strip_prefix("__waluau_m") else {
+        return false;
+    };
+    let digits = suffix
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    digits > 0 && suffix.as_bytes().get(digits) == Some(&b'_')
+}
+
 impl Parser {
     pub(super) fn expect_identifier(&mut self) -> Result<String, Diagnostic> {
         self.expect_identifier_spanned().map(|(name, _)| name)
@@ -15,7 +26,16 @@ impl Parser {
             Some(Token {
                 kind: TokenKind::Identifier(name),
                 span,
-            }) => Ok((name, span)),
+            }) => {
+                if is_linker_internal_identifier(&name) {
+                    Err(Diagnostic::new(format!(
+                        "identifier '{name}' uses a reserved linker prefix"
+                    ))
+                    .with_span(span))
+                } else {
+                    Ok((name, span))
+                }
+            }
             Some(_) => {
                 // Leave the unexpected token unconsumed so statement-level
                 // recovery can resynchronize on it (it may close a block).

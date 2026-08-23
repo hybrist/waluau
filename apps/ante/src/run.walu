@@ -23,7 +23,7 @@ local snapshot_data = require("./snapshot")
 -- run that ends can start over carrying what it originally set out with rather
 -- than what it had bought by the time it died. `rush` is the boss-rush run,
 -- where every duel is a boss battle rather than every third.
-type State = {
+export type State = {
     duel: i32,
     gold: i32,
     hearts: i32,
@@ -145,7 +145,7 @@ end
 -- "won" is a milestone rather than a stop: the last duel of the table
 -- is cleared exactly the way any other is, and the run walks on into the
 -- endless city.
-type Outcome =
+export type Outcome =
     "none" | "lost-health" | "lost-vault" | "lost-target" | "advance" | "won"
 
 function outcome_is_loss(outcome: Outcome): bool
@@ -182,7 +182,7 @@ end
 -- `outcome` is the rules module's answer about a duel this module has not
 -- settled yet, so it arrives rather than being re-derived here; a live duel
 -- passes "none".
-type View = {
+export type View = {
     duel: i32,
     cleared: i32,
     boss: bool,

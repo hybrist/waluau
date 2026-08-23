@@ -11,7 +11,7 @@
 -- size or aspect ratio reflows the same board; nothing anywhere assumes a
 -- reference resolution.
 --
-type State = {
+export type State = {
     canvas_width: f64,
     canvas_height: f64,
     scale: f64,

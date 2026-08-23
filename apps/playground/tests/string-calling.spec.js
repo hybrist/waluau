@@ -15,7 +15,7 @@ test.describe('string function calling', () => {
       'Compilation Succeeded',
       { timeout: COMPILER_READY_TIMEOUT },
     );
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
   });
 
   test('shows greet, concat and equals function cards with string inputs', async ({ page }) => {

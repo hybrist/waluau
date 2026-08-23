@@ -692,7 +692,7 @@ mod tests {
             (
                 "/service.walu".to_string(),
                 r#"
-                    type Promise<T> = extern
+                    export type Promise<T> = extern
 
                     declare function host_exchange(value: Promise<i32>): Promise<string>
                     declare function host_text(): Promise<string>
@@ -766,7 +766,7 @@ mod tests {
 
     fn opaque_counter_module() -> String {
         r#"
-            opaque type Counter = { value: i32 }
+            export opaque type Counter = { value: i32 }
             local shared: Counter = { value = 0::i32 }
 
             function new(value: i32): Counter

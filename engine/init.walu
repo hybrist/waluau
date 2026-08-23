@@ -6,14 +6,14 @@ local input_module = require("waluau:engine/v1/input")
 local graphics_module = require("waluau:engine/v1/graphics")
 local particles_module = require("waluau:engine/v1/particles")
 
-type Config = browser.Config
-type Game = browser.Game
-type Session = browser.Session
-type Input = input_module.Input
-type Graphics = graphics_module.Graphics
-type ParticleSystem = particles_module.ParticleSystem
-type ParticleColor = particles_module.Color
-type ParticleQuad = particles_module.Quad
+export type Config = browser.Config
+export type Game = browser.Game
+export type Session = browser.Session
+export type Input = input_module.Input
+export type Graphics = graphics_module.Graphics
+export type ParticleSystem = particles_module.ParticleSystem
+export type ParticleColor = particles_module.Color
+export type ParticleQuad = particles_module.Quad
 
 local VERSION <const>: string = "1.5.0"
 

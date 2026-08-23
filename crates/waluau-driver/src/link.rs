@@ -600,17 +600,20 @@ fn merge_with_builtins(
 
         let (re_exports, namespaces, mut value_aliases) =
             process_reexport_bindings(&module.program.top_level, &imports);
+        let type_namespaces = module_type_namespaces(modules, module, entry_id);
         // Module constants are cloned at each use. Aggregate declarations are
         // removed from executable top-level code below so top-level uses also
         // receive independent values instead of sharing mutable table state.
-        let module_constants = module_constants(&module.program)?;
+        let module_constants = module_constants(&module.program, &type_namespaces)?;
         let aggregate_constants = module_constants
             .iter()
             .filter_map(|(name, value)| is_aggregate_constant(value).then_some(name.clone()))
             .collect::<HashSet<_>>();
         value_aliases.extend(module_constants);
-        let type_namespaces = module_type_namespaces(modules, module, entry_id);
         let transparent_type_aliases = transparent_module_type_aliases(module, &type_namespaces);
+        for function in &mut module_functions {
+            resolve_imported_enum_matches(&mut function.body, &type_namespaces)?;
+        }
 
         let mut rewriter = Rewriter {
             prefix: &prefix,
@@ -669,6 +672,7 @@ fn merge_with_builtins(
         }
 
         let mut lowered = module.program.top_level.clone();
+        resolve_imported_enum_matches(&mut lowered, &type_namespaces)?;
         lowered.retain(|stmt| !is_named_const(stmt, &aggregate_constants));
         for stmt in &mut lowered {
             rewriter.rewrite_stmt_types(stmt);
@@ -752,6 +756,18 @@ struct ModuleNamespace {
     functions: BTreeMap<String, String>,
     constants: BTreeMap<String, Expr>,
 }
+
+/// One erased declaration exposed through a required module. Ordinary aliases
+/// carry only their canonical linked name; enums additionally retain their
+/// declaration-order variants so qualified values and matches can be resolved
+/// without manufacturing a runtime table.
+#[derive(Clone, Debug)]
+struct ExportedType {
+    canonical_name: String,
+    enum_variants: Option<Vec<String>>,
+}
+
+type TypeNamespace = HashMap<String, ExportedType>;
 
 impl ModuleNamespace {
     fn from_functions(functions: BTreeMap<String, String>) -> Self {
@@ -915,14 +931,116 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     }
 }
 
-fn module_constants(program: &Program) -> Result<HashMap<String, Expr>, Diagnostic> {
-    waluau_ast::collect_module_constants(program).map_err(|error| {
+fn module_constants(
+    program: &Program,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) -> Result<HashMap<String, Expr>, Diagnostic> {
+    let mut program = program.clone();
+    let mut shadowed = type_namespaces.keys().cloned().collect::<HashSet<_>>();
+    for stmt in &mut program.top_level {
+        let Stmt::Let { name, value, .. } = stmt else {
+            continue;
+        };
+        rewrite_imported_enum_constant_expr(value, type_namespaces, &shadowed);
+        if type_namespaces.contains_key(name) {
+            if matches!(value, Expr::Require(..)) {
+                shadowed.remove(name);
+            } else {
+                shadowed.insert(name.clone());
+            }
+        }
+    }
+    waluau_ast::collect_module_constants(&program).map_err(|error| {
         let diagnostic = Diagnostic::new(error.to_string());
         match error.span() {
             Some(span) => diagnostic.with_span(span),
             None => diagnostic,
         }
     })
+}
+
+fn imported_enum_variant_expr(
+    expr: &Expr,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+    shadowed: &HashSet<String>,
+) -> Option<Expr> {
+    let Expr::Field {
+        base,
+        name: variant,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    let Expr::Field {
+        base: namespace_base,
+        name: enum_name,
+        ..
+    } = &**base
+    else {
+        return None;
+    };
+    let Expr::Name(namespace, _, _) = &**namespace_base else {
+        return None;
+    };
+    if shadowed.contains(namespace) {
+        return None;
+    }
+    let exported = type_namespaces.get(namespace)?.get(enum_name)?;
+    let ordinal = exported
+        .enum_variants
+        .as_ref()?
+        .iter()
+        .position(|name| name == variant)?;
+    let span = expr.span();
+    Some(Expr::Cast {
+        expr: Box::new(Expr::Cast {
+            expr: Box::new(Expr::Number(
+                waluau_ast::NumberLiteral {
+                    raw: ordinal.to_string(),
+                },
+                span,
+            )),
+            ty: Type::Numeric(waluau_ast::NumericType::I32),
+            span,
+        }),
+        ty: Type::Named {
+            name: exported.canonical_name.clone(),
+            type_args: Vec::new(),
+        },
+        span,
+    })
+}
+
+fn rewrite_imported_enum_constant_expr(
+    expr: &mut Expr,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+    shadowed: &HashSet<String>,
+) {
+    if let Some(resolved) = imported_enum_variant_expr(expr, type_namespaces, shadowed) {
+        *expr = resolved;
+        return;
+    }
+    match expr {
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
+            rewrite_imported_enum_constant_expr(expr, type_namespaces, shadowed);
+        }
+        Expr::Binary { left, right, .. } => {
+            rewrite_imported_enum_constant_expr(left, type_namespaces, shadowed);
+            rewrite_imported_enum_constant_expr(right, type_namespaces, shadowed);
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                rewrite_imported_enum_constant_expr(element, type_namespaces, shadowed);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                rewrite_imported_enum_constant_expr(&mut field.value, type_namespaces, shadowed);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn is_aggregate_constant(expr: &Expr) -> bool {
@@ -1103,7 +1221,8 @@ fn compute_module_export(
     );
     let (re_exports, namespaces, _) =
         process_reexport_bindings(&module.program.top_level, &imports);
-    let mut constants = module_constants(&module.program)?;
+    let type_namespaces = module_type_namespaces(modules, module, entry_id);
+    let mut constants = module_constants(&module.program, &type_namespaces)?;
     // Exported enum constants carry a cast to their declaring nominal type.
     // Canonicalize that type before the expression is copied into consumers;
     // otherwise `render.faces_up` would inline a cast to an unqualified
@@ -1114,7 +1233,6 @@ fn compute_module_export(
         .iter()
         .map(|decl| decl.name.clone())
         .collect::<HashSet<_>>();
-    let type_namespaces = module_type_namespaces(modules, module, entry_id);
     let transparent_type_aliases = transparent_module_type_aliases(module, &type_namespaces);
     let empty_names = HashSet::new();
     let rewriter = Rewriter {
@@ -1135,6 +1253,11 @@ fn compute_module_export(
 
     let resolved = resolve_module_export(
         module.program.export.as_ref(),
+        module
+            .program
+            .type_declarations
+            .iter()
+            .any(|declaration| declaration.exported),
         &prefix,
         &top_level_names,
         &re_exports,
@@ -1183,7 +1306,7 @@ fn module_type_namespaces(
     modules: &[LoadedModule],
     module: &LoadedModule,
     entry_id: usize,
-) -> HashMap<String, HashMap<String, String>> {
+) -> HashMap<String, TypeNamespace> {
     let mut type_namespaces = HashMap::new();
     let mut cache = HashMap::new();
     for stmt in &module.program.top_level {
@@ -1208,7 +1331,7 @@ fn module_type_namespaces(
 /// These are references to the target declaration, not new nominal types.
 fn transparent_module_type_aliases(
     module: &LoadedModule,
-    type_namespaces: &HashMap<String, HashMap<String, String>>,
+    type_namespaces: &HashMap<String, TypeNamespace>,
 ) -> HashMap<String, String> {
     module
         .program
@@ -1225,8 +1348,8 @@ fn transparent_module_type_aliases(
                 return None;
             }
             let (namespace, member) = name.split_once('.')?;
-            let canonical = type_namespaces.get(namespace)?.get(member)?;
-            Some((declaration.name.clone(), canonical.clone()))
+            let exported = type_namespaces.get(namespace)?.get(member)?;
+            Some((declaration.name.clone(), exported.canonical_name.clone()))
         })
         .collect()
 }
@@ -1235,8 +1358,8 @@ fn exported_type_names(
     modules: &[LoadedModule],
     module_id: usize,
     entry_id: usize,
-    cache: &mut HashMap<usize, HashMap<String, String>>,
-) -> HashMap<String, String> {
+    cache: &mut HashMap<usize, TypeNamespace>,
+) -> TypeNamespace {
     if let Some(types) = cache.get(&module_id) {
         return types.clone();
     }
@@ -1247,7 +1370,16 @@ fn exported_type_names(
         .program
         .type_declarations
         .iter()
-        .map(|decl| (decl.name.clone(), format!("{prefix}{}", decl.name)))
+        .filter(|decl| decl.exported)
+        .map(|decl| {
+            (
+                decl.name.clone(),
+                ExportedType {
+                    canonical_name: format!("{prefix}{}", decl.name),
+                    enum_variants: decl.enum_variants.clone(),
+                },
+            )
+        })
         .collect::<HashMap<_, _>>();
     cache.insert(module_id, types.clone());
 
@@ -1285,13 +1417,224 @@ fn exported_type_names(
             continue;
         };
         let target_types = exported_type_names(modules, target_id, entry_id, cache);
-        if let Some(canonical) = target_types.get(member) {
-            types.insert(declaration.name.clone(), canonical.clone());
+        if declaration.exported
+            && let Some(exported) = target_types.get(member)
+        {
+            types.insert(declaration.name.clone(), exported.clone());
         }
     }
 
     cache.insert(module_id, types.clone());
     types
+}
+
+/// Resolve the enum metadata that a single-file parse cannot know. Qualified
+/// match patterns retain a dotted enum type plus symbolic arm names until the
+/// module graph is available here; this pass validates them and fills the
+/// ordinals consumed by HIR/IR.
+fn resolve_imported_enum_matches(
+    stmts: &mut [Stmt],
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) -> Result<(), Diagnostic> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Match {
+                value,
+                enum_ty,
+                arms,
+            } => {
+                if arms.iter().any(|arm| arm.ordinal < 0) {
+                    let Type::Named { name, type_args } = enum_ty else {
+                        return Err(Diagnostic::new("imported enum match has a non-named type"));
+                    };
+                    if !type_args.is_empty() {
+                        return Err(Diagnostic::new(format!(
+                            "enum '{name}' cannot have type arguments"
+                        )));
+                    }
+                    let Some((namespace, member)) = name.split_once('.') else {
+                        return Err(Diagnostic::new(format!("unknown enum '{name}' in match")));
+                    };
+                    let Some(exported) = type_namespaces
+                        .get(namespace)
+                        .and_then(|types| types.get(member))
+                    else {
+                        return Err(Diagnostic::new(format!(
+                            "module '{namespace}' does not export enum '{member}'"
+                        )));
+                    };
+                    let Some(variants) = &exported.enum_variants else {
+                        return Err(Diagnostic::new(format!("'{name}' is a type, not an enum")));
+                    };
+                    for arm in arms.iter_mut() {
+                        let Some(ordinal) =
+                            variants.iter().position(|variant| variant == &arm.variant)
+                        else {
+                            return Err(Diagnostic::new(format!(
+                                "unknown enum variant '{name}.{}'",
+                                arm.variant
+                            )));
+                        };
+                        arm.ordinal = ordinal as i32;
+                    }
+                    let missing = variants
+                        .iter()
+                        .filter(|variant| !arms.iter().any(|arm| &arm.variant == *variant))
+                        .map(|variant| format!("{name}.{variant}"))
+                        .collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        return Err(Diagnostic::new(format!(
+                            "non-exhaustive match for enum '{name}'; missing: {}",
+                            missing.join(", ")
+                        )));
+                    }
+                }
+                resolve_imported_enum_expr(value, type_namespaces)?;
+                for arm in arms {
+                    resolve_imported_enum_matches(&mut arm.body, type_namespaces)?;
+                }
+            }
+            Stmt::Let { value, .. }
+            | Stmt::Assign { value, .. }
+            | Stmt::Return(value)
+            | Stmt::Expr(value) => resolve_imported_enum_expr(value, type_namespaces)?,
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                resolve_imported_enum_expr(base, type_namespaces)?;
+                resolve_imported_enum_expr(index, type_namespaces)?;
+                resolve_imported_enum_expr(value, type_namespaces)?;
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                resolve_imported_enum_expr(base, type_namespaces)?;
+                resolve_imported_enum_expr(value, type_namespaces)?;
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                resolve_imported_enum_expr(condition, type_namespaces)?;
+                resolve_imported_enum_matches(then_body, type_namespaces)?;
+                resolve_imported_enum_matches(else_body, type_namespaces)?;
+            }
+            Stmt::IfCast {
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                resolve_imported_enum_expr(value, type_namespaces)?;
+                resolve_imported_enum_matches(then_body, type_namespaces)?;
+                resolve_imported_enum_matches(else_body, type_namespaces)?;
+            }
+            Stmt::While { condition, body } => {
+                resolve_imported_enum_expr(condition, type_namespaces)?;
+                resolve_imported_enum_matches(body, type_namespaces)?;
+            }
+            Stmt::Repeat { body, condition } => {
+                resolve_imported_enum_matches(body, type_namespaces)?;
+                resolve_imported_enum_expr(condition, type_namespaces)?;
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                resolve_imported_enum_expr(start, type_namespaces)?;
+                resolve_imported_enum_expr(stop, type_namespaces)?;
+                if let Some(step) = step {
+                    resolve_imported_enum_expr(step, type_namespaces)?;
+                }
+                resolve_imported_enum_matches(body, type_namespaces)?;
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                resolve_imported_enum_expr(iterator, type_namespaces)?;
+                resolve_imported_enum_matches(body, type_namespaces)?;
+            }
+            Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
+                for value in values {
+                    resolve_imported_enum_expr(value, type_namespaces)?;
+                }
+            }
+            Stmt::LetMulti { values, .. } => {
+                for value in values {
+                    resolve_imported_enum_expr(value, type_namespaces)?;
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+    Ok(())
+}
+
+fn resolve_imported_enum_expr(
+    expr: &mut Expr,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) -> Result<(), Diagnostic> {
+    match expr {
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            resolve_imported_enum_expr(expr, type_namespaces)
+        }
+        Expr::Binary { left, right, .. } => {
+            resolve_imported_enum_expr(left, type_namespaces)?;
+            resolve_imported_enum_expr(right, type_namespaces)
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            resolve_imported_enum_expr(condition, type_namespaces)?;
+            resolve_imported_enum_expr(then_expr, type_namespaces)?;
+            resolve_imported_enum_expr(else_expr, type_namespaces)
+        }
+        Expr::Call { callee, args, .. } => {
+            resolve_imported_enum_expr(callee, type_namespaces)?;
+            for arg in args {
+                resolve_imported_enum_expr(arg, type_namespaces)?;
+            }
+            Ok(())
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            resolve_imported_enum_expr(receiver, type_namespaces)?;
+            for arg in args {
+                resolve_imported_enum_expr(arg, type_namespaces)?;
+            }
+            Ok(())
+        }
+        Expr::Function(function) => {
+            resolve_imported_enum_matches(&mut function.body, type_namespaces)
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                resolve_imported_enum_expr(element, type_namespaces)?;
+            }
+            Ok(())
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                resolve_imported_enum_expr(&mut field.value, type_namespaces)?;
+            }
+            Ok(())
+        }
+        Expr::Field { base, .. } => resolve_imported_enum_expr(base, type_namespaces),
+        Expr::Index { base, index, .. } => {
+            resolve_imported_enum_expr(base, type_namespaces)?;
+            resolve_imported_enum_expr(index, type_namespaces)
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Vararg(..)
+        | Expr::Name(..)
+        | Expr::Require(..) => Ok(()),
+    }
 }
 
 fn process_reexport_bindings(
@@ -1325,6 +1668,7 @@ fn process_reexport_bindings(
 
 fn resolve_module_export(
     export: Option<&Expr>,
+    has_declaration_exports: bool,
     prefix: &str,
     top_level_names: &HashSet<String>,
     re_exports: &HashMap<String, String>,
@@ -1368,8 +1712,11 @@ fn resolve_module_export(
         Some(_) => Err(Diagnostic::new(
             "module must export a function name or table of functions",
         )),
+        None if has_declaration_exports => {
+            Ok(ResolvedImport::Namespace(ModuleNamespace::default()))
+        }
         None => Err(Diagnostic::new(
-            "module has no export; add `return <function>` or `return { ... }`",
+            "module has no export; add `return <function>`, `return { ... }`, or an exported declaration",
         )),
     }
 }
@@ -1463,7 +1810,7 @@ struct Rewriter<'a> {
     func_names: &'a HashSet<String>,
     type_names: &'a HashSet<String>,
     /// Require-binding name -> exported type name -> canonical linked name.
-    type_namespaces: &'a HashMap<String, HashMap<String, String>>,
+    type_namespaces: &'a HashMap<String, TypeNamespace>,
     /// Local alias name -> canonical declaration in the imported module.
     transparent_type_aliases: &'a HashMap<String, String>,
     global_names: &'a HashSet<String>,
@@ -1699,7 +2046,7 @@ impl Rewriter<'_> {
                         .get(namespace)
                         .and_then(|types| types.get(member))
                     {
-                        *name = canonical.clone();
+                        *name = canonical.canonical_name.clone();
                     }
                 } else if let Some(canonical) = self.transparent_type_aliases.get(name) {
                     *name = canonical.clone();
@@ -1790,6 +2137,8 @@ impl Rewriter<'_> {
         self.rewrite_stmt_types(stmt);
         match stmt {
             Stmt::Let { name, value, .. } => {
+                let is_type_namespace_require =
+                    matches!(&*value, Expr::Require(..)) && self.type_namespaces.contains_key(name);
                 if let Expr::Require(path, _) = &*value {
                     if let Some(resolved) = self.imports.get(path) {
                         match resolved {
@@ -1843,7 +2192,9 @@ impl Rewriter<'_> {
                             .insert(name.clone(), ModuleNamespace::from_functions(field_map));
                     }
                 }
-                bound.insert(name.clone());
+                if !is_type_namespace_require {
+                    bound.insert(name.clone());
+                }
             }
             Stmt::Assign { name, value, .. } => {
                 self.rewrite_expr(value, bound);
@@ -1963,6 +2314,13 @@ impl Rewriter<'_> {
 
     fn rewrite_expr(&mut self, expr: &mut Expr, bound: &HashSet<String>) {
         let use_span = expr.span();
+        // `colors.Color.red`: imported enum namespaces are erased declarations,
+        // not runtime tables. Resolve the variant directly to the same typed
+        // ordinal cast produced for a local `Color.red` expression.
+        if let Some(resolved) = imported_enum_variant_expr(expr, self.type_namespaces, bound) {
+            *expr = resolved;
+            return;
+        }
         if let Expr::Field {
             base, name: field, ..
         } = expr
@@ -2845,7 +3203,7 @@ mod tests {
         fs::write(
             dir.path().join("gfx.walu"),
             r#"
-                type Graphics = { width: f64 }
+                export type Graphics = { width: f64 }
 
                 function make(): Graphics
                     return { width = 2.0 }
@@ -2994,6 +3352,66 @@ mod tests {
             ),
             "expected top-level require namespace access to rewrite to imported function: {:?}",
             main.body
+        );
+    }
+
+    #[test]
+    fn imported_enum_constants_resolve_without_overriding_shadowing_locals() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("directions.walu"),
+            "export enum Direction { north, south }",
+        )
+        .expect("directions should write");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                local directions = require("./directions")
+                local DEFAULT <const>: directions.Direction = directions.Direction.south
+
+                function main(): directions.Direction
+                    return DEFAULT
+                end
+
+                function shadow(directions: { Direction: { south: i32 } }): i32
+                    return directions.Direction.south
+                end
+            "#,
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu")).expect("link should succeed");
+        waluau_hir::type_check_and_infer(&program)
+            .expect("imported enum constants and shadowed locals should type-check");
+        let main = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "main")
+            .expect("main should be present");
+        assert!(
+            matches!(&main.body[0], Stmt::Return(Expr::Cast { .. })),
+            "the imported enum constant should inline as a typed ordinal: {:?}",
+            main.body
+        );
+        let shadow = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "shadow")
+            .expect("shadow should be present");
+        assert!(
+            matches!(
+                &shadow.body[0],
+                Stmt::Return(Expr::Field { base, name, .. })
+                    if name == "south"
+                        && matches!(
+                            &**base,
+                            Expr::Field { base, name, .. }
+                                if name == "Direction"
+                                    && matches!(&**base, Expr::Name(name, _, _) if name == "directions")
+                        )
+            ),
+            "a local named like the require alias must keep runtime field access: {:?}",
+            shadow.body
         );
     }
 

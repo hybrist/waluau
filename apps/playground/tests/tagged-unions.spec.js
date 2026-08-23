@@ -40,7 +40,7 @@ end
     );
 
     // Switch to Run tab
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
 
     // Verify Process Option function signature and custom tagged union input layout
     const procCard = page.locator('.func-card:has(.func-signature-name:text-is("process_option"))');

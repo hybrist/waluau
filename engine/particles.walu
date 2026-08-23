@@ -29,10 +29,10 @@ local graphics_module = require("./graphics")
 type Graphics = graphics_module.Graphics
 
 -- Channels run 0.0..1.0, the same range the renderer sends to the GPU.
-type Color = { red: f64, green: f64, blue: f64, alpha: f64 }
+export type Color = { red: f64, green: f64, blue: f64, alpha: f64 }
 -- A source rectangle in texture pixels. A quad list is walked across a
 -- particle's life, which is how sprite-sheet animation works.
-type Quad = { x: f64, y: f64, width: f64, height: f64 }
+export type Quad = { x: f64, y: f64, width: f64, height: f64 }
 
 -- One pooled particle. Records are reused, so every field is overwritten on
 -- spawn and nothing here is allowed to mean "unset".
@@ -72,7 +72,7 @@ type Particle = {
     sway_offset: f64
 }
 
-type ParticleSystem = {
+export type ParticleSystem = {
     alive: {Particle},
     free: {Particle},
     capacity: i32,

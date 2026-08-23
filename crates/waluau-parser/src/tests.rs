@@ -23,6 +23,20 @@ fn parses_v0_function() {
 }
 
 #[test]
+fn rejects_reserved_linker_identifiers() {
+    let error = parse("local value: __waluau_m0_Hidden = 1\n")
+        .expect_err("source must not address linker-private declarations");
+    assert!(
+        error
+            .to_string()
+            .contains("identifier '__waluau_m0_Hidden' uses a reserved linker prefix"),
+        "{error}"
+    );
+    parse("function __waluau_main(): unit end")
+        .expect("the runtime entry name must not match a module prefix");
+}
+
+#[test]
 fn parses_nominal_enum_values_and_exhaustive_match() {
     let source = r#"
         enum Direction { north, east, south }
@@ -249,6 +263,30 @@ fn parses_module_opaque_type_declarations() {
     assert_eq!(declaration.name, "State");
     assert!(declaration.module_opaque);
     assert_eq!(declaration.file_path, "/game.walu");
+}
+
+#[test]
+fn parses_exported_type_and_enum_declarations() {
+    let program = parse_with_path(
+        r#"
+            export type Pair<T> = { first: T, second: T }
+            export opaque type Token = i32
+            export enum Direction { north, south }
+            type Private = bool
+        "#,
+        "/types.walu",
+    )
+    .expect("exported declarations should parse");
+
+    assert!(program.type_declarations[0].exported);
+    assert_eq!(program.type_declarations[0].type_params, ["T"]);
+    assert!(program.type_declarations[1].exported);
+    assert!(program.type_declarations[1].module_opaque);
+    assert_eq!(
+        program.type_declarations[2].enum_variants.as_deref(),
+        Some(["north".to_string(), "south".to_string()].as_slice())
+    );
+    assert!(!program.type_declarations[3].exported);
 }
 
 #[test]

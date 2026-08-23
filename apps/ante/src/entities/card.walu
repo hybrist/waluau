@@ -46,7 +46,7 @@ const EYE_LID: f64 = 4.6
 -- Everything the board can currently think about one card. Grouped rather
 -- than passed as five loose booleans: a card's state is one reading, and a new
 -- one extends this record instead of every call site.
-type Look = {
+export type Look = {
     card: game.Card,
     selected: bool,
     focused: bool,

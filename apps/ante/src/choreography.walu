@@ -45,7 +45,7 @@ type Session = {
     discards: {game.Card}
 }
 
-type State = {
+export type State = {
     fan_parts: {f64},
     session: Session,
     -- Scratch geometry for the thrown table_card cards: one deformable sheet the

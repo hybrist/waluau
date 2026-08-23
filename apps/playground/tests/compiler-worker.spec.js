@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 
-const COMPILER_READY_TIMEOUT = 20_000;
+// The Ante project compiles in roughly 17 seconds in isolation. Leave room for
+// the CPU contention from the rest of the parallel browser suite; the test's
+// responsiveness assertions below still catch worker starvation directly.
+const COMPILER_READY_TIMEOUT = 40_000;
 
 test('complex project analysis runs in a dedicated worker without starving the UI', async ({ page }) => {
   await page.addInitScript(() => {

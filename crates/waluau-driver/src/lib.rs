@@ -879,7 +879,7 @@ fn generate_asset_module(declarations: &[AssetDeclaration]) -> Result<String, Di
         "-- Generated from waluau.assets.json. Do not edit.\n\
 local resources = require(\"waluau:engine/resources\")\n\
 local audio = require(\"waluau:engine/audio\")\n\n\
-type Bundle = {\n    owner: resources.Owner",
+export type Bundle = {\n    owner: resources.Owner",
     );
     for declaration in &named {
         let name = declaration
@@ -896,7 +896,7 @@ type Bundle = {\n    owner: resources.Owner",
     }
     source.push_str(
         "\n}\n\
-type LoadResult = { bundle: Bundle, errors: {resources.ResourceError} }\n\n\
+export type LoadResult = { bundle: Bundle, errors: {resources.ResourceError} }\n\n\
 function load(): LoadResult\n\
     local owner: resources.Owner = resources.new_owner()\n\
     local errors: {resources.ResourceError} = {}\n\
@@ -2343,7 +2343,7 @@ end
         fs::write(
             tempdir.path().join("service.walu"),
             r#"
-                type Promise<T> = extern
+                export type Promise<T> = extern
 
                 declare function host_exchange(value: Promise<i32>): Promise<string>
                 declare function host_text(): Promise<string>
@@ -2627,7 +2627,7 @@ end
         fs::write(
             tempdir.path().join("state.walu"),
             r#"
-                type State = { score: i32 }
+                export type State = { score: i32 }
 
                 function new_state(): State
                     return { score = 41::i32 }
@@ -2673,7 +2673,7 @@ end
         fs::write(
             tempdir.path().join("gfx.walu"),
             r#"
-                type Graphics = { width: f64 }
+                export type Graphics = { width: f64 }
 
                 function make(): Graphics
                     return { width = 2.0 }
@@ -2929,7 +2929,7 @@ end
         fs::write(
             tempdir.path().join("config.walu"),
             r#"
-                type Config = { enabled: bool? }
+                export type Config = { enabled: bool? }
 
                 function enabled(config: Config): bool
                     local value: bool? = config.enabled
@@ -3184,7 +3184,7 @@ end
         fs::write(
             tempdir.path().join("faces.walu"),
             r#"
-                enum Face { down, up }
+                export enum Face { down, up }
                 const FACES_UP: Face = Face.up
 
                 function is_up(face: Face): bool
@@ -3211,6 +3211,106 @@ end
 
         let wasm = super::compile_file(&input_path).expect("compile should succeed");
         assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_imports_exported_declarations_and_enum_namespace() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("directions.walu"),
+            r#"
+                export enum Direction { north, east, south }
+                export type Step = { direction: Direction, distance: i32 }
+                type Scratch = { value: i32 }
+            "#,
+        )
+        .expect("declaration-only module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local directions = require("./directions")
+
+                function score(direction: directions.Direction): i32
+                    match direction do
+                    case directions.Direction.north then
+                        return 1
+                    case directions.Direction.east then
+                        return 2
+                    case directions.Direction.south then
+                        return 3
+                    end
+                end
+
+                local direction: directions.Direction = directions.Direction.east
+                local step: directions.Step = { direction = direction, distance = 4 }
+                assert(score(step.direction) == 2)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_keeps_plain_type_declarations_private() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("types.walu"),
+            r#"
+                export type Public = { value: i32 }
+                type Hidden = { value: i32 }
+            "#,
+        )
+        .expect("types module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local types = require("./types")
+                local value: types.Hidden = { value = 1 }
+            "#,
+        )
+        .expect("main module should write");
+
+        let error = super::compile_file(&input_path)
+            .expect_err("private imported type should be rejected")
+            .to_string();
+        assert!(error.contains("unknown type 'types.Hidden'"), "{error}");
+    }
+
+    #[test]
+    fn compile_file_rejects_non_exhaustive_imported_enum_match() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("directions.walu"),
+            "export enum Direction { north, south }",
+        )
+        .expect("enum module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local directions = require("./directions")
+                function score(direction: directions.Direction): i32
+                    match direction do
+                    case directions.Direction.north then
+                        return 1
+                    end
+                end
+            "#,
+        )
+        .expect("main module should write");
+
+        let error = super::compile_file(&input_path)
+            .expect_err("imported enum match should remain exhaustive")
+            .to_string();
+        assert!(
+            error.contains("non-exhaustive match for enum 'directions.Direction'")
+                && error.contains("directions.Direction.south"),
+            "{error}"
+        );
     }
 
     #[test]

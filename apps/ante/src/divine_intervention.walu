@@ -2,7 +2,7 @@
 -- Rendering owns what the fairy looks like; this module only says when it is
 -- flying and which of the five cards it has reached.
 
-type State = {
+export type State = {
     matched: i32,
     active: bool,
     clock: f64,

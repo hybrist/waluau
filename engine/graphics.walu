@@ -88,7 +88,7 @@ type CachedUniform = {
     revision: i32,
     location: WebGLUniformLocation
 }
-type Shader = {
+export type Shader = {
     program: WebGLProgram?,
     id: i32,
     revision: i32,
@@ -102,7 +102,7 @@ type Shader = {
     texture_location: WebGLUniformLocation?,
     released: bool
 }
-type ShaderResult = { ok: bool, shader: Shader, error: GraphicsError }
+export type ShaderResult = { ok: bool, shader: Shader, error: GraphicsError }
 type CompiledShader = { ok: bool, shader: WebGLShader?, error: GraphicsError }
 
 -- A parameter block is an array of these opaque, compiler-typed values. Games
@@ -117,14 +117,14 @@ opaque type ShaderParameter =
     | IVec2Parameter({ name: string, x: i32, y: i32 })
     | IVec3Parameter({ name: string, x: i32, y: i32, z: i32 })
     | IVec4Parameter({ name: string, x: i32, y: i32, z: i32, w: i32 })
-type ShaderBindingResult = { ok: bool, error: GraphicsError }
+export type ShaderBindingResult = { ok: bool, error: GraphicsError }
 type UniformResult = {
     ok: bool,
     location: WebGLUniformLocation?,
     actual_kind: u32
 }
 
-type Graphics = {
+export type Graphics = {
     gl: WebGL2RenderingContext,
     width: f64,
     height: f64,
@@ -169,9 +169,9 @@ type Graphics = {
 -- `flip_v` marks storage whose first row is the logical bottom, which is how
 -- framebuffer color attachments are laid out. Textures uploaded from decoded
 -- images keep the DOM convention and leave it false.
-type Texture = { handle: i32, width: i32, height: i32, released: bool, flip_v: bool }
-type TextureResult = { ok: bool, texture: Texture, error: GraphicsError }
-type Font = {
+export type Texture = { handle: i32, width: i32, height: i32, released: bool, flip_v: bool }
+export type TextureResult = { ok: bool, texture: Texture, error: GraphicsError }
+export type Font = {
     handle: i32,
     width: i32,
     height: i32,
@@ -185,9 +185,9 @@ type Font = {
     advances: {i32},
     released: bool
 }
-type FontResult = { ok: bool, font: Font, error: GraphicsError }
-type RenderTarget = { handle: i32, width: i32, height: i32, released: bool }
-type RenderTargetResult = { ok: bool, target: RenderTarget, error: GraphicsError }
+export type FontResult = { ok: bool, font: Font, error: GraphicsError }
+export type RenderTarget = { handle: i32, width: i32, height: i32, released: bool }
+export type RenderTargetResult = { ok: bool, target: RenderTarget, error: GraphicsError }
 
 function empty_shader(): Shader
     return {

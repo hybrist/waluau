@@ -553,7 +553,10 @@ fn completion_after_dot_lists_namespace_and_module_members() {
     let lib = dir.path().join("lib.walu");
     std::fs::write(
         &lib,
-        "function double(x: i32): i32\n    return x * 2\nend\nreturn double\n",
+        "export type Public = { value: i32 }\n\
+type Hidden = { value: i32 }\n\
+export enum Direction { north, south }\n\
+function double(x: i32): i32\n    return x * 2\nend\nreturn double\n",
     )
     .expect("write fixture");
     let main = dir.path().join("main.walu");
@@ -596,7 +599,40 @@ fn completion_after_dot_lists_namespace_and_module_members() {
         .iter()
         .filter_map(|item| item["label"].as_str())
         .collect();
-    assert_eq!(labels, vec!["double"], "{labels:?}");
+    assert!(labels.contains(&"double"), "{labels:?}");
+    assert!(labels.contains(&"Public"), "{labels:?}");
+    assert!(labels.contains(&"Direction"), "{labels:?}");
+    assert!(!labels.contains(&"Hidden"), "{labels:?}");
+}
+
+#[test]
+fn exported_enum_variant_definition_crosses_module_namespace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("directions.walu");
+    let lib_text = "type Hidden = i32\nexport enum Direction { north, south }\n";
+    std::fs::write(&lib, lib_text).expect("write fixture");
+    let main = dir.path().join("main.walu");
+    let text = "local directions = require(\"./directions\")\n\
+local direction: directions.Direction = directions.Direction.north\n";
+    std::fs::write(&main, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, text);
+    let (line, character) = position_of(text, "north");
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &main,
+        line,
+        character,
+    );
+    assert!(
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("directions.walu")),
+        "{location:?}"
+    );
+    assert_eq!(location["range"]["start"]["line"], json!(1));
 }
 
 #[test]
@@ -664,7 +700,7 @@ fn completion_after_colon_offers_type_names_in_annotations() {
 /// Fixture mirroring the ante game module shape: a record type, a
 /// constructor with a declared return type, and a method.
 const GAME_MODULE: &str = "type Card = { rank: i32, suit: i32 }\n\
-type State = { middle: {Card}, round: i32 }\n\
+export type State = { middle: {Card}, round: i32 }\n\
 function State:play(first: i32, second: i32): unit\n\
 end\n\
 function new(): State\n\
@@ -1134,7 +1170,7 @@ fn definition_resolves_functions_and_methods_through_every_receiver_shape() {
             vec![
                 (
                     "lib.walu",
-                    "type P = { x: i32 }\nfunction <def>P.new</def>(): P\n    return { x = 1 }\nend\n",
+                    "export type P = { x: i32 }\nfunction <def>P.new</def>(): P\n    return { x = 1 }\nend\n",
                 ),
                 (
                     "main.walu",
@@ -1147,7 +1183,7 @@ fn definition_resolves_functions_and_methods_through_every_receiver_shape() {
             vec![
                 (
                     "lib.walu",
-                    "type P = { x: i32 }\nfunction P.new(): P\n    return { x = 1 }\nend\nfunction <def>P:get</def>(): i32\n    return self.x\nend\n",
+                    "export type P = { x: i32 }\nfunction P.new(): P\n    return { x = 1 }\nend\nfunction <def>P:get</def>(): i32\n    return self.x\nend\n",
                 ),
                 (
                     "main.walu",
@@ -1160,7 +1196,7 @@ fn definition_resolves_functions_and_methods_through_every_receiver_shape() {
             vec![
                 (
                     "lib.walu",
-                    "type P = { x: i32 }\nfunction <def>P:get</def>(): i32\n    return self.x\nend\n",
+                    "export type P = { x: i32 }\nfunction <def>P:get</def>(): i32\n    return self.x\nend\n",
                 ),
                 (
                     "main.walu",
@@ -1385,7 +1421,7 @@ fn references_separate_shadowed_bindings() {
 fn references_follow_methods_and_cross_module_uses() {
     let dir = tempfile::tempdir().expect("tempdir");
     let lib = dir.path().join("lib.walu");
-    let lib_text = "type P = { x: i32 }\n\
+    let lib_text = "export type P = { x: i32 }\n\
 type Other = { x: i32 }\n\
 function P.new(): P\n\
     return { x = 1 }\n\

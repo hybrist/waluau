@@ -6,7 +6,7 @@
 
 local resources = require("./resources")
 
-type SaveResult = { ok: bool, error: resources.ResourceError }
+export type SaveResult = { ok: bool, error: resources.ResourceError }
 
 declare function game_save_read_text(slot: string): extern
 declare function game_save_read_bytes(slot: string): extern

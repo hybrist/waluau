@@ -12,7 +12,7 @@ local render = require("./render")
 local entity = require("./entity")
 local layout = require("./layout")
 
-type State = {
+export type State = {
     bundle: assets.Bundle?,
     texture: graphics_module.Texture?,
     font: graphics_module.Font?,

@@ -7,7 +7,7 @@ local graphics_module = require("./graphics")
 local time_module = require("./time")
 local window = require("dom:window")
 
-type Config = {
+export type Config = {
     title: string,
     -- The fixed logical viewport. Left out, the engine measures the
     -- browser's available space instead — the natural pairing with
@@ -29,7 +29,7 @@ type Config = {
     mount: string?
 }
 
-type Game = {
+export type Game = {
     load: () -> unit,
     update: (f64, input_module.Input) -> unit,
     draw: (graphics_module.Graphics, f64) -> unit,
@@ -47,7 +47,7 @@ type Game = {
 -- Development hot replacement suspends after capturing state so the old Wasm
 -- instance no longer receives input or schedules frames while its canvas stays
 -- mounted for the replacement handoff.
-type Session = {
+export type Session = {
     stop: () -> unit,
     -- Change the logical viewport of a running game. A host that keeps one
     -- canvas across scenes of different sizes — Storybook's preview moving

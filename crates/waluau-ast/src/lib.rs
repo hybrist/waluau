@@ -78,6 +78,14 @@ pub struct TypeDeclaration {
     pub source_name: String,
     pub type_params: Vec<String>,
     pub ty: Type,
+    /// Whether this declaration is part of its source module's interface.
+    /// Plain `type`/`enum` declarations remain private to their file; only an
+    /// explicit `export` makes the source name available through `require`.
+    pub exported: bool,
+    /// Declaration-order variants for a nominal enum. `None` identifies an
+    /// ordinary type alias. Variants remain compile-time metadata and do not
+    /// create a runtime table.
+    pub enum_variants: Option<Vec<String>>,
     /// Whether importing modules see this alias as an opaque nominal handle.
     /// The declaring file still type-checks against `ty`; lowering always uses
     /// `ty`, so this changes no runtime representation.
