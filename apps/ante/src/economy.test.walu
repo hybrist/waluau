@@ -212,9 +212,15 @@ local function play_run(seed: i32): RunTrial
         math.randomseed(seed * 1000 + attempt)
         local duel: game.State = game.new(state:boss(), state.spells, state.gold)
         autopilot(duel)
+        -- The live game screen charges health as each breach resolves. This aggregate
+        -- runner plays the whole vault in one call, then applies those same
+        -- losses before asking the run for its outcome.
+        for trick in game.view(duel).history do
+            if trick.winner < 0 then state:lose_hand() end
+        end
         local reached: i32 = state.duel
         local outcome: run.Outcome = state:settle(duel:is_victory(), duel:gold())
-        if outcome == "lost-vault" or outcome == "lost-target" then
+        if run.outcome_is_loss(outcome) then
             return { duels = reached - 1, ended_by = outcome, purse = duel:gold() }
         end
     end
@@ -249,7 +255,9 @@ describe("Ante Magic run economy", function()
         local total: i32 = 0
         for seed = 1::i32, RUN_TRIALS do
             local trial: RunTrial = play_run(seed)
-            if trial.ended_by == "lost-vault" then held += 1
+            if trial.ended_by == "lost-health"
+                or trial.ended_by == "lost-vault"
+            then held += 1
             elseif trial.ended_by == "lost-target" then short += 1
             else unfinished += 1 end
             total += trial.duels

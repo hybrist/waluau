@@ -40,12 +40,14 @@ const SHORT_INK: string = "#fb7185"
 function marker_text(run: run_module.View): string
     local text: string = "DUEL " .. tostring(run.duel)
     if run.duel > run.run_length then
-        return text .. "   ENDLESS   CLEARED " .. tostring(run.cleared)
+        text = text .. "   ENDLESS   CLEARED " .. tostring(run.cleared)
+    else
+        text = text .. " / " .. tostring(run.run_length)
+        if run.duel == run.run_length then text = text .. "   FINAL DUEL"
+        elseif run.boss then text = text .. "   CHALLENGE" end
     end
-    text = text .. " / " .. tostring(run.run_length)
-    if run.duel == run.run_length then return text .. "   FINAL DUEL" end
-    if run.boss then return text .. "   CHALLENGE" end
-    return text
+    return text .. "   HEARTS " .. tostring(run.hearts)
+        .. " / " .. tostring(run.max_hearts)
 end
 
 function marker_ink(run: run_module.View): string

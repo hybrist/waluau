@@ -1,7 +1,7 @@
 -- DOM-free run state: the roguelike frame around the duel. A run is a
--- sequence of duels fought with one gold pool. Clearing a duel carries the
--- gold that survived it into the next one; losing a duel ends the run, and
--- the gold with it.
+-- sequence of duels fought with one gold pool and one pool of hearts.
+-- Clearing a duel carries both into the next one; every hand the Opponent
+-- takes costs a heart, and reaching zero ends the run.
 --
 -- This module owns the shape of the sequence — which duel is live, how much
 -- gold it opens with, which duels are boss battles, and the spell loadout
@@ -17,14 +17,16 @@ local snapshot_data = require("./snapshot")
 -- live. `gold` is what the live duel was dealt, not what it has left: the
 -- rules spend from their own pool, and a cleared duel hands its remainder
 -- back here — which is also the purse the intermission between duels shops
--- from. `spells` is the loadout every duel of the run is fought with, in the
--- order the spells were learned; `start_spell` is the one the menu picked, so a
+-- from. `hearts` is damaged by lost hands and, unlike a duel-local tally,
+-- survives every cleared duel. `spells` is the loadout every duel of the run
+-- is fought with, in the order the spells were learned; `start_spell` is the one the menu picked, so a
 -- run that ends can start over carrying what it originally set out with rather
 -- than what it had bought by the time it died. `rush` is the boss-rush run,
 -- where every duel is a boss battle rather than every third.
 type State = {
     duel: i32,
     gold: i32,
+    hearts: i32,
     cleared: i32,
     spells: {game.Spell},
     start_spell: i32,
@@ -49,7 +51,10 @@ const ENDLESS_STEP: i32 = 6
 const MAX_SPELLS: i32 = 2
 -- However cheap a spell is upgraded, a cast is never free.
 const MIN_SPELL_COST: i32 = 2
-const SNAPSHOT_SCHEMA: string = "duel-run-v2"
+-- Three lost hands across the whole run. A won duel repairs nothing: health is
+-- run state, just like the purse and loadout it carries through the shop.
+const MAX_HEARTS: i32 = 3
+const SNAPSHOT_SCHEMA: string = "duel-run-v3"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
@@ -59,6 +64,7 @@ function new(spell: i32, rush: bool): State
     return {
         duel = 1,
         gold = game.starting_gold,
+        hearts = MAX_HEARTS,
         cleared = 0,
         spells = { game.new_spell(spell) },
         start_spell = spell,
@@ -131,19 +137,33 @@ function State:endless(): bool
     return self.duel > run_length(self.rush)
 end
 
--- The verdict of a fought duel, read as a moment in the run. There are two
--- ways to lose a duel and two ways to leave one, and this says which without
--- applying any of them — one classifier, so the screen showing a verdict and
--- the settle that acts on it can never disagree about what happened.
+-- The verdict of a fought duel, read as a moment in the run. Health, the duel,
+-- or the target can end it; clearing it either advances or crosses the finish
+-- line. This says which without applying any of them — one classifier, so the
+-- screen showing a verdict and the settle that acts on it agree.
 --
 -- "won" is a milestone rather than a stop: the last duel of the table
 -- is cleared exactly the way any other is, and the run walks on into the
--- endless city. Only the two losses end a run.
-type Outcome = "none" | "lost-vault" | "lost-target" | "advance" | "won"
+-- endless city.
+type Outcome =
+    "none" | "lost-health" | "lost-vault" | "lost-target" | "advance" | "won"
+
+function outcome_is_loss(outcome: Outcome): bool
+    return outcome == "lost-health"
+        or outcome == "lost-vault"
+        or outcome == "lost-target"
+end
+
+function outcome_walks_on(outcome: Outcome): bool
+    return outcome == "advance" or outcome == "won"
+end
 
 function outcome_of(
-    duel: i32, rush: bool, cleared: bool, carried_gold: i32
+    duel: i32, rush: bool, hearts: i32, cleared: bool, carried_gold: i32
 ): Outcome
+    -- Health can end the run during a duel, before its ordinary best-of-three
+    -- verdict exists. It therefore outranks both that verdict and the purse.
+    if hearts <= 0 then return "lost-health" end
     if not cleared then return "lost-vault" end
     if carried_gold < target_at(duel, rush) then return "lost-target" end
     -- The finish line is a moment the run passes through once, not a state it
@@ -154,9 +174,9 @@ end
 
 -- The run as the board reads it: which duel of the sequence this is, how many
 -- the player have already taken, whether this one and the next are boss
--- battles, the gold the run carried in, what leaving this duel and the next
--- one costs, how far the authored curve runs, and the verdict on the live
--- duel. Read-only, the way game.View is — a screen showing the run must not be
+-- battles, the gold and hearts the run carried in, what leaving this duel and
+-- the next one costs, how far the authored curve runs, and the verdict on the
+-- live duel. Read-only, the way game.View is — a screen showing the run must not be
 -- able to move it.
 --
 -- `outcome` is the rules module's answer about a duel this module has not
@@ -168,6 +188,8 @@ type View = {
     boss: bool,
     next_is_boss: bool,
     carried_gold: i32,
+    hearts: i32,
+    max_hearts: i32,
     target: i32,
     ante_ahead: i32,
     run_length: i32,
@@ -181,6 +203,8 @@ function view(state: State, outcome: Outcome): View
         boss = state:boss(),
         next_is_boss = state:next_is_boss(),
         carried_gold = state.gold,
+        hearts = state.hearts,
+        max_hearts = MAX_HEARTS,
         target = state:target(),
         ante_ahead = target_at(state.duel + 1, state.rush),
         run_length = run_length(state.rush),
@@ -190,16 +214,16 @@ end
 
 -- The live duel has been fought to a verdict. Taking it advances the run,
 -- charges the duel its target, and carries what is left into the next one;
--- losing it — to the opponent or to a target the purse could not cover — ends
--- the run, and what follows is the first duel of a fresh one. A duel the run
--- already spent gold in is never fought twice.
+-- losing the run — to health, the opponent, or a target the purse could not
+-- cover — starts a fresh one. A duel the run already spent gold in is never
+-- fought twice.
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished duel decided is not this module's to decide again.
 function State:settle(cleared: bool, carried_gold: i32): Outcome
     local outcome: Outcome = outcome_of(
-        self.duel, self.rush, cleared, carried_gold)
-    if outcome == "lost-vault" or outcome == "lost-target" then
+        self.duel, self.rush, self.hearts, cleared, carried_gold)
+    if outcome_is_loss(outcome) then
         self:restart(self.start_spell, self.rush)
         return outcome
     end
@@ -215,10 +239,19 @@ function State:restart(spell: i32, rush: bool): unit
     local fresh: State = new(spell, rush)
     self.duel = fresh.duel
     self.gold = fresh.gold
+    self.hearts = fresh.hearts
     self.cleared = fresh.cleared
     self.spells = fresh.spells
     self.start_spell = spell
     self.rush = rush
+end
+
+-- Charge exactly one heart for a hand the Opponent took. A terminal reveal
+-- may call this before the run is settled, so zero is an observable state,
+-- while repeated calls cannot take health negative.
+function State:lose_hand(): bool
+    if self.hearts > 0 then self.hearts -= 1 end
+    return self.hearts == 0
 end
 
 -- Whether the loadout already holds that kind of spell, and therefore whether
@@ -293,6 +326,7 @@ function snapshot(state: State): string
     snapshot_data.append_i32(parts, state.duel)
     snapshot_data.append_i32(parts, state.gold)
     snapshot_data.append_i32(parts, state.cleared)
+    snapshot_data.append_i32(parts, state.hearts)
     snapshot_data.append_i32(parts, #state.spells)
     for spell in state.spells do
         snapshot_data.append_i32(parts, spell.kind)
@@ -310,6 +344,7 @@ function restore(snapshot_value: string): State?
     local duel: i32 = reader:next_i32()
     local gold: i32 = reader:next_i32()
     local cleared: i32 = reader:next_i32()
+    local hearts: i32 = reader:next_i32()
     local spells: {game.Spell} = {}
     local spell_count: i32 = reader:next_length()
     for _ = 1, spell_count do
@@ -324,6 +359,7 @@ function restore(snapshot_value: string): State?
     local restored: State = {
         duel = duel,
         gold = gold,
+        hearts = hearts,
         cleared = cleared,
         spells = spells,
         start_spell = start_spell,
@@ -333,6 +369,9 @@ function restore(snapshot_value: string): State?
     -- No upper selected on the duel: a run past the end of its table is a run
     -- that won and kept walking, not a payload from another build.
     if duel < 1 then return nil end
+    -- Zero is the terminal reveal before settle restarts the run; no run can
+    -- have more health than it opened with or take damage below zero.
+    if hearts < 0 or hearts > MAX_HEARTS then return nil end
     -- A run always carries at least the spell it set out with, and never more
     -- than the two the player can hold ready.
     if #spells < 1 or #spells > MAX_SPELLS then return nil end
@@ -346,9 +385,12 @@ return {
     target_at = target_at,
     run_length = run_length,
     outcome_of = outcome_of,
+    outcome_is_loss = outcome_is_loss,
+    outcome_walks_on = outcome_walks_on,
     snapshot = snapshot,
     restore = restore,
     boss_every = BOSS_EVERY,
     max_spells = MAX_SPELLS,
     min_spell_cost = MIN_SPELL_COST,
+    max_hearts = MAX_HEARTS,
 }
