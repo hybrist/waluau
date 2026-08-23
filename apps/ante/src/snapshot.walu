@@ -2,7 +2,7 @@
 -- snapshots. Rules and presentation modules keep ownership of their fields;
 -- this module owns the token format both use.
 
-type Reader = { tokens: {string}, index: i32, ok: bool, collection_limit: i32 }
+export type Reader = { tokens: {string}, index: i32, ok: bool, collection_limit: i32 }
 
 function append_i32(parts: {string}, value: i32): unit
     table.insert(parts, tostring(value))

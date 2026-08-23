@@ -26,7 +26,7 @@ local snapshot_data = require("./snapshot")
 -- What a slot has for sale. Both of these name the spell they are about rather
 -- than a cast key, because a trade can move a spell off the key it was rolled
 -- against and an offer must not follow it.
-type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+export type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
 
 -- What a slot draws from. A category can offer more than one kind of goods: the
 -- spell slots sell both sharpening a spell already carried and teaching a new
@@ -40,7 +40,7 @@ type Category = "spells"
 --
 -- A category with less stock than it has slots simply fills fewer of them, so an
 -- unfilled slot is a slot that is not here rather than one holding nothing.
-type Slot = {
+export type Slot = {
     category: Category,
     goods: Goods,
     item: shop_item.Item,
@@ -54,7 +54,7 @@ type Slot = {
 -- changed hands yet; the rest of the time it is nil.
 type Pending = { slot: i32, choices: {i32} }
 
-type State = { open: bool, slots: {Slot}, cursor: i32, pending: Pending? }
+export type State = { open: bool, slots: {Slot}, cursor: i32, pending: Pending? }
 
 type ShopResult = "stay" | "leave"
 
@@ -69,7 +69,7 @@ type RowKind = "sale" | "choice" | "leave" | "cancel"
 -- line is selling stays on the slot; a row names the slot rather than carrying a
 -- copy of its goods, so the two cannot drift apart. Input and drawing read the
 -- same list, so a greyed-out line and a refused press can never disagree.
-type Row = {
+export type Row = {
     kind: RowKind,
     slot: i32,
     key: i32,

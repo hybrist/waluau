@@ -8,7 +8,7 @@ local shader_program = require("./shader_program")
 
 type Graphics = engine.Graphics
 type Source = shader_sources.Source
-type EffectShaders = {
+export type EffectShaders = {
     gold_shimmer: shader_program.State,
     defeat_shroud: shader_program.State,
     card_burn: shader_program.State,
@@ -21,7 +21,7 @@ type EffectShaders = {
     -- loading fills it in; it travels with the effect registry.
     noise_texture: graphics_module.Texture?
 }
-type State = {
+export type State = {
     shaders: EffectShaders,
     programs: {shader_program.State},
     vertex_source: Source,
@@ -29,7 +29,7 @@ type State = {
     vertex_ready: bool,
     vertex_error: string
 }
-type Diagnostics = { fatal_error: string, warnings: string }
+export type Diagnostics = { fatal_error: string, warnings: string }
 
 function new(): State
     local gold: shader_program.State = shader_program.new(

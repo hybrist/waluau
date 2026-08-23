@@ -16,7 +16,7 @@ test.describe('nullable function calling', () => {
       'Compilation Succeeded',
       { timeout: COMPILER_READY_TIMEOUT },
     );
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
   });
 
   test('renders nullable metadata and defaults optional values to nil', async ({ page }) => {

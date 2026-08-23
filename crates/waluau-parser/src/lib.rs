@@ -40,6 +40,8 @@ pub enum DefinitionKind {
     Property,
     /// A `type Name = ...` declaration.
     TypeName,
+    /// A nominal enum member, recorded as `Enum.variant` for tooling.
+    EnumVariant,
 }
 
 /// One name-introducing site recorded by the parser.
@@ -59,6 +61,11 @@ pub struct DefinitionSite {
     /// Exact span of the defining identifier token(s).
     pub name_span: Span,
     pub kind: DefinitionKind,
+    /// Whether a type/enum declaration is visible through a required module.
+    /// Value definitions continue to use the module's trailing return table.
+    pub exported: bool,
+    /// Declaration-order variants when this definition names an enum.
+    pub enum_variants: Option<Vec<String>>,
     /// The annotated type (locals/params/declares), when syntactically
     /// present. Functions carry their rendered signature in `detail` instead.
     pub ty: Option<Type>,

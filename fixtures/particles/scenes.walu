@@ -26,7 +26,7 @@ const SCENE_COUNT: i32 = 9
 const SPRITE_FRAMES: i32 = 4
 const SPRITE_CELL: f64 = 32.0
 
-type Scene = {
+export type Scene = {
     kind: i32,
     name: string,
     hint: string,

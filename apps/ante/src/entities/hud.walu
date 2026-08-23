@@ -1,94 +1,23 @@
--- The band across the top of the duel: who is being robbed, where the run
--- stands, how the three rounds have gone, and how much gold is on the table.
+-- The band across the top of the duel: how the three rounds have gone.
 --
--- It is a row of three things that want opposite edges — the title block left,
--- the orb track in the middle, the gold right — so it is written as exactly
--- that: one row, spaced apart, sitting on a shared bottom edge. Nothing here
--- knows where the top of the board is. The band is measured from the type it
--- actually holds, which is why a longer duel marker or a wider display face
--- grows the band instead of colliding with the row underneath it.
+-- The breach orbs sit centred in the header band across the top of the board.
 
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../box_layout")
 local entity = require("../entity")
-local label = require("./label")
 local orb_track = require("./orb_track")
 
-const TITLE_SIZE: f64 = 22.0
-const CAPTION_SIZE: f64 = 9.0
--- Daylight between the title and the caption under it.
-const STACK_GAP: f64 = 8.0
-
-const TITLE_INK: string = "#fbbf24"
-const GOLD_INK: string = "#67e8f9"
-const CAPTION_INK: string = "#155e75"
-const BOSS_INK: string = "#b45309"
--- The gold pile once it no longer covers the target.
-const SHORT_INK: string = "#fb7185"
-
--- How far along the sequence the player is standing, and whether this is one
--- of the boss battles the run lands on every third duel. Boss duels wear the
--- warning ink so the shrinking fan is never a surprise, and the last duel of
--- the table wears it too.
---
--- Past that duel the denominator would be a lie — the city keeps going — so a
--- run walking on says so instead, and counts what it has taken.
---
--- Spaces rather than a dash: the duel font has no em dash glyph, so a
--- separator written as one renders as a gap anyway.
-function marker_text(run: run_module.View): string
-    local text: string = "DUEL " .. tostring(run.duel)
-    if run.duel > run.run_length then
-        text = text .. "   ENDLESS   CLEARED " .. tostring(run.cleared)
-    else
-        text = text .. " / " .. tostring(run.run_length)
-        if run.duel == run.run_length then text = text .. "   FINAL DUEL"
-        elseif run.boss then text = text .. "   CHALLENGE" end
-    end
-    return text .. "   HEARTS " .. tostring(run.hearts)
-        .. " / " .. tostring(run.max_hearts)
-end
-
-function marker_ink(run: run_module.View): string
-    if run.boss or run.duel >= run.run_length then return BOSS_INK end
-    return CAPTION_INK
-end
-
-function title_block(run: run_module.View): entity.Node
-    return entity.down({ gap = STACK_GAP }, {
-        label.left("ANTE MAGIC", TITLE_SIZE, TITLE_INK),
-        label.left(marker_text(run), CAPTION_SIZE, marker_ink(run)),
-    })
-end
-
--- The gold on hand against the target it owes, and the one glance that says
--- whether the duel is being fought from above water or below it: the pile
--- turns to warning ink the moment it stops covering what leaving costs.
-function gold_block(state: game.View, run: run_module.View): entity.Node
-    local tone: string = GOLD_INK
-    if state.player_points < run.target then tone = SHORT_INK end
-    return entity.down({ gap = STACK_GAP, align = "end" }, {
-        label.right(tostring(state.player_points), TITLE_SIZE, tone),
-        label.right(
-            "GOLD   TARGET " .. tostring(run.target), CAPTION_SIZE, CAPTION_INK),
-    })
-end
-
--- The orbs sit on the caption's bottom edge rather than the middle of the
--- band, which is what keeps the tally reading as part of the header line
--- instead of floating between the two rows of type.
 function node(state: game.View, run: run_module.View): entity.Node
     return entity.across({
-        justify = "space-between",
-        align = "end",
+        justify = "center",
+        align = "center",
     }, {
-        title_block(run),
         orb_track.node(state),
-        gold_block(state, run),
     })
 end
 
 return {
     node = node,
 }
+

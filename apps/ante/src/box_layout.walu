@@ -7,9 +7,9 @@
 -- size its renderer owns, text can report browser-derived font metrics, and a
 -- test can use plain numbers. The seam stays between presentation meaning and
 -- geometry rather than growing into a second renderer.
-type Rect = { x: f64, y: f64, width: f64, height: f64 }
-type Edges = { left: f64, top: f64, right: f64, bottom: f64 }
-type Intrinsic = {
+export type Rect = { x: f64, y: f64, width: f64, height: f64 }
+export type Edges = { left: f64, top: f64, right: f64, bottom: f64 }
+export type Intrinsic = {
     min_width: f64,
     preferred_width: f64,
     max_width: f64,
@@ -20,11 +20,11 @@ type Intrinsic = {
     -- no meaningful text baseline.
     baseline: f64
 }
-type Axis = "row" | "column"
-type Justify = "start" | "center" | "end" | "space-between"
-type Align = "start" | "center" | "end" | "stretch" | "baseline"
-type Style = { axis: Axis, gap: f64, justify: Justify, align: Align, padding: Edges }
-type Tree = {
+export type Axis = "row" | "column"
+export type Justify = "start" | "center" | "end" | "space-between"
+export type Align = "start" | "center" | "end" | "stretch" | "baseline"
+export type Style = { axis: Axis, gap: f64, justify: Justify, align: Align, padding: Edges }
+export type Tree = {
     kind: "leaf" | "flow",
     key: i32,
     intrinsic: Intrinsic,
@@ -33,8 +33,8 @@ type Tree = {
     grow: f64,
     shrink: f64
 }
-type Frame = { key: i32, rect: Rect, baseline: f64 }
-type Result = { frames: {Frame}, content: Rect, overflow_x: f64, overflow_y: f64, overflowed: bool }
+export type Frame = { key: i32, rect: Rect, baseline: f64 }
+export type Result = { frames: {Frame}, content: Rect, overflow_x: f64, overflow_y: f64, overflowed: bool }
 type Extents = { set: bool, left: f64, top: f64, right: f64, bottom: f64 }
 
 -- Large enough to mean "no authored cap" for game-space geometry without

@@ -8,17 +8,17 @@ local burn_particles = require("./burn_particles")
 
 type Graphics = engine.Graphics
 type EffectShaders = effect_shaders.EffectShaders
-type Point = { x: f64, y: f64 }
+export type Point = { x: f64, y: f64 }
 -- `impact` is gone with the rays it keyed. A landing is now one emission and a
 -- crowd of sparks living out their own lifetimes, so nothing reads a scalar
 -- saying how far through the impact the whole burst is.
-type Cast = { clock: f64, progress: f64, origin: Point, target: Point }
+export type Cast = { clock: f64, progress: f64, origin: Point, target: Point }
 -- The live particles a cast owns. These are simulations rather than settings:
 -- they hold the sparks and embers currently in the air, so they are advanced
 -- once per tick beside the clock that released them and are never written to a
 -- snapshot. The burst is shared by all four spells because only one spell is
 -- ever in flight; the trail belongs to the one carrier that leaves one.
-type Sparks = { trail: particles.ParticleSystem, burst: particles.ParticleSystem }
+export type Sparks = { trail: particles.ParticleSystem, burst: particles.ParticleSystem }
 
 const TRAVEL_SECONDS: f64 = 0.62
 const ORIGIN_X: f64 = 30.0

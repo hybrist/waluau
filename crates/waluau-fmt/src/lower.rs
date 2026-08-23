@@ -364,16 +364,24 @@ fn declare_const(t: &Tree) -> Doc {
 
 /// `type Name<T> = Type`.
 fn type_decl(t: &Tree) -> Doc {
-    // [`opaque`],`type`,name,[TypeParams],`=`,type
-    let opaque = matches!(
+    // [`export`],[`opaque`],`type`,name,[TypeParams],`=`,type
+    let exported = matches!(
         tok_kind_at(t, 0),
+        Some(TokenKind::Identifier(keyword)) if keyword == "export"
+    );
+    let export_offset = usize::from(exported);
+    let opaque = matches!(
+        tok_kind_at(t, export_offset),
         Some(TokenKind::Identifier(keyword)) if keyword == "opaque"
     );
-    let type_index = usize::from(opaque);
+    let type_index = export_offset + usize::from(opaque);
     let name_index = type_index + 1;
     let mut parts = Vec::new();
-    if opaque {
+    if exported {
         parts.extend([node(&t.children[0]), text(" ")]);
+    }
+    if opaque {
+        parts.extend([node(&t.children[export_offset]), text(" ")]);
     }
     parts.extend([
         node(&t.children[type_index]),
@@ -392,17 +400,27 @@ fn type_decl(t: &Tree) -> Doc {
 }
 
 fn enum_decl(t: &Tree) -> Doc {
-    let variants = t.children[3..t.children.len() - 1]
+    let exported = matches!(
+        tok_kind_at(t, 0),
+        Some(TokenKind::Identifier(keyword)) if keyword == "export"
+    );
+    let enum_index = usize::from(exported);
+    let variants = t.children[enum_index + 3..t.children.len() - 1]
         .iter()
         .map(node)
         .collect::<Vec<_>>();
-    concat([
-        node(&t.children[0]),
+    let mut parts = Vec::new();
+    if exported {
+        parts.extend([node(&t.children[0]), text(" ")]);
+    }
+    parts.extend([
+        node(&t.children[enum_index]),
         text(" "),
-        node(&t.children[1]),
+        node(&t.children[enum_index + 1]),
         text(" "),
         bracketed_docs("{", "}", variants, true),
-    ])
+    ]);
+    concat(parts)
 }
 
 // ---------------------------------------------------------------------------

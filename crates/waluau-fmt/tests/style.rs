@@ -102,6 +102,15 @@ fn formats_nominal_enums_and_matches() {
 }
 
 #[test]
+fn formats_exported_declarations_and_qualified_enum_matches() {
+    let src = "export type Pair<T>={first:T,second:T}\nexport opaque type Token=i32\nexport enum Direction{north,south}\nmatch d do\ncase directions.Direction.north then\ncase directions.Direction.south then\nend\n";
+    assert_eq!(
+        fmt(src),
+        "export type Pair<T> = { first: T, second: T }\nexport opaque type Token = i32\nexport enum Direction { north, south }\nmatch d do\ncase directions.Direction.north then\ncase directions.Direction.south then\nend\n"
+    );
+}
+
+#[test]
 fn formats_literal_union_type_declarations() {
     assert_eq!(
         fmt("type CardColor=\"red\"|\"black\"\n"),

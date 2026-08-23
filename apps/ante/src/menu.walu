@@ -25,11 +25,11 @@ local spell_launch = require("./spell_launch")
 local city_map = require("./city_map")
 local layout = require("./layout")
 
-type MenuAction = "none" | "start" | "start-rush"
+export type MenuAction = "none" | "start" | "start-rush"
 
 type Stage = "main" | "spell"
 
-type State = {
+export type State = {
     clock: f64,
     cursor: i32,
     help_open: bool,

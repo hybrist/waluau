@@ -7,22 +7,22 @@
 -- finish_*; this keeps suspension explicit until transitive async wrappers can
 -- preserve caller continuations and aggregate locals reliably.
 
-type Resource = { handle: i32, kind: string, path: string }
-type ResourceError = { code: string, message: string, path: string }
-type LoadResult = { ok: bool, resource: Resource, error: ResourceError }
+export type Resource = { handle: i32, kind: string, path: string }
+export type ResourceError = { code: string, message: string, path: string }
+export type LoadResult = { ok: bool, resource: Resource, error: ResourceError }
 
 -- Typed manifest bundles use opaque resource shapes so an image cannot be
 -- passed to an audio operation (or a font to a texture upload). A Lease is
 -- shared with the bundle Owner: releasing either one invalidates the same
 -- handle and makes the other release path idempotent.
 type Lease = { handle: i32, path: string, released: bool }
-opaque type ImageResource = { lease: Lease }
-opaque type FontResource = { lease: Lease }
-opaque type SoundResource = { lease: Lease }
-opaque type Owner = { leases: {Lease}, released: bool }
-type ImageLoadResult = { resource: ImageResource?, error: ResourceError? }
-type FontLoadResult = { resource: FontResource?, error: ResourceError? }
-type SoundLoadResult = { resource: SoundResource?, error: ResourceError? }
+export opaque type ImageResource = { lease: Lease }
+export opaque type FontResource = { lease: Lease }
+export opaque type SoundResource = { lease: Lease }
+export opaque type Owner = { leases: {Lease}, released: bool }
+export type ImageLoadResult = { resource: ImageResource?, error: ResourceError? }
+export type FontLoadResult = { resource: FontResource?, error: ResourceError? }
+export type SoundLoadResult = { resource: SoundResource?, error: ResourceError? }
 
 declare function game_resource_load_text(path: string): extern
 declare function game_resource_load_bytes(path: string): extern

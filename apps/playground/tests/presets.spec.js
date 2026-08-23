@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 const COMPILER_READY_TIMEOUT = 20_000;
+const LARGE_PROJECT_READY_TIMEOUT = 40_000;
 
 test.describe('preset selector', () => {
   test.beforeEach(async ({ page }) => {
@@ -75,7 +76,7 @@ test.describe('preset selector', () => {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
 
     await expect(
       page.locator('.func-card').filter({ hasText: 'overloaded_vector_result' }).locator('.func-result-value.success'),
@@ -97,7 +98,7 @@ test.describe('preset selector', () => {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
 
     await expect(
       page.frameLocator('iframe').locator('#tfjs-model-result').first(),
@@ -115,7 +116,7 @@ test.describe('preset selector', () => {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
-    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
 
     const result = page.frameLocator('iframe').locator('#tfjs-training-result').first();
     await expect(result).toContainText('TFJS training final loss:');
@@ -203,7 +204,7 @@ test.describe('preset selector', () => {
     );
     await expect(page.locator('.code-textarea')).toContainText('function install_ante_magic');
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
-      timeout: COMPILER_READY_TIMEOUT,
+      timeout: LARGE_PROJECT_READY_TIMEOUT,
     });
   });
 });

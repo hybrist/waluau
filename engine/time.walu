@@ -3,7 +3,7 @@
 -- Timestamps arrive in milliseconds (the requestAnimationFrame convention);
 -- game updates receive seconds.
 
-type Clock = { step: f64, max_frame: f64, accumulator: f64, last_ms: f64, started: bool }
+export type Clock = { step: f64, max_frame: f64, accumulator: f64, last_ms: f64, started: bool }
 
 function Clock.new(update_hz: f64, max_frame_seconds: f64): Clock
     assert(update_hz > 0.0)

@@ -157,9 +157,9 @@ end
 -- Where the deck sits and where the card lands, both as the card's centre —
 -- and the dials of the throw itself, carried with it so a story can put
 -- sliders on them.
-type Arc = "even" | "late" | "very-late" | "early"
+export type Arc = "even" | "late" | "very-late" | "early"
 
-type Draw = {
+export type Draw = {
     from_x: f64,
     from_y: f64,
     to_x: f64,

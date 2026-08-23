@@ -20,7 +20,7 @@ local card = require("./entities/card")
 
 -- A reveal burns a pair, which is why there are two; the table card Fireball is
 -- eating sheds a sheet fall and a coarser departing one on top of it.
-type CardAsh = {
+export type CardAsh = {
     reveal_first: particles.ParticleSystem,
     reveal_second: particles.ParticleSystem,
     table_card_sheet: particles.ParticleSystem,
