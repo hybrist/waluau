@@ -3,9 +3,9 @@
 Status: compatibility contract established by `waluau-fdhp.2`; development
 emission is available behind an explicit compiler option.
 
-Waluau development builds can use conventional embedded DWARF for source-level
+Waluau development builds use conventional external DWARF for source-level
 debugging of browser Wasm GC. Chrome's language-extension API associates a
-Wasm module with an extension that understands `EmbeddedDWARF`; the API is not
+Wasm module with an extension that understands `ExternalDWARF`; the API is not
 restricted to a source language. Google's supported extension is branded for
 C/C++, so line mapping works for Waluau while rich Waluau value semantics do
 not come for free.
@@ -22,27 +22,43 @@ cargo run -p waluau-cli -- path/to/main.walu \
   -o path/to/main.wasm --emit-js --development-dwarf
 ```
 
-Library callers use `waluau_driver::CompileOptions { development_dwarf: true }`
-with `compile_source_with_options`, `compile_file_with_options`,
-`compile_file_artifacts_with_options`, or
-`CompilerSession::build_root_with_options`. Codegen-only callers use the
-corresponding `waluau_codegen_wasm::EmitOptions` APIs.
+The command writes `main.wasm` and `main.debug.wasm`. Library callers use
+`waluau_driver::CompileOptions { development_dwarf: true }` with
+`compile_source_artifacts_with_options`, `compile_file_artifacts_with_options`,
+or `CompilerSession::build_root_with_options`; the returned artifacts contain
+the runtime Wasm and optional companion separately. Bytes-only helpers reject
+the option because one byte vector cannot represent both required files.
+Codegen-only callers receive the same two fields in `EmitResult`.
 
-The option is compiler configuration, not a Rust build profile. It emits
-`.debug_abbrev`, `.debug_info`, and `.debug_line`; inline strings make
-`.debug_str` unnecessary. With the option omitted, no `.debug_*` sections are
-emitted and the output follows the unchanged default encoding path. The Wasm
-`name` section is present in both modes.
+The Vite plugin passes the option automatically for dev-server and test
+compiles. It serves the sibling from `.waluau/` through Vite's normal file
+serving. Production builds do not pass the option. Loading the game fetches
+only the runtime Wasm; Chrome resolves and fetches the companion when DevTools
+attaches. The generated JavaScript uses `WebAssembly.compileStreaming` for its
+URL-based path so Chrome retains the module's HTTP URL and can resolve that
+relative sibling; callers supplying bytes directly must preserve an equivalent
+resolvable debug-symbol URL themselves.
+
+The runtime Wasm contains `external_debug_info` naming its relative sibling and
+never contains `.debug_*`. The standalone companion is a valid Wasm container
+with `.debug_abbrev`, `.debug_info`, and `.debug_line`; inline strings make
+`.debug_str` unnecessary. For compatibility with Chrome's official extension,
+the companion is a debugger-only snapshot of the matching runtime module plus
+those sections; its duplicated code is never fetched by the page. With the
+option omitted, the reference and companion are absent and the output follows
+the unchanged default encoding path.
 
 This gate is independent of the Rust profile used to build the compiler:
 neither a debug nor a release `waluau` executable emits DWARF unless the caller
 sets `development_dwarf` or passes `--development-dwarf`. Compiler tests compare
 the pre-option API with explicit default options byte for byte, and the browser
 verifier builds the same two-file program in both modes before launching
-Chrome. On 2026-08-22 that small fixture was 876 bytes by default and 1,450
-bytes with DWARF, an opt-in increase of 574 bytes (65.5%). The percentage is
-workload-dependent; run the verifier to measure current output rather than
-treating it as an artifact-size budget.
+Chrome. The verifier reports the tiny runtime reference overhead separately
+from the companion size. On 2026-08-22 the two-file fixture was 876 bytes by
+default, 998 bytes for the development runtime (+122 bytes / 13.9%), and 1,450
+bytes for the debugger-only companion. The companion was not requested by the
+ordinary page. Run the verifier to measure current output rather than treating
+one fixture as an artifact-size budget.
 
 The compiler derives browser-resolvable, slash-separated paths relative to the
 common authored source directory and records `.` as `DW_AT_comp_dir`. It never
@@ -56,8 +72,10 @@ subprogram DIEs.
 Use DWARF 4 for the first implementation. DWARF 4 and 5 both loaded in the
 official extension, but version 4 needs fewer section and form variants.
 
-Emit each DWARF payload as a Wasm custom section with its conventional name.
-The line-debugging baseline is:
+Emit `external_debug_info` in the runtime module with its payload holding the
+companion's relative URL as a length-prefixed WebAssembly UTF-8 string. Emit
+each DWARF payload in the standalone Wasm container as a custom section with
+its conventional name. The line-debugging baseline is:
 
 - `.debug_abbrev` and `.debug_info`, with a compile-unit DIE that references
   the line program and subprogram DIEs for authored functions;
@@ -136,6 +154,8 @@ the extension when validating the production emitter.
 | Surface | Result | Observation |
 | --- | --- | --- |
 | Wasm GC validation and execution | Pass in stable Chrome 151 | The module validated; `struct.new`/`struct.get` returned 42. |
+| External DWARF discovery | Pass in Chrome for Testing 148 and stable extension worker | V8 classified the runtime as `ExternalDWARF`; the official worker fetched the sibling and discovered both authored sources. |
+| Ordinary page network loading | Pass | The runtime page requested HTML, JavaScript, and runtime Wasm only; it did not request `.debug.wasm`. |
 | Authored source discovery | Pass in stable extension worker; pass in full Chrome for Testing UI | The worker returned the HTTP `.walu` URL; the Sources workspace registered the authored relative path. |
 | Line breakpoint binding | Pass in full UI | A line-4 gutter-equivalent breakpoint normalized to column 14 and bound to the Wasm module. |
 | Source stepping | Pass in full UI | Step-over moved from Waluau line 4 to line 5. |
@@ -165,6 +185,10 @@ lifted helper, mapped paused helper and caller frames, stepping to the next
 authored line, and mapped exception-path frames entered from a browser
 microtask. It also confirmed that the lifted-call wrapper and an exported
 compiler-generated record helper remain unmapped.
+
+It also confirmed that the runtime carries `external_debug_info` but no
+`.debug_*`, both artifacts validate, Chrome reports `ExternalDWARF`, and the
+debug companion is absent from ordinary runtime-page requests.
 
 The full UI showed the lifted helper's Wasm name
 `$__waluau_top_level_init$lambda0`, its wrapper's generated name, and `$run`.

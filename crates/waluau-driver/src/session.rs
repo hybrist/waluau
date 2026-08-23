@@ -565,31 +565,31 @@ mod tests {
         let incremental = session
             .build_root_with_options(&main, "program.wasm", options)
             .artifacts
-            .expect("incremental artifacts")
-            .wasm;
+            .expect("incremental artifacts");
         assert!(session.incremental_stats(&main).2);
 
         fs::write(&main, changed_source).expect("changed fixture should write");
         let cold = CompilerSession::new()
             .build_root_with_options(&main, "program.wasm", options)
             .artifacts
-            .expect("cold artifacts")
-            .wasm;
+            .expect("cold artifacts");
+        assert_eq!(incremental.wasm, cold.wasm, "runtime bytes must match");
         assert_eq!(
-            incremental, cold,
-            "debug metadata must use final cached offsets"
+            incremental.development_dwarf, cold.development_dwarf,
+            "external debug metadata must use final cached offsets"
         );
 
         let production = session
             .build_root_with_options(&main, "program.wasm", crate::CompileOptions::default())
             .artifacts
-            .expect("option change should rebuild")
-            .wasm;
+            .expect("option change should rebuild");
         assert!(
             !production
+                .wasm
                 .windows(b".debug_info".len())
                 .any(|window| window == b".debug_info")
         );
+        assert!(production.development_dwarf.is_none());
         assert!(
             !session.incremental_stats(&main).2,
             "debug configuration must participate in cache identity"

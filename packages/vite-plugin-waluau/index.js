@@ -379,12 +379,21 @@ export function waluau(options = {}) {
   }
 
   function compilerBuildArgs(entryPath, wasmOutput, reportOutput) {
+    const dwarfArgs = productionBuild ? [] : ['--development-dwarf'];
     const manifestArgs = options.manifest == null
       ? []
       : ['--manifest', resolve(appRoot, options.manifest)];
     const reportArgs = ['--report', reportOutput];
     const exportArgs = usesMinimalExports(entryPath) ? ['--minimal-exports'] : [];
-    return [entryPath, '-o', wasmOutput, '--emit-js', ...exportArgs, ...manifestArgs, ...reportArgs];
+    return [
+      entryPath,
+      '-o', wasmOutput,
+      '--emit-js',
+      ...dwarfArgs,
+      ...exportArgs,
+      ...manifestArgs,
+      ...reportArgs,
+    ];
   }
 
   function compilerCommand(buildArgs) {

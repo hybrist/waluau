@@ -181,15 +181,26 @@ fn development_dwarf_is_explicit_and_preserves_default_bytes() {
         "default output must omit DWARF"
     );
 
-    let debug = super::emit_with_options(
+    let emitted = super::emit_with_options(
         &ir,
         super::EmitOptions {
             development_dwarf: true,
             ..Default::default()
         },
     )
-    .expect("development emit should succeed")
-    .wasm;
+    .expect("development emit should succeed");
+    let debug = emitted
+        .development_dwarf
+        .expect("development DWARF companion");
+    assert!(custom_section(&emitted.wasm, ".debug_info").is_none());
+    let reference = custom_section(&emitted.wasm, "external_debug_info")
+        .expect("external_debug_info reference");
+    let mut reference_cursor = 0;
+    let url_length = read_uleb(&reference, &mut reference_cursor) as usize;
+    assert_eq!(
+        &reference[reference_cursor..reference_cursor + url_length],
+        b"program.debug.wasm"
+    );
     Validator::new_with_features(wasmparser::WasmFeatures::all())
         .validate_all(&debug)
         .expect("debug Wasm should validate");
@@ -206,6 +217,7 @@ fn development_dwarf_is_explicit_and_preserves_default_bytes() {
     ));
     assert!(contains_cstring(&line, "source"));
     assert!(custom_section(&debug, ".debug_str").is_none());
+    assert!(custom_section(&emitted.wasm, "name").is_some());
     assert!(custom_section(&debug, "name").is_some());
     assert!(
         !contains_cstring(&info, "__waluau_top_level_init"),
@@ -213,7 +225,7 @@ fn development_dwarf_is_explicit_and_preserves_default_bytes() {
     );
     let rows = dwarf_line_rows(&line);
     assert!(!rows.is_empty(), "authored instructions need line rows");
-    let instruction_offsets = wasm_instruction_offsets(&debug);
+    let instruction_offsets = wasm_instruction_offsets(&emitted.wasm);
     for (address, _file, _line, column) in rows {
         assert!(
             column > 0,
@@ -242,14 +254,15 @@ fn incremental_development_dwarf_matches_a_cold_emit() {
     let changed = lower("function answer(): i32\n    return 42\nend\n");
     let mut cache = super::EmitCache::default();
     super::emit_cached_with_options(&first, &mut cache, options).expect("cold cached emit");
-    let incremental = super::emit_cached_with_options(&changed, &mut cache, options)
-        .expect("incremental emit")
-        .wasm;
+    let incremental =
+        super::emit_cached_with_options(&changed, &mut cache, options).expect("incremental emit");
     assert!(cache.last_emit_was_incremental());
-    let cold = super::emit_with_options(&changed, options)
-        .expect("cold comparison emit")
-        .wasm;
-    assert_eq!(incremental, cold, "DWARF and code bytes must be equivalent");
+    let cold = super::emit_with_options(&changed, options).expect("cold comparison emit");
+    assert_eq!(incremental.wasm, cold.wasm, "code bytes must be equivalent");
+    assert_eq!(
+        incremental.development_dwarf, cold.development_dwarf,
+        "external DWARF bytes must be equivalent"
+    );
 }
 
 #[test]
@@ -261,8 +274,7 @@ fn development_dwarf_rejects_malformed_function_layouts() {
     let mut maps = vec![super::dwarf::FunctionDebugMap::default(); ir.functions.len()];
     maps[0].instruction_start = 2;
     let bodies = vec![vec![0]; ir.functions.len()];
-    let mut wasm = b"\0asm\x01\0\0\0".to_vec();
-    let error = super::dwarf::append_sections(&mut wasm, &ir, &bodies, &maps)
+    let error = super::dwarf::encode_external_module(b"\0asm\x01\0\0\0", &ir, &bodies, &maps)
         .expect_err("out-of-body instruction start should fail");
     assert!(error.to_string().contains("invalid instruction start"));
 }

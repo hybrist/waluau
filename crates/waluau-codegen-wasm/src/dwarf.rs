@@ -52,12 +52,12 @@ struct SourceRow {
     location: SourceLocation,
 }
 
-pub(crate) fn append_sections(
-    wasm: &mut Vec<u8>,
+pub(crate) fn encode_external_module(
+    runtime_wasm: &[u8],
     module: &Module,
     bodies: &[Vec<u8>],
     function_maps: &[FunctionDebugMap],
-) -> Result<(), Diagnostic> {
+) -> Result<Vec<u8>, Diagnostic> {
     if function_maps.len() != module.functions.len() || bodies.len() < function_maps.len() {
         return Err(Diagnostic::new(
             "internal error: incomplete function layout for DWARF emission",
@@ -112,9 +112,19 @@ pub(crate) fn append_sections(
     let debug_abbrev = encode_abbrev();
     let debug_info = encode_info(module, &source_paths, &ranges)?;
     let debug_line = encode_line(module, &source_paths, &ranges, &rows_by_function)?;
-    append_custom(wasm, ".debug_abbrev", debug_abbrev);
-    append_custom(wasm, ".debug_info", debug_info);
-    append_custom(wasm, ".debug_line", debug_line);
+    let mut wasm = runtime_wasm.to_vec();
+    append_custom(&mut wasm, ".debug_abbrev", debug_abbrev);
+    append_custom(&mut wasm, ".debug_info", debug_info);
+    append_custom(&mut wasm, ".debug_line", debug_line);
+    Ok(wasm)
+}
+
+pub(crate) fn append_external_reference(wasm: &mut Vec<u8>, url: &str) -> Result<(), Diagnostic> {
+    let url_len = u32::try_from(url.len())
+        .map_err(|_| Diagnostic::new("external DWARF URL is too long for a Wasm string"))?;
+    let mut data = Vec::with_capacity(u32_len(url_len) + url.len());
+    url.encode(&mut data);
+    append_custom(wasm, "external_debug_info", data);
     Ok(())
 }
 
@@ -210,7 +220,13 @@ fn encode_info(
 
     for (index, function, location) in authored {
         let range = ranges[index];
-        let (line, _) = line_column(&source_file(module, location.file)?.source, location)?;
+        let (line, _) =
+            line_column(source_file(module, location.file)?, location).map_err(|error| {
+                Diagnostic::new(format!(
+                    "invalid source location for DWARF function '{}': {error}",
+                    function.name
+                ))
+            })?;
         uleb(2, &mut unit);
         cstring(&function.name, &mut unit);
         let file_index = location
@@ -272,8 +288,13 @@ fn encode_line(
         let mut line = 1u32;
         let mut file = 1u32;
         for (row_address, location) in by_address {
-            let (row_line, column) =
-                line_column(&source_file(module, location.file)?.source, location)?;
+            let (row_line, column) = line_column(source_file(module, location.file)?, location)
+                .map_err(|error| {
+                    Diagnostic::new(format!(
+                        "invalid source row for DWARF function '{}': {error}",
+                        module.functions[function_index].name
+                    ))
+                })?;
             let row_file = location
                 .file
                 .0
@@ -332,13 +353,20 @@ fn extended_set_address(address: u32, out: &mut Vec<u8>) {
     out.extend_from_slice(&address.to_le_bytes());
 }
 
-fn line_column(source: &str, location: SourceLocation) -> Result<(u32, u32), Diagnostic> {
+fn line_column(
+    source_file: &SourceFile,
+    location: SourceLocation,
+) -> Result<(u32, u32), Diagnostic> {
     let start = location.span.start as usize;
-    let chars = source.chars().collect::<Vec<_>>();
+    let chars = source_file.source.chars().collect::<Vec<_>>();
     if start > chars.len() {
-        return Err(Diagnostic::new(
-            "source span is outside its DWARF source file",
-        ));
+        return Err(Diagnostic::new(format!(
+            "source span {}..{} is outside DWARF source file '{}' ({} characters)",
+            location.span.start,
+            location.span.end,
+            source_file.path,
+            chars.len(),
+        )));
     }
     let preceding = &chars[..start];
     let line = preceding

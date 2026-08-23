@@ -39,7 +39,9 @@ inside the intentionally unmapped synthetic GC helper and must not resolve.
 
 The opt-in verifier builds `compiler_probe_main.walu` and its required
 `compiler_probe_helper.walu` twice with the real CLI. It asserts that default
-output has no `.debug_*` sections, measures the development-only bytes, runs
+output has no debug reference, development runtime output contains only an
+`external_debug_info` reference, and the sibling contains all DWARF sections.
+It measures the runtime reference and companion separately, runs
 the official extension worker, and drives the full DevTools model. It uses a
 fresh temporary profile and requires explicit paths; it does not install a
 browser, download or commit an extension, or touch a personal Chrome profile.
@@ -64,7 +66,8 @@ Add `--headed` to watch the run. The script checks:
 - an exception path entered from a queued browser microtask maps its authored
   helper and caller, while its generated wrapper remains in the raw Wasm view;
 - a compiler-generated record helper has no source or DWARF function mapping;
-- the Wasm `name` section remains in default and development output; and
+- the Wasm `name` section remains in runtime output;
+- an ordinary runtime page load never requests the debug companion; and
 - Console/error stack objects are never rewritten to `.walu` locations.
 
 The JSON report includes every mapping, raw function name, stack value, and the
@@ -81,6 +84,8 @@ cargo run -p waluau-cli -- \
 
 wasm-tools validate --features all \
   fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.wasm
+wasm-tools validate --features all \
+  fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.debug.wasm
 ```
 
 The generated Wasm and JavaScript are ignored build artifacts. After starting
@@ -139,7 +144,7 @@ Open the printed extension-parser URL. Query parameters select a module and
 repeat expected sources, for example:
 
 ```text
-/extension/extension-harness.html?module=compiler_dwarf_probe.wasm&source=compiler_probe_main.walu&source=compiler_probe_helper.walu&syntheticOffset=298
+/extension/extension-harness.html?module=compiler_dwarf_probe.wasm&symbols=compiler_dwarf_probe.debug.wasm&source=compiler_probe_main.walu&source=compiler_probe_helper.walu&syntheticOffset=298
 ```
 
 The JSON result verifies source discovery, mapped lines, both mapping

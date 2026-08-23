@@ -182,21 +182,34 @@ function functionInstructionOffset(bytes, allSections, functionIndex) {
   throw new Error('function body not found');
 }
 
-function inspectArtifacts(defaultPath, developmentPath) {
+function inspectArtifacts(defaultPath, developmentPath, debugPath) {
   const normal = new Uint8Array(readFileSync(defaultPath));
   const development = new Uint8Array(readFileSync(developmentPath));
+  const debug = new Uint8Array(readFileSync(debugPath));
   const normalSections = sections(normal);
   const developmentSections = sections(development);
+  const debugSections = sections(debug);
   const normalCustom = normalSections.filter(item => item.id === 0).map(item => item.name);
   const developmentCustom = developmentSections.filter(item => item.id === 0).map(item => item.name);
+  const debugCustom = debugSections.filter(item => item.id === 0).map(item => item.name);
   if (normalCustom.some(name => name.startsWith('.debug_'))) {
     throw new Error(`default output contains DWARF: ${normalCustom}`);
   }
-  for (const name of ['.debug_abbrev', '.debug_info', '.debug_line']) {
-    if (!developmentCustom.includes(name)) throw new Error(`development output is missing ${name}`);
+  if (developmentCustom.some(name => name.startsWith('.debug_'))) {
+    throw new Error(`runtime output contains inline DWARF: ${developmentCustom}`);
   }
-  if (!normalCustom.includes('name') || !developmentCustom.includes('name')) {
-    throw new Error('both outputs must retain the Wasm name section');
+  for (const name of ['.debug_abbrev', '.debug_info', '.debug_line']) {
+    if (!debugCustom.includes(name)) throw new Error(`debug companion is missing ${name}`);
+  }
+  if (!normalCustom.includes('name') || !developmentCustom.includes('name') || !debugCustom.includes('name')) {
+    throw new Error('runtime outputs and the debugger snapshot must retain Wasm names');
+  }
+  const referenceSection = developmentSections.find(item => item.name === 'external_debug_info');
+  if (!referenceSection) throw new Error('runtime output is missing external_debug_info');
+  const referenceState = { offset: referenceSection.payloadStart };
+  const debugUrl = readName(development, referenceState);
+  if (debugUrl !== 'compiler_dwarf_probe.debug.wasm') {
+    throw new Error(`unexpected external debug URL: ${debugUrl}`);
   }
   const syntheticFunction = findExportedFunction(
     development,
@@ -205,13 +218,16 @@ function inspectArtifacts(defaultPath, developmentPath) {
   );
   return {
     defaultBytes: normal.byteLength,
-    developmentBytes: development.byteLength,
-    developmentOverheadBytes: development.byteLength - normal.byteLength,
-    developmentOverheadPercent: Number(
+    developmentRuntimeBytes: development.byteLength,
+    runtimeReferenceOverheadBytes: development.byteLength - normal.byteLength,
+    runtimeReferenceOverheadPercent: Number(
       (((development.byteLength - normal.byteLength) / normal.byteLength) * 100).toFixed(1),
     ),
+    debugCompanionBytes: debug.byteLength,
+    debugUrl,
     defaultCustomSections: normalCustom,
     developmentCustomSections: developmentCustom,
+    debugCustomSections: debugCustom,
     syntheticFunction: syntheticFunction.name,
     syntheticOffset: functionInstructionOffset(
       development,
@@ -258,6 +274,7 @@ async function verifyExtensionWorker(chromium, options, origin, syntheticOffset)
     const page = context.pages()[0] ?? await context.newPage();
     const parameters = new URLSearchParams({
       module: 'compiler_dwarf_probe.wasm',
+      symbols: 'compiler_dwarf_probe.debug.wasm',
       syntheticOffset: String(syntheticOffset),
     });
     parameters.append('source', 'compiler_probe_main.walu');
@@ -284,6 +301,31 @@ async function verifyExtensionWorker(chromium, options, origin, syntheticOffset)
   } finally {
     if (context) await context.close();
     rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+async function verifyRuntimePageDoesNotLoadDebug(chromium, options, origin) {
+  const browser = await chromium.launch({
+    executablePath: options.chrome,
+    headless: !options.headed,
+  });
+  try {
+    const page = await browser.newPage();
+    const requests = [];
+    page.on('request', request => requests.push(new URL(request.url()).pathname));
+    await page.goto(`${origin}/fixture/compiler-probe.html`);
+    await page.waitForFunction(() => globalThis.dwarfProbe);
+    assert(
+      requests.includes('/fixture/compiler_dwarf_probe.wasm'),
+      `runtime module was not requested: ${requests}`,
+    );
+    assert(
+      !requests.includes('/fixture/compiler_dwarf_probe.debug.wasm'),
+      `ordinary page load fetched external DWARF: ${requests}`,
+    );
+    return { requests };
+  } finally {
+    await browser.close();
   }
 }
 
@@ -354,9 +396,19 @@ async function verifyDevToolsUi(chromium, options, origin) {
     });
     const page = context.pages()[0] ?? await context.newPage();
     const consoleErrors = [];
+    const requests = [];
+    const parsedWasm = [];
+    page.on('request', request => requests.push(request.url()));
     page.on('console', message => {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
+    const pageDebugger = await context.newCDPSession(page);
+    pageDebugger.on('Debugger.scriptParsed', event => {
+      if (event.url.startsWith('wasm://')) {
+        parsedWasm.push({ url: event.url, debugSymbols: event.debugSymbols });
+      }
+    });
+    await pageDebugger.send('Debugger.enable');
     await page.goto(`${origin}/fixture/compiler-probe.html`);
     await page.waitForFunction(() => globalThis.dwarfProbe);
     await page.waitForTimeout(3_000);
@@ -365,6 +417,7 @@ async function verifyDevToolsUi(chromium, options, origin) {
     const evaluate = await attachDevTools(context, page);
 
     const installed = await evaluate(`(async () => {
+      const Common = await import('./core/common/common.js');
       const Workspace = await import('./models/workspace/workspace.js');
       const Breakpoints = await import('./models/breakpoints/breakpoints.js');
       const workspace = Workspace.Workspace.WorkspaceImpl.instance();
@@ -374,7 +427,13 @@ async function verifyDevToolsUi(chromium, options, origin) {
         if (helper) break;
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      if (!helper) return { sources: workspace.uiSourceCodes().map(source => source.url()) };
+      if (!helper) return {
+        sources: workspace.uiSourceCodes().map(source => source.url()),
+        devToolsConsole: Common.Console.Console.instance().messages().map(message => ({
+          text: message.text,
+          level: message.level,
+        })),
+      };
       const manager = Breakpoints.BreakpointManager.BreakpointManager.instance();
       const breakpoint = await manager.setBreakpoint(helper, 3, undefined, '', true, false, 'OTHER');
       await breakpoint.updateBreakpoint();
@@ -386,7 +445,14 @@ async function verifyDevToolsUi(chromium, options, origin) {
         bound: breakpoint.bound(),
       };
     })()`);
-    assert(!installed.sources, `authored helper source not found: ${JSON.stringify(installed.sources)}`);
+    assert(
+      !installed.sources,
+      `authored helper source not found: ${JSON.stringify({
+        installed,
+        requests,
+        parsedWasm,
+      })}`,
+    );
     assert(installed.bound, 'line breakpoint did not bind');
     assert(installed.breakpointColumn > 0, 'breakpoint did not normalize to an authored column');
 
@@ -545,6 +611,7 @@ const { chromium } = loadPlaywright();
 const scratch = mkdtempSync(join(tmpdir(), 'waluau-dwarf-artifacts-'));
 const defaultOutput = join(scratch, 'compiler_default_probe.wasm');
 const developmentOutput = join(fixtureDir, 'compiler_dwarf_probe.wasm');
+const debugOutput = join(fixtureDir, 'compiler_dwarf_probe.debug.wasm');
 const source = join(fixtureDir, 'compiler_probe_main.walu');
 let server;
 
@@ -554,8 +621,9 @@ try {
     'run', '-q', '-p', 'waluau-cli', '--', source,
     '-o', developmentOutput, '--emit-js', '--development-dwarf',
   ]);
-  const artifactInspection = inspectArtifacts(defaultOutput, developmentOutput);
+  const artifactInspection = inspectArtifacts(defaultOutput, developmentOutput, debugOutput);
   server = await startServer(options.extension);
+  const runtime = await verifyRuntimePageDoesNotLoadDebug(chromium, options, server.origin);
   const worker = await verifyExtensionWorker(
     chromium,
     options,
@@ -563,7 +631,7 @@ try {
     artifactInspection.syntheticOffset,
   );
   const devTools = await verifyDevToolsUi(chromium, options, server.origin);
-  process.stdout.write(`${JSON.stringify({ artifactInspection, worker, devTools }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ artifactInspection, runtime, worker, devTools }, null, 2)}\n`);
 } finally {
   if (server?.child) server.child.kill('SIGTERM');
   rmSync(scratch, { recursive: true, force: true });

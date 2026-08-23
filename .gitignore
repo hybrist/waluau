@@ -12,6 +12,7 @@ dist/
 .vercel
 apps/playground/public/*.wasm
 fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.wasm
+fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.debug.wasm
 fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.js
 
 # Beads / Dolt files (added by bd init)

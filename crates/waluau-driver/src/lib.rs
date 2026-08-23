@@ -41,13 +41,13 @@ pub mod session;
 pub use link::{LinkOutcome, ModuleProvider};
 pub use session::{Analysis, BuildOutcome, CompilerSession};
 
-pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]\n\n  --development-dwarf  Embed development-only DWARF v4 source mappings for browser DevTools\n  --minimal-exports    Export only the runtime entry points so wasm-opt can remove unused code";
+pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]\n\n  --development-dwarf  Emit a referenced sibling debug Wasm for browser DevTools\n  --minimal-exports    Export only the runtime entry points so wasm-opt can remove unused code";
 
 /// Explicit controls for compiler output. Defaults preserve the production
 /// artifact format exactly.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CompileOptions {
-    /// Embed source line mappings for browser DevTools development sessions.
+    /// Emit external source mappings for browser DevTools development sessions.
     pub development_dwarf: bool,
     /// Export only the runtime entry points, leaving the playground's
     /// per-function and record-marshalling exports out so a post-link
@@ -68,16 +68,26 @@ pub fn compile_source_with_options(
     source: &str,
     options: CompileOptions,
 ) -> Result<Vec<u8>, Diagnostic> {
+    if options.development_dwarf {
+        return Err(Diagnostic::new(
+            "development DWARF produces two artifacts; use compile_source_artifacts_with_options",
+        ));
+    }
+    Ok(compile_source_artifacts_with_options(source, "program.wasm", options)?.wasm)
+}
+
+pub fn compile_source_artifacts_with_options(
+    source: &str,
+    wasm_file_name: &str,
+    options: CompileOptions,
+) -> Result<CompileArtifacts, Diagnostic> {
     let mut program = waluau_parser::parse(source)?;
 
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program)?;
 
-    Ok(
-        compile_program(program, "program.wasm", empty_asset_manifest(), options)
-            .map_err(|mut errors| errors.remove(0))?
-            .wasm,
-    )
+    compile_program(program, wasm_file_name, empty_asset_manifest(), options)
+        .map_err(|mut errors| errors.remove(0))
 }
 
 /// Like [`compile_source`], but reports every independently-attributable
@@ -114,12 +124,18 @@ pub fn compile_file_with_options(
     path: &Path,
     options: CompileOptions,
 ) -> Result<Vec<u8>, Diagnostic> {
+    if options.development_dwarf {
+        return Err(Diagnostic::new(
+            "development DWARF produces two artifacts; use compile_file_artifacts_with_options",
+        ));
+    }
     Ok(compile_file_artifacts_with_options(path, "program.wasm", options)?.wasm)
 }
 
 #[derive(Debug)]
 pub struct CompileArtifacts {
     pub wasm: Vec<u8>,
+    pub development_dwarf: Option<Vec<u8>>,
     pub js: String,
     pub required_imports: Vec<waluau_codegen_wasm::RequiredImport>,
     pub bytes_constants: Vec<Vec<u8>>,
@@ -249,21 +265,24 @@ fn compile_program_with_cache(
         }
     };
     let lowered = started.elapsed();
+    let debug_file_name = development_dwarf_file_name(wasm_file_name);
     let emitted = match wasm_cache {
-        Some(cache) => waluau_codegen_wasm::emit_cached_with_options(
+        Some(cache) => waluau_codegen_wasm::emit_cached_with_options_and_debug_url(
             ir,
             cache,
             waluau_codegen_wasm::EmitOptions {
                 development_dwarf: options.development_dwarf,
                 minimal_exports: options.minimal_exports,
             },
+            &debug_file_name,
         ),
-        None => waluau_codegen_wasm::emit_with_options(
+        None => waluau_codegen_wasm::emit_with_options_and_debug_url(
             ir,
             waluau_codegen_wasm::EmitOptions {
                 development_dwarf: options.development_dwarf,
                 minimal_exports: options.minimal_exports,
             },
+            &debug_file_name,
         ),
     }
     .map_err(|error| vec![error])?;
@@ -282,10 +301,18 @@ fn compile_program_with_cache(
     }
     Ok(CompileArtifacts {
         wasm: emitted.wasm,
+        development_dwarf: emitted.development_dwarf,
         js,
         required_imports: emitted.required_imports,
         bytes_constants: emitted.bytes_constants,
     })
+}
+
+fn development_dwarf_file_name(wasm_file_name: &str) -> String {
+    Path::new(wasm_file_name)
+        .with_extension("debug.wasm")
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn resolve_diagnostic_source(error: Diagnostic, program: &waluau_ast::Program) -> Diagnostic {
@@ -369,6 +396,21 @@ where
     let artifacts = outcome
         .artifacts
         .expect("artifacts are present when no diagnostics were reported");
+    let debug_output = options.output.with_extension("debug.wasm");
+    if let Some(debug_wasm) = artifacts.development_dwarf {
+        // Publish the companion first so the runtime module never references a
+        // missing artifact after a successful build.
+        fs::write(&debug_output, debug_wasm)
+            .map_err(|error| vec![io_error("write DWARF companion", &debug_output, error)])?;
+    } else if let Err(error) = fs::remove_file(&debug_output)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(vec![io_error(
+            "remove stale DWARF companion",
+            &debug_output,
+            error,
+        )]);
+    }
     fs::write(&options.output, artifacts.wasm)
         .map_err(|error| vec![io_error("write output file", &options.output, error)])?;
     if options.emit_js {
@@ -1071,6 +1113,7 @@ mod tests {
         let entry_path = tempdir.path().join("entry.walu");
         let default_output = tempdir.path().join("default.wasm");
         let debug_output = tempdir.path().join("debug.wasm");
+        let debug_companion = tempdir.path().join("debug.debug.wasm");
         fs::write(
             &lib_path,
             "local function increment(value: i32): i32\n    return value + 1\nend\nreturn increment\n",
@@ -1091,14 +1134,31 @@ mod tests {
             os(&entry_path),
             OsString::from("-o"),
             os(&debug_output),
+            OsString::from("--emit-js"),
             OsString::from("--development-dwarf"),
         ])
         .expect("development CLI build should succeed");
-        let debug_wasm = fs::read(&debug_output).expect("debug output");
+        let runtime_wasm = fs::read(&debug_output).expect("runtime output");
+        let debug_wasm = fs::read(&debug_companion).expect("DWARF companion");
+        let debug_js = fs::read_to_string(debug_output.with_extension("js"))
+            .expect("development JavaScript glue");
+        assert!(
+            debug_js.contains("WebAssembly.compileStreaming(response.clone(), compilerOptions())"),
+            "URL-based loading must retain the HTTP module URL for relative debug companions"
+        );
+        assert!(custom_section(&runtime_wasm, ".debug_info").is_none());
+        assert!(custom_section(&runtime_wasm, "name").is_some());
+        let reference =
+            custom_section(&runtime_wasm, "external_debug_info").expect("external debug reference");
+        let mut reference_cursor = 0;
+        let reference_length = read_u32_leb(&reference, &mut reference_cursor) as usize;
+        assert_eq!(
+            &reference[reference_cursor..reference_cursor + reference_length],
+            b"debug.debug.wasm"
+        );
         let info = custom_section(&debug_wasm, ".debug_info").expect(".debug_info");
         let line = custom_section(&debug_wasm, ".debug_line").expect(".debug_line");
         assert!(custom_section(&debug_wasm, ".debug_abbrev").is_some());
-        assert!(custom_section(&debug_wasm, "name").is_some());
         assert!(contains_cstring(&info, "entry"));
         assert!(contains_cstring(&line, "entry.walu"));
         assert!(contains_cstring(&line, "lib.walu"));
@@ -1110,6 +1170,13 @@ mod tests {
         assert!(
             !String::from_utf8_lossy(&line).contains(tempdir.path().to_string_lossy().as_ref()),
             "debug paths must not contain the absolute build directory"
+        );
+
+        super::run_with_args([os(&entry_path), OsString::from("-o"), os(&debug_output)])
+            .expect("production rebuild should succeed");
+        assert!(
+            !debug_companion.exists(),
+            "production rebuild must remove a stale DWARF companion"
         );
     }
 
@@ -2937,6 +3004,13 @@ end
         fs::write(
             tempdir.path().join("config.walu"),
             r#"
+                -- Keep declarations beyond the importing file's length. This
+                -- catches copied constants retaining cross-file source spans.
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                -- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
                 local CELL_SIZE <const>: f64 = 16.0
                 local TITLE <const> = "snake"
                 local NEGATIVE_INDEX <const>: i32 = -1
@@ -2984,8 +3058,17 @@ end
         )
         .expect("main module should write");
 
-        let wasm = super::compile_file(&input_path).expect("compile should succeed");
-        assert!(!wasm.is_empty());
+        let artifacts = super::compile_file_artifacts_with_options(
+            &input_path,
+            "program.wasm",
+            super::CompileOptions {
+                development_dwarf: true,
+                ..super::CompileOptions::default()
+            },
+        )
+        .expect("compile with external DWARF should succeed");
+        assert!(!artifacts.wasm.is_empty());
+        assert!(artifacts.development_dwarf.is_some());
     }
 
     #[test]
