@@ -190,6 +190,11 @@ impl Parser {
     fn parse_type_atom(&mut self) -> Result<Type, Diagnostic> {
         if self.check_simple(&TokenKind::LBrace) {
             self.advance();
+            // `{}` is the empty record type; `{T}` stays an array type.
+            if self.check_simple(&TokenKind::RBrace) {
+                self.advance();
+                return Ok(Type::Record(std::collections::BTreeMap::new()));
+            }
             let is_record_type = matches!(
                 (self.tokens.get(self.index), self.tokens.get(self.index + 1)),
                 (

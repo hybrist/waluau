@@ -1,0 +1,28 @@
+-- `{}` in type position is the empty record type: a record with no fields.
+-- `{T}` stays an array type and `{ x: T }` stays a fielded record.
+
+type Marker = {}
+type Spaced = { }
+
+function tag(m: Marker): i32
+    return 7
+end
+
+function make(): Marker
+    return {}
+end
+
+function spaced_tag(s: Spaced): i32
+    return 11
+end
+
+local m: Marker = {}
+assert(tag(m) == 7)
+assert(tag(make()) == 7)
+
+local s: Spaced = {}
+assert(spaced_tag(s) == 11)
+
+-- The array reading of empty braces is untouched.
+local empty_array: {i32} = {}
+assert(#empty_array == 0)

@@ -1467,6 +1467,42 @@ fn rejects_empty_array_literals_without_context() {
 }
 
 #[test]
+fn checks_empty_record_type_alias() {
+    let source = r#"
+        type Marker = {}
+
+        function tag(m: Marker): i32
+            return 7
+        end
+
+        function entry(): i32
+            local m: Marker = {}
+            return tag(m)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("empty record alias should type check");
+}
+
+#[test]
+fn rejects_empty_braces_against_nonempty_record_type() {
+    let source = r#"
+        function entry(): i32
+            local p: { x: i32 } = {}
+            return p.x
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error.to_string().contains("missing record field 'x'"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
 fn treats_untyped_empty_braces_as_record_locals() {
     let source = r#"
         function entry(): i32

@@ -1537,6 +1537,46 @@ fn parses_record_type_with_trailing_comma() {
 }
 
 #[test]
+fn parses_empty_record_type() {
+    let source = r#"
+        type Marker = {}
+        type Spaced = { }
+
+        function entry(): i32
+            local m: Marker = {}
+            local xs: {i32} = {}
+            local p: { x: i32 } = { x = 1 }
+            return #xs + p.x
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.type_declarations[0].ty,
+        Type::Record(fields) if fields.is_empty()
+    ));
+    assert!(matches!(
+        &program.type_declarations[1].ty,
+        Type::Record(fields) if fields.is_empty()
+    ));
+    // `{T}` stays an array type and `{ x: T }` stays a fielded record.
+    assert!(matches!(
+        &program.functions[0].body[1],
+        Stmt::Let {
+            ty: Some(Type::Array(_)),
+            ..
+        }
+    ));
+    assert!(matches!(
+        &program.functions[0].body[2],
+        Stmt::Let {
+            ty: Some(Type::Record(fields)),
+            ..
+        } if fields.len() == 1
+    ));
+}
+
+#[test]
 fn rejects_record_type_with_double_trailing_comma() {
     let source = "type T = { x: number,, }\n";
     assert!(parse(source).is_err());

@@ -45,6 +45,13 @@ fn keeps_short_constructs_on_one_line() {
 }
 
 #[test]
+fn formats_empty_record_types() {
+    assert_eq!(fmt("type Marker={}\n"), "type Marker = {}\n");
+    assert_eq!(fmt("type Marker = {  }\n"), "type Marker = {}\n");
+    assert_eq!(fmt("local m:{}={}\n"), "local m: {} = {}\n");
+}
+
+#[test]
 fn formats_module_opaque_type_declarations() {
     assert_eq!(
         fmt("opaque   type State={value:i32}\n"),
