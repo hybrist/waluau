@@ -6027,18 +6027,19 @@ impl Builder<'_> {
                 if let Some(Type::TypedArray(kind)) = expected.as_ref() {
                     return self.lower_typed_array_literal(*kind, elements, env, types);
                 }
-                if elements.is_empty()
-                    && matches!(expected.as_ref(), Some(Type::Record(_)))
-                {
-                    let struct_ty = expected.expect("checked above");
-                    let Type::Record(record_fields) = &struct_ty else {
-                        unreachable!("checked above");
-                    };
+                if elements.is_empty() && expected.as_ref().is_some_and(is_record_like) {
+                    let expected_ty = expected.expect("checked above");
+                    let record_fields = type_record_fields(&expected_ty)
+                        .expect("is_record_like guarantees record fields");
+                    // The struct is allocated as the bare record; the final
+                    // coercion rewraps opaque aliases and nullable
+                    // expectations (`local m: Marker = {}`, `Marker?`).
+                    let struct_ty = Type::Record(record_fields.clone());
                     let value = self.emit(Instruction::StructNew {
                         struct_ty: struct_ty.clone(),
                         fields: Vec::with_capacity(record_fields.len()),
                     });
-                    return self.coerce_value(value, struct_ty, None);
+                    return self.coerce_value(value, struct_ty, Some(expected_ty));
                 }
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
                 // When the expected type is not an array (e.g. the literal is
@@ -7692,6 +7693,12 @@ impl Builder<'_> {
         if elements.is_empty() {
             if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
                 return coerce_type(Type::Array(Box::new(element_ty)), expected);
+            }
+            // `{}` with a record-like expectation is the empty record
+            // literal, not an array literal (see infer_array_literal in
+            // waluau-hir).
+            if expected.as_ref().is_some_and(is_record_like) {
+                return coerce_type(Type::Record(BTreeMap::new()), expected);
             }
             return Err(inference_diagnostic(
                 "inference/missing-context",

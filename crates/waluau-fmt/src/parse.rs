@@ -1015,6 +1015,11 @@ impl Parser {
             let is_record = self.at_n(1, &ident()) && self.at_n(2, &TokenKind::Colon);
             let mut c = Vec::new();
             self.bump(&mut c); // `{`
+            // `{}` is the empty record type; `{T}` stays an array type.
+            if self.at(&TokenKind::RBrace) {
+                self.expect(&TokenKind::RBrace, &mut c, "expected '}'")?;
+                return Ok(Self::tree(SyntaxKind::RecordType, c));
+            }
             if is_record {
                 while !self.at(&TokenKind::RBrace) && !self.eof() {
                     let mut f = Vec::new();

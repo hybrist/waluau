@@ -2168,6 +2168,13 @@ fn infer_array_literal(
             // stay `{i32}?`.
             return coerce_type(Type::Array(Box::new(element_ty)), expected);
         }
+        // `{}` with a record-like expectation is the empty record literal,
+        // not an array literal; route it through the same coercion as a
+        // fielded table literal so `local m: Marker = {}` checks when
+        // `Marker` is the empty record type.
+        if expected.as_ref().is_some_and(is_record_like) {
+            return coerce_type(Type::Record(BTreeMap::new()), expected);
+        }
         return Err(super::signatures::inference_diagnostic(
             "inference/missing-context",
             DiagnosticCategory::MissingContext,

@@ -557,6 +557,35 @@ fn emits_valid_wasm_for_scalar_program() {
 }
 
 #[test]
+fn emits_valid_wasm_for_empty_record_type() {
+    // `type Marker = {}` compiles to a struct type with zero fields; the
+    // module must still validate and construct/pass values of it.
+    let source = r#"
+        type Marker = {}
+
+        function tag(m: Marker): i32
+            return 7
+        end
+
+        function entry(): i32
+            local m: Marker = {}
+            local maybe: Marker? = {}
+            if maybe == nil then
+                return 0
+            end
+            return tag(m) + tag({}) + tag(maybe)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn omits_unused_declared_imports_and_their_function_types() {
     fn compile(source: &str) -> Vec<u8> {
         let program = waluau_parser::parse(source).expect("parse should succeed");
