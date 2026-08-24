@@ -569,7 +569,11 @@ fn emits_valid_wasm_for_empty_record_type() {
 
         function entry(): i32
             local m: Marker = {}
-            return tag(m)
+            local maybe: Marker? = {}
+            if maybe == nil then
+                return 0
+            end
+            return tag(m) + tag({}) + tag(maybe)
         end
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");

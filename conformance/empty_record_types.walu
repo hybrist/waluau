@@ -23,6 +23,19 @@ assert(tag(make()) == 7)
 local s: Spaced = {}
 assert(spaced_tag(s) == 11)
 
+-- `{}` in argument position against a record-typed parameter.
+assert(tag({}) == 7)
+
+-- `{}` against a nullable record expectation.
+local maybe: Marker? = {}
+if maybe ~= nil then
+    assert(tag(maybe) == 7)
+end
+
+-- An inline empty record annotation.
+local inline: {} = {}
+assert(tag(inline) == 7)
+
 -- The array reading of empty braces is untouched.
 local empty_array: {i32} = {}
 assert(#empty_array == 0)
