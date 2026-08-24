@@ -1,0 +1,33 @@
+-- Function types may name their parameters for documentation:
+-- `(a: i32, b: i32) -> i32`. Names are ignored for type checking and type
+-- identity, so named and unnamed spellings of the same shape interconvert
+-- freely.
+
+type Calculator = { apply: (a: i32, b: i32) -> i32, offset: i32 }
+
+local calc: Calculator = {
+    apply = function(x: i32, y: i32): i32
+        return x * 10 + y
+    end,
+    offset = 7,
+}
+
+assert(calc.apply(2, 3) == 23)
+assert(calc.apply(0, calc.offset) == 7)
+
+-- A named-parameter annotation accepts a closure checked against the bare
+-- parameter types, and the value flows into an unnamed annotation unchanged.
+local add: (first: i32, second: i32) -> i32 = function(a: i32, b: i32): i32
+    return a + b
+end
+local unnamed: (i32, i32) -> i32 = add
+assert(add(2, 3) == 5)
+assert(unnamed(40, 2) == 42)
+
+-- Names are allowed on some parameters and omitted on others.
+local mixed: (base: string, i32) -> string = function(s: string, n: i32): string
+    return s .. tostring(n)
+end
+assert(mixed("v", 2) == "v2")
+
+print("ok")

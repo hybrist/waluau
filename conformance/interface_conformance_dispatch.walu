@@ -1,0 +1,81 @@
+-- Interface conformance dispatch: a record type with `self`-receiver method
+-- fields acts as an interface, `type T = I & { ... }` declares conformance,
+-- and coercing a conforming value to the interface type builds a record of
+-- bound methods (dictionary passing). The interface record *wraps* the
+-- receiver:
+--   - bound methods read the receiver at call time, so mutations through the
+--     original value stay visible through the interface;
+--   - non-function fields are copied snapshots taken at coercion time;
+--   - the coerced record is a distinct object, so it never compares
+--     identical to the original value.
+
+type Op = { exec: (self, a: i32, b: i32) -> i32 }
+type Add = Op & {}
+type Mul = Op & {}
+
+function Add:exec(a: i32, b: i32): i32
+    return a + b
+end
+
+function Mul:exec(a: i32, b: i32): i32
+    return a * b
+end
+
+-- The epic's target example: annotation-driven coercion, then dispatch
+-- through both call syntaxes. The stored field holds a bound method, so the
+-- dot call needs no explicit receiver and the colon call adds none.
+local add: Add = {}
+local op: Op = add
+assert(op.exec(2, 3) == 5)
+assert(op:exec(2, 3) == 5)
+
+-- Real polymorphism: two conforming types dispatch differently through the
+-- same interface-typed parameter.
+function run(op: Op): i32
+    return op:exec(2, 3)
+end
+
+local mul: Mul = {}
+assert(run(add) == 5)
+assert(run(mul) == 6)
+
+-- Coercion in return position and via an explicit `::` cast.
+function as_op(add: Add): Op
+    return add
+end
+
+assert(as_op(add).exec(4, 4) == 8)
+assert((mul :: Op):exec(4, 4) == 16)
+
+-- Mutation through the original receiver is visible through the interface:
+-- bound methods close over the receiver, not over a copy of its state.
+type Counter = { total: (self) -> i32 }
+type Tally = Counter & { count: i32 }
+
+function Tally:total(): i32
+    return self.count
+end
+
+local tally: Tally = { count = 1 }
+local counter: Counter = tally
+assert(counter:total() == 1)
+tally.count = 42
+assert(counter:total() == 42)
+
+-- Non-function interface fields are copied when the record is built: the
+-- snapshot keeps its value even after the receiver moves on, while bound
+-- methods keep reading the live receiver.
+type Labeled = { count: i32, total: (self) -> i32 }
+type Scored = Labeled & { count: i32 }
+
+function Scored:total(): i32
+    return self.count
+end
+
+local scored: Scored = { count = 7 }
+local labeled: Labeled = scored
+scored.count = 9
+assert(labeled.count == 7)
+assert(labeled:total() == 9)
+
+print("ok")

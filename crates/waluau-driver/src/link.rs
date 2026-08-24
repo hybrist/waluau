@@ -635,6 +635,20 @@ fn merge_with_builtins(
             let mut lowered = decl.clone();
             rewriter.rewrite_type(&mut lowered.ty);
             lowered.name = format!("{prefix}{}", lowered.name);
+            // Conformance interface names reference type declarations by
+            // name (possibly dotted, `ops.Op`); canonicalize them exactly
+            // like a `Type::Named` reference.
+            for interface in &mut lowered.conforms {
+                let mut named = Type::Named {
+                    name: std::mem::take(interface),
+                    type_args: Vec::new(),
+                };
+                rewriter.rewrite_type(&mut named);
+                let Type::Named { name, .. } = named else {
+                    unreachable!("rewrite_type preserves the Named variant");
+                };
+                *interface = name;
+            }
             type_declarations.push(lowered);
         }
 
@@ -2081,6 +2095,7 @@ impl Rewriter<'_> {
             Type::Function {
                 params,
                 return_type,
+                ..
             } => {
                 for ty in params {
                     self.rewrite_type(ty);
@@ -3264,6 +3279,56 @@ mod tests {
             ),
             "record fields should reference the canonical imported declaration: {fields:?}"
         );
+    }
+
+    #[test]
+    fn conformance_to_an_imported_interface_links_and_checks() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("ops.walu"),
+            r#"
+                export type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+                function noop(): i32
+                    return 0
+                end
+
+                return { noop = noop }
+            "#,
+        )
+        .expect("ops module should write");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                local ops = require("./ops")
+
+                type Add = ops.Op & {}
+
+                function Add:exec(a: i32, b: i32): i32
+                    return a + b
+                end
+
+                function main(): i32
+                    return ops.noop()
+                end
+            "#,
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu")).expect("link should succeed");
+        let add = program
+            .type_declarations
+            .iter()
+            .find(|declaration| declaration.source_name == "Add")
+            .expect("the conforming declaration should link");
+        assert_eq!(add.conforms.len(), 1, "conforms: {:?}", add.conforms);
+        assert!(
+            add.conforms[0].ends_with("_Op") && !add.conforms[0].contains('.'),
+            "the interface name should be canonicalized: {:?}",
+            add.conforms
+        );
+        waluau_hir::type_check(&program)
+            .expect("cross-module conformance should satisfy the checker");
     }
 
     #[test]

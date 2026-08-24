@@ -92,6 +92,16 @@ pub struct TypeDeclaration {
     pub module_opaque: bool,
     /// Source file that owns the representation of a module-opaque alias.
     pub file_path: String,
+    /// Interfaces this type declares conformance to via
+    /// `type Name = Interface & { ... }`. The conformance checker verifies
+    /// every function-typed field of each interface has a matching
+    /// implementation with `self` substituted by this type; the bound-method
+    /// coercion consumes this list to build interface records.
+    ///
+    /// The parser currently accepts at most one interface per declaration;
+    /// the field is a list so the coercion side never needs an AST change if
+    /// that restriction is lifted.
+    pub conforms: Vec<String>,
 }
 
 /// Resolved source metadata for an application of a generic extern type
@@ -436,6 +446,13 @@ pub enum Type {
     Function {
         params: Vec<Type>,
         return_type: Box<Type>,
+        /// Whether the function type opens with the contextual `self` receiver
+        /// placeholder (`(self, a: i32) -> i32`). Only legal as the immediate
+        /// type of a record field, where it marks an interface method whose
+        /// receiver type is substituted at conformance-check time. `self` is
+        /// not included in `params`. Participates in type equality: a method
+        /// type never unifies with a plain function type of the same shape.
+        has_self: bool,
     },
     /// A fixed-shape record used for module namespaces (`require` results).
     Record(BTreeMap<String, Type>),
@@ -546,6 +563,7 @@ impl Type {
             Self::Function {
                 params,
                 return_type,
+                ..
             } => params.iter().any(Self::contains_readonly) || return_type.contains_readonly(),
             Self::Record(fields) => fields.values().any(Self::contains_readonly),
             Self::TaggedVariant(variant) => variant.payload.contains_readonly(),
@@ -889,8 +907,15 @@ impl std::fmt::Display for Type {
             Self::Function {
                 params,
                 return_type,
+                has_self,
             } => {
                 write!(f, "(")?;
+                if *has_self {
+                    write!(f, "self")?;
+                    if !params.is_empty() {
+                        write!(f, ", ")?;
+                    }
+                }
                 for (index, param) in params.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
@@ -901,10 +926,18 @@ impl std::fmt::Display for Type {
             }
             Self::Record(fields) => {
                 write!(f, "{{")?;
-                for (index, (name, ty)) in fields.iter().enumerate() {
-                    if index > 0 {
+                let mut first = true;
+                for (name, ty) in fields {
+                    // `$` never appears in user-written field names; fields
+                    // carrying it are compiler-internal (the conformance
+                    // wrapper identity field) and stay out of display.
+                    if name.contains('$') {
+                        continue;
+                    }
+                    if !first {
                         write!(f, ", ")?;
                     }
+                    first = false;
                     write!(f, "{name}: {ty}")?;
                 }
                 write!(f, "}}")

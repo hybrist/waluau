@@ -1120,6 +1120,43 @@ mod tests {
     }
 
     #[test]
+    fn interface_brand_narrowing_links_across_modules() {
+        // Brand checks work when the interface, a conforming type, and the
+        // consuming module live in different files: the dotted narrowing
+        // target (`ops.Add`), the dotted hard cast, and a second conforming
+        // sibling declared in the entry module all compile through the
+        // linker's canonicalized conformance names.
+        let tempdir = tempdir().expect("tempdir should exist");
+        let ops_path = tempdir.path().join("ops.walu");
+        let entry_path = tempdir.path().join("entry.walu");
+        fs::write(
+            &ops_path,
+            "export type Op = { exec: (self, a: i32, b: i32) -> i32 }\n\
+             export type Add = Op & { bias: i32 }\n\
+             function Add:exec(a: i32, b: i32): i32\n    return a + b + self.bias\nend\n\
+             function make_add(): Add\n    return { bias = 1 }\nend\n\
+             return { make_add = make_add }\n",
+        )
+        .expect("ops fixture should write");
+        fs::write(
+            &entry_path,
+            "local ops = require(\"./ops\")\n\
+             type Mul = ops.Op & { bias: i32 }\n\
+             function Mul:exec(a: i32, b: i32): i32\n    return a * b + self.bias\nend\n\
+             function pick(op: ops.Op): i32\n\
+                 if ops.Add(a) = op then\n        return a.bias\n    end\n\
+                 if Mul(m) = op then\n        return m.bias + 100\n    end\n\
+                 return -1\nend\n\
+             function force(op: ops.Op): i32\n    return (op :: ops.Add).bias\nend\n\
+             function entry(): i32\n\
+                 local mul: Mul = { bias = 2 }\n\
+                 return pick(ops.make_add()) + pick(mul) + force(ops.make_add())\nend\n",
+        )
+        .expect("entry fixture should write");
+        super::compile_file(&entry_path).expect("cross-module brand narrowing should compile");
+    }
+
+    #[test]
     fn cli_development_dwarf_maps_linked_sources_and_is_gated() {
         assert!(super::CLI_HELP.contains("--development-dwarf"));
         let tempdir = tempdir().expect("tempdir should exist");

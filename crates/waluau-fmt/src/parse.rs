@@ -231,7 +231,16 @@ impl Parser {
             &mut c,
             "expected '=' in type declaration",
         )?;
-        c.push(self.parse_type()?);
+        let first = self.parse_type()?;
+        if self.at(&TokenKind::Ampersand) {
+            // Conformance marker: `type Name = Interface & { ... }`.
+            let mut k = vec![first];
+            self.bump(&mut k); // `&`
+            k.push(self.parse_type()?);
+            c.push(Self::tree(SyntaxKind::ConformanceType, k));
+        } else {
+            c.push(first);
+        }
         Ok(Self::tree(SyntaxKind::TypeDecl, c))
     }
 
@@ -504,15 +513,22 @@ impl Parser {
     }
 
     fn parse_if_clause(&mut self) -> Result<Node, Diagnostic> {
-        // Type-narrowing form: `Name(binding) = value then`.
+        // Type-narrowing form: `Name(binding) = value then`, where the
+        // target may be module-qualified (`ops.Add`).
+        let dotted = self.at(&ident()) && self.at_n(1, &TokenKind::Dot) && self.at_n(2, &ident());
+        let name_tokens = if dotted { 3 } else { 1 };
         if self.at(&ident())
-            && self.at_n(1, &TokenKind::LParen)
-            && self.at_n(2, &ident())
-            && self.at_n(3, &TokenKind::RParen)
-            && self.at_n(4, &TokenKind::Equal)
+            && self.at_n(name_tokens, &TokenKind::LParen)
+            && self.at_n(name_tokens + 1, &ident())
+            && self.at_n(name_tokens + 2, &TokenKind::RParen)
+            && self.at_n(name_tokens + 3, &TokenKind::Equal)
         {
             let mut c = Vec::new();
             self.bump(&mut c); // target name
+            if dotted {
+                self.bump(&mut c); // `.`
+                self.bump(&mut c); // member
+            }
             self.bump(&mut c); // (
             self.bump(&mut c); // binding
             self.bump(&mut c); // )
@@ -1015,6 +1031,11 @@ impl Parser {
             let is_record = self.at_n(1, &ident()) && self.at_n(2, &TokenKind::Colon);
             let mut c = Vec::new();
             self.bump(&mut c); // `{`
+            // `{}` is the empty record type; `{T}` stays an array type.
+            if self.at(&TokenKind::RBrace) {
+                self.expect(&TokenKind::RBrace, &mut c, "expected '}'")?;
+                return Ok(Self::tree(SyntaxKind::RecordType, c));
+            }
             if is_record {
                 while !self.at(&TokenKind::RBrace) && !self.eof() {
                     let mut f = Vec::new();
@@ -1115,7 +1136,18 @@ impl Parser {
         let mut inner = Vec::new();
         if !self.at(&TokenKind::RParen) {
             loop {
-                inner.push(self.parse_type()?);
+                // A documentation-only named parameter (`a: i32`). The `self`
+                // receiver placeholder needs no special casing here: it is a
+                // bare identifier and round-trips as a named type.
+                if self.at(&ident()) && self.at_n(1, &TokenKind::Colon) {
+                    let mut p = Vec::new();
+                    self.bump(&mut p); // name
+                    self.bump(&mut p); // `:`
+                    p.push(self.parse_type()?);
+                    inner.push(Self::tree(SyntaxKind::NamedParamType, p));
+                } else {
+                    inner.push(self.parse_type()?);
+                }
                 if !self.eat(&TokenKind::Comma, &mut Vec::new()) {
                     break;
                 }

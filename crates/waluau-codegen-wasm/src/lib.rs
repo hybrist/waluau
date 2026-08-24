@@ -134,6 +134,7 @@ fn is_event_unit_callback_type(ty: &Type) -> bool {
     let Type::Function {
         params,
         return_type,
+        ..
     } = ty
     else {
         return false;
@@ -150,6 +151,7 @@ fn is_f64_unit_callback_type(ty: &Type) -> bool {
     let Type::Function {
         params,
         return_type,
+        ..
     } = ty
     else {
         return false;
@@ -167,6 +169,7 @@ fn is_unit_extern_callback_type(ty: &Type) -> bool {
     let Type::Function {
         params,
         return_type,
+        ..
     } = ty
     else {
         return false;
@@ -183,6 +186,7 @@ fn is_unit_unit_callback_type(ty: &Type) -> bool {
     let Type::Function {
         params,
         return_type,
+        ..
     } = ty
     else {
         return false;
@@ -1191,6 +1195,7 @@ fn emit_inner(
         let callback_type = Type::Function {
             params: vec![Type::Extern],
             return_type: Box::new(Type::Unit),
+            has_self: false,
         };
         types.ty().function(
             vec![
@@ -1209,6 +1214,7 @@ fn emit_inner(
         let callback_type = Type::Function {
             params: vec![Type::Numeric(NumericType::F64)],
             return_type: Box::new(Type::Unit),
+            has_self: false,
         };
         types.ty().function(
             vec![wasm_type(&callback_type, &array_registry)?, ValType::F64],
@@ -1224,6 +1230,7 @@ fn emit_inner(
         let callback_type = Type::Function {
             params: Vec::new(),
             return_type: Box::new(Type::Extern),
+            has_self: false,
         };
         types.ty().function(
             vec![wasm_type(&callback_type, &array_registry)?],
@@ -1239,6 +1246,7 @@ fn emit_inner(
         let callback_type = Type::Function {
             params: Vec::new(),
             return_type: Box::new(Type::Unit),
+            has_self: false,
         };
         types.ty().function(
             vec![wasm_type(&callback_type, &array_registry)?],

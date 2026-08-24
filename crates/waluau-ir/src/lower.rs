@@ -966,6 +966,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             for param in params {
                 collect_type_variant_tags(param, tag_ids);
@@ -1585,12 +1586,20 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         Type::Function {
             params,
             return_type,
+            // `self` is a checker-only receiver contract: at runtime a method
+            // slot holds a bound closure whose callable signature is exactly
+            // the self-less parameter list. Erasing the marker here keeps
+            // struct keying, CallValue wrapper signatures, and the generic
+            // indirect call path consistent — IR and codegen never see
+            // `has_self`.
+            has_self: _,
         } => Type::Function {
             params: params
                 .iter()
                 .map(|ty| erase_type_opaque_types_at(ty, false))
                 .collect(),
             return_type: Box::new(erase_type_opaque_types_at(return_type, false)),
+            has_self: false,
         },
         Type::Record(fields) => Type::Record(
             fields
@@ -1634,6 +1643,7 @@ fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             params
                 .iter()
@@ -4833,6 +4843,7 @@ impl Builder<'_> {
         let Type::Function {
             params,
             return_type,
+            ..
         } = iterator_ty
         else {
             return Err(Diagnostic::new("for-in iterator must be a function"));
@@ -5211,6 +5222,7 @@ impl Builder<'_> {
                     let actual = Type::Function {
                         params,
                         return_type: Box::new(return_type),
+                        has_self: false,
                     };
                     self.coerce_value(value, actual, expected)?
                 } else {
@@ -5292,6 +5304,7 @@ impl Builder<'_> {
                     let Type::Function {
                         params,
                         return_type,
+                        ..
                     } = field_ty
                     else {
                         return Err(Diagnostic::new("attempt to call non-function value"));
@@ -5361,6 +5374,7 @@ impl Builder<'_> {
                         field_ty: Type::Function {
                             params: param_types.clone(),
                             return_type: return_type.clone(),
+                            has_self: false,
                         },
                     });
                     self.emit(Instruction::CallValue {
@@ -5963,6 +5977,7 @@ impl Builder<'_> {
                 let Type::Function {
                     params: param_types,
                     return_type,
+                    ..
                 } = callee_ty
                 else {
                     return Err(Diagnostic::new("attempt to call non-function value"));
@@ -5974,6 +5989,7 @@ impl Builder<'_> {
                     Some(Type::Function {
                         params: param_types.clone(),
                         return_type: return_type.clone(),
+                        has_self: false,
                     }),
                 )?;
                 let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
@@ -6027,18 +6043,19 @@ impl Builder<'_> {
                 if let Some(Type::TypedArray(kind)) = expected.as_ref() {
                     return self.lower_typed_array_literal(*kind, elements, env, types);
                 }
-                if elements.is_empty()
-                    && matches!(expected.as_ref(), Some(Type::Record(_)))
-                {
-                    let struct_ty = expected.expect("checked above");
-                    let Type::Record(record_fields) = &struct_ty else {
-                        unreachable!("checked above");
-                    };
+                if elements.is_empty() && expected.as_ref().is_some_and(is_record_like) {
+                    let expected_ty = expected.expect("checked above");
+                    let record_fields = type_record_fields(&expected_ty)
+                        .expect("is_record_like guarantees record fields");
+                    // The struct is allocated as the bare record; the final
+                    // coercion rewraps opaque aliases and nullable
+                    // expectations (`local m: Marker = {}`, `Marker?`).
+                    let struct_ty = Type::Record(record_fields.clone());
                     let value = self.emit(Instruction::StructNew {
                         struct_ty: struct_ty.clone(),
                         fields: Vec::with_capacity(record_fields.len()),
                     });
-                    return self.coerce_value(value, struct_ty, None);
+                    return self.coerce_value(value, struct_ty, Some(expected_ty));
                 }
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
                 // When the expected type is not an array (e.g. the literal is
@@ -6669,6 +6686,7 @@ impl Builder<'_> {
                         .map(|param| param.ty.clone())
                         .collect(),
                     return_type: Box::new(return_ty.clone()),
+                    has_self: false,
                 },
             );
         }
@@ -6822,6 +6840,7 @@ impl Builder<'_> {
                     Ok(Type::Function {
                         params: params.clone(),
                         return_type: Box::new(ret.clone()),
+                        has_self: false,
                     })
                 } else {
                     Err(Diagnostic::new(format!(
@@ -6891,6 +6910,7 @@ impl Builder<'_> {
                     let Type::Function {
                         params,
                         return_type,
+                        ..
                     } = field_ty
                     else {
                         return Err(Diagnostic::new("attempt to call non-function value"));
@@ -7132,6 +7152,7 @@ impl Builder<'_> {
                 }
             }
             Expr::Function(function) => Ok(Type::Function {
+                has_self: false,
                 return_type: Box::new(Self::function_expr_return_type(function)?),
                 params: function
                     .params
@@ -7693,6 +7714,12 @@ impl Builder<'_> {
             if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
                 return coerce_type(Type::Array(Box::new(element_ty)), expected);
             }
+            // `{}` with a record-like expectation is the empty record
+            // literal, not an array literal (see infer_array_literal in
+            // waluau-hir).
+            if expected.as_ref().is_some_and(is_record_like) {
+                return coerce_type(Type::Record(BTreeMap::new()), expected);
+            }
             return Err(inference_diagnostic(
                 "inference/missing-context",
                 DiagnosticCategory::MissingContext,
@@ -7786,6 +7813,7 @@ impl Builder<'_> {
                 let callee_ty = Type::Function {
                     params: Vec::new(),
                     return_type: Box::new(i32_ty.clone()),
+                    has_self: false,
                 };
                 let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
                     Ok(ty) => ty,
@@ -7997,6 +8025,7 @@ impl Builder<'_> {
         let Type::Function {
             params,
             return_type,
+            ..
         } = callee_ty.clone()
         else {
             return Some(Err(Diagnostic::new(format!(
@@ -8116,6 +8145,7 @@ impl Builder<'_> {
                     Type::Function {
                         params,
                         return_type,
+                        ..
                     } if params.is_empty() && **return_type == Type::Numeric(NumericType::I32) => {
                         Some(Ok(Type::Thread))
                     }
@@ -8246,10 +8276,7 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        let Type::Function {
-            params,
-            return_type: _,
-        } = callee_ty.clone()
+        let Type::Function { params, .. } = callee_ty.clone()
         else {
             return Some(Err(Diagnostic::new(format!(
                 "{PCALL} expects a function, got {callee_ty}"
@@ -9782,6 +9809,7 @@ impl Builder<'_> {
             let comparator_ty = Type::Function {
                 params: vec![element_ty.clone(), element_ty.clone()],
                 return_type: Box::new(Type::Bool),
+                has_self: false,
             };
             Some(self.lower_expr(comparator_arg, env, types, Some(comparator_ty))?)
         } else {
@@ -11348,6 +11376,7 @@ impl Builder<'_> {
             let repl_ty = Type::Function {
                 params: param_tys.clone(),
                 return_type: Box::new(return_ty.clone()),
+                has_self: false,
             };
             let repl = self.lower_expr(&args[2], env, types, Some(repl_ty))?;
             self.lower_gsub_function_loop(
@@ -11397,6 +11426,7 @@ impl Builder<'_> {
                 Type::Function {
                     params,
                     return_type,
+                    ..
                 } => Ok(Some((params, *return_type))),
                 _ => Ok(None),
             };
@@ -11407,6 +11437,7 @@ impl Builder<'_> {
             let candidate = Type::Function {
                 params: expected_params.clone(),
                 return_type: Box::new(return_ty.clone()),
+                has_self: false,
             };
             if self
                 .infer_expr_type(repl_arg, types, Some(candidate))

@@ -45,6 +45,22 @@ fn keeps_short_constructs_on_one_line() {
 }
 
 #[test]
+fn formats_empty_record_types() {
+    assert_eq!(fmt("type Marker={}\n"), "type Marker = {}\n");
+    assert_eq!(fmt("type Marker = {  }\n"), "type Marker = {}\n");
+    assert_eq!(fmt("local m:{}={}\n"), "local m: {} = {}\n");
+}
+
+#[test]
+fn formats_conformance_declarations() {
+    assert_eq!(fmt("type Add=Op&{}\n"), "type Add = Op & {}\n");
+    assert_eq!(
+        fmt("type Add = Op  &  { count: i32 }\n"),
+        "type Add = Op & { count: i32 }\n"
+    );
+}
+
+#[test]
 fn formats_module_opaque_type_declarations() {
     assert_eq!(
         fmt("opaque   type State={value:i32}\n"),
@@ -121,5 +137,33 @@ fn formats_literal_union_type_declarations() {
     assert_eq!(
         fmt("type Speed=0.5|1.0|2.0\n"),
         "type Speed = 0.5 | 1.0 | 2.0\n"
+    );
+}
+
+#[test]
+fn formats_self_receivers_and_named_parameters_in_function_types() {
+    assert_eq!(
+        fmt("type Op={exec:(self,a:i32,b:i32)->i32}\n"),
+        "type Op = { exec: (self, a: i32, b: i32) -> i32 }\n"
+    );
+    assert_eq!(
+        fmt("type Calc={apply:(a:i32,b:i32)->i32,offset:i32}\n"),
+        "type Calc = { apply: (a: i32, b: i32) -> i32, offset: i32 }\n"
+    );
+    assert_eq!(
+        fmt("function use(op: (base:string,i32)->string): unit end\n"),
+        "function use(op: (base: string, i32) -> string): unit\nend\n"
+    );
+}
+
+#[test]
+fn formats_if_cast_targets_including_module_qualified_names() {
+    assert_eq!(
+        fmt("if Add(a)=op then\nuse(a)\nend\n"),
+        "if Add(a) = op then\n    use(a)\nend\n"
+    );
+    assert_eq!(
+        fmt("if ops . Add(a)=op then\nuse(a)\nelse\nother()\nend\n"),
+        "if ops.Add(a) = op then\n    use(a)\nelse\n    other()\nend\n"
     );
 }

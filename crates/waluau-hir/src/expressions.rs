@@ -97,7 +97,7 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     }
 }
 
-fn method_signature<'a>(
+pub(super) fn method_signature<'a>(
     receiver: &Expr,
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
@@ -111,7 +111,7 @@ fn method_signature<'a>(
         .map(|signature| (signature, method_name))
 }
 
-fn type_method_signature<'a>(
+pub(super) fn type_method_signature<'a>(
     receiver_ty: &Type,
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
@@ -606,6 +606,7 @@ fn infer_expr_inner(
                         params.clone()
                     },
                     return_type: Box::new(return_type.clone()),
+                    has_self: false,
                 }
             } else {
                 return Err(Diagnostic::new(format!("unknown name '{name}'")));
@@ -1187,9 +1188,14 @@ fn infer_expr_inner(
             }
             let callee_ty = infer_expr(callee, vars, fn_signatures, active_type_params, None)?;
             let (params, ret) = match callee_ty {
+                // A `(self, ...) -> R` method slot holds a bound method whose
+                // receiver is already applied, so a call through it provides
+                // the self-less parameters only; `params` never includes the
+                // receiver either way.
                 Type::Function {
                     params,
                     return_type,
+                    ..
                 } => (params, *return_type),
                 other => {
                     return Err(Diagnostic::new(format!(
@@ -1339,9 +1345,43 @@ fn infer_expr_inner(
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
                 match field_ty {
+                    // A `(self, ...) -> R` field holds a bound method: the
+                    // receiver was applied when the interface record was
+                    // built, so `recv:m(args)` is sugar for `recv.m(args)` —
+                    // the stored closure takes the self-less parameters only.
                     Type::Function {
                         params,
                         return_type,
+                        has_self: true,
+                    } => {
+                        let actual_args = infer_expr_list(
+                            args,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(&params),
+                        )?;
+                        if !call_arity_matches(&params, actual_args.len()) {
+                            return Err(Diagnostic::new(format!(
+                                "function expects {} arguments, got {}",
+                                params.len(),
+                                actual_args.len()
+                            )));
+                        }
+                        for (expected_param, actual) in params.iter().zip(actual_args.iter()) {
+                            if expected_param != actual {
+                                return Err(Diagnostic::new(format!(
+                                    "call expected {}, got {}",
+                                    expected_param, actual
+                                )));
+                            }
+                        }
+                        return coerce_type(*return_type, expected);
+                    }
+                    Type::Function {
+                        params,
+                        return_type,
+                        has_self: false,
                     } => (params, *return_type),
                     other => {
                         return Err(Diagnostic::new(format!(
@@ -1424,6 +1464,7 @@ fn infer_expr_inner(
                             Type::Function {
                                 params: params.clone(),
                                 return_type: Box::new(return_type.clone()),
+                                has_self: false,
                             },
                             expected,
                         ),
@@ -2168,6 +2209,13 @@ fn infer_array_literal(
             // stay `{i32}?`.
             return coerce_type(Type::Array(Box::new(element_ty)), expected);
         }
+        // `{}` with a record-like expectation is the empty record literal,
+        // not an array literal; route it through the same coercion as a
+        // fielded table literal so `local m: Marker = {}` checks when
+        // `Marker` is the empty record type.
+        if expected.as_ref().is_some_and(is_record_like) {
+            return coerce_type(Type::Record(BTreeMap::new()), expected);
+        }
         return Err(super::signatures::inference_diagnostic(
             "inference/missing-context",
             DiagnosticCategory::MissingContext,
@@ -2334,6 +2382,7 @@ fn infer_function_expr(
             .map(|param| param.ty.clone())
             .collect(),
         return_type: Box::new(return_ty.clone()),
+        has_self: false,
     };
     let mut local_scope = vars.clone();
     for param in &function.params {

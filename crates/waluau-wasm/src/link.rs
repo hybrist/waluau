@@ -587,6 +587,20 @@ fn merge_with_ambient_declarations(
             let mut lowered = decl.clone();
             rewriter.rewrite_type(&mut lowered.ty);
             lowered.name = format!("{prefix}{}", lowered.name);
+            // Conformance interface names reference type declarations by
+            // name (possibly dotted, `ops.Op`); canonicalize them exactly
+            // like a `Type::Named` reference.
+            for interface in &mut lowered.conforms {
+                let mut named = Type::Named {
+                    name: std::mem::take(interface),
+                    type_args: Vec::new(),
+                };
+                rewriter.rewrite_type(&mut named);
+                let Type::Named { name, .. } = named else {
+                    unreachable!("rewrite_type preserves the Named variant");
+                };
+                *interface = name;
+            }
             type_declarations.push(lowered);
         }
 
@@ -1837,6 +1851,7 @@ impl Rewriter<'_> {
             Type::Function {
                 params,
                 return_type,
+                ..
             } => {
                 for ty in params {
                     self.rewrite_type(ty);

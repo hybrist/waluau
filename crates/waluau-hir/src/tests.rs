@@ -26,6 +26,7 @@ fn type_checks_valid_program() {
 #[test]
 fn diagnostic_type_display_hides_nested_module_mangling() {
     let ty = Type::Function {
+        has_self: false,
         params: vec![Type::Opaque {
             name: "__waluau_m12_Graphics".to_string(),
             ty: Box::new(Type::Record(Default::default())),
@@ -560,7 +561,7 @@ fn nullable_function_values_support_locals_aliases_and_nil_narrowing() {
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
     assert!(matches!(
         &typed.functions[1].params[0].ty,
-        Type::Nullable(inner) if matches!(inner.as_ref(), Type::Function { params, return_type }
+        Type::Nullable(inner) if matches!(inner.as_ref(), Type::Function { params, return_type, .. }
             if params.is_empty() && return_type.as_ref() == &Type::Unit)
     ));
 }
@@ -1463,6 +1464,42 @@ fn rejects_empty_array_literals_without_context() {
     assert_eq!(
         error.to_string(),
         "empty array literal requires explicit element type"
+    );
+}
+
+#[test]
+fn checks_empty_record_type_alias() {
+    let source = r#"
+        type Marker = {}
+
+        function tag(m: Marker): i32
+            return 7
+        end
+
+        function entry(): i32
+            local m: Marker = {}
+            return tag(m)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("empty record alias should type check");
+}
+
+#[test]
+fn rejects_empty_braces_against_nonempty_record_type() {
+    let source = r#"
+        function entry(): i32
+            local p: { x: i32 } = {}
+            return p.x
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error.to_string().contains("missing record field 'x'"),
+        "unexpected diagnostic: {error}"
     );
 }
 
@@ -4861,4 +4898,585 @@ fn unguarded_forward_reference_cycle_is_rejected() {
         error.to_string().contains("cyclic type declaration"),
         "{error}"
     );
+}
+
+#[test]
+fn resolves_record_types_with_self_method_fields() {
+    // A record type whose field carries a `self` receiver parses and
+    // resolves.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        function describe(op: Op?): bool
+            return op == nil
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn self_method_fields_accept_bound_closures() {
+    // A method slot stores a *bound* method: a closure taking the self-less
+    // parameters. A manual vtable therefore constructs directly, and both
+    // call syntaxes provide the self-less arguments.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        local op: Op = {
+            exec = function(a: i32, b: i32): i32
+                return a + b
+            end,
+        }
+
+        function run_dot(op: Op): i32
+            return op.exec(1, 2)
+        end
+
+        function run_colon(op: Op): i32
+            return op:exec(1, 2)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("bound-method construction and calls should check");
+}
+
+#[test]
+fn self_method_fields_reject_mismatched_values() {
+    // A value that is not a function of the self-less shape cannot fill a
+    // method slot; the diagnostic points at conformance declarations.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        local op: Op = {
+            exec = function(a: i32): i32
+                return a
+            end,
+        }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("construction must fail");
+    assert!(
+        error.to_string().contains("declares conformance"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_satisfied_by_method_declaration() {
+    // The full accepted end-to-end declaration, with the method textually
+    // after the conformance declaration.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("conformance via a method declaration should check");
+}
+
+#[test]
+fn conformance_satisfied_with_inferred_return_type() {
+    // Conformance is checked after whole-program return-type inference, so
+    // the implementing method may leave its return type to inference.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32)
+            return a + b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("an inferred method return type should satisfy conformance");
+}
+
+#[test]
+fn conformance_satisfied_by_record_fields() {
+    // A plain function field and a receiver-typed field both satisfy their
+    // interface slots as record fields; the receiver-typed field references
+    // the conforming type from inside its own declaration (recursion
+    // anchor), which nominal matching identifies by name.
+    let source = r#"
+        type Op = { exec: (self, a: i32) -> i32, helper: (i32) -> i32 }
+        type Add = Op & { exec: (Add, i32) -> i32, helper: (i32) -> i32 }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("conformance via record fields should check");
+}
+
+#[test]
+fn conformance_requires_declared_non_function_fields() {
+    let source = r#"
+        type Op = { exec: (self) -> i32, count: i32 }
+        type Add = Op & { count: i32 }
+
+        function Add:exec(): i32
+            return self.count
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("a declared data field should satisfy conformance");
+
+    let source = r#"
+        type Op = { count: i32 }
+        type Add = Op & {}
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a missing data field must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("does not conform to interface 'Op': missing field 'count' with type i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_missing_method_is_reported() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a missing method must fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("type 'Add' does not conform to interface 'Op': missing method 'exec'")
+            && rendered.contains("(Add, i32, i32) -> i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_mismatched_method_signature_is_reported() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32): i32
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a mismatched method must fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("method 'exec' has type (Add, i32) -> i32")
+            && rendered.contains("requires (Add, i32, i32) -> i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_self_substitutes_to_the_conforming_type() {
+    // The receiver slot must be the conforming type itself: a field typed
+    // with the interface as its receiver does not satisfy the method.
+    let source = r#"
+        type Op = { exec: (self, a: i32) -> i32 }
+        type Add = Op & { exec: (Op, i32) -> i32 }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a wrong receiver type must fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("field 'exec' has type (Op, i32) -> i32")
+            && rendered.contains("requires (Add, i32) -> i32"),
+        "unexpected diagnostic: {error}"
+    );
+
+    // A method declared on a different type does not satisfy the obligation.
+    let source = r#"
+        type Op = { exec: (self, a: i32) -> i32 }
+        type Add = Op & {}
+        type Sub = {}
+
+        function Sub:exec(a: i32): i32
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("another type's method must not satisfy");
+    assert!(
+        error.to_string().contains("missing method 'exec'"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_to_unknown_or_non_record_interfaces_is_reported() {
+    let source = "type Add = Op & {}";
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("an unknown interface must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("unknown interface 'Op' in the conformance declaration of type 'Add'"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let source = r#"
+        type Num = i32
+        type Add = Num & {}
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a non-record interface must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("an interface must be a record type, got i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_coercion_rewrites_annotated_local() {
+    // `local op: Op = add` desugars to a call to the generated constructor
+    // `__conform$Add$Op`, and both call syntaxes dispatch through the
+    // interface record.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        local add: Add = {}
+        local op: Op = add
+        assert(op.exec(2, 3) == 5)
+        assert(op:exec(2, 3) == 5)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("coercion should check");
+    let init = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .expect("top-level init function");
+    let rendered = format!("{:?}", init.body);
+    assert!(
+        rendered.contains("__conform$Add$Op"),
+        "expected a constructor call in the rewritten body: {rendered}"
+    );
+    assert!(
+        typed
+            .functions
+            .iter()
+            .any(|function| function.name.to_string() == "__conform$Add$Op"),
+        "expected the generated constructor function"
+    );
+}
+
+#[test]
+fn conformance_coercion_covers_arguments_returns_and_casts() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        function run(op: Op): i32
+            return op:exec(2, 3)
+        end
+
+        function as_op(add: Add): Op
+            return add
+        end
+
+        local add: Add = {}
+        assert(run(add) == 5)
+        assert(run(add :: Op) == 5)
+        assert(as_op(add):exec(2, 3) == 5)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("argument, return, and cast coercions should check");
+}
+
+#[test]
+fn conformance_coercion_dispatches_polymorphically() {
+    // Two conforming types flow through the same interface-typed function.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+        type Mul = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        function Mul:exec(a: i32, b: i32): i32
+            return a * b
+        end
+
+        function run(op: Op): i32
+            return op:exec(2, 3)
+        end
+
+        local add: Add = {}
+        local mul: Mul = {}
+        assert(run(add) == 5)
+        assert(run(mul) == 6)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("polymorphic dispatch should check");
+}
+
+#[test]
+fn conformance_coercion_infers_unannotated_returns() {
+    // A function without a return annotation may still return a coerced
+    // value: the rewrite runs before return-type inference.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        function make_op(add: Add)
+            return add :: Op
+        end
+
+        local add: Add = {}
+        assert(make_op(add):exec(2, 3) == 5)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("inferred interface return should check");
+}
+
+#[test]
+fn coercing_a_non_conforming_type_is_an_error() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Plain = {}
+
+        local plain: Plain = {}
+        local op: Op = plain
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("non-conforming coercion must fail");
+    assert!(
+        error.to_string().contains("missing record field 'exec'"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn function_type_parameter_names_do_not_affect_checking() {
+    let source = r#"
+        local add: (first: i32, second: i32) -> i32 = function(x: i32, y: i32): i32
+            return x + y
+        end
+        local unnamed: (i32, i32) -> i32 = add
+        assert(unnamed(1, 2) == 3)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("names must not affect checking");
+}
+
+// ---------------------------------------------------------------------------
+// Interface brand checks and downcasts (wrapper identity + surface forms)
+// ---------------------------------------------------------------------------
+
+/// Source shared by the brand tests: two conforming types with identical
+/// layouts behind one interface.
+const SIBLING_CONFORMANCE: &str = r#"
+    type Op = { exec: (self, a: i32, b: i32) -> i32 }
+    type Add = Op & { bias: i32 }
+    type Mul = Op & { bias: i32 }
+
+    function Add:exec(a: i32, b: i32): i32
+        return a + b + self.bias
+    end
+
+    function Mul:exec(a: i32, b: i32): i32
+        return a * b + self.bias
+    end
+"#;
+
+#[test]
+fn conformance_brands_are_distinct_and_order_independent() {
+    // Layout-identical siblings get distinct brands, and the assignment
+    // depends only on the set of canonical names, not on declaration order
+    // (stand-in for module link order).
+    let forward = parse(SIBLING_CONFORMANCE).expect("parse should succeed");
+    let reversed = parse(
+        r#"
+        type Mul = Op & { bias: i32 }
+        type Add = Op & { bias: i32 }
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b + self.bias
+        end
+
+        function Mul:exec(a: i32, b: i32): i32
+            return a * b + self.bias
+        end
+    "#,
+    )
+    .expect("parse should succeed");
+    let brands = super::conformance::conformance_brands(&forward);
+    assert_eq!(brands.len(), 2);
+    assert_ne!(brands["Add"], brands["Mul"]);
+    assert_eq!(brands, super::conformance::conformance_brands(&reversed));
+}
+
+#[test]
+fn conformance_wrappers_carry_brand_and_receiver_identity() {
+    // The generated wrapper's interface record includes the hidden identity
+    // field holding the concrete type's brand and the receiver reference,
+    // and the interface declaration itself gains the (nullable, omittable)
+    // field.
+    let mut program = parse(SIBLING_CONFORMANCE).expect("parse should succeed");
+    super::conformance::generate_conformance_wrappers(&mut program);
+    let brands = super::conformance::conformance_brands(&program);
+
+    let op = program
+        .type_declarations
+        .iter()
+        .find(|decl| decl.name == "Op")
+        .expect("Op declaration");
+    let Type::Record(op_fields) = &op.ty else {
+        panic!("Op must stay a record");
+    };
+    assert!(
+        matches!(
+            op_fields.get(super::conformance::META_FIELD),
+            Some(Type::Nullable(_))
+        ),
+        "interface record must gain the hidden nullable identity field"
+    );
+
+    for concrete in ["Add", "Mul"] {
+        let wrapper_name = super::conformance::conformance_wrapper_name(concrete, "Op");
+        let wrapper = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == wrapper_name)
+            .expect("wrapper function");
+        let [Stmt::Return(Expr::TableLiteral { fields, .. })] = wrapper.body.as_slice() else {
+            panic!("wrapper body must return a table literal");
+        };
+        let meta = fields
+            .iter()
+            .find(|field| field.name == super::conformance::META_FIELD)
+            .expect("wrapper record must fill the identity field");
+        let Expr::TableLiteral {
+            fields: meta_fields,
+            ..
+        } = &meta.value
+        else {
+            panic!("identity field must be a record literal");
+        };
+        let brand = meta_fields
+            .iter()
+            .find(|field| field.name == "brand")
+            .expect("identity record must carry the brand");
+        let Expr::Number(literal, _) = &brand.value else {
+            panic!("brand must be a compile-time constant");
+        };
+        assert_eq!(literal.raw, brands[concrete].to_string());
+        let receiver = meta_fields
+            .iter()
+            .find(|field| field.name == "receiver")
+            .expect("identity record must carry the receiver");
+        assert!(
+            matches!(&receiver.value, Expr::Name(name, ..) if name == "__conform_receiver"),
+            "receiver must be the original receiver reference, not a copy"
+        );
+        // The consuming forms exist alongside the wrapper.
+        for helper in [
+            super::conformance::conformance_check_name(concrete, "Op"),
+            super::conformance::conformance_cast_name(concrete, "Op"),
+        ] {
+            assert!(
+                program
+                    .functions
+                    .iter()
+                    .any(|function| function.name.to_string() == helper),
+                "missing generated helper {helper}"
+            );
+        }
+    }
+}
+
+#[test]
+fn interface_narrowing_and_hard_cast_type_check() {
+    let source = format!(
+        "{SIBLING_CONFORMANCE}
+        function pick(op: Op): i32
+            if Add(a) = op then
+                return a.bias
+            end
+            local forced = op :: Mul
+            return forced.bias
+        end
+    "
+    );
+    let program = parse(&source).expect("parse should succeed");
+    super::type_check(&program).expect("interface narrowing and hard cast should check");
+}
+
+#[test]
+fn interface_narrowing_rejects_non_conforming_target() {
+    let source = format!(
+        "{SIBLING_CONFORMANCE}
+        type Other = {{ tag: i32 }}
+        function pick(op: Op): i32
+            if Other(o) = op then
+                return o.tag
+            end
+            return 0
+        end
+    "
+    );
+    let program = parse(&source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("non-conforming target must fail");
+    assert!(
+        error.to_string().contains("neither a tagged-union variant"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn interface_hard_cast_rejects_non_conforming_target() {
+    let source = format!(
+        "{SIBLING_CONFORMANCE}
+        type Other = {{ tag: i32 }}
+        function pick(op: Op): Other
+            return op :: Other
+        end
+    "
+    );
+    let program = parse(&source).expect("parse should succeed");
+    super::type_check(&program).expect_err("non-conforming hard cast must fail");
+}
+
+#[test]
+fn plain_interface_literals_omit_the_identity_field() {
+    // A plain interface literal never mentions the hidden field; the
+    // nullable field is omittable, so construction still checks.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        local plain: Op = {
+            exec = function(a: i32, b: i32): i32
+                return a - b
+            end,
+        }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("plain interface literals should still check");
 }

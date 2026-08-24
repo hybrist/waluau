@@ -173,6 +173,7 @@ pub(super) fn infer_coroutine_builtin_call(
                 Type::Function {
                     params,
                     return_type,
+                    has_self: false,
                 } if params.is_empty() && **return_type == i32_ty => {
                     Some(coerce_type(Type::Thread, expected))
                 }
@@ -331,6 +332,7 @@ pub(super) fn infer_pcall_builtin_call(
     let Type::Function {
         params,
         return_type,
+        has_self: false,
     } = callee_ty
     else {
         return Some(Err(Diagnostic::new(format!(
@@ -1012,6 +1014,7 @@ pub(super) fn infer_table_builtin_call(
                 let comparator_ty = Type::Function {
                     params: vec![element_ty.clone(), element_ty.clone()],
                     return_type: Box::new(Type::Bool),
+                    has_self: false,
                 };
                 match super::expressions::infer_expr(
                     comparator,

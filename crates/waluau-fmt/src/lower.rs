@@ -80,6 +80,8 @@ fn tree(t: &Tree) -> Doc {
         K::ArrayLiteral => delimited("{", "}", t, false),
         K::TableLiteral => delimited("{", "}", t, true),
         K::TableField | K::RecordField => field(t),
+        // NamedParamType shares RecordField's `[name, `:`, type]` shape.
+        K::NamedParamType => field(t),
         K::ArgList => arg_list(t),
         K::TypeArgs => delimited("<", ">", t, false),
 
@@ -92,6 +94,9 @@ fn tree(t: &Tree) -> Doc {
         K::TaggedVariantType => node_join_tight(t),
         K::LiteralType => node_join_tight(t),
         K::TaggedUnionType => join(text(" | "), t.children.iter().map(node)),
+        // [interface, `&`, record]; the `&` token renders itself so its
+        // attached comment trivia survives.
+        K::ConformanceType => join(text(" "), t.children.iter().map(node)),
         K::ParenType => paren_type(t),
         K::PrimitiveType => join(text(" "), t.children.iter().map(node)),
         K::NameList => join(text(", "), t.children.iter().map(node)),
@@ -528,16 +533,23 @@ fn if_clause(t: &Tree) -> Doc {
     let mut parts = Vec::new();
     let mut i;
     if t.kind == SyntaxKind::IfCastClause {
-        // Name ( binding ) = value then ...
-        parts.push(node(&t.children[0])); // Name
-        parts.push(node(&t.children[1])); // (
-        parts.push(node(&t.children[2])); // binding
-        parts.push(node(&t.children[3])); // )
+        // Name [. member] ( binding ) = value then ...
+        let mut j = 0;
+        parts.push(node(&t.children[j])); // Name
+        j += 1;
+        if matches!(tok_kind_at(t, j), Some(TokenKind::Dot)) {
+            parts.push(node(&t.children[j])); // .
+            parts.push(node(&t.children[j + 1])); // member
+            j += 2;
+        }
+        parts.push(node(&t.children[j])); // (
+        parts.push(node(&t.children[j + 1])); // binding
+        parts.push(node(&t.children[j + 2])); // )
         parts.push(text(" = "));
-        parts.push(node(&t.children[4])); // value
+        parts.push(node(&t.children[j + 3])); // value
         parts.push(text(" "));
-        parts.push(node(&t.children[5])); // then
-        i = 6;
+        parts.push(node(&t.children[j + 4])); // then
+        i = j + 5;
     } else {
         parts.push(node(&t.children[0])); // condition
         parts.push(text(" "));

@@ -24,6 +24,20 @@ pub(super) struct Parser {
     file_path: String,
     /// Locally declared nominal enums and their declaration-order variants.
     enums: HashMap<String, Vec<String>>,
+    /// One-shot permission for a `self` receiver in the next function type
+    /// atom. Set while parsing a record field's type and consumed by the
+    /// first parenthesized type list, so `self` is legal exactly at the top
+    /// level of a record field's function type and nowhere deeper.
+    self_allowed: bool,
+    /// One-shot permission for a conformance marker (`Interface & { ... }`)
+    /// in the next type. Set while parsing a type declaration's right-hand
+    /// side and consumed by the outermost [`Parser::parse_type`] call, so
+    /// `&` is legal exactly at the top level of a type declaration and
+    /// nowhere deeper.
+    conformance_allowed: bool,
+    /// The interface name recognized by a conformance marker, picked up by
+    /// [`Parser::parse_type_decl`] after the right-hand side parses.
+    pending_conformance: Option<String>,
 }
 
 impl Parser {
@@ -36,6 +50,9 @@ impl Parser {
             definitions: Vec::new(),
             file_path,
             enums: HashMap::new(),
+            self_allowed: false,
+            conformance_allowed: false,
+            pending_conformance: None,
         }
     }
 
@@ -79,6 +96,7 @@ impl Parser {
                 .map(|param| param.ty.clone())
                 .collect(),
             return_type: Box::new(return_type),
+            has_self: false,
         })
     }
 
@@ -719,6 +737,7 @@ impl Parser {
             enum_variants: Some(variants),
             module_opaque: false,
             file_path: self.file_path.clone(),
+            conforms: Vec::new(),
         })
     }
 
@@ -745,15 +764,29 @@ impl Parser {
         let scope_token = self.type_param_scope.len();
         self.type_param_scope.extend(type_params.iter().cloned());
         self.expect_simple(TokenKind::Equal, "expected '=' in type declaration")?;
-        let parsed = self.parse_type().map(|ty| TypeDeclaration {
-            source_name: name.clone(),
-            name,
-            type_params,
-            ty,
-            exported,
-            enum_variants: None,
-            module_opaque,
-            file_path: self.file_path.clone(),
+        // The right-hand side of a type declaration is the one place a
+        // conformance marker (`Interface & { ... }`) may appear.
+        self.conformance_allowed = true;
+        let parsed_type = self.parse_type();
+        self.conformance_allowed = false;
+        let conforms: Vec<String> = self.pending_conformance.take().into_iter().collect();
+        let parsed = parsed_type.and_then(|ty| {
+            if !conforms.is_empty() && !type_params.is_empty() {
+                return Err(Diagnostic::new(format!(
+                    "generic type '{name}' cannot declare interface conformance"
+                )));
+            }
+            Ok(TypeDeclaration {
+                source_name: name.clone(),
+                name,
+                type_params,
+                ty,
+                exported,
+                enum_variants: None,
+                module_opaque,
+                file_path: self.file_path.clone(),
+                conforms,
+            })
         });
         self.type_param_scope.truncate(scope_token);
         if let Ok(declaration) = &parsed {
@@ -769,8 +802,13 @@ impl Parser {
                 Some(declaration.ty.clone()),
                 0,
             );
+            let rendered_conforms: String = declaration
+                .conforms
+                .iter()
+                .map(|interface| format!("{interface} & "))
+                .collect();
             self.definitions[index].detail = Some(format!(
-                "{}{}type {}{rendered_params} = {}",
+                "{}{}type {}{rendered_params} = {rendered_conforms}{}",
                 if declaration.exported { "export " } else { "" },
                 if declaration.module_opaque {
                     "opaque "

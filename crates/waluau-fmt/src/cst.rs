@@ -88,8 +88,14 @@ pub enum SyntaxKind {
     RecordField,
     FunctionType,
     TypeList,
+    /// A documentation-only named parameter inside a function type's
+    /// parameter list (`(a: i32) -> i32`): `[name, `:`, type]`.
+    NamedParamType,
     TaggedVariantType,
     TaggedUnionType,
+    /// The right-hand side of a conformance declaration
+    /// (`type Add = Op & { ... }`): `[interface, `&`, record]`.
+    ConformanceType,
     ParenType,
     PrimitiveType,
     /// A string or number literal in type position (`"red"`, `0`, `-1`),

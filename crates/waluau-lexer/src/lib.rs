@@ -72,6 +72,7 @@ pub enum TokenKind {
     And,
     Or,
     Pipe,
+    Ampersand,
     Arrow,
     ColonColon,
     Colon,
@@ -330,7 +331,7 @@ fn lex_range(
                 if matches!(chars.get(i + 1), Some('&')) {
                     return Err(Diagnostic::new("unsupported '&&', use 'and'"));
                 } else {
-                    return Err(Diagnostic::new("unexpected '&', expected '&&'"));
+                    (TokenKind::Ampersand, 1)
                 }
             }
             '|' => {
@@ -1067,7 +1068,7 @@ mod tests {
     fn rejects_unsupported_operators() {
         assert_eq!(err("&&").to_string(), "unsupported '&&', use 'and'");
         assert_eq!(err("||").to_string(), "unsupported '||', use 'or'");
-        assert_eq!(err("&").to_string(), "unexpected '&', expected '&&'");
+        assert_eq!(kinds("&"), vec![TokenKind::Ampersand]);
         assert_eq!(kinds("|"), vec![TokenKind::Pipe]);
     }
 
