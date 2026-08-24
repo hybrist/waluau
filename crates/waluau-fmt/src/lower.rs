@@ -533,16 +533,23 @@ fn if_clause(t: &Tree) -> Doc {
     let mut parts = Vec::new();
     let mut i;
     if t.kind == SyntaxKind::IfCastClause {
-        // Name ( binding ) = value then ...
-        parts.push(node(&t.children[0])); // Name
-        parts.push(node(&t.children[1])); // (
-        parts.push(node(&t.children[2])); // binding
-        parts.push(node(&t.children[3])); // )
+        // Name [. member] ( binding ) = value then ...
+        let mut j = 0;
+        parts.push(node(&t.children[j])); // Name
+        j += 1;
+        if matches!(tok_kind_at(t, j), Some(TokenKind::Dot)) {
+            parts.push(node(&t.children[j])); // .
+            parts.push(node(&t.children[j + 1])); // member
+            j += 2;
+        }
+        parts.push(node(&t.children[j])); // (
+        parts.push(node(&t.children[j + 1])); // binding
+        parts.push(node(&t.children[j + 2])); // )
         parts.push(text(" = "));
-        parts.push(node(&t.children[4])); // value
+        parts.push(node(&t.children[j + 3])); // value
         parts.push(text(" "));
-        parts.push(node(&t.children[5])); // then
-        i = 6;
+        parts.push(node(&t.children[j + 4])); // then
+        i = j + 5;
     } else {
         parts.push(node(&t.children[0])); // condition
         parts.push(text(" "));

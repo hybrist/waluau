@@ -513,15 +513,22 @@ impl Parser {
     }
 
     fn parse_if_clause(&mut self) -> Result<Node, Diagnostic> {
-        // Type-narrowing form: `Name(binding) = value then`.
+        // Type-narrowing form: `Name(binding) = value then`, where the
+        // target may be module-qualified (`ops.Add`).
+        let dotted = self.at(&ident()) && self.at_n(1, &TokenKind::Dot) && self.at_n(2, &ident());
+        let name_tokens = if dotted { 3 } else { 1 };
         if self.at(&ident())
-            && self.at_n(1, &TokenKind::LParen)
-            && self.at_n(2, &ident())
-            && self.at_n(3, &TokenKind::RParen)
-            && self.at_n(4, &TokenKind::Equal)
+            && self.at_n(name_tokens, &TokenKind::LParen)
+            && self.at_n(name_tokens + 1, &ident())
+            && self.at_n(name_tokens + 2, &TokenKind::RParen)
+            && self.at_n(name_tokens + 3, &TokenKind::Equal)
         {
             let mut c = Vec::new();
             self.bump(&mut c); // target name
+            if dotted {
+                self.bump(&mut c); // `.`
+                self.bump(&mut c); // member
+            }
             self.bump(&mut c); // (
             self.bump(&mut c); // binding
             self.bump(&mut c); // )

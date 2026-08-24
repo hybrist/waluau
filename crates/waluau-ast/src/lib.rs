@@ -926,10 +926,18 @@ impl std::fmt::Display for Type {
             }
             Self::Record(fields) => {
                 write!(f, "{{")?;
-                for (index, (name, ty)) in fields.iter().enumerate() {
-                    if index > 0 {
+                let mut first = true;
+                for (name, ty) in fields {
+                    // `$` never appears in user-written field names; fields
+                    // carrying it are compiler-internal (the conformance
+                    // wrapper identity field) and stay out of display.
+                    if name.contains('$') {
+                        continue;
+                    }
+                    if !first {
                         write!(f, ", ")?;
                     }
+                    first = false;
                     write!(f, "{name}: {ty}")?;
                 }
                 write!(f, "}}")
