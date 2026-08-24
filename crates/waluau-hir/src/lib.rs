@@ -239,12 +239,14 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Type::Function {
             params: params
                 .iter()
                 .map(|ty| type_visible_from_file(ty, file_path, opaque))
                 .collect(),
             return_type: Box::new(type_visible_from_file(return_type, file_path, opaque)),
+            has_self: *has_self,
         },
         Type::Record(fields) => Type::Record(
             fields
@@ -316,12 +318,14 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Type::Function {
             params: params
                 .iter()
                 .map(|ty| restore_module_opaque_type(ty, opaque))
                 .collect(),
             return_type: Box::new(restore_module_opaque_type(return_type, opaque)),
+            has_self: *has_self,
         },
         Type::Record(fields) => Type::Record(
             fields
@@ -1158,12 +1162,14 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Type::Function {
             params: params
                 .iter()
                 .map(|param| substitute_type_params(param, subst))
                 .collect(),
             return_type: Box::new(substitute_type_params(return_type, subst)),
+            has_self: *has_self,
         },
         Type::Record(fields) => Type::Record(
             fields
@@ -1491,6 +1497,7 @@ fn resolve_type_refs_allowing_forward_refs(
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Ok(Type::Function {
             params: params
                 .iter()
@@ -1515,6 +1522,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 stack,
                 guarded,
             )?),
+            has_self: *has_self,
         }),
         Type::Record(fields) => Ok(Type::Record(
             fields
@@ -1973,6 +1981,7 @@ fn resolve_type_refs_fixpoint(
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Ok(Type::Function {
             params: params
                 .iter()
@@ -1997,6 +2006,7 @@ fn resolve_type_refs_fixpoint(
                 stack,
                 fixpoint_mode,
             )?),
+            has_self: *has_self,
         }),
         Type::Record(fields) => Ok(Type::Record(
             fields

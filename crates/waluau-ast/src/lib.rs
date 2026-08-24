@@ -436,6 +436,13 @@ pub enum Type {
     Function {
         params: Vec<Type>,
         return_type: Box<Type>,
+        /// Whether the function type opens with the contextual `self` receiver
+        /// placeholder (`(self, a: i32) -> i32`). Only legal as the immediate
+        /// type of a record field, where it marks an interface method whose
+        /// receiver type is substituted at conformance-check time. `self` is
+        /// not included in `params`. Participates in type equality: a method
+        /// type never unifies with a plain function type of the same shape.
+        has_self: bool,
     },
     /// A fixed-shape record used for module namespaces (`require` results).
     Record(BTreeMap<String, Type>),
@@ -546,6 +553,7 @@ impl Type {
             Self::Function {
                 params,
                 return_type,
+                ..
             } => params.iter().any(Self::contains_readonly) || return_type.contains_readonly(),
             Self::Record(fields) => fields.values().any(Self::contains_readonly),
             Self::TaggedVariant(variant) => variant.payload.contains_readonly(),
@@ -889,8 +897,15 @@ impl std::fmt::Display for Type {
             Self::Function {
                 params,
                 return_type,
+                has_self,
             } => {
                 write!(f, "(")?;
+                if *has_self {
+                    write!(f, "self")?;
+                    if !params.is_empty() {
+                        write!(f, ", ")?;
+                    }
+                }
                 for (index, param) in params.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;

@@ -357,6 +357,7 @@ fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             for param in params {
                 insert_nullable_box_kinds(param, out);
@@ -485,6 +486,7 @@ fn insert_array_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             for param in params {
                 insert_array_type(param, seen, out);
@@ -515,6 +517,7 @@ fn insert_record_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             for param in params {
                 insert_record_type(param, seen, out);

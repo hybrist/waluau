@@ -380,6 +380,7 @@ fn verify_function(
                     let expected_callee_ty = Type::Function {
                         params: params.clone(),
                         return_type: Box::new(return_type.clone()),
+                        has_self: false,
                     };
                     if callee_ty != expected_callee_ty {
                         return Err(Diagnostic::new(format!(
@@ -422,6 +423,7 @@ fn verify_function(
                     let expected_callee_ty = Type::Function {
                         params: Vec::new(),
                         return_type: Box::new(Type::Numeric(NumericType::I32)),
+                        has_self: false,
                     };
                     if callee_ty != expected_callee_ty {
                         return Err(Diagnostic::new(format!(
@@ -503,10 +505,12 @@ fn verify_function(
                     let expected_sig = Type::Function {
                         params: params.clone(),
                         return_type: Box::new(return_type.clone()),
+                        has_self: false,
                     };
                     let actual_sig = Type::Function {
                         params: sig_params[captures.len()..].to_vec(),
                         return_type: Box::new(sig_ret.clone()),
+                        has_self: false,
                     };
                     if expected_sig != actual_sig {
                         return Err(Diagnostic::new(format!(
@@ -1424,6 +1428,7 @@ fn infer_instruction_type(
         } => Ok(Type::Function {
             params: params.clone(),
             return_type: Box::new(return_type.clone()),
+            has_self: false,
         }),
         Instruction::ArrayNew { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),

@@ -19,9 +19,11 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Type::Function {
             params: params.iter().map(|ty| substitute_type(ty, subst)).collect(),
             return_type: Box::new(substitute_type(return_type, subst)),
+            has_self: *has_self,
         },
         Type::Record(fields) => Type::Record(
             fields
@@ -51,6 +53,7 @@ fn contains_type_param(ty: &Type) -> bool {
         Type::Function {
             params,
             return_type,
+            ..
         } => params.iter().any(contains_type_param) || contains_type_param(return_type.as_ref()),
         _ => false,
     }
@@ -199,10 +202,12 @@ fn unify(
             Type::Function {
                 params: p_params,
                 return_type: p_ret,
+                ..
             },
             Type::Function {
                 params: a_params,
                 return_type: a_ret,
+                ..
             },
         ) => {
             if p_params.len() != a_params.len() {
@@ -344,6 +349,7 @@ impl<'a> Monomorphizer<'a> {
             let fn_ty = Type::Function {
                 params: param_types,
                 return_type: Box::new(return_type),
+                has_self: false,
             };
             if let Some(symbol_id) = function.symbol_id {
                 function_signatures.insert(symbol_id, fn_ty);
@@ -364,6 +370,7 @@ impl<'a> Monomorphizer<'a> {
             let fn_ty = Type::Function {
                 params: param_types,
                 return_type: Box::new(return_type),
+                has_self: false,
             };
             if let Some(symbol_id) = declared.symbol_id {
                 function_signatures.insert(symbol_id, fn_ty);
@@ -385,6 +392,7 @@ impl<'a> Monomorphizer<'a> {
                         let fn_ty = Type::Function {
                             params: param_types,
                             return_type: Box::new(return_type),
+                            has_self: false,
                         };
                         method_signatures.insert((*table_symbol_id, name.clone()), fn_ty);
                     }
@@ -1725,6 +1733,7 @@ impl<'a> Monomorphizer<'a> {
                 Ok(Type::Function {
                     params,
                     return_type: Box::new(return_type),
+                    has_self: false,
                 })
             }
             Expr::ArrayLiteral { elements, .. } => {
@@ -1789,6 +1798,7 @@ impl<'a> Monomorphizer<'a> {
                 return Some(Type::Function {
                     params: params.clone(),
                     return_type: Box::new(return_type.clone()),
+                    has_self: false,
                 });
             }
         }
@@ -1990,6 +2000,7 @@ fn mangle_type(ty: &Type) -> String {
         Type::Function {
             params,
             return_type,
+            ..
         } => format!(
             "$f{}$r{}",
             params.iter().map(mangle_type).collect::<Vec<_>>().join(""),

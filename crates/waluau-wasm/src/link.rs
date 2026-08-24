@@ -1837,6 +1837,7 @@ impl Rewriter<'_> {
             Type::Function {
                 params,
                 return_type,
+                ..
             } => {
                 for ty in params {
                     self.rewrite_type(ty);

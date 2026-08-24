@@ -21,6 +21,17 @@ fn int_union_numeric(members: &[NumberUnionMember]) -> NumericType {
     }
 }
 
+/// The parsed entries of a parenthesized type list (`(self, a: i32, b: i32)`).
+///
+/// Parameter names are documentation only and are dropped here: two function
+/// types differing only in parameter names are the same type. `self` is a
+/// receiver placeholder recorded out-of-band instead of as a parameter type.
+struct ParenTypeList {
+    params: Vec<Type>,
+    has_self: bool,
+    saw_named: bool,
+}
+
 impl Parser {
     pub(super) fn parse_type_param_list(&mut self) -> Result<Vec<String>, Diagnostic> {
         if !self.check_simple(&TokenKind::Less) {
@@ -208,7 +219,13 @@ impl Parser {
                 loop {
                     let name = self.expect_identifier()?;
                     self.expect_simple(TokenKind::Colon, "expected ':' after record field name")?;
-                    let field_ty = self.parse_type()?;
+                    // A record field's type may be an interface method type
+                    // with a `self` receiver; the permission is one-shot and
+                    // consumed by the field type's outermost type atom.
+                    self.self_allowed = true;
+                    let field_ty = self.parse_type();
+                    self.self_allowed = false;
+                    let field_ty = field_ty?;
                     fields.insert(name, field_ty);
                     if self.check_simple(&TokenKind::Comma) {
                         self.advance();
@@ -228,20 +245,24 @@ impl Parser {
             return Ok(Type::Array(Box::new(element)));
         }
         if self.check_simple(&TokenKind::LParen) {
+            let allow_self = std::mem::take(&mut self.self_allowed);
             self.advance();
-            let mut params = Vec::new();
-            if !self.check_simple(&TokenKind::RParen) {
-                loop {
-                    params.push(self.parse_type()?);
-                    if self.check_simple(&TokenKind::Comma) {
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-            }
-            self.expect_simple(TokenKind::RParen, "expected ')' after function type params")?;
+            let list =
+                self.parse_paren_type_list(allow_self, "expected ')' after function type params")?;
             if !self.check_simple(&TokenKind::Arrow) {
+                if list.has_self {
+                    return Err(self.diagnostic_at_current(
+                        "expected '->' after the parameters of a function type \
+                         with a 'self' receiver",
+                    ));
+                }
+                if list.saw_named {
+                    return Err(self.diagnostic_at_current(
+                        "parameter names are only allowed in function types \
+                         (the parameter list must be followed by '->')",
+                    ));
+                }
+                let mut params = list.params;
                 return match params.len() {
                     0 => Ok(Type::Unit),
                     1 => Ok(params.remove(0)),
@@ -253,8 +274,9 @@ impl Parser {
             self.advance();
             let return_type = self.parse_return_type()?;
             return Ok(Type::Function {
-                params,
+                params: list.params,
                 return_type: Box::new(return_type),
+                has_self: list.has_self,
             });
         }
 
@@ -356,6 +378,82 @@ impl Parser {
         }
     }
 
+    /// Parse the entries of a parenthesized type list, after the caller has
+    /// consumed the opening `(`.
+    ///
+    /// Each entry is a bare type, or a documentation-only named parameter
+    /// (`name: T`, the name is validated and dropped: it never affects type
+    /// identity). When `allow_self` is set, the first entry may additionally
+    /// be the contextual `self` receiver placeholder; `self` is not a lexer
+    /// keyword, so it is recognized here by the `,`/`)` delimiter that
+    /// follows it.
+    fn parse_paren_type_list(
+        &mut self,
+        allow_self: bool,
+        close_message: &str,
+    ) -> Result<ParenTypeList, Diagnostic> {
+        let mut list = ParenTypeList {
+            params: Vec::new(),
+            has_self: false,
+            saw_named: false,
+        };
+        if !self.check_simple(&TokenKind::RParen) {
+            let mut first = true;
+            loop {
+                let next_kind = self.tokens.get(self.index + 1).map(|token| &token.kind);
+                let entry_is_self = matches!(
+                    (self.peek().map(|token| &token.kind), next_kind),
+                    (
+                        Some(TokenKind::Identifier(name)),
+                        Some(TokenKind::Comma | TokenKind::RParen),
+                    ) if name == "self"
+                );
+                let entry_is_named = matches!(
+                    (self.peek().map(|token| &token.kind), next_kind),
+                    (Some(TokenKind::Identifier(_)), Some(TokenKind::Colon))
+                );
+                if entry_is_self {
+                    let span = self.peek().map(|token| token.span);
+                    self.advance();
+                    let error = |message: &str| {
+                        let diagnostic = Diagnostic::new(message.to_string());
+                        match span {
+                            Some(span) => diagnostic.with_span(span),
+                            None => diagnostic,
+                        }
+                    };
+                    if !first {
+                        return Err(error(
+                            "'self' must be the first parameter in a function type",
+                        ));
+                    }
+                    if !allow_self {
+                        return Err(error(
+                            "'self' is only allowed in a function type used directly \
+                             as a record field type",
+                        ));
+                    }
+                    list.has_self = true;
+                } else if entry_is_named {
+                    self.advance(); // parameter name (documentation only)
+                    self.advance(); // ':'
+                    list.saw_named = true;
+                    list.params.push(self.parse_type()?);
+                } else {
+                    list.params.push(self.parse_type()?);
+                }
+                first = false;
+                if self.check_simple(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_simple(TokenKind::RParen, close_message)?;
+        Ok(list)
+    }
+
     /// Parse the return-type position of a function type annotation.
     ///
     /// `(T1, T2)` not followed by `->` becomes `Type::Multi([T1, T2])`.
@@ -367,26 +465,23 @@ impl Parser {
             return self.parse_type();
         }
         self.advance(); // consume '('
-        let mut types = Vec::new();
-        if !self.check_simple(&TokenKind::RParen) {
-            loop {
-                types.push(self.parse_type()?);
-                if self.check_simple(&TokenKind::Comma) {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-        }
-        self.expect_simple(TokenKind::RParen, "expected ')' in return type")?;
+        let list = self.parse_paren_type_list(false, "expected ')' in return type")?;
         if self.check_simple(&TokenKind::Arrow) {
             self.advance(); // consume '->'
             let nested_return = self.parse_return_type()?;
             return Ok(Type::Function {
-                params: types,
+                params: list.params,
                 return_type: Box::new(nested_return),
+                has_self: false,
             });
         }
+        if list.saw_named {
+            return Err(self.diagnostic_at_current(
+                "parameter names are only allowed in function types \
+                 (the parameter list must be followed by '->')",
+            ));
+        }
+        let mut types = list.params;
         Ok(match types.len() {
             0 => Type::Unit,
             1 => types.remove(0),

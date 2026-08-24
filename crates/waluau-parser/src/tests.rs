@@ -609,6 +609,7 @@ fn parses_grouped_nullable_function_types() {
             type_args: vec![],
         }],
         return_type: Box::new(Type::Unit),
+        has_self: false,
     };
     assert_eq!(
         program.functions[0].params[0].ty,
@@ -619,6 +620,7 @@ fn parses_grouped_nullable_function_types() {
         Type::Nullable(Box::new(Type::Function {
             params: vec![event_callback],
             return_type: Box::new(Type::Unit),
+            has_self: false,
         }))
     );
     assert_eq!(
@@ -675,6 +677,7 @@ fn parses_paren_unit_type_alias() {
         Type::Function {
             params: vec![],
             return_type: Box::new(Type::Numeric(NumericType::I32)),
+            has_self: false,
         }
     );
 }
@@ -696,6 +699,7 @@ fn parses_multi_value_return_type_in_function_type() {
                 Type::Bool,
                 Type::Numeric(NumericType::I32),
             ])),
+            has_self: false,
         }
     );
 }
@@ -1468,7 +1472,7 @@ fn parses_function_type_and_literal_assignment() {
     assert!(matches!(
         &function.body[0],
         waluau_ast::Stmt::Let {
-            ty: Some(Type::Function { params, return_type }),
+            ty: Some(Type::Function { params, return_type, .. }),
             value: waluau_ast::Expr::Function(_),
             ..
         } if params == &vec![Type::Numeric(NumericType::I32)]
@@ -2670,5 +2674,148 @@ fn definitions_record_initializer_hints_and_function_signature_types() {
             receiver: "s".to_string(),
             method: "upper".to_string()
         })
+    );
+}
+
+#[test]
+fn parses_named_parameters_in_function_types() {
+    // Parameter names are documentation only and are dropped at parse time:
+    // named and unnamed spellings produce identical types.
+    let named = parse("function apply(op: (a: i32, b: i32) -> i32): unit end")
+        .expect("named parameters should parse");
+    let unnamed = parse("function apply(op: (i32, i32) -> i32): unit end")
+        .expect("unnamed parameters should parse");
+    assert_eq!(
+        named.functions[0].params[0].ty,
+        unnamed.functions[0].params[0].ty
+    );
+    assert_eq!(
+        named.functions[0].params[0].ty,
+        Type::Function {
+            params: vec![
+                Type::Numeric(NumericType::I32),
+                Type::Numeric(NumericType::I32),
+            ],
+            return_type: Box::new(Type::Numeric(NumericType::I32)),
+            has_self: false,
+        }
+    );
+
+    // Names may cover only some parameters.
+    let mixed = parse("function apply(op: (base: string, i32) -> string): unit end")
+        .expect("mixed named/positional parameters should parse");
+    assert_eq!(
+        mixed.functions[0].params[0].ty,
+        Type::Function {
+            params: vec![Type::String, Type::Numeric(NumericType::I32)],
+            return_type: Box::new(Type::String),
+            has_self: false,
+        }
+    );
+}
+
+#[test]
+fn parses_self_receiver_in_record_field_function_type() {
+    let program = parse("type Op = { exec: (self, a: i32, b: i32) -> i32 }")
+        .expect("a self receiver in a record field's function type should parse");
+    let expected_field = Type::Function {
+        params: vec![
+            Type::Numeric(NumericType::I32),
+            Type::Numeric(NumericType::I32),
+        ],
+        return_type: Box::new(Type::Numeric(NumericType::I32)),
+        has_self: true,
+    };
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::Record([("exec".to_string(), expected_field)].into_iter().collect())
+    );
+
+    // `self` alone is a zero-parameter method type.
+    let program =
+        parse("type Ticker = { tick: (self) -> unit }").expect("a lone self receiver should parse");
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::Record(
+            [(
+                "tick".to_string(),
+                Type::Function {
+                    params: Vec::new(),
+                    return_type: Box::new(Type::Unit),
+                    has_self: true,
+                }
+            )]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn self_receiver_participates_in_type_identity() {
+    let with_self = parse("type Op = { exec: (self, a: i32) -> i32 }").expect("parses");
+    let without_self = parse("type Op = { exec: (a: i32) -> i32 }").expect("parses");
+    assert_ne!(
+        with_self.type_declarations[0].ty,
+        without_self.type_declarations[0].ty
+    );
+}
+
+#[test]
+fn rejects_self_outside_record_field_function_types() {
+    let error = parse("type F = (self) -> i32")
+        .expect_err("a self receiver in a plain type alias must fail");
+    assert!(
+        error.to_string().contains(
+            "'self' is only allowed in a function type used directly as a record field type"
+        ),
+        "unexpected diagnostic: {error}"
+    );
+
+    let error = parse("function f(callback: (self) -> i32): unit end")
+        .expect_err("a self receiver in a parameter annotation must fail");
+    assert!(
+        error.to_string().contains("'self' is only allowed"),
+        "unexpected diagnostic: {error}"
+    );
+
+    // Nested function types inside a record field are not the field's own
+    // method type, so the receiver permission does not reach them.
+    let error = parse("type Op = { exec: ((self) -> i32) -> i32 }")
+        .expect_err("a self receiver in a nested function type must fail");
+    assert!(
+        error.to_string().contains("'self' is only allowed"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn rejects_self_after_the_first_parameter() {
+    let error = parse("type Op = { exec: (a: i32, self) -> i32 }")
+        .expect_err("self after the first parameter must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("'self' must be the first parameter in a function type"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn rejects_self_and_parameter_names_in_type_grouping() {
+    let error =
+        parse("type Op = { exec: (self) }").expect_err("a self receiver without '->' must fail");
+    assert!(
+        error.to_string().contains("expected '->'"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let error = parse("function f(x: (a: i32)): unit end")
+        .expect_err("parameter names in a parenthesized grouping must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("parameter names are only allowed in function types"),
+        "unexpected diagnostic: {error}"
     );
 }
