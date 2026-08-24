@@ -302,16 +302,39 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             "cannot erase a read-only view into unknown",
         )),
         Some(Type::Unknown) => Ok(Type::Unknown),
-        // An interface method slot (`(self, ...) -> R` record field) cannot be
-        // filled by any value yet: `self` is a receiver placeholder that only
-        // conformance declarations will know how to substitute. Exactly equal
-        // method types already unified above, which keeps alias resolution
-        // working. This arm sits before the `unknown` unboxing arm so a
-        // dynamic value cannot sneak past the placeholder either.
+        // An interface method slot (`(self, ...) -> R` record field) holds a
+        // *bound* method: a closure whose callable signature is the field's
+        // signature with the receiver already applied. A plain function value
+        // of that self-less shape therefore fills the slot (this is how the
+        // conformance coercion builds interface records), and reading the
+        // slot produces a value of the self-less shape. Any other value is
+        // rejected. This arm sits before the `unknown` unboxing arm so a
+        // dynamic value cannot sneak past the receiver contract.
+        Some(Type::Function {
+            params: expected_params,
+            return_type: expected_return,
+            has_self: expected_self,
+        }) if matches!(
+            &actual,
+            Type::Function {
+                params: actual_params,
+                return_type: actual_return,
+                ..
+            } if *actual_params == expected_params && *actual_return == expected_return
+        ) =>
+        {
+            Ok(Type::Function {
+                params: expected_params,
+                return_type: expected_return,
+                has_self: expected_self,
+            })
+        }
         Some(expected @ Type::Function { has_self: true, .. }) => Err(Diagnostic::new(format!(
-            "cannot provide a value for the method type {expected}: its 'self' \
-             receiver is bound by conformance declarations, which are not \
-             implemented yet"
+            "cannot provide {} for the method type {}: interface method slots \
+             hold bound methods, created by coercing a value whose type \
+             declares conformance (type T = Interface & {{ ... }})",
+            super::module_type_display(&actual),
+            super::module_type_display(&expected),
         ))),
         Some(expected) if actual == Type::Unknown && expected != Type::Unit => Ok(expected),
         Some(Type::Nullable(expected_inner)) => match actual {

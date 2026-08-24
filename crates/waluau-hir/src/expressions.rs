@@ -22,12 +22,6 @@ use super::signatures::{
 };
 use super::statements::check_stmt;
 
-/// Conservative diagnostic for calling through a record field whose type
-/// carries a `self` receiver. Dispatch through such interface method fields
-/// arrives with conformance declarations (`type Add = Op & { ... }`).
-pub(super) const SELF_METHOD_CALL_NOT_IMPLEMENTED: &str = "cannot call a record field with a 'self' receiver yet: conformance \
-     declarations (interface method dispatch) are not implemented";
-
 pub(super) fn builtin_name(callee: &Expr) -> Option<String> {
     match callee {
         Expr::Name(name, _, _) => Some(name.clone()),
@@ -103,7 +97,7 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     }
 }
 
-fn method_signature<'a>(
+pub(super) fn method_signature<'a>(
     receiver: &Expr,
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
@@ -117,7 +111,7 @@ fn method_signature<'a>(
         .map(|signature| (signature, method_name))
 }
 
-fn type_method_signature<'a>(
+pub(super) fn type_method_signature<'a>(
     receiver_ty: &Type,
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
@@ -1194,13 +1188,14 @@ fn infer_expr_inner(
             }
             let callee_ty = infer_expr(callee, vars, fn_signatures, active_type_params, None)?;
             let (params, ret) = match callee_ty {
-                Type::Function { has_self: true, .. } => {
-                    return Err(Diagnostic::new(SELF_METHOD_CALL_NOT_IMPLEMENTED));
-                }
+                // A `(self, ...) -> R` method slot holds a bound method whose
+                // receiver is already applied, so a call through it provides
+                // the self-less parameters only; `params` never includes the
+                // receiver either way.
                 Type::Function {
                     params,
                     return_type,
-                    has_self: false,
+                    ..
                 } => (params, *return_type),
                 other => {
                     return Err(Diagnostic::new(format!(
@@ -1350,8 +1345,38 @@ fn infer_expr_inner(
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
                 match field_ty {
-                    Type::Function { has_self: true, .. } => {
-                        return Err(Diagnostic::new(SELF_METHOD_CALL_NOT_IMPLEMENTED));
+                    // A `(self, ...) -> R` field holds a bound method: the
+                    // receiver was applied when the interface record was
+                    // built, so `recv:m(args)` is sugar for `recv.m(args)` —
+                    // the stored closure takes the self-less parameters only.
+                    Type::Function {
+                        params,
+                        return_type,
+                        has_self: true,
+                    } => {
+                        let actual_args = infer_expr_list(
+                            args,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(&params),
+                        )?;
+                        if !call_arity_matches(&params, actual_args.len()) {
+                            return Err(Diagnostic::new(format!(
+                                "function expects {} arguments, got {}",
+                                params.len(),
+                                actual_args.len()
+                            )));
+                        }
+                        for (expected_param, actual) in params.iter().zip(actual_args.iter()) {
+                            if expected_param != actual {
+                                return Err(Diagnostic::new(format!(
+                                    "call expected {}, got {}",
+                                    expected_param, actual
+                                )));
+                            }
+                        }
+                        return coerce_type(*return_type, expected);
                     }
                     Type::Function {
                         params,
