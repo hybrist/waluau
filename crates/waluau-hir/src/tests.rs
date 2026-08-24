@@ -4971,6 +4971,176 @@ fn self_method_fields_reject_calls_until_conformance_lands() {
 }
 
 #[test]
+fn conformance_satisfied_by_method_declaration() {
+    // The full accepted end-to-end declaration, with the method textually
+    // after the conformance declaration.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("conformance via a method declaration should check");
+}
+
+#[test]
+fn conformance_satisfied_with_inferred_return_type() {
+    // Conformance is checked after whole-program return-type inference, so
+    // the implementing method may leave its return type to inference.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32)
+            return a + b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("an inferred method return type should satisfy conformance");
+}
+
+#[test]
+fn conformance_satisfied_by_record_fields() {
+    // A plain function field and a receiver-typed field both satisfy their
+    // interface slots as record fields; the receiver-typed field references
+    // the conforming type from inside its own declaration (recursion
+    // anchor), which nominal matching identifies by name.
+    let source = r#"
+        type Op = { exec: (self, a: i32) -> i32, helper: (i32) -> i32 }
+        type Add = Op & { exec: (Add, i32) -> i32, helper: (i32) -> i32 }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("conformance via record fields should check");
+}
+
+#[test]
+fn conformance_requires_declared_non_function_fields() {
+    let source = r#"
+        type Op = { exec: (self) -> i32, count: i32 }
+        type Add = Op & { count: i32 }
+
+        function Add:exec(): i32
+            return self.count
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("a declared data field should satisfy conformance");
+
+    let source = r#"
+        type Op = { count: i32 }
+        type Add = Op & {}
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a missing data field must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("does not conform to interface 'Op': missing field 'count' with type i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_missing_method_is_reported() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a missing method must fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("type 'Add' does not conform to interface 'Op': missing method 'exec'")
+            && rendered.contains("(Add, i32, i32) -> i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_mismatched_method_signature_is_reported() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32): i32
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a mismatched method must fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("method 'exec' has type (Add, i32) -> i32")
+            && rendered.contains("requires (Add, i32, i32) -> i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_self_substitutes_to_the_conforming_type() {
+    // The receiver slot must be the conforming type itself: a field typed
+    // with the interface as its receiver does not satisfy the method.
+    let source = r#"
+        type Op = { exec: (self, a: i32) -> i32 }
+        type Add = Op & { exec: (Op, i32) -> i32 }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a wrong receiver type must fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("field 'exec' has type (Op, i32) -> i32")
+            && rendered.contains("requires (Add, i32) -> i32"),
+        "unexpected diagnostic: {error}"
+    );
+
+    // A method declared on a different type does not satisfy the obligation.
+    let source = r#"
+        type Op = { exec: (self, a: i32) -> i32 }
+        type Add = Op & {}
+        type Sub = {}
+
+        function Sub:exec(a: i32): i32
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("another type's method must not satisfy");
+    assert!(
+        error.to_string().contains("missing method 'exec'"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_to_unknown_or_non_record_interfaces_is_reported() {
+    let source = "type Add = Op & {}";
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("an unknown interface must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("unknown interface 'Op' in the conformance declaration of type 'Add'"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let source = r#"
+        type Num = i32
+        type Add = Num & {}
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("a non-record interface must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("an interface must be a record type, got i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
 fn function_type_parameter_names_do_not_affect_checking() {
     let source = r#"
         local add: (first: i32, second: i32) -> i32 = function(x: i32, y: i32): i32

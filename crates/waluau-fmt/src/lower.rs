@@ -94,6 +94,9 @@ fn tree(t: &Tree) -> Doc {
         K::TaggedVariantType => node_join_tight(t),
         K::LiteralType => node_join_tight(t),
         K::TaggedUnionType => join(text(" | "), t.children.iter().map(node)),
+        // [interface, `&`, record]; the `&` token renders itself so its
+        // attached comment trivia survives.
+        K::ConformanceType => join(text(" "), t.children.iter().map(node)),
         K::ParenType => paren_type(t),
         K::PrimitiveType => join(text(" "), t.children.iter().map(node)),
         K::NameList => join(text(", "), t.children.iter().map(node)),

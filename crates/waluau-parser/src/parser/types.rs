@@ -67,12 +67,21 @@ impl Parser {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
+        // One-shot: only the outermost type of a type declaration's
+        // right-hand side may carry a conformance marker.
+        let conformance_allowed = std::mem::take(&mut self.conformance_allowed);
         let first = self.parse_nullable_type()?;
+        if self.check_simple(&TokenKind::Ampersand) {
+            if conformance_allowed {
+                return self.parse_conformance_tail(first);
+            }
+            return Err(self.intersection_diagnostic());
+        }
         if !self.check_simple(&TokenKind::Pipe) {
             return Ok(first);
         }
 
-        match first {
+        let union = match first {
             Type::StringLiteralUnion(members) => self.parse_string_union_tail(members),
             Type::NumberLiteralUnion(union) => self.parse_number_union_tail(union),
             Type::TaggedVariant(variant) => {
@@ -94,7 +103,55 @@ impl Parser {
                 "union member must be a tagged variant, a string literal, \
                  or a number literal, got {other}"
             ))),
+        }?;
+        if self.check_simple(&TokenKind::Ampersand) {
+            return Err(self.intersection_diagnostic());
         }
+        Ok(union)
+    }
+
+    /// The diagnostic for `&` in any type position other than the top level
+    /// of a type declaration.
+    fn intersection_diagnostic(&self) -> Diagnostic {
+        self.diagnostic_at_current(
+            "intersection types are not supported; '&' only declares interface \
+             conformance in a type declaration: type Name = Interface & { ... }",
+        )
+    }
+
+    /// Parse the `& { ... }` conformance tail of a type declaration, after
+    /// the interface type has been parsed and with the `&` still pending.
+    ///
+    /// The accepted form is `Interface & RecordType`: the left-hand side
+    /// must be a single named type and the right-hand side a record type
+    /// declaring the type's own fields. This is a conformance marker, not a
+    /// general intersection; the declared type's shape is exactly the
+    /// right-hand record. The recognized interface name is left in
+    /// `pending_conformance` for [`Parser::parse_type_decl`].
+    fn parse_conformance_tail(&mut self, interface: Type) -> Result<Type, Diagnostic> {
+        self.advance(); // consume '&'
+        let Type::Named { name, type_args } = interface else {
+            return Err(self.diagnostic_at_current(&format!(
+                "the left-hand side of '&' in a type declaration must be a \
+                 named interface type, got {interface}"
+            )));
+        };
+        if !type_args.is_empty() {
+            return Err(self.diagnostic_at_current(&format!(
+                "interface '{name}' cannot take type arguments in a \
+                 conformance declaration"
+            )));
+        }
+        let shape = self.parse_type()?;
+        let Type::Record(_) = &shape else {
+            return Err(self.diagnostic_at_current(&format!(
+                "the right-hand side of '&' in a type declaration must be a \
+                 record type declaring the type's own fields (conforming to \
+                 multiple interfaces is not supported), got {shape}"
+            )));
+        };
+        self.pending_conformance = Some(name);
+        Ok(shape)
     }
 
     fn parse_string_union_tail(&mut self, mut members: Vec<String>) -> Result<Type, Diagnostic> {
