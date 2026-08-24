@@ -150,12 +150,14 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Type::Function {
             params: params
                 .iter()
                 .map(|param| substitute_type(param, subst))
                 .collect(),
             return_type: Box::new(substitute_type(return_type, subst)),
+            has_self: *has_self,
         },
         other => other.clone(),
     }
@@ -231,6 +233,7 @@ pub(super) fn validate_type_in_scope(
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             for param in params {
                 validate_type_in_scope(param, allowed)?;
@@ -277,6 +280,7 @@ fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bo
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             params
                 .iter()
@@ -314,6 +318,7 @@ fn contains_type_param(ty: &Type) -> bool {
         Type::Function {
             params,
             return_type,
+            ..
         } => params.iter().any(contains_type_param) || contains_type_param(return_type.as_ref()),
         _ => false,
     }
@@ -472,12 +477,20 @@ fn unify(
             Type::Function {
                 params: p_params,
                 return_type: p_ret,
+                has_self: p_self,
             },
             Type::Function {
                 params: a_params,
                 return_type: a_ret,
+                has_self: a_self,
             },
         ) => {
+            if p_self != a_self {
+                return Err(Diagnostic::new(format!(
+                    "cannot match a 'self' method type with a plain function type: \
+                     {param_ty} vs {actual_ty}"
+                )));
+            }
             if p_params.len() != a_params.len() {
                 return Err(Diagnostic::new(format!(
                     "cannot match functions of different arity: {param_ty} vs {actual_ty}"
@@ -741,6 +754,7 @@ pub(super) fn infer_function_expr_return_type(
                 .map(|param| param.ty.clone())
                 .collect(),
             return_type: Box::new(Type::Unit),
+            has_self: false,
         };
         local_vars.insert(
             function_name.clone(),

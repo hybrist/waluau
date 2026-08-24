@@ -1029,6 +1029,7 @@ fn collect_return_types_with_scope(
                     Type::Function {
                         params,
                         return_type,
+                        has_self: false,
                     } => {
                         if !params.is_empty() {
                             return Err(Diagnostic::new(
@@ -1958,6 +1959,7 @@ fn check_stmt_inner(
                     Type::Function {
                         params,
                         return_type,
+                        has_self: false,
                     } => {
                         if !params.is_empty() {
                             return Err(Diagnostic::new(

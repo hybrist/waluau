@@ -80,6 +80,8 @@ fn tree(t: &Tree) -> Doc {
         K::ArrayLiteral => delimited("{", "}", t, false),
         K::TableLiteral => delimited("{", "}", t, true),
         K::TableField | K::RecordField => field(t),
+        // NamedParamType shares RecordField's `[name, `:`, type]` shape.
+        K::NamedParamType => field(t),
         K::ArgList => arg_list(t),
         K::TypeArgs => delimited("<", ">", t, false),
 

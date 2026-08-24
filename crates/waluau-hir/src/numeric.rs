@@ -302,6 +302,17 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             "cannot erase a read-only view into unknown",
         )),
         Some(Type::Unknown) => Ok(Type::Unknown),
+        // An interface method slot (`(self, ...) -> R` record field) cannot be
+        // filled by any value yet: `self` is a receiver placeholder that only
+        // conformance declarations will know how to substitute. Exactly equal
+        // method types already unified above, which keeps alias resolution
+        // working. This arm sits before the `unknown` unboxing arm so a
+        // dynamic value cannot sneak past the placeholder either.
+        Some(expected @ Type::Function { has_self: true, .. }) => Err(Diagnostic::new(format!(
+            "cannot provide a value for the method type {expected}: its 'self' \
+             receiver is bound by conformance declarations, which are not \
+             implemented yet"
+        ))),
         Some(expected) if actual == Type::Unknown && expected != Type::Unit => Ok(expected),
         Some(Type::Nullable(expected_inner)) => match actual {
             Type::Nil => Ok(Type::Nullable(expected_inner)),
@@ -589,7 +600,12 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 };
                 // Each field coerces independently, so e.g. an `i32` value boxes
                 // into an `unknown` field.
-                coerce_type(actual_ty.clone(), Some(expected_ty.clone())).map_err(|_| {
+                coerce_type(actual_ty.clone(), Some(expected_ty.clone())).map_err(|inner| {
+                    // The method-type arm explains the 'self' receiver and the
+                    // missing conformance support; keep that message intact.
+                    if matches!(expected_ty, Type::Function { has_self: true, .. }) {
+                        return inner;
+                    }
                     Diagnostic::new(format!(
                         "record field '{}' expects {}, got {}",
                         name,

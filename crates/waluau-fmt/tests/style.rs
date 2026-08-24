@@ -130,3 +130,19 @@ fn formats_literal_union_type_declarations() {
         "type Speed = 0.5 | 1.0 | 2.0\n"
     );
 }
+
+#[test]
+fn formats_self_receivers_and_named_parameters_in_function_types() {
+    assert_eq!(
+        fmt("type Op={exec:(self,a:i32,b:i32)->i32}\n"),
+        "type Op = { exec: (self, a: i32, b: i32) -> i32 }\n"
+    );
+    assert_eq!(
+        fmt("type Calc={apply:(a:i32,b:i32)->i32,offset:i32}\n"),
+        "type Calc = { apply: (a: i32, b: i32) -> i32, offset: i32 }\n"
+    );
+    assert_eq!(
+        fmt("function use(op: (base:string,i32)->string): unit end\n"),
+        "function use(op: (base: string, i32) -> string): unit\nend\n"
+    );
+}

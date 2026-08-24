@@ -24,6 +24,11 @@ pub(super) struct Parser {
     file_path: String,
     /// Locally declared nominal enums and their declaration-order variants.
     enums: HashMap<String, Vec<String>>,
+    /// One-shot permission for a `self` receiver in the next function type
+    /// atom. Set while parsing a record field's type and consumed by the
+    /// first parenthesized type list, so `self` is legal exactly at the top
+    /// level of a record field's function type and nowhere deeper.
+    self_allowed: bool,
 }
 
 impl Parser {
@@ -36,6 +41,7 @@ impl Parser {
             definitions: Vec::new(),
             file_path,
             enums: HashMap::new(),
+            self_allowed: false,
         }
     }
 
@@ -79,6 +85,7 @@ impl Parser {
                 .map(|param| param.ty.clone())
                 .collect(),
             return_type: Box::new(return_type),
+            has_self: false,
         })
     }
 

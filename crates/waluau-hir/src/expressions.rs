@@ -22,6 +22,12 @@ use super::signatures::{
 };
 use super::statements::check_stmt;
 
+/// Conservative diagnostic for calling through a record field whose type
+/// carries a `self` receiver. Dispatch through such interface method fields
+/// arrives with conformance declarations (`type Add = Op & { ... }`).
+pub(super) const SELF_METHOD_CALL_NOT_IMPLEMENTED: &str = "cannot call a record field with a 'self' receiver yet: conformance \
+     declarations (interface method dispatch) are not implemented";
+
 pub(super) fn builtin_name(callee: &Expr) -> Option<String> {
     match callee {
         Expr::Name(name, _, _) => Some(name.clone()),
@@ -606,6 +612,7 @@ fn infer_expr_inner(
                         params.clone()
                     },
                     return_type: Box::new(return_type.clone()),
+                    has_self: false,
                 }
             } else {
                 return Err(Diagnostic::new(format!("unknown name '{name}'")));
@@ -1187,9 +1194,13 @@ fn infer_expr_inner(
             }
             let callee_ty = infer_expr(callee, vars, fn_signatures, active_type_params, None)?;
             let (params, ret) = match callee_ty {
+                Type::Function { has_self: true, .. } => {
+                    return Err(Diagnostic::new(SELF_METHOD_CALL_NOT_IMPLEMENTED));
+                }
                 Type::Function {
                     params,
                     return_type,
+                    has_self: false,
                 } => (params, *return_type),
                 other => {
                     return Err(Diagnostic::new(format!(
@@ -1339,9 +1350,13 @@ fn infer_expr_inner(
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
                 match field_ty {
+                    Type::Function { has_self: true, .. } => {
+                        return Err(Diagnostic::new(SELF_METHOD_CALL_NOT_IMPLEMENTED));
+                    }
                     Type::Function {
                         params,
                         return_type,
+                        has_self: false,
                     } => (params, *return_type),
                     other => {
                         return Err(Diagnostic::new(format!(
@@ -1424,6 +1439,7 @@ fn infer_expr_inner(
                             Type::Function {
                                 params: params.clone(),
                                 return_type: Box::new(return_type.clone()),
+                                has_self: false,
                             },
                             expected,
                         ),
@@ -2341,6 +2357,7 @@ fn infer_function_expr(
             .map(|param| param.ty.clone())
             .collect(),
         return_type: Box::new(return_ty.clone()),
+        has_self: false,
     };
     let mut local_scope = vars.clone();
     for param in &function.params {

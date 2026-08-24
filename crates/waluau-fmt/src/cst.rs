@@ -88,6 +88,9 @@ pub enum SyntaxKind {
     RecordField,
     FunctionType,
     TypeList,
+    /// A documentation-only named parameter inside a function type's
+    /// parameter list (`(a: i32) -> i32`): `[name, `:`, type]`.
+    NamedParamType,
     TaggedVariantType,
     TaggedUnionType,
     ParenType,

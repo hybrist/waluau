@@ -966,6 +966,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             for param in params {
                 collect_type_variant_tags(param, tag_ids);
@@ -1585,12 +1586,14 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         Type::Function {
             params,
             return_type,
+            has_self,
         } => Type::Function {
             params: params
                 .iter()
                 .map(|ty| erase_type_opaque_types_at(ty, false))
                 .collect(),
             return_type: Box::new(erase_type_opaque_types_at(return_type, false)),
+            has_self: *has_self,
         },
         Type::Record(fields) => Type::Record(
             fields
@@ -1634,6 +1637,7 @@ fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
         Type::Function {
             params,
             return_type,
+            ..
         } => {
             params
                 .iter()
@@ -4833,6 +4837,7 @@ impl Builder<'_> {
         let Type::Function {
             params,
             return_type,
+            ..
         } = iterator_ty
         else {
             return Err(Diagnostic::new("for-in iterator must be a function"));
@@ -5211,6 +5216,7 @@ impl Builder<'_> {
                     let actual = Type::Function {
                         params,
                         return_type: Box::new(return_type),
+                        has_self: false,
                     };
                     self.coerce_value(value, actual, expected)?
                 } else {
@@ -5292,6 +5298,7 @@ impl Builder<'_> {
                     let Type::Function {
                         params,
                         return_type,
+                        ..
                     } = field_ty
                     else {
                         return Err(Diagnostic::new("attempt to call non-function value"));
@@ -5361,6 +5368,7 @@ impl Builder<'_> {
                         field_ty: Type::Function {
                             params: param_types.clone(),
                             return_type: return_type.clone(),
+                            has_self: false,
                         },
                     });
                     self.emit(Instruction::CallValue {
@@ -5963,6 +5971,7 @@ impl Builder<'_> {
                 let Type::Function {
                     params: param_types,
                     return_type,
+                    ..
                 } = callee_ty
                 else {
                     return Err(Diagnostic::new("attempt to call non-function value"));
@@ -5974,6 +5983,7 @@ impl Builder<'_> {
                     Some(Type::Function {
                         params: param_types.clone(),
                         return_type: return_type.clone(),
+                        has_self: false,
                     }),
                 )?;
                 let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
@@ -6670,6 +6680,7 @@ impl Builder<'_> {
                         .map(|param| param.ty.clone())
                         .collect(),
                     return_type: Box::new(return_ty.clone()),
+                    has_self: false,
                 },
             );
         }
@@ -6823,6 +6834,7 @@ impl Builder<'_> {
                     Ok(Type::Function {
                         params: params.clone(),
                         return_type: Box::new(ret.clone()),
+                        has_self: false,
                     })
                 } else {
                     Err(Diagnostic::new(format!(
@@ -6892,6 +6904,7 @@ impl Builder<'_> {
                     let Type::Function {
                         params,
                         return_type,
+                        ..
                     } = field_ty
                     else {
                         return Err(Diagnostic::new("attempt to call non-function value"));
@@ -7133,6 +7146,7 @@ impl Builder<'_> {
                 }
             }
             Expr::Function(function) => Ok(Type::Function {
+                has_self: false,
                 return_type: Box::new(Self::function_expr_return_type(function)?),
                 params: function
                     .params
@@ -7793,6 +7807,7 @@ impl Builder<'_> {
                 let callee_ty = Type::Function {
                     params: Vec::new(),
                     return_type: Box::new(i32_ty.clone()),
+                    has_self: false,
                 };
                 let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
                     Ok(ty) => ty,
@@ -8004,6 +8019,7 @@ impl Builder<'_> {
         let Type::Function {
             params,
             return_type,
+            ..
         } = callee_ty.clone()
         else {
             return Some(Err(Diagnostic::new(format!(
@@ -8123,6 +8139,7 @@ impl Builder<'_> {
                     Type::Function {
                         params,
                         return_type,
+                        ..
                     } if params.is_empty() && **return_type == Type::Numeric(NumericType::I32) => {
                         Some(Ok(Type::Thread))
                     }
@@ -8253,10 +8270,7 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        let Type::Function {
-            params,
-            return_type: _,
-        } = callee_ty.clone()
+        let Type::Function { params, .. } = callee_ty.clone()
         else {
             return Some(Err(Diagnostic::new(format!(
                 "{PCALL} expects a function, got {callee_ty}"
@@ -9789,6 +9803,7 @@ impl Builder<'_> {
             let comparator_ty = Type::Function {
                 params: vec![element_ty.clone(), element_ty.clone()],
                 return_type: Box::new(Type::Bool),
+                has_self: false,
             };
             Some(self.lower_expr(comparator_arg, env, types, Some(comparator_ty))?)
         } else {
@@ -11355,6 +11370,7 @@ impl Builder<'_> {
             let repl_ty = Type::Function {
                 params: param_tys.clone(),
                 return_type: Box::new(return_ty.clone()),
+                has_self: false,
             };
             let repl = self.lower_expr(&args[2], env, types, Some(repl_ty))?;
             self.lower_gsub_function_loop(
@@ -11404,6 +11420,7 @@ impl Builder<'_> {
                 Type::Function {
                     params,
                     return_type,
+                    ..
                 } => Ok(Some((params, *return_type))),
                 _ => Ok(None),
             };
@@ -11414,6 +11431,7 @@ impl Builder<'_> {
             let candidate = Type::Function {
                 params: expected_params.clone(),
                 return_type: Box::new(return_ty.clone()),
+                has_self: false,
             };
             if self
                 .infer_expr_type(repl_arg, types, Some(candidate))

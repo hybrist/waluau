@@ -412,6 +412,7 @@ pub(crate) fn infer_value_types(
                 } => Type::Function {
                     params: params.clone(),
                     return_type: Box::new(return_type.clone()),
+                    has_self: false,
                 },
                 IrInstruction::ArrayNew { element_ty, .. } => {
                     Type::Array(Box::new(element_ty.clone()))

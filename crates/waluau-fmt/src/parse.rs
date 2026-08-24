@@ -1120,7 +1120,18 @@ impl Parser {
         let mut inner = Vec::new();
         if !self.at(&TokenKind::RParen) {
             loop {
-                inner.push(self.parse_type()?);
+                // A documentation-only named parameter (`a: i32`). The `self`
+                // receiver placeholder needs no special casing here: it is a
+                // bare identifier and round-trips as a named type.
+                if self.at(&ident()) && self.at_n(1, &TokenKind::Colon) {
+                    let mut p = Vec::new();
+                    self.bump(&mut p); // name
+                    self.bump(&mut p); // `:`
+                    p.push(self.parse_type()?);
+                    inner.push(Self::tree(SyntaxKind::NamedParamType, p));
+                } else {
+                    inner.push(self.parse_type()?);
+                }
                 if !self.eat(&TokenKind::Comma, &mut Vec::new()) {
                     break;
                 }

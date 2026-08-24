@@ -26,6 +26,7 @@ fn type_checks_valid_program() {
 #[test]
 fn diagnostic_type_display_hides_nested_module_mangling() {
     let ty = Type::Function {
+        has_self: false,
         params: vec![Type::Opaque {
             name: "__waluau_m12_Graphics".to_string(),
             ty: Box::new(Type::Record(Default::default())),
@@ -560,7 +561,7 @@ fn nullable_function_values_support_locals_aliases_and_nil_narrowing() {
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
     assert!(matches!(
         &typed.functions[1].params[0].ty,
-        Type::Nullable(inner) if matches!(inner.as_ref(), Type::Function { params, return_type }
+        Type::Nullable(inner) if matches!(inner.as_ref(), Type::Function { params, return_type, .. }
             if params.is_empty() && return_type.as_ref() == &Type::Unit)
     ));
 }
@@ -4897,4 +4898,87 @@ fn unguarded_forward_reference_cycle_is_rejected() {
         error.to_string().contains("cyclic type declaration"),
         "{error}"
     );
+}
+
+#[test]
+fn resolves_record_types_with_self_method_fields() {
+    // A record type whose field carries a `self` receiver parses and
+    // resolves; only construction and dispatch wait for conformance
+    // declarations.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        function describe(op: Op?): bool
+            return op == nil
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn self_method_fields_reject_direct_construction() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        local op: Op = {
+            exec = function(a: i32, b: i32): i32
+                return a + b
+            end,
+        }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("construction must fail");
+    assert!(
+        error.to_string().contains("conformance declarations"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn self_method_fields_reject_calls_until_conformance_lands() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        function run(op: Op): i32
+            return op.exec(1, 2)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("dot call must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot call a record field with a 'self' receiver"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        function run(op: Op): i32
+            return op:exec(1, 2)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("method call must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot call a record field with a 'self' receiver"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn function_type_parameter_names_do_not_affect_checking() {
+    let source = r#"
+        local add: (first: i32, second: i32) -> i32 = function(x: i32, y: i32): i32
+            return x + y
+        end
+        local unnamed: (i32, i32) -> i32 = add
+        assert(unnamed(1, 2) == 3)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("names must not affect checking");
 }
