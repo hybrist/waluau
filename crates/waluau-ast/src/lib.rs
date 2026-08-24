@@ -92,6 +92,16 @@ pub struct TypeDeclaration {
     pub module_opaque: bool,
     /// Source file that owns the representation of a module-opaque alias.
     pub file_path: String,
+    /// Interfaces this type declares conformance to via
+    /// `type Name = Interface & { ... }`. The conformance checker verifies
+    /// every function-typed field of each interface has a matching
+    /// implementation with `self` substituted by this type; the bound-method
+    /// coercion consumes this list to build interface records.
+    ///
+    /// The parser currently accepts at most one interface per declaration;
+    /// the field is a list so the coercion side never needs an AST change if
+    /// that restriction is lifted.
+    pub conforms: Vec<String>,
 }
 
 /// Resolved source metadata for an application of a generic extern type

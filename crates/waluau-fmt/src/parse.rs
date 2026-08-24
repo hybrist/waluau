@@ -231,7 +231,16 @@ impl Parser {
             &mut c,
             "expected '=' in type declaration",
         )?;
-        c.push(self.parse_type()?);
+        let first = self.parse_type()?;
+        if self.at(&TokenKind::Ampersand) {
+            // Conformance marker: `type Name = Interface & { ... }`.
+            let mut k = vec![first];
+            self.bump(&mut k); // `&`
+            k.push(self.parse_type()?);
+            c.push(Self::tree(SyntaxKind::ConformanceType, k));
+        } else {
+            c.push(first);
+        }
         Ok(Self::tree(SyntaxKind::TypeDecl, c))
     }
 

@@ -35,6 +35,7 @@ impl CompilerTimer {
 }
 
 mod builtins;
+mod conformance;
 mod expressions;
 mod numeric;
 mod signatures;
@@ -4388,6 +4389,14 @@ fn type_check_and_infer_collect_inner(
             errors.push(error.with_file_path_if_missing(file_path));
         }
     }
+
+    // Conformance declarations are checked once every function signature is
+    // known, so `function T:name(...)` implementations may appear anywhere
+    // in the program relative to the declaration.
+    errors.extend(conformance::check_conformance_declarations(
+        &typed,
+        &fn_signatures,
+    ));
 
     let prepared_at = started.elapsed();
 

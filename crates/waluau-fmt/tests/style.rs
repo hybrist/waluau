@@ -52,6 +52,15 @@ fn formats_empty_record_types() {
 }
 
 #[test]
+fn formats_conformance_declarations() {
+    assert_eq!(fmt("type Add=Op&{}\n"), "type Add = Op & {}\n");
+    assert_eq!(
+        fmt("type Add = Op  &  { count: i32 }\n"),
+        "type Add = Op & { count: i32 }\n"
+    );
+}
+
+#[test]
 fn formats_module_opaque_type_declarations() {
     assert_eq!(
         fmt("opaque   type State={value:i32}\n"),

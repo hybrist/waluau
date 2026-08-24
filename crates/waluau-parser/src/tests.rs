@@ -2842,6 +2842,104 @@ fn rejects_self_after_the_first_parameter() {
 }
 
 #[test]
+fn parses_conformance_declarations() {
+    let program = parse("type Add = Op & {}").expect("an empty conformance record should parse");
+    let declaration = &program.type_declarations[0];
+    assert_eq!(declaration.conforms, vec!["Op".to_string()]);
+    assert_eq!(
+        declaration.ty,
+        Type::Record(std::collections::BTreeMap::new())
+    );
+
+    let program =
+        parse("type Add = Op & { count: i32 }").expect("a conformance record with fields parses");
+    let declaration = &program.type_declarations[0];
+    assert_eq!(declaration.conforms, vec!["Op".to_string()]);
+    assert_eq!(
+        declaration.ty,
+        Type::Record(
+            [("count".to_string(), Type::Numeric(NumericType::I32))]
+                .into_iter()
+                .collect()
+        )
+    );
+
+    // A dotted interface name references an imported module's type alias.
+    let program = parse("type Add = ops.Op & {}").expect("a dotted interface name parses");
+    assert_eq!(
+        program.type_declarations[0].conforms,
+        vec!["ops.Op".to_string()]
+    );
+
+    // Plain declarations conform to nothing.
+    let program = parse("type Add = { count: i32 }").expect("parses");
+    assert!(program.type_declarations[0].conforms.is_empty());
+}
+
+#[test]
+fn rejects_ampersand_outside_type_declarations() {
+    for source in [
+        "function f(x: A & B): unit end",
+        "function f(): unit local x: A & B = y end",
+        "type Add = { op: Op & {} }",
+        "function f(x: (A & B) -> i32): unit end",
+    ] {
+        let error = parse(source).expect_err("'&' outside a type declaration RHS must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("intersection types are not supported"),
+            "unexpected diagnostic for {source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn rejects_malformed_conformance_declarations() {
+    let error = parse("type Add = {} & Op").expect_err("a record interface position must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("left-hand side of '&' in a type declaration must be a named interface"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let error =
+        parse("type Add = Op & Sub & {}").expect_err("multiple interfaces must fail for now");
+    assert!(
+        error
+            .to_string()
+            .contains("intersection types are not supported"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let error = parse("type Add = Op & i32").expect_err("a non-record shape must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("right-hand side of '&' in a type declaration must be a record type"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let error = parse("type Add = Op<i32> & {}").expect_err("interface type arguments must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot take type arguments in a conformance declaration"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let error =
+        parse("type Add<T> = Op & {}").expect_err("generic conformance declarations must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("generic type 'Add' cannot declare interface conformance"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
 fn rejects_self_and_parameter_names_in_type_grouping() {
     let error =
         parse("type Op = { exec: (self) }").expect_err("a self receiver without '->' must fail");

@@ -93,6 +93,9 @@ pub enum SyntaxKind {
     NamedParamType,
     TaggedVariantType,
     TaggedUnionType,
+    /// The right-hand side of a conformance declaration
+    /// (`type Add = Op & { ... }`): `[interface, `&`, record]`.
+    ConformanceType,
     ParenType,
     PrimitiveType,
     /// A string or number literal in type position (`"red"`, `0`, `-1`),
