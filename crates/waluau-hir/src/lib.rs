@@ -4137,6 +4137,10 @@ fn type_check_and_infer_collect_inner(
     let started = CompilerTimer::start();
     let mut typed = desugar_method_declarations(program).map_err(|error| vec![error])?;
     desugar_implicit_top_level_declarations(&mut typed);
+    // Conformance constructors are ordinary functions written against
+    // `Type::Named` references, so generating them before type resolution
+    // lets them resolve, infer, and check like hand-written code.
+    conformance::generate_conformance_wrappers(&mut typed);
     let desugared_at = started.elapsed();
     resolve_program_types(&mut typed).map_err(|error| vec![error])?;
     let module_opaque = module_opaque_types(&typed);
@@ -4285,6 +4289,16 @@ fn type_check_and_infer_collect_inner(
     let mut module_bindings = collect_module_bindings(&typed.top_level, &fn_signatures)
         .map_err(|error| vec![error.with_file_path_if_missing(typed.entry_file_path.clone())])?;
 
+    // Rewrite conformance coercion sites into constructor calls before
+    // return-type inference, so unannotated functions that return coerced
+    // values infer their interface-typed returns like any other call.
+    conformance::desugar_conformance_coercions(
+        &mut typed,
+        &fn_signatures,
+        &module_bindings,
+        &reusable,
+    );
+
     let mut unresolved: Vec<usize> = typed
         .functions
         .iter()
@@ -4377,6 +4391,16 @@ fn type_check_and_infer_collect_inner(
     module_bindings = collect_module_bindings(&typed.top_level, &fn_signatures)
         .map_err(|error| vec![error.with_file_path_if_missing(typed.entry_file_path.clone())])?;
 
+    // Second, idempotent run now that every return type is known: coercion
+    // sites the first run could not type yet (for example values produced by
+    // functions whose return types were still being inferred) rewrite here.
+    conformance::desugar_conformance_coercions(
+        &mut typed,
+        &fn_signatures,
+        &module_bindings,
+        &reusable,
+    );
+
     if let Some(top_level_init) = typed
         .functions
         .iter_mut()
@@ -4392,11 +4416,13 @@ fn type_check_and_infer_collect_inner(
 
     // Conformance declarations are checked once every function signature is
     // known, so `function T:name(...)` implementations may appear anywhere
-    // in the program relative to the declaration.
-    errors.extend(conformance::check_conformance_declarations(
-        &typed,
-        &fn_signatures,
-    ));
+    // in the program relative to the declaration. Wrappers of failed pairs
+    // are excluded from body checking: the conformance diagnostic is the
+    // actionable error, and their generated bodies would only cascade.
+    let (conformance_errors, failed_wrappers) =
+        conformance::check_conformance_declarations(&typed, &fn_signatures);
+    errors.extend(conformance_errors);
+    errored_functions.extend(failed_wrappers);
 
     let prepared_at = started.elapsed();
 

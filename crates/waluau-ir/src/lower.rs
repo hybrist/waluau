@@ -1586,14 +1586,20 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         Type::Function {
             params,
             return_type,
-            has_self,
+            // `self` is a checker-only receiver contract: at runtime a method
+            // slot holds a bound closure whose callable signature is exactly
+            // the self-less parameter list. Erasing the marker here keeps
+            // struct keying, CallValue wrapper signatures, and the generic
+            // indirect call path consistent — IR and codegen never see
+            // `has_self`.
+            has_self: _,
         } => Type::Function {
             params: params
                 .iter()
                 .map(|ty| erase_type_opaque_types_at(ty, false))
                 .collect(),
             return_type: Box::new(erase_type_opaque_types_at(return_type, false)),
-            has_self: *has_self,
+            has_self: false,
         },
         Type::Record(fields) => Type::Record(
             fields

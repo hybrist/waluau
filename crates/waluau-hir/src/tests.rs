@@ -4903,8 +4903,7 @@ fn unguarded_forward_reference_cycle_is_rejected() {
 #[test]
 fn resolves_record_types_with_self_method_fields() {
     // A record type whose field carries a `self` receiver parses and
-    // resolves; only construction and dispatch wait for conformance
-    // declarations.
+    // resolves.
     let source = r#"
         type Op = { exec: (self, a: i32, b: i32) -> i32 }
 
@@ -4917,7 +4916,10 @@ fn resolves_record_types_with_self_method_fields() {
 }
 
 #[test]
-fn self_method_fields_reject_direct_construction() {
+fn self_method_fields_accept_bound_closures() {
+    // A method slot stores a *bound* method: a closure taking the self-less
+    // parameters. A manual vtable therefore constructs directly, and both
+    // call syntaxes provide the self-less arguments.
     let source = r#"
         type Op = { exec: (self, a: i32, b: i32) -> i32 }
 
@@ -4926,46 +4928,36 @@ fn self_method_fields_reject_direct_construction() {
                 return a + b
             end,
         }
-    "#;
-    let program = parse(source).expect("parse should succeed");
-    let error = super::type_check(&program).expect_err("construction must fail");
-    assert!(
-        error.to_string().contains("conformance declarations"),
-        "unexpected diagnostic: {error}"
-    );
-}
 
-#[test]
-fn self_method_fields_reject_calls_until_conformance_lands() {
-    let source = r#"
-        type Op = { exec: (self, a: i32, b: i32) -> i32 }
-
-        function run(op: Op): i32
+        function run_dot(op: Op): i32
             return op.exec(1, 2)
         end
-    "#;
-    let program = parse(source).expect("parse should succeed");
-    let error = super::type_check(&program).expect_err("dot call must fail");
-    assert!(
-        error
-            .to_string()
-            .contains("cannot call a record field with a 'self' receiver"),
-        "unexpected diagnostic: {error}"
-    );
 
-    let source = r#"
-        type Op = { exec: (self, a: i32, b: i32) -> i32 }
-
-        function run(op: Op): i32
+        function run_colon(op: Op): i32
             return op:exec(1, 2)
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let error = super::type_check(&program).expect_err("method call must fail");
+    super::type_check(&program).expect("bound-method construction and calls should check");
+}
+
+#[test]
+fn self_method_fields_reject_mismatched_values() {
+    // A value that is not a function of the self-less shape cannot fill a
+    // method slot; the diagnostic points at conformance declarations.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        local op: Op = {
+            exec = function(a: i32): i32
+                return a
+            end,
+        }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("construction must fail");
     assert!(
-        error
-            .to_string()
-            .contains("cannot call a record field with a 'self' receiver"),
+        error.to_string().contains("declares conformance"),
         "unexpected diagnostic: {error}"
     );
 }
@@ -5136,6 +5128,141 @@ fn conformance_to_unknown_or_non_record_interfaces_is_reported() {
         error
             .to_string()
             .contains("an interface must be a record type, got i32"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn conformance_coercion_rewrites_annotated_local() {
+    // `local op: Op = add` desugars to a call to the generated constructor
+    // `__conform$Add$Op`, and both call syntaxes dispatch through the
+    // interface record.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        local add: Add = {}
+        local op: Op = add
+        assert(op.exec(2, 3) == 5)
+        assert(op:exec(2, 3) == 5)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("coercion should check");
+    let init = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .expect("top-level init function");
+    let rendered = format!("{:?}", init.body);
+    assert!(
+        rendered.contains("__conform$Add$Op"),
+        "expected a constructor call in the rewritten body: {rendered}"
+    );
+    assert!(
+        typed
+            .functions
+            .iter()
+            .any(|function| function.name.to_string() == "__conform$Add$Op"),
+        "expected the generated constructor function"
+    );
+}
+
+#[test]
+fn conformance_coercion_covers_arguments_returns_and_casts() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        function run(op: Op): i32
+            return op:exec(2, 3)
+        end
+
+        function as_op(add: Add): Op
+            return add
+        end
+
+        local add: Add = {}
+        assert(run(add) == 5)
+        assert(run(add :: Op) == 5)
+        assert(as_op(add):exec(2, 3) == 5)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("argument, return, and cast coercions should check");
+}
+
+#[test]
+fn conformance_coercion_dispatches_polymorphically() {
+    // Two conforming types flow through the same interface-typed function.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+        type Mul = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        function Mul:exec(a: i32, b: i32): i32
+            return a * b
+        end
+
+        function run(op: Op): i32
+            return op:exec(2, 3)
+        end
+
+        local add: Add = {}
+        local mul: Mul = {}
+        assert(run(add) == 5)
+        assert(run(mul) == 6)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("polymorphic dispatch should check");
+}
+
+#[test]
+fn conformance_coercion_infers_unannotated_returns() {
+    // A function without a return annotation may still return a coerced
+    // value: the rewrite runs before return-type inference.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        function make_op(add: Add)
+            return add :: Op
+        end
+
+        local add: Add = {}
+        assert(make_op(add):exec(2, 3) == 5)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("inferred interface return should check");
+}
+
+#[test]
+fn coercing_a_non_conforming_type_is_an_error() {
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Plain = {}
+
+        local plain: Plain = {}
+        local op: Op = plain
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("non-conforming coercion must fail");
+    assert!(
+        error.to_string().contains("missing record field 'exec'"),
         "unexpected diagnostic: {error}"
     );
 }
