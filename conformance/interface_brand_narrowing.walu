@@ -1,0 +1,89 @@
+-- Brand checks and downcasts from interface values. A conformance wrapper
+-- (built when a conforming value coerces to its interface type) carries a
+-- hidden identity: which concrete type built it, and a reference to the
+-- original receiver. Two surface forms consume it:
+--
+--   - `if Add(a) = op then` narrows an interface-typed value: the then-branch
+--     binds the ORIGINAL receiver (reference identity with the pre-coercion
+--     value); wrappers of other conforming types and plain interface literals
+--     take the else branch, never trap.
+--   - `op :: Add` hard-casts, returning the original receiver, and raises a
+--     catchable error when the value does not wrap an Add.
+--
+-- Add and Mul have identical layouts on purpose: layout-canonicalized wasm
+-- structs cannot distinguish them, so these checks must hinge on the brand,
+-- not on the shape.
+
+type Op = { exec: (self, a: i32, b: i32) -> i32 }
+type Add = Op & { bias: i32 }
+type Mul = Op & { bias: i32 }
+
+function Add:exec(a: i32, b: i32): i32
+    return a + b + self.bias
+end
+
+function Mul:exec(a: i32, b: i32): i32
+    return a * b + self.bias
+end
+
+local add: Add = { bias = 0 }
+local mul: Mul = { bias = 0 }
+local wrapped_add: Op = add
+local wrapped_mul: Op = mul
+local plain: Op = {
+    exec = function(a: i32, b: i32): i32
+        return a - b
+    end,
+}
+
+-- Narrowing takes the then-branch exactly for wrappers of the named type.
+if Add(a) = wrapped_add then
+    assert(a.bias == 0)
+    -- The binding is the original receiver: mutations through it are visible
+    -- through the pre-coercion value and through the wrapper's bound methods.
+    a.bias = 10
+else
+    assert(false)
+end
+assert(add.bias == 10)
+assert(wrapped_add:exec(2, 3) == 15)
+
+-- A wrapper built by a layout-identical sibling takes the else branch.
+if Add(a) = wrapped_mul then
+    assert(false)
+end
+
+-- A plain interface literal (never coerced, no wrapper) takes the else
+-- branch; it does not trap.
+if Add(a) = plain then
+    assert(false)
+end
+
+if Mul(m) = wrapped_mul then
+    m.bias = 1
+else
+    assert(false)
+end
+assert(mul.bias == 1)
+assert(wrapped_mul:exec(2, 3) == 7)
+
+-- The hard cast returns the original receiver, with reference identity.
+local back = wrapped_add :: Add
+assert(back.bias == 10)
+back.bias = 20
+assert(add.bias == 20)
+assert(wrapped_add:exec(1, 1) == 22)
+
+-- On mismatch the hard cast raises a catchable error: sibling wrappers and
+-- plain literals both fail, so cross-sibling misidentification is impossible
+-- through these forms.
+local sibling_ok, sibling_err = pcall(function(): Add
+    return wrapped_mul :: Add
+end)
+assert(not sibling_ok)
+assert(sibling_err == "interface cast failed: value is not 'Add'")
+
+local plain_ok, plain_err = pcall(function(): Add
+    return plain :: Add
+end)
+assert(not plain_ok)

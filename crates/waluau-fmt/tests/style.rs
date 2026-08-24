@@ -155,3 +155,15 @@ fn formats_self_receivers_and_named_parameters_in_function_types() {
         "function use(op: (base: string, i32) -> string): unit\nend\n"
     );
 }
+
+#[test]
+fn formats_if_cast_targets_including_module_qualified_names() {
+    assert_eq!(
+        fmt("if Add(a)=op then\nuse(a)\nend\n"),
+        "if Add(a) = op then\n    use(a)\nend\n"
+    );
+    assert_eq!(
+        fmt("if ops . Add(a)=op then\nuse(a)\nelse\nother()\nend\n"),
+        "if ops.Add(a) = op then\n    use(a)\nelse\n    other()\nend\n"
+    );
+}

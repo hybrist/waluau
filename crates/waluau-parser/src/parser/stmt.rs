@@ -765,31 +765,44 @@ impl Parser {
     }
 
     fn try_parse_if_cast_clause(&mut self) -> Result<Option<Stmt>, Diagnostic> {
+        let Some(TokenKind::Identifier(first)) = self.peek().map(|token| &token.kind) else {
+            return Ok(None);
+        };
+        let first = first.clone();
+        // The target may be module-qualified (`ops.Add`), one segment deep
+        // like every other type reference.
+        let (target_name, name_tokens) =
+            if let (Some(TokenKind::Dot), Some(TokenKind::Identifier(member))) = (
+                self.peek_n(1).map(|token| &token.kind),
+                self.peek_n(2).map(|token| &token.kind),
+            ) {
+                (format!("{first}.{member}"), 3)
+            } else {
+                (first, 1)
+            };
         let (
-            Some(TokenKind::Identifier(target_name)),
             Some(TokenKind::LParen),
             Some(TokenKind::Identifier(binding)),
             Some(TokenKind::RParen),
             Some(TokenKind::Equal),
         ) = (
-            self.peek().map(|token| &token.kind),
-            self.peek_n(1).map(|token| &token.kind),
-            self.peek_n(2).map(|token| &token.kind),
-            self.peek_n(3).map(|token| &token.kind),
-            self.peek_n(4).map(|token| &token.kind),
+            self.peek_n(name_tokens).map(|token| &token.kind),
+            self.peek_n(name_tokens + 1).map(|token| &token.kind),
+            self.peek_n(name_tokens + 2).map(|token| &token.kind),
+            self.peek_n(name_tokens + 3).map(|token| &token.kind),
         )
         else {
             return Ok(None);
         };
 
-        let target_name = target_name.clone();
         let binding = binding.clone();
-        let binding_span = self.peek_n(2).map(|token| token.span).unwrap_or_default();
-        self.advance();
-        self.advance();
-        self.advance();
-        self.advance();
-        self.advance();
+        let binding_span = self
+            .peek_n(name_tokens + 1)
+            .map(|token| token.span)
+            .unwrap_or_default();
+        for _ in 0..name_tokens + 4 {
+            self.advance();
+        }
         let value = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if-cast")?;
         // The narrowed binding exists in the then-branch only.

@@ -18,8 +18,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use waluau_ast::{
-    Expr, Function, FunctionExpr, FunctionName, Param, Program, Rebindability, Stmt, TableField,
-    Type, TypeDeclaration,
+    BinaryOp, Expr, Function, FunctionExpr, FunctionName, NumberLiteral, NumericType, Param,
+    Program, Rebindability, Stmt, TableField, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -81,6 +81,8 @@ pub(crate) fn check_conformance_declarations(
             check_conformance(decl, interface_name, &decls, fn_signatures, &mut errors);
             if errors.len() > before {
                 failed_wrappers.insert(conformance_wrapper_name(&decl.name, interface_name));
+                failed_wrappers.insert(conformance_check_name(&decl.name, interface_name));
+                failed_wrappers.insert(conformance_cast_name(&decl.name, interface_name));
             }
         }
     }
@@ -140,6 +142,11 @@ fn check_conformance(
     };
 
     for (field_name, field_ty) in interface_fields {
+        // The hidden identity field belongs to the wrapper machinery, not to
+        // the conformance obligation.
+        if field_name == META_FIELD {
+            continue;
+        }
         let expected = match field_ty {
             Type::Function {
                 params,
@@ -293,6 +300,80 @@ fn nominal_types_match(left: &Type, right: &Type) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Wrapper identity: hidden brand + receiver field
+// ---------------------------------------------------------------------------
+
+/// Hidden interface-record field carrying wrapper identity. On a plain
+/// interface literal the field is nil (nullable record fields may be omitted
+/// from literals and lower to nil); on a conformance wrapper it holds the
+/// concrete type's brand and a reference to the original receiver. The `$`
+/// keeps the name outside the identifier space of user programs, and record
+/// display skips `$` fields, so the type system carries the field without
+/// surfacing it.
+pub(crate) const META_FIELD: &str = "__conform$meta";
+const META_BRAND_FIELD: &str = "brand";
+const META_RECEIVER_FIELD: &str = "receiver";
+
+/// The type of the hidden identity field: `{ brand: i32, receiver: unknown }?`.
+/// Nullable, so plain interface literals may omit it; the receiver is boxed
+/// as `unknown` because concrete types with different shapes share one
+/// interface.
+fn meta_field_type() -> Type {
+    Type::Nullable(Box::new(Type::Record(BTreeMap::from([
+        (
+            META_BRAND_FIELD.to_string(),
+            Type::Numeric(NumericType::I32),
+        ),
+        (META_RECEIVER_FIELD.to_string(), Type::Unknown),
+    ]))))
+}
+
+/// Deterministic i32 brand per conforming type: the 1-based rank of the
+/// declaration's canonical name among all conforming declarations, in sorted
+/// order. Canonical names are already link-time canonicalized (both linkers
+/// round-trip `conforms` entries through their rewriters), so the assignment
+/// depends only on the set of names in the linked program, not on module
+/// order. Brands never escape the compiled program: they only exist as
+/// constants inside generated wrapper and check functions.
+pub(crate) fn conformance_brands(program: &Program) -> HashMap<String, i32> {
+    let mut names: Vec<&str> = program
+        .type_declarations
+        .iter()
+        .filter(|decl| !decl.conforms.is_empty())
+        .map(|decl| decl.name.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| (name.to_string(), index as i32 + 1))
+        .collect()
+}
+
+/// The declaration that owns the record type of an interface named in a
+/// conformance declaration, following pre-resolution alias chains
+/// (`type I2 = I1`). This is where the hidden identity field is injected.
+fn interface_record_root(name: &str, decls: &HashMap<&str, &TypeDeclaration>) -> Option<String> {
+    let mut seen = HashSet::new();
+    let mut current = name;
+    loop {
+        if !seen.insert(current.to_string()) {
+            return None;
+        }
+        let decl = decls.get(current)?;
+        if !decl.type_params.is_empty() {
+            return None;
+        }
+        match &decl.ty {
+            Type::Record(_) => return Some(decl.name.clone()),
+            Type::Named { name, type_args } if type_args.is_empty() => current = name,
+            _ => return None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Bound-method coercion: wrapper generation
 // ---------------------------------------------------------------------------
 
@@ -301,6 +382,20 @@ fn nominal_types_match(left: &Type, right: &Type) -> bool {
 /// identifier space of user programs (mirroring overload variant names).
 pub(crate) fn conformance_wrapper_name(type_name: &str, interface_name: &str) -> String {
     format!("__conform${type_name}${interface_name}")
+}
+
+/// Name of the generated brand check that recovers a `type_name` receiver
+/// from an `interface_name` value, or nil when the value does not wrap one.
+/// `if T(x) = op then` narrowing desugars onto this function.
+pub(crate) fn conformance_check_name(type_name: &str, interface_name: &str) -> String {
+    format!("__conformcheck${type_name}${interface_name}")
+}
+
+/// Name of the generated hard cast that recovers a `type_name` receiver from
+/// an `interface_name` value or raises an error. `op :: T` desugars onto
+/// this function.
+pub(crate) fn conformance_cast_name(type_name: &str, interface_name: &str) -> String {
+    format!("__conformcast${type_name}${interface_name}")
 }
 
 /// Receiver parameter name of a generated conformance wrapper. Out of the
@@ -344,12 +439,36 @@ pub(crate) fn generate_conformance_wrappers(program: &mut Program) {
     {
         return;
     }
+    // Inject the hidden identity field into every interface's record type
+    // before any wrapper is built, so wrappers, plain literals, and the
+    // generated brand checks all agree on the interface shape.
+    let interface_roots: HashSet<String> = {
+        let decls: HashMap<&str, &TypeDeclaration> = program
+            .type_declarations
+            .iter()
+            .map(|decl| (decl.name.as_str(), decl))
+            .collect();
+        program
+            .type_declarations
+            .iter()
+            .flat_map(|decl| decl.conforms.iter())
+            .filter_map(|interface_name| interface_record_root(interface_name, &decls))
+            .collect()
+    };
+    for decl in &mut program.type_declarations {
+        if interface_roots.contains(&decl.name)
+            && let Type::Record(fields) = &mut decl.ty
+        {
+            fields.insert(META_FIELD.to_string(), meta_field_type());
+        }
+    }
+    let brands = conformance_brands(program);
     let decls: HashMap<&str, &TypeDeclaration> = program
         .type_declarations
         .iter()
         .map(|decl| (decl.name.as_str(), decl))
         .collect();
-    let mut wrappers = Vec::new();
+    let mut generated = Vec::new();
     for decl in &program.type_declarations {
         if !decl.type_params.is_empty() {
             continue;
@@ -360,10 +479,13 @@ pub(crate) fn generate_conformance_wrappers(program: &mut Program) {
                 // reports it; there is nothing to construct.
                 continue;
             };
-            wrappers.push(conformance_wrapper(decl, interface_name, fields));
+            let brand = brands[decl.name.as_str()];
+            generated.push(conformance_wrapper(decl, interface_name, fields, brand));
+            generated.push(conformance_check_fn(decl, interface_name, brand));
+            generated.push(conformance_cast_fn(decl, interface_name));
         }
     }
-    program.functions.append(&mut wrappers);
+    program.functions.append(&mut generated);
 }
 
 /// The record fields of an interface named in a conformance declaration,
@@ -394,10 +516,35 @@ fn conformance_wrapper(
     decl: &TypeDeclaration,
     interface_name: &str,
     fields: &BTreeMap<String, Type>,
+    brand: i32,
 ) -> Function {
     let receiver = || Expr::Name(RECEIVER_PARAM.to_string(), None, None);
     let mut table_fields = Vec::with_capacity(fields.len());
     for (field_name, field_ty) in fields {
+        // The hidden identity field records which concrete type built this
+        // wrapper and keeps the original receiver recoverable. The receiver
+        // reference is stored as-is (boxed to `unknown` by the field
+        // coercion), so recovery returns the pre-coercion struct with
+        // reference identity intact.
+        if field_name == META_FIELD {
+            table_fields.push(TableField {
+                name: META_FIELD.to_string(),
+                value: Expr::TableLiteral {
+                    fields: vec![
+                        TableField {
+                            name: META_BRAND_FIELD.to_string(),
+                            value: brand_literal(brand),
+                        },
+                        TableField {
+                            name: META_RECEIVER_FIELD.to_string(),
+                            value: receiver(),
+                        },
+                    ],
+                    span: None,
+                },
+            });
+            continue;
+        }
         let value = match field_ty {
             Type::Function {
                 params,
@@ -480,6 +627,210 @@ fn conformance_wrapper(
     }
 }
 
+/// Parameter name of the generated brand check and hard cast: the interface
+/// value under scrutiny. Like [`RECEIVER_PARAM`], the name never meets user
+/// code (generated bodies contain no user statements).
+const VALUE_PARAM: &str = "__conform_value";
+
+/// Local holding the identity field inside a generated brand check.
+const META_LOCAL: &str = "__conform_meta";
+
+/// Local bound to a recovered receiver. Also used by the `if T(x) = op`
+/// statement desugar, where it is spliced into user function bodies: the `$`
+/// keeps it out of the user identifier space, and local shadowing makes a
+/// fixed name correct even when several narrowing statements share a scope.
+const NARROWED_LOCAL: &str = "__conform$narrowed";
+
+fn brand_literal(brand: i32) -> Expr {
+    Expr::Number(
+        NumberLiteral {
+            raw: brand.to_string(),
+        },
+        None,
+    )
+}
+
+fn nil_compare(op: BinaryOp, expr: Expr) -> Expr {
+    Expr::Binary {
+        op,
+        left: Box::new(expr),
+        right: Box::new(Expr::Nil(None)),
+        resolved_name: None,
+        span: None,
+    }
+}
+
+/// Generate the brand check for a conformance pair:
+///
+/// ```lua
+/// function __conformcheck$Add$Op(__conform_value: Op): Add?
+///     local __conform_meta = __conform_value.__conform$meta
+///     if __conform_meta ~= nil then
+///         if __conform_meta.brand == 1 then
+///             return __conform_meta.receiver :: Add
+///         end
+///     end
+///     return nil
+/// end
+/// ```
+///
+/// A plain interface literal has a nil identity field and a wrapper built by
+/// a different concrete type has a different brand; both return nil instead
+/// of trapping. Once the brand matches, the `unknown -> Add` unbox is safe
+/// even against layout-canonicalized sibling structs, because the brand has
+/// already pinned the nominal type; the returned reference is the original
+/// receiver.
+fn conformance_check_fn(decl: &TypeDeclaration, interface_name: &str, brand: i32) -> Function {
+    let meta = || Expr::Name(META_LOCAL.to_string(), None, None);
+    let meta_field = |name: &str| Expr::Field {
+        base: Box::new(meta()),
+        name: name.to_string(),
+        resolved_name: None,
+        span: None,
+    };
+    let target_ty = Type::Named {
+        name: decl.name.clone(),
+        type_args: Vec::new(),
+    };
+    let body = vec![
+        Stmt::Let {
+            name: META_LOCAL.to_string(),
+            symbol_id: None,
+            rebindability: Rebindability::Const,
+            ty: None,
+            value: Expr::Field {
+                base: Box::new(Expr::Name(VALUE_PARAM.to_string(), None, None)),
+                name: META_FIELD.to_string(),
+                resolved_name: None,
+                span: None,
+            },
+        },
+        Stmt::If {
+            condition: nil_compare(BinaryOp::NotEq, meta()),
+            then_body: vec![Stmt::If {
+                condition: Expr::Binary {
+                    op: BinaryOp::Eq,
+                    left: Box::new(meta_field(META_BRAND_FIELD)),
+                    right: Box::new(brand_literal(brand)),
+                    resolved_name: None,
+                    span: None,
+                },
+                then_body: vec![Stmt::Return(Expr::Cast {
+                    expr: Box::new(meta_field(META_RECEIVER_FIELD)),
+                    ty: target_ty.clone(),
+                    span: None,
+                })],
+                else_body: Vec::new(),
+            }],
+            else_body: Vec::new(),
+        },
+        Stmt::Return(Expr::Nil(None)),
+    ];
+    Function {
+        name: FunctionName::Simple(conformance_check_name(&decl.name, interface_name)),
+        symbol_id: None,
+        type_params: Vec::new(),
+        params: vec![Param {
+            name: VALUE_PARAM.to_string(),
+            symbol_id: None,
+            ty: Type::Named {
+                name: interface_name.to_string(),
+                type_args: Vec::new(),
+            },
+        }],
+        vararg: false,
+        return_type: Some(Type::Nullable(Box::new(target_ty))),
+        body,
+        file_path: decl.file_path.clone(),
+        span: None,
+    }
+}
+
+/// Generate the hard cast for a conformance pair:
+///
+/// ```lua
+/// function __conformcast$Add$Op(__conform_value: Op): Add
+///     local __conform$narrowed = __conformcheck$Add$Op(__conform_value)
+///     if __conform$narrowed ~= nil then
+///         return __conform$narrowed
+///     end
+///     error("interface cast failed: value is not 'Add'")
+///     return (nil :: unknown) :: Add
+/// end
+/// ```
+///
+/// The mismatch path raises the catchable error tag with a message naming
+/// the target type; the trailing cast only satisfies the checker's
+/// all-paths-return rule and is unreachable.
+fn conformance_cast_fn(decl: &TypeDeclaration, interface_name: &str) -> Function {
+    let narrowed = || Expr::Name(NARROWED_LOCAL.to_string(), None, None);
+    let target_ty = Type::Named {
+        name: decl.name.clone(),
+        type_args: Vec::new(),
+    };
+    let body = vec![
+        Stmt::Let {
+            name: NARROWED_LOCAL.to_string(),
+            symbol_id: None,
+            rebindability: Rebindability::Const,
+            ty: None,
+            value: Expr::Call {
+                callee: Box::new(Expr::Name(
+                    conformance_check_name(&decl.name, interface_name),
+                    None,
+                    None,
+                )),
+                type_args: Vec::new(),
+                args: vec![Expr::Name(VALUE_PARAM.to_string(), None, None)],
+                span: None,
+                method_call_origin: None,
+            },
+        },
+        Stmt::If {
+            condition: nil_compare(BinaryOp::NotEq, narrowed()),
+            then_body: vec![Stmt::Return(narrowed())],
+            else_body: Vec::new(),
+        },
+        Stmt::Expr(Expr::Call {
+            callee: Box::new(Expr::Name("error".to_string(), None, None)),
+            type_args: Vec::new(),
+            args: vec![Expr::String(
+                format!("interface cast failed: value is not '{}'", decl.source_name),
+                None,
+            )],
+            span: None,
+            method_call_origin: None,
+        }),
+        Stmt::Return(Expr::Cast {
+            expr: Box::new(Expr::Cast {
+                expr: Box::new(Expr::Nil(None)),
+                ty: Type::Unknown,
+                span: None,
+            }),
+            ty: target_ty.clone(),
+            span: None,
+        }),
+    ];
+    Function {
+        name: FunctionName::Simple(conformance_cast_name(&decl.name, interface_name)),
+        symbol_id: None,
+        type_params: Vec::new(),
+        params: vec![Param {
+            name: VALUE_PARAM.to_string(),
+            symbol_id: None,
+            ty: Type::Named {
+                name: interface_name.to_string(),
+                type_args: Vec::new(),
+            },
+        }],
+        vararg: false,
+        return_type: Some(target_ty),
+        body,
+        file_path: decl.file_path.clone(),
+        span: None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Bound-method coercion: rewriting coercion sites
 // ---------------------------------------------------------------------------
@@ -557,6 +908,42 @@ pub(crate) fn desugar_conformance_coercions(
             expected_return.as_ref(),
         );
     }
+    // Top-level statements exist twice: in `program.top_level` (the copy
+    // module-binding symbols are declared from) and cloned into the generated
+    // `__waluau_top_level_init` function (rewritten in the loop above with an
+    // empty binding seed, matching `function_module_bindings`). The
+    // interface-narrowing desugar introduces statements, so rewrite the
+    // top-level copy with the same context to keep both copies identical;
+    // the pass is deterministic and idempotent, so identical inputs stay in
+    // lockstep across both desugar runs. `top_level_file_paths` is parallel
+    // to `top_level` (one path per statement), so the rewrite goes slice by
+    // slice — sharing one scope, like the single pass over the init clone —
+    // and repeats each slice's path for the statements it gains.
+    if !program.top_level.is_empty() {
+        let mut vars = HashMap::new();
+        let active = HashSet::new();
+        let stmts = std::mem::take(&mut program.top_level);
+        let paths = std::mem::take(&mut program.top_level_file_paths);
+        debug_assert_eq!(stmts.len(), paths.len());
+        let mut new_stmts = Vec::with_capacity(stmts.len());
+        let mut new_paths = Vec::with_capacity(paths.len());
+        let mut stmts = stmts.into_iter();
+        let mut start = 0;
+        while start < paths.len() {
+            let path = &paths[start];
+            let mut end = start + 1;
+            while end < paths.len() && paths[end] == *path {
+                end += 1;
+            }
+            let mut slice: Vec<Stmt> = stmts.by_ref().take(end - start).collect();
+            rewriter.rewrite_stmts(&mut slice, &mut vars, &active, None);
+            new_paths.extend(std::iter::repeat_n(path.clone(), slice.len()));
+            new_stmts.append(&mut slice);
+            start = end;
+        }
+        program.top_level = new_stmts;
+        program.top_level_file_paths = new_paths;
+    }
 }
 
 struct CoercionRewriter<'a> {
@@ -598,6 +985,73 @@ impl CoercionRewriter<'_> {
             .then(|| conformance_wrapper_name(actual_name, interface_name))
     }
 
+    /// The generated hard cast to call for `value :: T` when `value` is
+    /// interface-typed and `T` is declared to conform to that interface, or
+    /// `None` when the cast is not a conformance downcast. Casts to types
+    /// that do not conform stay compile errors through the unchanged cast
+    /// rules.
+    fn conforming_downcast(&self, actual: &Type, target: &Type) -> Option<String> {
+        let (
+            Type::Opaque {
+                name: interface_name,
+                ..
+            },
+            Type::Opaque {
+                name: target_name, ..
+            },
+        ) = (actual, target)
+        else {
+            return None;
+        };
+        if interface_name == target_name {
+            return None;
+        }
+        self.conformance
+            .get(target_name)?
+            .iter()
+            .any(|name| name == interface_name)
+            .then(|| conformance_cast_name(target_name, interface_name))
+    }
+
+    /// The generated brand check backing an `if T(x) = value then` statement
+    /// whose scrutinee is interface-typed and whose target conforms to that
+    /// interface, or `None` when the statement is not interface narrowing
+    /// (tagged-union and extern if-casts keep their existing lowering).
+    fn interface_if_cast_check(
+        &self,
+        stmt: &Stmt,
+        vars: &HashMap<String, Binding>,
+        active: &HashSet<String>,
+    ) -> Option<String> {
+        let Stmt::IfCast {
+            target_ty, value, ..
+        } = stmt
+        else {
+            return None;
+        };
+        let value_ty = infer_expr(value, vars, self.fn_signatures, active, None).ok()?;
+        let (
+            Type::Opaque {
+                name: interface_name,
+                ..
+            },
+            Type::Opaque {
+                name: target_name, ..
+            },
+        ) = (&value_ty, target_ty)
+        else {
+            return None;
+        };
+        if interface_name == target_name {
+            return None;
+        }
+        self.conformance
+            .get(target_name.as_str())?
+            .iter()
+            .any(|name| name == interface_name)
+            .then(|| conformance_check_name(target_name, interface_name))
+    }
+
     /// Parameter types for arguments of a `Expr::Call`, when the callee is a
     /// plain (non-generic, non-overloaded, non-variadic) function reachable
     /// by name.
@@ -616,13 +1070,55 @@ impl CoercionRewriter<'_> {
 
     fn rewrite_stmts(
         &self,
-        stmts: &mut [Stmt],
+        stmts: &mut Vec<Stmt>,
         vars: &mut HashMap<String, Binding>,
         active: &HashSet<String>,
         expected_return: Option<&Type>,
     ) {
-        for stmt in stmts {
-            self.rewrite_stmt(stmt, vars, active, expected_return);
+        let mut index = 0;
+        while index < stmts.len() {
+            // Interface narrowing desugars a whole statement into two:
+            //
+            //     if Add(a) = op then BODY else EBODY end
+            // ==>
+            //     local __conform$narrowed = __conformcheck$Add$Op(op)
+            //     if __conform$narrowed ~= nil then
+            //         local a = __conform$narrowed
+            //         BODY
+            //     else
+            //         EBODY
+            //     end
+            //
+            // The scrutinee is evaluated once, the binding is visible in the
+            // then-branch only (matching the tagged-union and extern forms),
+            // and existing nullable narrowing types the fresh local. The two
+            // replacement statements are then rewritten by the ordinary loop
+            // below, which also recurses into the branch bodies.
+            if let Some(check_fn) = self.interface_if_cast_check(&stmts[index], vars, active) {
+                let Stmt::IfCast {
+                    binding,
+                    binding_symbol_id,
+                    value,
+                    then_body,
+                    else_body,
+                    ..
+                } = std::mem::replace(&mut stmts[index], Stmt::Break)
+                else {
+                    unreachable!("interface_if_cast_check matched an IfCast");
+                };
+                let replacement = interface_if_cast_statements(
+                    check_fn,
+                    binding,
+                    binding_symbol_id,
+                    value,
+                    then_body,
+                    else_body,
+                );
+                stmts.splice(index..=index, replacement);
+                continue;
+            }
+            self.rewrite_stmt(&mut stmts[index], vars, active, expected_return);
+            index += 1;
         }
     }
 
@@ -959,9 +1455,31 @@ impl CoercionRewriter<'_> {
                     }
                 }
             }
-            Expr::Cast { expr, ty, .. } => {
+            Expr::Cast {
+                expr: inner, ty, ..
+            } => {
                 let target = ty.clone();
-                self.rewrite_expr(expr, Some(&target), vars, active);
+                self.rewrite_expr(inner, Some(&target), vars, active);
+                // `op :: Add` on an interface-typed value is the hard
+                // conformance downcast: brand check, then the original
+                // receiver, or a raised error on mismatch.
+                let downcast = infer_expr(inner, vars, self.fn_signatures, active, None)
+                    .ok()
+                    .and_then(|actual| self.conforming_downcast(&actual, &target));
+                if let Some(cast_fn) = downcast {
+                    let span = expr.span();
+                    let Expr::Cast { expr: inner, .. } = std::mem::replace(expr, Expr::Nil(None))
+                    else {
+                        unreachable!("matched above");
+                    };
+                    *expr = Expr::Call {
+                        callee: Box::new(Expr::Name(cast_fn, None, span)),
+                        type_args: Vec::new(),
+                        args: vec![*inner],
+                        span,
+                        method_call_origin: None,
+                    };
+                }
             }
             Expr::TableLiteral { fields, .. } => {
                 let expected_fields = expected.and_then(record_field_types).cloned();
@@ -1053,6 +1571,57 @@ impl CoercionRewriter<'_> {
             method_call_origin: None,
         };
     }
+}
+
+/// The two statements replacing an interface-narrowing `if T(x) = value`:
+/// a fresh local calling the generated brand check, and a nil test that
+/// binds the recovered receiver at the head of the then-branch. See
+/// [`CoercionRewriter::rewrite_stmts`] for the shape.
+fn interface_if_cast_statements(
+    check_fn: String,
+    binding: String,
+    binding_symbol_id: Option<waluau_ast::SymbolId>,
+    value: Expr,
+    mut then_body: Vec<Stmt>,
+    else_body: Vec<Stmt>,
+) -> [Stmt; 2] {
+    let span = value.span();
+    let narrowed = || Expr::Name(NARROWED_LOCAL.to_string(), None, span);
+    let check_let = Stmt::Let {
+        name: NARROWED_LOCAL.to_string(),
+        symbol_id: None,
+        rebindability: Rebindability::Const,
+        ty: None,
+        value: Expr::Call {
+            callee: Box::new(Expr::Name(check_fn, None, span)),
+            type_args: Vec::new(),
+            args: vec![value],
+            span,
+            method_call_origin: None,
+        },
+    };
+    then_body.insert(
+        0,
+        Stmt::Let {
+            name: binding,
+            symbol_id: binding_symbol_id,
+            rebindability: Rebindability::Const,
+            ty: None,
+            value: narrowed(),
+        },
+    );
+    let check_if = Stmt::If {
+        condition: Expr::Binary {
+            op: BinaryOp::NotEq,
+            left: Box::new(narrowed()),
+            right: Box::new(Expr::Nil(None)),
+            resolved_name: None,
+            span,
+        },
+        then_body,
+        else_body,
+    };
+    [check_let, check_if]
 }
 
 /// Record fields behind nominal, nullable, or read-only wrappers.

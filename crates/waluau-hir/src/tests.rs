@@ -5279,3 +5279,204 @@ fn function_type_parameter_names_do_not_affect_checking() {
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("names must not affect checking");
 }
+
+// ---------------------------------------------------------------------------
+// Interface brand checks and downcasts (wrapper identity + surface forms)
+// ---------------------------------------------------------------------------
+
+/// Source shared by the brand tests: two conforming types with identical
+/// layouts behind one interface.
+const SIBLING_CONFORMANCE: &str = r#"
+    type Op = { exec: (self, a: i32, b: i32) -> i32 }
+    type Add = Op & { bias: i32 }
+    type Mul = Op & { bias: i32 }
+
+    function Add:exec(a: i32, b: i32): i32
+        return a + b + self.bias
+    end
+
+    function Mul:exec(a: i32, b: i32): i32
+        return a * b + self.bias
+    end
+"#;
+
+#[test]
+fn conformance_brands_are_distinct_and_order_independent() {
+    // Layout-identical siblings get distinct brands, and the assignment
+    // depends only on the set of canonical names, not on declaration order
+    // (stand-in for module link order).
+    let forward = parse(SIBLING_CONFORMANCE).expect("parse should succeed");
+    let reversed = parse(
+        r#"
+        type Mul = Op & { bias: i32 }
+        type Add = Op & { bias: i32 }
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b + self.bias
+        end
+
+        function Mul:exec(a: i32, b: i32): i32
+            return a * b + self.bias
+        end
+    "#,
+    )
+    .expect("parse should succeed");
+    let brands = super::conformance::conformance_brands(&forward);
+    assert_eq!(brands.len(), 2);
+    assert_ne!(brands["Add"], brands["Mul"]);
+    assert_eq!(brands, super::conformance::conformance_brands(&reversed));
+}
+
+#[test]
+fn conformance_wrappers_carry_brand_and_receiver_identity() {
+    // The generated wrapper's interface record includes the hidden identity
+    // field holding the concrete type's brand and the receiver reference,
+    // and the interface declaration itself gains the (nullable, omittable)
+    // field.
+    let mut program = parse(SIBLING_CONFORMANCE).expect("parse should succeed");
+    super::conformance::generate_conformance_wrappers(&mut program);
+    let brands = super::conformance::conformance_brands(&program);
+
+    let op = program
+        .type_declarations
+        .iter()
+        .find(|decl| decl.name == "Op")
+        .expect("Op declaration");
+    let Type::Record(op_fields) = &op.ty else {
+        panic!("Op must stay a record");
+    };
+    assert!(
+        matches!(
+            op_fields.get(super::conformance::META_FIELD),
+            Some(Type::Nullable(_))
+        ),
+        "interface record must gain the hidden nullable identity field"
+    );
+
+    for concrete in ["Add", "Mul"] {
+        let wrapper_name = super::conformance::conformance_wrapper_name(concrete, "Op");
+        let wrapper = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == wrapper_name)
+            .expect("wrapper function");
+        let [Stmt::Return(Expr::TableLiteral { fields, .. })] = wrapper.body.as_slice() else {
+            panic!("wrapper body must return a table literal");
+        };
+        let meta = fields
+            .iter()
+            .find(|field| field.name == super::conformance::META_FIELD)
+            .expect("wrapper record must fill the identity field");
+        let Expr::TableLiteral {
+            fields: meta_fields,
+            ..
+        } = &meta.value
+        else {
+            panic!("identity field must be a record literal");
+        };
+        let brand = meta_fields
+            .iter()
+            .find(|field| field.name == "brand")
+            .expect("identity record must carry the brand");
+        let Expr::Number(literal, _) = &brand.value else {
+            panic!("brand must be a compile-time constant");
+        };
+        assert_eq!(literal.raw, brands[concrete].to_string());
+        let receiver = meta_fields
+            .iter()
+            .find(|field| field.name == "receiver")
+            .expect("identity record must carry the receiver");
+        assert!(
+            matches!(&receiver.value, Expr::Name(name, ..) if name == "__conform_receiver"),
+            "receiver must be the original receiver reference, not a copy"
+        );
+        // The consuming forms exist alongside the wrapper.
+        for helper in [
+            super::conformance::conformance_check_name(concrete, "Op"),
+            super::conformance::conformance_cast_name(concrete, "Op"),
+        ] {
+            assert!(
+                program
+                    .functions
+                    .iter()
+                    .any(|function| function.name.to_string() == helper),
+                "missing generated helper {helper}"
+            );
+        }
+    }
+}
+
+#[test]
+fn interface_narrowing_and_hard_cast_type_check() {
+    let source = format!(
+        "{SIBLING_CONFORMANCE}
+        function pick(op: Op): i32
+            if Add(a) = op then
+                return a.bias
+            end
+            local forced = op :: Mul
+            return forced.bias
+        end
+    "
+    );
+    let program = parse(&source).expect("parse should succeed");
+    super::type_check(&program).expect("interface narrowing and hard cast should check");
+}
+
+#[test]
+fn interface_narrowing_rejects_non_conforming_target() {
+    let source = format!(
+        "{SIBLING_CONFORMANCE}
+        type Other = {{ tag: i32 }}
+        function pick(op: Op): i32
+            if Other(o) = op then
+                return o.tag
+            end
+            return 0
+        end
+    "
+    );
+    let program = parse(&source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("non-conforming target must fail");
+    assert!(
+        error.to_string().contains("neither a tagged-union variant"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
+fn interface_hard_cast_rejects_non_conforming_target() {
+    let source = format!(
+        "{SIBLING_CONFORMANCE}
+        type Other = {{ tag: i32 }}
+        function pick(op: Op): Other
+            return op :: Other
+        end
+    "
+    );
+    let program = parse(&source).expect("parse should succeed");
+    super::type_check(&program).expect_err("non-conforming hard cast must fail");
+}
+
+#[test]
+fn plain_interface_literals_omit_the_identity_field() {
+    // A plain interface literal never mentions the hidden field; the
+    // nullable field is omittable, so construction still checks.
+    let source = r#"
+        type Op = { exec: (self, a: i32, b: i32) -> i32 }
+        type Add = Op & {}
+
+        function Add:exec(a: i32, b: i32): i32
+            return a + b
+        end
+
+        local plain: Op = {
+            exec = function(a: i32, b: i32): i32
+                return a - b
+            end,
+        }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("plain interface literals should still check");
+}
