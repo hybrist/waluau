@@ -25,8 +25,8 @@ local function stocked(
         table.insert(slots, {
             category = "spells",
             goods = item,
-            item = shop.item_for(item),
-            price = shop.price_of(item, state),
+            item = item:item_for(),
+            price = item:price_of(state),
             sold = false,
         })
     end
@@ -37,9 +37,9 @@ end
 describe("Ante Magic shop lines", function()
     it("quotes the cast an upgrade would buy down", function()
         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.new()
+        local intermission: shop.State = shop.State.new()
         stocked(intermission, state, { Upgrade({ kind = spells.SpellKind.Firebolt }) })
-        local rows: {shop.Row} = shop.rows(intermission, state)
+        local rows: {shop.Row} = intermission:rows(state)
 
         expect(shop_render.row_label(intermission, rows[0], state, nil))
             :toBe("UPGRADE FIREBOLT   USE 5 TO 4 GOLD")
@@ -48,8 +48,8 @@ describe("Ante Magic shop lines", function()
 
         -- Bought, it says what it did rather than what it would do: the numbers
         -- it quoted are the ones it has already changed.
-        shop.activate(intermission, state)
-        local spent: {shop.Row} = shop.rows(intermission, state)
+        intermission:activate(state)
+        local spent: {shop.Row} = intermission:rows(state)
         expect(shop_render.row_label(intermission, spent[0], state, nil))
             :toBe("UPGRADED FIREBOLT")
         expect(shop_render.row_ink(spent[0])):toBe("#52525b")
@@ -57,44 +57,44 @@ describe("Ante Magic shop lines", function()
 
     it("says where a learned spell would land, and what it would cost the loadout", function()
         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.new()
+        local intermission: shop.State = shop.State.new()
         stocked(intermission, state, { Spell({ kind = spells.SpellKind.Clone }) })
         expect(shop_render.row_label(
-            intermission, shop.rows(intermission, state)[0], state, nil))
+            intermission, intermission:rows(state)[0], state, nil))
             :toBe("LEARN CLONE   KEY 2")
 
         -- A full loadout has no key to name, so the line says what it would take
         -- instead of where it would go.
         expect(state:learn(spells.SpellKind.FreezeRay, 1)):toBe(true)
         expect(shop_render.row_label(
-            intermission, shop.rows(intermission, state)[0], state, nil))
+            intermission, intermission:rows(state)[0], state, nil))
             :toBe("LEARN CLONE   TRADES A SPELL AWAY")
     end)
 
     it("closes the wording on a spell another slot traded away", function()
         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
         expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
-        local intermission: shop.State = shop.new()
+        local intermission: shop.State = shop.State.new()
         stocked(intermission, state, { Upgrade({ kind = spells.SpellKind.Clone }) })
 
         -- Trading the spell out from under the offer leaves the line standing
         -- and saying so.
         expect(state:learn(spells.SpellKind.RaiseCard, 1)):toBe(true)
         expect(shop_render.row_label(
-            intermission, shop.rows(intermission, state)[0], state, nil))
+            intermission, intermission:rows(state)[0], state, nil))
             :toBe("UPGRADE CLONE   TRADED AWAY")
     end)
 
     it("names both sides of a trade, and the way out of the shop", function()
         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
         expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
-        local intermission: shop.State = shop.new()
+        local intermission: shop.State = shop.State.new()
         stocked(intermission, state, { Spell({ kind = spells.SpellKind.FreezeRay }) })
-        shop.activate(intermission, state)
-        expect(shop.choosing(intermission)):toBe(true)
+        intermission:activate(state)
+        expect(intermission:choosing()):toBe(true)
 
-        local rows: {shop.Row} = shop.rows(intermission, state)
-        local offered: spells.SpellKind? = shop.pending_spell(intermission)
+        local rows: {shop.Row} = intermission:rows(state)
+        local offered: spells.SpellKind? = intermission:pending_spell()
         expect(shop_render.row_label(intermission, rows[0], state, offered))
             :toBe("TRADE FIREBOLT FOR FREEZE RAY")
         expect(shop_render.row_label(intermission, rows[2], state, offered))
@@ -103,9 +103,9 @@ describe("Ante Magic shop lines", function()
 
     it("says which duel the way out leads into and what clearing it costs", function()
         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.new()
+        local intermission: shop.State = shop.State.new()
         stocked(intermission, state, {})
-        local rows: {shop.Row} = shop.rows(intermission, state)
+        local rows: {shop.Row} = intermission:rows(state)
         expect(shop_render.row_label(intermission, rows[0], state, nil))
             :toBe("ENTER DUEL 2   TARGET " .. tostring(state:target()))
         -- The way out is never for sale, so it never wears a spell's ink.

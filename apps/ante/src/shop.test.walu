@@ -22,8 +22,8 @@ local function shopping_run(spell: spells.SpellKind, gold: i32): run.State
 end
 
 local function open_shop(state: run.State): shop.State
-    local intermission: shop.State = shop.new()
-    shop.open_for(intermission, state)
+    local intermission: shop.State = shop.State.new()
+    intermission:open_for(state)
     return intermission
 end
 
@@ -39,8 +39,8 @@ local function stock_slots(
         table.insert(slots, {
             category = "spells",
             goods = item,
-            item = shop.item_for(item),
-            price = shop.price_of(item, state),
+            item = item:item_for(),
+            price = item:price_of(state),
             sold = false,
         })
     end
@@ -64,7 +64,7 @@ end
 -- Move the cursor onto the first trade line, so a test names the choice it means
 -- instead of counting rows.
 local function point_at_choice(intermission: shop.State, state: run.State, key: i32): unit
-    local rows: {shop.Row} = shop.rows(intermission, state)
+    local rows: {shop.Row} = intermission:rows(state)
     for index, row in rows do
         if row.kind == "choice" and row.key == key then
             intermission.cursor = index
@@ -76,7 +76,7 @@ end
 
 -- Move the cursor onto the line that backs out of the question.
 local function point_at_cancel(intermission: shop.State, state: run.State): unit
-    local rows: {shop.Row} = shop.rows(intermission, state)
+    local rows: {shop.Row} = intermission:rows(state)
     for index, row in rows do
         if row.kind == "cancel" then
             intermission.cursor = index
@@ -92,7 +92,7 @@ describe("Ante Magic shop stock", function()
         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 30)
         local intermission: shop.State = open_shop(state)
         expect(intermission.open):toBe(true)
-        expect(shop.choosing(intermission)):toBe(false)
+        expect(intermission:choosing()):toBe(false)
         expect(intermission.cursor):toBe(0)
         expect(#intermission.slots):toBe(#shop.slot_layout())
 
@@ -119,7 +119,7 @@ describe("Ante Magic shop stock", function()
             end
         end
 
-        local rows: {shop.Row} = shop.rows(intermission, state)
+        local rows: {shop.Row} = intermission:rows(state)
         expect(#rows):toBe(#shop.slot_layout() + 1)
         expect(tostring(rows[2].kind)):toBe("leave")
     end)
@@ -154,8 +154,8 @@ describe("Ante Magic shop stock", function()
             upgrade_goods(spells.SpellKind.Clone),
             learn_goods(spells.SpellKind.Firebolt),
         })
-        local rows: {shop.Row} = shop.rows(intermission, state)
-        expect(rows[0].price):toBe(shop.price_of(upgrade_goods(spells.SpellKind.Clone), state))
+        local rows: {shop.Row} = intermission:rows(state)
+        expect(rows[0].price):toBe(upgrade_goods(spells.SpellKind.Clone):price_of(state))
         expect(rows[0].available):toBe(true)
         expect(rows[1].price):toBe(shop.learn_price)
         expect(rows[1].available):toBe(false)
@@ -165,10 +165,10 @@ describe("Ante Magic shop stock", function()
         -- Pressing an offer the run cannot pay for buys nothing rather than
         -- falling through to the next line.
         intermission.cursor = 1
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(tostring(intermission:activate(state))):toBe("stay")
         expect(state.gold):toBe(5)
         expect(state:spell_count()):toBe(1)
-        expect(shop.choosing(intermission)):toBe(false)
+        expect(intermission:choosing()):toBe(false)
         expect(slot_sold(intermission, 1)):toBe(false)
     end)
 end)
@@ -183,36 +183,36 @@ describe("Ante Magic shop purchases", function()
             learn_goods(spells.SpellKind.Clone),
         })
 
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(tostring(intermission:activate(state))):toBe("stay")
         expect(state.spells[0].cost):toBe(spells.DEFAULT_SPELL_COST - 1)
         expect(state.gold):toBe(36)
 
         -- The line stays where it was, spent: the same spell is not upgraded a
         -- second time at this shop however often it is pressed, and the offer
         -- beside it is untouched.
-        local rows: {shop.Row} = shop.rows(intermission, state)
+        local rows: {shop.Row} = intermission:rows(state)
         expect(#rows):toBe(3)
         expect(rows[0].sold):toBe(true)
         expect(rows[0].available):toBe(false)
         expect(rows[1].sold):toBe(false)
         expect(rows[1].available):toBe(true)
 
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(tostring(intermission:activate(state))):toBe("stay")
         expect(state.spells[0].cost):toBe(spells.DEFAULT_SPELL_COST - 1)
         expect(state.gold):toBe(36)
 
         -- The other offer is still live, and buying it spends its own price.
         intermission.cursor = 1
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(tostring(intermission:activate(state))):toBe("stay")
         expect(state:spell_count()):toBe(2)
         expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
         expect(state.gold):toBe(36 - shop.learn_price)
-        local spent: {shop.Row} = shop.rows(intermission, state)
+        local spent: {shop.Row} = intermission:rows(state)
         expect(spent[0].sold):toBe(true)
         expect(spent[1].sold):toBe(true)
         -- Both offers spent leaves the way into the duel and nothing else.
         expect(tostring(spent[2].kind)):toBe("leave")
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(tostring(intermission:activate(state))):toBe("stay")
         expect(state.gold):toBe(36 - shop.learn_price)
     end)
 
@@ -224,21 +224,21 @@ describe("Ante Magic shop purchases", function()
 
         -- The step a spell is on is the run's, not the visit's: a fresh shop
         -- quotes the next step up for a spell an earlier one upgraded.
-        expect(shop.price_of(sharpen, state)):toBe(4)
+        expect(sharpen:price_of(state)):toBe(4)
         stock_slots(intermission, state, { sharpen })
-        shop.activate(intermission, state)
+        intermission:activate(state)
         expect(state.spells[0].cost):toBe(game.spell_cost - 1)
         expect(state.gold):toBe(36)
 
-        expect(shop.price_of(sharpen, state)):toBe(6)
+        expect(sharpen:price_of(state)):toBe(6)
         stock_slots(intermission, state, { sharpen })
-        shop.activate(intermission, state)
+        intermission:activate(state)
         expect(state.spells[0].cost):toBe(game.spell_cost - 2)
         expect(state.gold):toBe(30)
 
-        expect(shop.price_of(sharpen, state)):toBe(8)
+        expect(sharpen:price_of(state)):toBe(8)
         stock_slots(intermission, state, { sharpen })
-        shop.activate(intermission, state)
+        intermission:activate(state)
         expect(state.spells[0].cost):toBe(run.min_spell_cost)
         expect(state.gold):toBe(22)
 
@@ -246,9 +246,9 @@ describe("Ante Magic shop purchases", function()
         -- all: it is out of the stock, and a stale offer for it is closed.
         expect(#shop.spell_stock(state)):toBe(3)
         stock_slots(intermission, state, { sharpen })
-        local rows: {shop.Row} = shop.rows(intermission, state)
+        local rows: {shop.Row} = intermission:rows(state)
         expect(rows[0].available):toBe(false)
-        shop.activate(intermission, state)
+        intermission:activate(state)
         expect(state.spells[0].cost):toBe(run.min_spell_cost)
         expect(state.gold):toBe(22)
     end)
@@ -259,8 +259,8 @@ describe("Ante Magic shop purchases", function()
         local intermission: shop.State = open_shop(state)
         local taught: shop.Goods = learn_goods(spells.SpellKind.RaiseCard)
         stock_slots(intermission, state, { taught })
-        expect(shop.destination(taught, state)):toBe(1)
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(taught:destination(state)):toBe(1)
+        expect(tostring(intermission:activate(state))):toBe("stay")
 
         expect(state:spell_count()):toBe(2)
         expect(state.spells[1].kind):toBe(spells.SpellKind.RaiseCard)
@@ -281,17 +281,17 @@ describe("Ante Magic shop purchases", function()
         })
 
         intermission.cursor = 1
-        expect(shop.destination(taught, state)):toBe(-1)
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(taught:destination(state)):toBe(-1)
+        expect(tostring(intermission:activate(state))):toBe("stay")
         -- Being asked is not yet buying: the purse, the loadout, and the offer
         -- are all untouched until a spell is named.
-        expect(shop.choosing(intermission)):toBe(true)
-        expect(shop.pending_slot(intermission)):toBe(1)
+        expect(intermission:choosing()):toBe(true)
+        expect(intermission:pending_slot()):toBe(1)
         expect(state.gold):toBe(40)
         expect(state:spell_count()):toBe(2)
         expect(slot_sold(intermission, 1)):toBe(false)
 
-        local choices: {shop.Row} = shop.rows(intermission, state)
+        local choices: {shop.Row} = intermission:rows(state)
         expect(#choices):toBe(3)
         expect(tostring(choices[0].kind)):toBe("choice")
         expect(choices[0].spell):toBe(spells.SpellKind.Firebolt)
@@ -299,8 +299,8 @@ describe("Ante Magic shop purchases", function()
         expect(tostring(choices[2].kind)):toBe("cancel")
 
         point_at_choice(intermission, state, 1)
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
-        expect(shop.choosing(intermission)):toBe(false)
+        expect(tostring(intermission:activate(state))):toBe("stay")
+        expect(intermission:choosing()):toBe(false)
         expect(state:spell_count()):toBe(2)
         expect(state.spells[0].kind):toBe(spells.SpellKind.Firebolt)
         expect(state.spells[1].kind):toBe(spells.SpellKind.FreezeRay)
@@ -310,7 +310,7 @@ describe("Ante Magic shop purchases", function()
         -- The cursor comes back to the line that was bought, and that line is
         -- spent rather than restocked.
         expect(intermission.cursor):toBe(1)
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(tostring(intermission:activate(state))):toBe("stay")
         expect(state.gold):toBe(40 - shop.learn_price)
     end)
 
@@ -326,18 +326,18 @@ describe("Ante Magic shop purchases", function()
 
         -- Trade the very spell the first offer was about.
         intermission.cursor = 1
-        shop.activate(intermission, state)
+        intermission:activate(state)
         point_at_choice(intermission, state, 1)
-        shop.activate(intermission, state)
+        intermission:activate(state)
         expect(state:carries(spells.SpellKind.Clone)):toBe(false)
 
         -- An offer names a spell rather than a key, so the upgrading one is
         -- simply closed instead of quietly upgrading whatever moved in.
-        local rows: {shop.Row} = shop.rows(intermission, state)
+        local rows: {shop.Row} = intermission:rows(state)
         expect(rows[0].available):toBe(false)
         local before: i32 = state.gold
         intermission.cursor = 0
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
+        expect(tostring(intermission:activate(state))):toBe("stay")
         expect(state.gold):toBe(before)
         expect(state.spells[1].cost):toBe(game.spell_cost)
     end)
@@ -351,12 +351,12 @@ describe("Ante Magic shop purchases", function()
             learn_goods(spells.SpellKind.Clone),
             upgrade_goods(spells.SpellKind.RaiseCard),
         })
-        shop.activate(intermission, state)
-        expect(shop.choosing(intermission)):toBe(true)
+        intermission:activate(state)
+        expect(intermission:choosing()):toBe(true)
 
         point_at_cancel(intermission, state)
-        expect(tostring(shop.activate(intermission, state))):toBe("stay")
-        expect(shop.choosing(intermission)):toBe(false)
+        expect(tostring(intermission:activate(state))):toBe("stay")
+        expect(intermission:choosing()):toBe(false)
         expect(state.gold):toBe(40)
         expect(state.spells[0].kind):toBe(spells.SpellKind.RaiseCard)
         expect(state.spells[1].kind):toBe(spells.SpellKind.FreezeRay)
@@ -366,12 +366,12 @@ describe("Ante Magic shop purchases", function()
         expect(intermission.cursor):toBe(0)
 
         -- Escape backs out of the same question, and then out of the shop.
-        shop.activate(intermission, state)
-        expect(shop.choosing(intermission)):toBe(true)
-        expect(tostring(shop.keypressed(intermission, state, "Escape"))):toBe("stay")
-        expect(shop.choosing(intermission)):toBe(false)
+        intermission:activate(state)
+        expect(intermission:choosing()):toBe(true)
+        expect(tostring(intermission:keypressed(state, "Escape"))):toBe("stay")
+        expect(intermission:choosing()):toBe(false)
         expect(intermission.cursor):toBe(0)
-        expect(tostring(shop.keypressed(intermission, state, "Escape"))):toBe("leave")
+        expect(tostring(intermission:keypressed(state, "Escape"))):toBe("leave")
     end)
 end)
 
@@ -380,27 +380,27 @@ describe("Ante Magic shop controls", function()
         math.randomseed(149)
         local state: run.State = shopping_run(spells.SpellKind.Clone, 30)
         local intermission: shop.State = open_shop(state)
-        local count: i32 = shop.row_count(intermission, state)
+        local count: i32 = intermission:row_count(state)
         expect(count):toBe(3)
-        shop.move(intermission, state, -1)
+        intermission:move(state, -1)
         expect(intermission.cursor):toBe(count - 1)
-        shop.move(intermission, state, 1)
+        intermission:move(state, 1)
         expect(intermission.cursor):toBe(0)
-        shop.keypressed(intermission, state, "ArrowDown")
+        intermission:keypressed(state, "ArrowDown")
         expect(intermission.cursor):toBe(1)
-        shop.keypressed(intermission, state, "ArrowUp")
+        intermission:keypressed(state, "ArrowUp")
         expect(intermission.cursor):toBe(0)
 
         -- A pointer between the lines leaves the cursor where it was.
-        shop.focus(intermission, state, 2)
+        intermission:focus(state, 2)
         expect(intermission.cursor):toBe(2)
-        shop.focus(intermission, state, -1)
+        intermission:focus(state, -1)
         expect(intermission.cursor):toBe(2)
-        shop.focus(intermission, state, count)
+        intermission:focus(state, count)
         expect(intermission.cursor):toBe(2)
 
         -- The last line is the way into the duel, whichever gesture takes it.
-        expect(tostring(shop.keypressed(intermission, state, "Enter"))):toBe("leave")
+        expect(tostring(intermission:keypressed(state, "Enter"))):toBe("leave")
     end)
 
     it("round-trips the visit through development snapshots", function()
@@ -413,13 +413,13 @@ describe("Ante Magic shop controls", function()
             learn_goods(spells.SpellKind.FreezeRay),
         })
         intermission.cursor = 0
-        shop.activate(intermission, state)
+        intermission:activate(state)
         intermission.cursor = 1
-        shop.activate(intermission, state)
-        expect(shop.choosing(intermission)):toBe(true)
+        intermission:activate(state)
+        expect(intermission:choosing()):toBe(true)
 
-        local encoded: string = shop.snapshot(intermission)
-        local restored: shop.State? = shop.restore(encoded)
+        local encoded: string = intermission:snapshot()
+        local restored: shop.State? = shop.State.restore(encoded)
         expect(restored == nil):toBe(false)
         if restored ~= nil then
             local visit: shop.State = restored
@@ -435,51 +435,51 @@ describe("Ante Magic shop controls", function()
             -- The price a visit quoted is part of the visit, not something
             -- re-derived on the way back in.
             expect(visit.slots[1].price):toBe(shop.learn_price)
-            expect(shop.pending_slot(visit)):toBe(1)
+            expect(visit:pending_slot()):toBe(1)
             expect(visit.cursor):toBe(intermission.cursor)
-            expect(shop.snapshot(visit)):toBe(encoded)
+            expect(visit:snapshot()):toBe(encoded)
         end
 
         -- A payload from another build — the old token wire format, a JSON
         -- payload carrying a stale schema marker, or one with trailing
         -- garbage — is a normal refusal rather than a crash.
-        expect(shop.restore("duel-shop-v3,1,0,0,-1") == nil):toBe(true)
+        expect(shop.State.restore("duel-shop-v3,1,0,0,-1") == nil):toBe(true)
         local stale_schema: string =
             string.gsub(encoded, "duel%-shop%-v4", "duel-shop-v3")
-        expect(shop.restore(stale_schema) == nil):toBe(true)
-        expect(shop.restore(encoded .. ",unexpected") == nil):toBe(true)
+        expect(shop.State.restore(stale_schema) == nil):toBe(true)
+        expect(shop.State.restore(encoded .. ",unexpected") == nil):toBe(true)
         -- An unknown category, an unknown kind of goods, and a spell that does
         -- not exist each fail on their own terms: the first two are shape the
         -- decoder checks, the kind a domain only this build knows.
         local unknown_category: string =
             string.gsub(encoded, '"category":"spells"', '"category":"relics"')
-        expect(shop.restore(unknown_category) == nil):toBe(true)
+        expect(shop.State.restore(unknown_category) == nil):toBe(true)
         local unknown_goods: string =
             string.gsub(encoded, '"tag":"Spell"', '"tag":"Charm"')
-        expect(shop.restore(unknown_goods) == nil):toBe(true)
+        expect(shop.State.restore(unknown_goods) == nil):toBe(true)
         local unknown_spell: string =
             string.gsub(encoded, '"kind":%d+', '"kind":9')
-        expect(shop.restore(unknown_spell) == nil):toBe(true)
+        expect(shop.State.restore(unknown_spell) == nil):toBe(true)
         -- A negative price, a pending question naming a slot the visit does
         -- not have, and a trade key the loadout could never hold are refused
         -- the same way.
         local negative_price: string =
             string.gsub(encoded, '"price":7', '"price":-1')
-        expect(shop.restore(negative_price) == nil):toBe(true)
+        expect(shop.State.restore(negative_price) == nil):toBe(true)
         -- "slot" appears only inside the pending question, so this renames
         -- the slot it points at.
         local absent_slot: string =
             string.gsub(encoded, '"slot":1', '"slot":4')
-        expect(shop.restore(absent_slot) == nil):toBe(true)
+        expect(shop.State.restore(absent_slot) == nil):toBe(true)
         local impossible_key: string =
             string.gsub(encoded, '"choices":%[0', '"choices":[9')
-        expect(shop.restore(impossible_key) == nil):toBe(true)
+        expect(shop.State.restore(impossible_key) == nil):toBe(true)
 
         -- Closing the shop leaves nothing of the visit behind.
-        shop.close(intermission)
+        intermission:close()
         expect(intermission.open):toBe(false)
         expect(#intermission.slots):toBe(0)
-        expect(shop.choosing(intermission)):toBe(false)
+        expect(intermission:choosing()):toBe(false)
         expect(intermission.cursor):toBe(0)
     end)
 end)
