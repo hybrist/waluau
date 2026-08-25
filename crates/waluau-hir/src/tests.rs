@@ -5480,3 +5480,317 @@ fn plain_interface_literals_omit_the_identity_field() {
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("plain interface literals should still check");
 }
+
+#[test]
+fn enum_pairs_loop_type_checks() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function catalog(): string
+            local out = ""
+            for name, kind in pairs(SpellKind) do
+                out = out .. name
+                assert(kind == SpellKind.Firebolt or kind == SpellKind.FreezeRay)
+            end
+            return out
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("enum pairs loop should check");
+}
+
+#[test]
+fn record_pairs_loop_type_checks() {
+    let source = r#"
+        function total(): i32
+            local scores = { alice = 3::i32, bob = 5::i32 }
+            local sum: i32 = 0
+            for name, score in pairs(scores) do
+                sum = sum + score
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("record pairs loop should check");
+}
+
+#[test]
+fn record_pairs_name_only_loop_allows_mixed_field_types() {
+    let source = r#"
+        function keys(): string
+            local mixed = { id = 7::i32, label = "seven" }
+            local out = ""
+            for key in pairs(mixed) do
+                out = out .. key
+            end
+            return out
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("name-only record pairs loop should check");
+}
+
+#[test]
+fn rejects_record_pairs_value_over_mixed_field_types() {
+    let source = r#"
+        function broken(): unit
+            local mixed = { id = 7::i32, label = "seven" }
+            for key, value in pairs(mixed) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs over a record requires every field to have the same type; 'id' is i32 but 'label' is string"
+    );
+}
+
+#[test]
+fn rejects_pairs_over_non_record_value() {
+    let source = r#"
+        function broken(): unit
+            for key, value in pairs(42) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs(...) requires an enum type or a record value, got f64"
+    );
+}
+
+#[test]
+fn rejects_pairs_over_array_with_iteration_hint() {
+    let source = r#"
+        function broken(): unit
+            local arr = {1, 2, 3}
+            for key, value in pairs(arr) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs(...) requires an enum type or a record value; arrays iterate directly: `for i, v in arr`"
+    );
+}
+
+#[test]
+fn rejects_pairs_over_readonly_record_view() {
+    let source = r#"
+        type Model = { count: i32 }
+
+        function scan(view: readonly<Model>): unit
+            for key, value in pairs(view) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs over a read-only record view is not supported"
+    );
+}
+
+#[test]
+fn rejects_record_pairs_with_three_loop_variables() {
+    let source = r#"
+        function broken(): unit
+            local scores = { alice = 3::i32 }
+            for a, b, c in pairs(scores) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs for-in loop expects 1 or 2 loop variables, got 3"
+    );
+}
+
+#[test]
+fn iterator_protocol_loop_type_checks() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            local n = i + 1
+            if n < #a then
+                return n, a[n]
+            end
+            return nil, 0
+        end
+
+        function total(nums: {i32}): i32
+            local sum: i32 = 0
+            for i, v in iter, nums, -1 do
+                sum = sum + v
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("protocol loop should check");
+}
+
+#[test]
+fn iterator_protocol_factory_loop_type_checks() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function my_ipairs(a: {i32}): (({i32}, i32) -> (i32?, i32), {i32}, i32)
+            return iter, a, -1
+        end
+
+        function total(nums: {i32}): i32
+            local sum: i32 = 0
+            for i, v in my_ipairs(nums) do
+                sum = sum + v
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("factory protocol loop should check");
+}
+
+#[test]
+fn next_over_record_and_array_type_checks() {
+    let source = r#"
+        function scan(): i32
+            local scores = { alice = 3::i32, bob = 5::i32 }
+            local total: i32 = 0
+            for name, score in next, scores do
+                total = total + score
+            end
+            local words = {"a", "b"}
+            for i, v in next, words do
+                total = total + i
+            end
+            return total
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("next loops should check");
+}
+
+#[test]
+fn rejects_iterator_with_non_nullable_first_return() {
+    let source = r#"
+        function bad(a: {i32}, i: i32): (i32, i32)
+            return i, 0
+        end
+
+        function scan(nums: {i32}): unit
+            for i, v in bad, nums, 0 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "the iterator function's first return value must be nullable — returning nil ends the loop"
+    );
+}
+
+#[test]
+fn rejects_omitted_control_start_for_non_nullable_control() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function scan(nums: {i32}): unit
+            for i, v in iter, nums do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "the iterator's control parameter i32 does not accept nil; pass an explicit control start: `for ... in f, state, start`"
+    );
+}
+
+#[test]
+fn rejects_binding_more_variables_than_the_iterator_produces() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function scan(nums: {i32}): unit
+            for a, b, c in iter, nums, 0 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "for-in loop binds 3 variables, but the iterator produces 2 values"
+    );
+}
+
+#[test]
+fn rejects_next_over_non_iterable_value() {
+    let source = r#"
+        function scan(): unit
+            for k, v in next, 42 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "next iterates a record or an array, got f64"
+    );
+}
+
+#[test]
+fn rejects_non_nil_control_start_for_builtin_next() {
+    let source = r#"
+        function scan(): unit
+            local scores = { a = 1::i32 }
+            for k, v in next, scores, 5 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "the control start for a `next` iterator must be nil"
+    );
+}
+
+#[test]
+fn shadowed_next_iterates_as_an_ordinary_protocol_function() {
+    let source = r#"
+        function step(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function scan(nums: {i32}): i32
+            local next = step
+            local total: i32 = 0
+            for i, v in next, nums, -1 do
+                total = total + v
+            end
+            return total
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("a shadowed next should check as a protocol iterator");
+}

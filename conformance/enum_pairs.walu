@@ -1,0 +1,71 @@
+-- `pairs` over an enum type iterates its variants in declaration order,
+-- binding the variant name and the enum value. The parser expands the loop
+-- into an array for-in over the variant-name strings; the value is rebuilt
+-- from the loop index, so no runtime table backs the enum.
+
+enum SpellKind {
+    Firebolt,
+    FreezeRay,
+    RaiseCard,
+    Clone,
+}
+
+local names = ""
+local ordinals: i32 = 0
+for name, kind in pairs(SpellKind) do
+    names = names .. name .. ";"
+    ordinals = ordinals * 10 + (kind :: i32)
+end
+assert(names == "Firebolt;FreezeRay;RaiseCard;Clone;")
+assert(ordinals == 123)
+
+-- A single loop variable binds just the variant name.
+local count: i32 = 0
+for name in pairs(SpellKind) do
+    count = count + 1
+end
+assert(count == 4)
+
+-- The value variable is a genuine enum value: it matches exhaustively.
+function score(kind: SpellKind): i32
+    local value: i32 = 0
+    match kind do
+    case SpellKind.Firebolt then
+        value = 1
+    case SpellKind.FreezeRay then
+        value = 2
+    case SpellKind.RaiseCard then
+        value = 4
+    case SpellKind.Clone then
+        value = 8
+    end
+    return value
+end
+
+local total: i32 = 0
+for _, kind in pairs(SpellKind) do
+    total = total + score(kind)
+end
+assert(total == 15)
+
+-- break and continue behave like any other for-in loop.
+local visited = ""
+for name, kind in pairs(SpellKind) do
+    if name == "FreezeRay" then
+        continue
+    end
+    visited = visited .. name
+    if name == "RaiseCard" then
+        break
+    end
+end
+assert(visited == "FireboltRaiseCard")
+
+-- Nested loops over the same enum stay independent.
+local grid: i32 = 0
+for _, a in pairs(SpellKind) do
+    for _, b in pairs(SpellKind) do
+        grid = grid + (a :: i32) * (b :: i32)
+    end
+end
+assert(grid == 36)

@@ -1,0 +1,58 @@
+-- `pairs` over a record value iterates its fields in field order
+-- (alphabetical), binding the field-name string and the field value. Every
+-- field must share one type, since a single loop variable binds the values.
+-- The field names are compile-time constants, so the loop walks a string
+-- array with the values snapshot into a parallel array.
+
+local scores = { alice = 3, bob = 5, carol = 7 }
+
+local names = ""
+local total: i32 = 0
+for name, score in pairs(scores) do
+    names = names .. name .. ";"
+    total = total + (score :: i32)
+end
+assert(names == "alice;bob;carol;")
+assert(total == 15)
+
+-- A single loop variable binds just the field name, and works even when the
+-- field types differ (no value is bound).
+local mixed = { id = 7, label = "seven" }
+local keys = ""
+for key in pairs(mixed) do
+    keys = keys .. key .. ";"
+end
+assert(keys == "id;label;")
+
+-- Nominal record aliases iterate like their underlying record.
+type Point = { x: f64, y: f64 }
+local p: Point = { x = 1.5, y = 2.5 }
+local sum = 0.0
+for _, v in pairs(p) do
+    sum = sum + v
+end
+assert(sum == 4.0)
+
+-- The record expression is evaluated exactly once.
+local calls: i32 = 0
+function make(): Point
+    calls = calls + 1
+    return { x = 10.0, y = 20.0 }
+end
+local acc = 0.0
+for k, v in pairs(make()) do
+    acc = acc + v
+end
+assert(acc == 30.0)
+assert(calls == 1)
+
+-- The value snapshot is taken before the loop body runs: mutating the record
+-- inside the loop does not change the values the loop observes.
+local cell = { first = 1, second = 2 }
+local observed: i32 = 0
+for _, v in pairs(cell) do
+    observed = observed * 10 + (v :: i32)
+    cell.second = 99
+end
+assert(observed == 12)
+assert(cell.second == 99)

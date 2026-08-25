@@ -521,8 +521,12 @@ fn localize_stmt_types(stmts: &mut [Stmt], file_path: &str, opaque: &ModuleOpaqu
                 }
                 localize_stmt_types(body, file_path, opaque);
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                localize_expr_types(iterator, file_path, opaque);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    localize_expr_types(iterator, file_path, opaque);
+                }
                 localize_stmt_types(body, file_path, opaque);
             }
             Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
@@ -988,29 +992,28 @@ fn annotate_inferred_stmt_locals(
             }
             Stmt::ForIn {
                 names,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                annotate_inferred_expr_locals(iterator, vars, fn_signatures, active_type_params)?;
+                for iterator in iterators.iter_mut() {
+                    annotate_inferred_expr_locals(
+                        iterator,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                    )?;
+                }
                 let mut loop_scope = vars.clone();
-                if let Ok(Type::Array(element_ty)) =
-                    infer_expr(iterator, vars, fn_signatures, active_type_params, None)
-                {
-                    if names.len() == 1 {
-                        loop_scope.insert(
-                            names[0].clone(),
-                            binding_for(*element_ty, Rebindability::Const),
-                        );
-                    } else if names.len() == 2 {
-                        loop_scope.insert(
-                            names[0].clone(),
-                            binding_for(Type::Numeric(NumericType::I32), Rebindability::Const),
-                        );
-                        loop_scope.insert(
-                            names[1].clone(),
-                            binding_for(*element_ty, Rebindability::Const),
-                        );
+                if let Ok(loop_types) = statements::for_in_loop_value_types(
+                    iterators,
+                    names.len(),
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    for (name, ty) in names.iter().zip(loop_types) {
+                        loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
                     }
                 }
                 annotate_inferred_stmt_locals(
@@ -2363,14 +2366,18 @@ fn resolve_stmt_type_refs(
             }
             Ok(())
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            resolve_expr_type_refs(
-                iterator,
-                raw_opaque,
-                generic,
-                opaque_cache,
-                active_type_params,
-            )?;
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            for iterator in iterators.iter_mut() {
+                resolve_expr_type_refs(
+                    iterator,
+                    raw_opaque,
+                    generic,
+                    opaque_cache,
+                    active_type_params,
+                )?;
+            }
             for stmt in body {
                 resolve_stmt_type_refs(
                     stmt,
@@ -3021,8 +3028,12 @@ fn resolve_stmt_implicit_self(
             }
             Ok(())
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            resolve_expr_implicit_self(iterator, vars, fn_signatures, active_type_params)?;
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            for iterator in iterators.iter_mut() {
+                resolve_expr_implicit_self(iterator, vars, fn_signatures, active_type_params)?;
+            }
             for stmt in body {
                 resolve_stmt_implicit_self(stmt, vars, fn_signatures, active_type_params)?;
             }
@@ -3460,29 +3471,23 @@ fn annotate_stmt_resolved_members(
         }
         Stmt::ForIn {
             names,
-            iterator,
+            iterators,
             body,
             ..
         } => {
-            annotate_expr_resolved_members(iterator, vars, fn_signatures, active_type_params)?;
+            for iterator in iterators.iter_mut() {
+                annotate_expr_resolved_members(iterator, vars, fn_signatures, active_type_params)?;
+            }
             let mut loop_scope = vars.clone();
-            if let Ok(Type::Array(element_ty)) =
-                infer_expr(iterator, vars, fn_signatures, active_type_params, None)
-            {
-                if names.len() == 1 {
-                    loop_scope.insert(
-                        names[0].clone(),
-                        binding_for(*element_ty, Rebindability::Const),
-                    );
-                } else if names.len() == 2 {
-                    loop_scope.insert(
-                        names[0].clone(),
-                        binding_for(Type::Numeric(NumericType::I32), Rebindability::Const),
-                    );
-                    loop_scope.insert(
-                        names[1].clone(),
-                        binding_for(*element_ty, Rebindability::Const),
-                    );
+            if let Ok(loop_types) = statements::for_in_loop_value_types(
+                iterators,
+                names.len(),
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                for (name, ty) in names.iter().zip(loop_types) {
+                    loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
                 }
             }
             annotate_stmts_resolved_members(
@@ -3799,8 +3804,12 @@ fn fill_gsub_annotations_in_stmts(stmts: &mut [Stmt]) {
                 }
                 fill_gsub_annotations_in_stmts(body);
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                fill_gsub_annotations_in_expr(iterator);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    fill_gsub_annotations_in_expr(iterator);
+                }
                 fill_gsub_annotations_in_stmts(body);
             }
             Stmt::ReturnMulti(values)

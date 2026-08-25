@@ -1500,11 +1500,62 @@ fn exported_type_names(
 /// match patterns retain a dotted enum type plus symbolic arm names until the
 /// module graph is available here; this pass validates them and fills the
 /// ordinals consumed by HIR/IR.
+/// Desugars `for ... in pairs(mod.Enum)` over an imported enum into the same
+/// variant-name array loop the parser builds for a local enum. Returns the
+/// replacement statement, or `None` when the iterator has a different shape.
+fn imported_enum_pairs_for_in(
+    stmt: &mut Stmt,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) -> Result<Option<Stmt>, Diagnostic> {
+    let Stmt::ForIn {
+        names,
+        iterators,
+        body,
+        ..
+    } = stmt
+    else {
+        return Ok(None);
+    };
+    let [iterator] = iterators.as_slice() else {
+        return Ok(None);
+    };
+    let Some(Expr::Field {
+        base,
+        name: enum_name,
+        ..
+    }) = waluau_ast::pairs_call_arg(iterator)
+    else {
+        return Ok(None);
+    };
+    let Expr::Name(namespace, _, _) = &**base else {
+        return Ok(None);
+    };
+    let Some(exported) = type_namespaces
+        .get(namespace)
+        .and_then(|types| types.get(enum_name))
+    else {
+        return Ok(None);
+    };
+    let Some(variants) = exported.enum_variants.clone() else {
+        return Ok(None);
+    };
+    let display_name = format!("{namespace}.{enum_name}");
+    let canonical_name = exported.canonical_name.clone();
+    let span = iterator.span();
+    let names = std::mem::take(names);
+    let body = std::mem::take(body);
+    waluau_ast::enum_pairs_for_in(&display_name, &canonical_name, &variants, names, body, span)
+        .map(Some)
+}
+
 fn resolve_imported_enum_matches(
     stmts: &mut [Stmt],
     type_namespaces: &HashMap<String, TypeNamespace>,
 ) -> Result<(), Diagnostic> {
     for stmt in stmts {
+        if let Some(replacement) = imported_enum_pairs_for_in(stmt, type_namespaces)? {
+            *stmt = replacement;
+        }
         match stmt {
             Stmt::Match {
                 value,
@@ -1618,8 +1669,12 @@ fn resolve_imported_enum_matches(
                 }
                 resolve_imported_enum_matches(body, type_namespaces)?;
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                resolve_imported_enum_expr(iterator, type_namespaces)?;
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    resolve_imported_enum_expr(iterator, type_namespaces)?;
+                }
                 resolve_imported_enum_matches(body, type_namespaces)?;
             }
             Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
@@ -1997,8 +2052,12 @@ impl Rewriter<'_> {
                     self.rewrite_stmt_types(stmt);
                 }
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                self.rewrite_expr_types(iterator);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    self.rewrite_expr_types(iterator);
+                }
                 for stmt in body {
                     self.rewrite_stmt_types(stmt);
                 }
@@ -2339,11 +2398,13 @@ impl Rewriter<'_> {
             }
             Stmt::ForIn {
                 names,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                self.rewrite_expr(iterator, bound);
+                for iterator in iterators.iter_mut() {
+                    self.rewrite_expr(iterator, bound);
+                }
                 let mut inner = bound.clone();
                 for name in names {
                     inner.insert(name.clone());
@@ -2617,8 +2678,12 @@ fn strip_unused_namespace_lets_in_stmt(
             }
             strip_unused_namespace_lets(body, namespaces);
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            strip_unused_namespace_lets_in_expr(iterator, namespaces);
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            for iterator in iterators {
+                strip_unused_namespace_lets_in_expr(iterator, namespaces);
+            }
             strip_unused_namespace_lets(body, namespaces);
         }
         Stmt::ReturnMulti(values)
@@ -2845,11 +2910,13 @@ fn rename_stmt(
         }
         Stmt::ForIn {
             names,
-            iterator,
+            iterators,
             body,
             ..
         } => {
-            rename_expr(iterator, renames, available, shadowed);
+            for iterator in iterators.iter_mut() {
+                rename_expr(iterator, renames, available, shadowed);
+            }
             let mut inner_available = available.clone();
             let mut inner_shadowed = shadowed.clone();
             for name in names {
@@ -3038,8 +3105,13 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                     .is_some_and(|step_expr| expr_mentions_name(name, step_expr))
                 || stmt_mentions_name(name, body)
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            expr_mentions_name(name, iterator) || stmt_mentions_name(name, body)
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            iterators
+                .iter()
+                .any(|iterator| expr_mentions_name(name, iterator))
+                || stmt_mentions_name(name, body)
         }
         Stmt::ReturnMulti(values)
         | Stmt::LetMulti { values, .. }
@@ -3161,8 +3233,12 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                 }
                 collect_block(body, out);
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                collect_expr(iterator, out);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    collect_expr(iterator, out);
+                }
                 collect_block(body, out);
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => collect_expr(expr, out),

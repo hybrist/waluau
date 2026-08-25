@@ -1117,11 +1117,63 @@ fn exported_type_names(
     types
 }
 
+/// Desugars `for ... in pairs(mod.Enum)` over an imported enum into the same
+/// variant-name array loop the parser builds for a local enum. Returns the
+/// replacement statement, or `None` when the iterator has a different shape.
+fn imported_enum_pairs_for_in(
+    stmt: &mut Stmt,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) -> Result<Option<Stmt>, String> {
+    let Stmt::ForIn {
+        names,
+        iterators,
+        body,
+        ..
+    } = stmt
+    else {
+        return Ok(None);
+    };
+    let [iterator] = iterators.as_slice() else {
+        return Ok(None);
+    };
+    let Some(Expr::Field {
+        base,
+        name: enum_name,
+        ..
+    }) = waluau_ast::pairs_call_arg(iterator)
+    else {
+        return Ok(None);
+    };
+    let Expr::Name(namespace, _, _) = &**base else {
+        return Ok(None);
+    };
+    let Some(exported) = type_namespaces
+        .get(namespace)
+        .and_then(|types| types.get(enum_name))
+    else {
+        return Ok(None);
+    };
+    let Some(variants) = exported.enum_variants.clone() else {
+        return Ok(None);
+    };
+    let display_name = format!("{namespace}.{enum_name}");
+    let canonical_name = exported.canonical_name.clone();
+    let span = iterator.span();
+    let names = std::mem::take(names);
+    let body = std::mem::take(body);
+    waluau_ast::enum_pairs_for_in(&display_name, &canonical_name, &variants, names, body, span)
+        .map(Some)
+        .map_err(|diagnostic| diagnostic.to_string())
+}
+
 fn resolve_imported_enum_matches(
     stmts: &mut [Stmt],
     type_namespaces: &HashMap<String, TypeNamespace>,
 ) -> Result<(), String> {
     for stmt in stmts {
+        if let Some(replacement) = imported_enum_pairs_for_in(stmt, type_namespaces)? {
+            *stmt = replacement;
+        }
         match stmt {
             Stmt::Match {
                 value,
@@ -1230,8 +1282,12 @@ fn resolve_imported_enum_matches(
                 }
                 resolve_imported_enum_matches(body, type_namespaces)?;
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                resolve_imported_enum_expr(iterator, type_namespaces)?;
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    resolve_imported_enum_expr(iterator, type_namespaces)?;
+                }
                 resolve_imported_enum_matches(body, type_namespaces)?;
             }
             Stmt::ReturnMulti(values)
@@ -1756,8 +1812,12 @@ impl Rewriter<'_> {
                     self.rewrite_stmt_types(stmt);
                 }
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                self.rewrite_expr_types(iterator);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    self.rewrite_expr_types(iterator);
+                }
                 for stmt in body {
                     self.rewrite_stmt_types(stmt);
                 }
@@ -2096,11 +2156,13 @@ impl Rewriter<'_> {
             }
             Stmt::ForIn {
                 names,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                self.rewrite_expr(iterator, bound);
+                for iterator in iterators.iter_mut() {
+                    self.rewrite_expr(iterator, bound);
+                }
                 let mut inner = bound.clone();
                 for name in names {
                     inner.insert(name.clone());
@@ -2375,8 +2437,12 @@ fn strip_unused_namespace_lets_in_stmt(
             }
             strip_unused_namespace_lets(body, namespaces);
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            strip_unused_namespace_lets_in_expr(iterator, namespaces);
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            for iterator in iterators {
+                strip_unused_namespace_lets_in_expr(iterator, namespaces);
+            }
             strip_unused_namespace_lets(body, namespaces);
         }
         Stmt::ReturnMulti(values)
@@ -2603,11 +2669,13 @@ fn rename_stmt(
         }
         Stmt::ForIn {
             names,
-            iterator,
+            iterators,
             body,
             ..
         } => {
-            rename_expr(iterator, renames, available, shadowed);
+            for iterator in iterators.iter_mut() {
+                rename_expr(iterator, renames, available, shadowed);
+            }
             let mut inner_available = available.clone();
             let mut inner_shadowed = shadowed.clone();
             for name in names {
@@ -2796,8 +2864,13 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                     .is_some_and(|step_expr| expr_mentions_name(name, step_expr))
                 || stmt_mentions_name(name, body)
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            expr_mentions_name(name, iterator) || stmt_mentions_name(name, body)
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            iterators
+                .iter()
+                .any(|iterator| expr_mentions_name(name, iterator))
+                || stmt_mentions_name(name, body)
         }
         Stmt::ReturnMulti(values)
         | Stmt::LetMulti { values, .. }
@@ -2919,8 +2992,12 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                 }
                 collect_block(body, out);
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                collect_expr(iterator, out);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    collect_expr(iterator, out);
+                }
                 collect_block(body, out);
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => collect_expr(expr, out),
@@ -3023,6 +3100,80 @@ mod tests {
                 .filter(|declaration| declaration.name == "Promise")
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn imported_enum_pairs_desugars_to_variant_name_array_loop() {
+        let files = std::collections::HashMap::from([
+            (
+                "spells.walu".to_string(),
+                r#"
+                    export enum SpellKind { Firebolt, FreezeRay }
+
+                    function noop(): i32
+                        return 0
+                    end
+
+                    return { noop = noop }
+                "#
+                .to_string(),
+            ),
+            (
+                "main.walu".to_string(),
+                r#"
+                    local spells = require("./spells")
+
+                    local names = ""
+                    for name, kind in pairs(spells.SpellKind) do
+                        names = names .. name
+                    end
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let program = link_programs(&files, "main.walu").expect("link should succeed");
+        let desugared = program
+            .functions
+            .iter()
+            .flat_map(|function| &function.body)
+            .chain(&program.top_level)
+            .find_map(|stmt| match stmt {
+                Stmt::ForIn {
+                    names,
+                    iterators,
+                    body,
+                    ..
+                } => Some((names, iterators, body)),
+                _ => None,
+            })
+            .expect("the pairs loop should survive linking as a for-in");
+        let (names, iterators, body) = desugared;
+        let [iterator] = iterators.as_slice() else {
+            panic!("the enum pairs desugar produces a single iterator");
+        };
+        assert_eq!(
+            names,
+            &vec![
+                waluau_ast::ENUM_PAIRS_ORDINAL.to_string(),
+                "name".to_string()
+            ]
+        );
+        let Expr::ArrayLiteral { elements, .. } = iterator else {
+            panic!("imported enum pairs should iterate a variant-name array, got {iterator:?}");
+        };
+        let variant_names: Vec<_> = elements
+            .iter()
+            .map(|element| match element {
+                Expr::String(value, _) => value.as_str(),
+                other => panic!("variant array should hold strings, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(variant_names, ["Firebolt", "FreezeRay"]);
+        assert!(
+            matches!(body.first(), Some(Stmt::Let { name, .. }) if name == "kind"),
+            "the loop body should open with the enum-value binding"
         );
     }
 

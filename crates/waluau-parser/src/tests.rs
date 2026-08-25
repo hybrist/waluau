@@ -3016,3 +3016,168 @@ fn rejects_self_and_parameter_names_in_type_grouping() {
         "unexpected diagnostic: {error}"
     );
 }
+
+#[test]
+fn desugars_enum_pairs_loop_into_variant_name_array() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function catalog(): unit
+            for name, kind in pairs(SpellKind) do
+                local x = name
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::ForIn {
+        names,
+        iterators,
+        body,
+        ..
+    } = &program.functions[0].body[0]
+    else {
+        panic!("pairs over an enum should parse as a for-in loop");
+    };
+    let [iterator] = iterators.as_slice() else {
+        panic!("the enum pairs desugar produces a single iterator");
+    };
+    assert_eq!(
+        names,
+        &vec![
+            waluau_ast::ENUM_PAIRS_ORDINAL.to_string(),
+            "name".to_string()
+        ]
+    );
+    let Expr::ArrayLiteral { elements, .. } = iterator else {
+        panic!("the iterator should be the variant-name array, got {iterator:?}");
+    };
+    let variants: Vec<_> = elements
+        .iter()
+        .map(|element| match element {
+            Expr::String(value, _) => value.as_str(),
+            other => panic!("variant array should hold strings, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(variants, ["Firebolt", "FreezeRay"]);
+    let Some(Stmt::Let {
+        name,
+        rebindability,
+        value,
+        ..
+    }) = body.first()
+    else {
+        panic!("the loop body should open with the enum-value binding");
+    };
+    assert_eq!(name, "kind");
+    assert_eq!(*rebindability, Rebindability::Const);
+    let Expr::Cast { expr, ty, .. } = value else {
+        panic!("the enum value should be a cast of the loop ordinal, got {value:?}");
+    };
+    assert!(
+        matches!(&**expr, Expr::Name(ordinal, _, _) if ordinal == waluau_ast::ENUM_PAIRS_ORDINAL)
+    );
+    assert!(matches!(ty, Type::Named { name, .. } if name == "SpellKind"));
+}
+
+#[test]
+fn desugars_name_only_enum_pairs_loop() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function catalog(): unit
+            for name in pairs(SpellKind) do
+                local x = name
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::ForIn {
+        names, iterators, ..
+    } = &program.functions[0].body[0]
+    else {
+        panic!("pairs over an enum should parse as a for-in loop");
+    };
+    assert_eq!(names, &vec!["name".to_string()]);
+    assert!(matches!(iterators.as_slice(), [Expr::ArrayLiteral { .. }]));
+}
+
+#[test]
+fn rejects_enum_pairs_loop_with_three_variables() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function catalog(): unit
+            for a, b, c in pairs(SpellKind) do
+            end
+        end
+    "#;
+
+    let error = parse(source).expect_err("three loop variables should be rejected");
+    assert_eq!(
+        error.to_string(),
+        "pairs over enum 'SpellKind' yields a variant name and value; expected 1 or 2 loop variables, got 3"
+    );
+}
+
+#[test]
+fn pairs_over_non_enum_name_stays_a_plain_call() {
+    let source = r#"
+        function scan(): unit
+            local scores = { alice = 3::i32 }
+            for name, score in pairs(scores) do
+                local x = name
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::ForIn { iterators, .. } = &program.functions[0].body[1] else {
+        panic!("the loop should parse as a for-in");
+    };
+    assert!(
+        matches!(iterators.as_slice(), [Expr::Call { .. }]),
+        "a non-enum pairs iterator is left for the type checker, got {iterators:?}"
+    );
+}
+
+#[test]
+fn parses_iterator_expression_list() {
+    let source = r#"
+        function scan(): unit
+            for k, v in iter, state, -1 do
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::ForIn {
+        names, iterators, ..
+    } = &program.functions[0].body[0]
+    else {
+        panic!("expected a for-in loop");
+    };
+    assert_eq!(names, &vec!["k".to_string(), "v".to_string()]);
+    assert_eq!(iterators.len(), 3);
+    assert!(matches!(&iterators[0], Expr::Name(name, _, _) if name == "iter"));
+    assert!(matches!(&iterators[1], Expr::Name(name, _, _) if name == "state"));
+}
+
+#[test]
+fn rejects_more_than_three_iterator_expressions() {
+    let source = r#"
+        function scan(): unit
+            for k in a, b, c, d do
+            end
+        end
+    "#;
+
+    let error = parse(source).expect_err("four iterator expressions should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("for-in takes at most 3 iterator expressions"),
+        "{error}"
+    );
+}
