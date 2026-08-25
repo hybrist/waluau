@@ -33,8 +33,8 @@ export type State = {
 const SOUND_PATH: string = "assets/card-flip.wav"
 const FLIP_SOUND_VOLUME: f64 = 0.62
 
-function new(): State
-    local effect_set: effect_shaders.State = effect_shaders.new()
+function State.new(): State
+    local effect_set: effect_shaders.State = effect_shaders.State.new()
     return {
         bundle = nil,
         texture = nil,
@@ -52,41 +52,40 @@ function new(): State
     }
 end
 
-function append_warning(state: State, warning: string): unit
-    if #state.warnings > 0 then state.warnings ..= "; " end
-    state.warnings ..= warning
+function State:append_warning(warning: string): unit
+    if #self.warnings > 0 then self.warnings ..= "; " end
+    self.warnings ..= warning
 end
 
-function fatal_audio(state: State, code: string, message: string): unit
-    if #state.fatal_audio_code > 0 then return end
-    state.fatal_audio_code = code
-    state.fatal_audio_message = message
+function State:fatal_audio(code: string, message: string): unit
+    if #self.fatal_audio_code > 0 then return end
+    self.fatal_audio_code = code
+    self.fatal_audio_message = message
 end
 
-function load_async(state: State): i32
+function State:load_async(): i32
     local result: assets.LoadResult = assets.load()
-    state.bundle = result.bundle
-    state.sound_finished = true
+    self.bundle = result.bundle
+    self.sound_finished = true
     for _, error in result.errors do
-        if error.path == SOUND_PATH then fatal_audio(state, error.code, error.message)
-        else append_warning(state, error.code .. ": " .. error.message) end
+        if error.path == SOUND_PATH then self:fatal_audio(error.code, error.message)
+        else self:append_warning(error.code .. ": " .. error.message) end
     end
     return 0
 end
 
-function prepare(state: State, graphics: engine.Graphics): unit
-    state.graphics = graphics
-    effect_shaders.refresh(state.effect_set, graphics)
-    local shader_diagnostics: effect_shaders.Diagnostics = effect_shaders.diagnostics(
-        state.effect_set)
-    state.fatal_shader_error = shader_diagnostics.fatal_error
-    if shader_diagnostics.warnings ~= state.shader_warnings then
-        state.shader_warnings = shader_diagnostics.warnings
-        if #state.shader_warnings > 0 then
-            print("ante: optional shader warning: " .. state.shader_warnings)
+function State:prepare(graphics: engine.Graphics): unit
+    self.graphics = graphics
+    self.effect_set:refresh(graphics)
+    local shader_diagnostics: effect_shaders.Diagnostics = self.effect_set:diagnostics()
+    self.fatal_shader_error = shader_diagnostics.fatal_error
+    if shader_diagnostics.warnings ~= self.shader_warnings then
+        self.shader_warnings = shader_diagnostics.warnings
+        if #self.shader_warnings > 0 then
+            print("ante: optional shader warning: " .. self.shader_warnings)
         end
     end
-    local maybe_bundle: assets.Bundle? = state.bundle
+    local maybe_bundle: assets.Bundle? = self.bundle
     if maybe_bundle ~= nil then
         local bundle: assets.Bundle = maybe_bundle::assets.Bundle
         local maybe_image: resources.ImageResource? = bundle.card_back
@@ -95,8 +94,8 @@ function prepare(state: State, graphics: engine.Graphics): unit
             local result: graphics_module.TextureResult = graphics:texture_from_image(source)
             resources.release_image(source)
             bundle.card_back = nil
-            if result.ok then state.texture = result.texture
-            else append_warning(state, result.error.code .. ": " .. result.error.message) end
+            if result.ok then self.texture = result.texture
+            else self:append_warning(result.error.code .. ": " .. result.error.message) end
         end
         local maybe_noise: resources.ImageResource? = bundle.ice_noise
         if maybe_noise ~= nil then
@@ -104,8 +103,8 @@ function prepare(state: State, graphics: engine.Graphics): unit
             local result: graphics_module.TextureResult = graphics:texture_from_image(source)
             resources.release_image(source)
             bundle.ice_noise = nil
-            if result.ok then state.effects.noise_texture = result.texture
-            else append_warning(state, result.error.code .. ": " .. result.error.message) end
+            if result.ok then self.effects.noise_texture = result.texture
+            else self:append_warning(result.error.code .. ": " .. result.error.message) end
         end
         local maybe_font_source: resources.FontResource? = bundle.vault_font
         if maybe_font_source ~= nil then
@@ -113,12 +112,12 @@ function prepare(state: State, graphics: engine.Graphics): unit
             local result: graphics_module.FontResult = graphics:font_from_typed_resource(source)
             resources.release_font(source)
             bundle.vault_font = nil
-            if result.ok then state.font = result.font
-            else append_warning(state, result.error.code .. ": " .. result.error.message) end
+            if result.ok then self.font = result.font
+            else self:append_warning(result.error.code .. ": " .. result.error.message) end
         end
     end
 
-    local maybe_font: graphics_module.Font? = state.font
+    local maybe_font: graphics_module.Font? = self.font
     local custom_font_ready: bool = false
     if maybe_font ~= nil then
         custom_font_ready = graphics:set_font_resource(maybe_font::graphics_module.Font, 14.0)
@@ -126,26 +125,26 @@ function prepare(state: State, graphics: engine.Graphics): unit
     if not custom_font_ready then graphics:use_builtin_font() end
 end
 
-function unlock_audio(state: State): bool
-    if state.audio_unlocked then return true end
+function State:unlock_audio(): bool
+    if self.audio_unlocked then return true end
     if not audio.unlock() then
-        fatal_audio(state, "unavailable", "the audio host could not unlock its playback device")
+        self:fatal_audio("unavailable", "the audio host could not unlock its playback device")
         return false
     end
-    state.audio_unlocked = true
+    self.audio_unlocked = true
     return true
 end
 
-function play_flip(state: State): unit
-    if #state.fatal_audio_code > 0 then return end
-    local maybe_bundle: assets.Bundle? = state.bundle
+function State:play_flip(): unit
+    if #self.fatal_audio_code > 0 then return end
+    local maybe_bundle: assets.Bundle? = self.bundle
     if maybe_bundle == nil then
-        fatal_audio(state, "invalid_handle", "decoded card flip sound has no resource handle")
+        self:fatal_audio("invalid_handle", "decoded card flip sound has no resource handle")
         return
     end
     local maybe_sound: resources.SoundResource? = (maybe_bundle::assets.Bundle).card_flip
     if maybe_sound == nil then
-        fatal_audio(state, "invalid_handle", "decoded card flip sound has no resource handle")
+        self:fatal_audio("invalid_handle", "decoded card flip sound has no resource handle")
         return
     end
     if not audio.play_sound(
@@ -154,70 +153,58 @@ function play_flip(state: State): unit
     end
 end
 
-function can_update(state: State): bool
-    return #state.fatal_audio_code == 0 and state.sound_finished and state.audio_unlocked
+function State:can_update(): bool
+    return #self.fatal_audio_code == 0 and self.sound_finished and self.audio_unlocked
 end
 
 -- The surface every entity of the game draws on: the live graphics, the effect
 -- programs, and the packaged card back once it has arrived. This module owns
 -- all three, so it is where the three become one value.
-function surface(state: State, graphics: engine.Graphics): entity.Surface
+function State:surface(graphics: engine.Graphics): entity.Surface
     return {
         graphics = graphics,
-        effects = state.effects,
-        card_back = state.texture,
+        effects = self.effects,
+        card_back = self.texture,
     }
 end
 
-function draw_failure(state: State, graphics: engine.Graphics): bool
-    local board: entity.Surface = surface(state, graphics)
+function State:draw_failure(graphics: engine.Graphics): bool
+    local board: entity.Surface = self:surface(graphics)
     local viewport: layout.State = layout.current()
-    if #state.fatal_shader_error > 0 then
-        render.draw_shader_error(board, viewport, state.fatal_shader_error)
+    if #self.fatal_shader_error > 0 then
+        render.draw_shader_error(board, viewport, self.fatal_shader_error)
         return true
     end
-    if #state.fatal_audio_code > 0 then
+    if #self.fatal_audio_code > 0 then
         render.draw_audio_error(
-            board, viewport, SOUND_PATH, state.fatal_audio_code,
-            state.fatal_audio_message)
+            board, viewport, SOUND_PATH, self.fatal_audio_code,
+            self.fatal_audio_message)
         return true
     end
     return false
 end
 
-function dispose(state: State): unit
-    local maybe_graphics: engine.Graphics? = state.graphics
+function State:dispose(): unit
+    local maybe_graphics: engine.Graphics? = self.graphics
     if maybe_graphics ~= nil then
         local graphics: engine.Graphics = maybe_graphics::engine.Graphics
-        effect_shaders.release(
-            state.effect_set, graphics)
-        local maybe_texture: graphics_module.Texture? = state.texture
+        self.effect_set:release(graphics)
+        local maybe_texture: graphics_module.Texture? = self.texture
         if maybe_texture ~= nil then
             graphics:release_texture(maybe_texture::graphics_module.Texture)
-            state.texture = nil
+            self.texture = nil
         end
-        local maybe_font: graphics_module.Font? = state.font
+        local maybe_font: graphics_module.Font? = self.font
         if maybe_font ~= nil then
             graphics:release_font(maybe_font::graphics_module.Font)
-            state.font = nil
+            self.font = nil
         end
-        state.graphics = nil
+        self.graphics = nil
     end
-    local maybe_bundle: assets.Bundle? = state.bundle
+    local maybe_bundle: assets.Bundle? = self.bundle
     if maybe_bundle ~= nil then
         resources.release_owner((maybe_bundle::assets.Bundle).owner)
-        state.bundle = nil
+        self.bundle = nil
     end
 end
 
-return {
-    new = new,
-    load_async = load_async,
-    prepare = prepare,
-    unlock_audio = unlock_audio,
-    play_flip = play_flip,
-    can_update = can_update,
-    surface = surface,
-    draw_failure = draw_failure,
-    dispose = dispose,
-}

@@ -34,7 +34,7 @@ type ActiveScreen = "menu" | "game"
 type HotSnapshot = { schema: string, screen: ActiveScreen, sections: {string} }
 
 function play_flip_cues(assets: presentation_resources.State, count: i32): unit
-    for _ = 1, count do presentation_resources.play_flip(assets) end
+    for _ = 1, count do assets:play_flip() end
 end
 
 function install_ante_magic(): unit
@@ -42,9 +42,9 @@ function install_ante_magic(): unit
     local menu_state: menu.State = menu.State.new()
     local duel: game_screen.State = game_screen.State.new()
     local city: city_map.State = city_map.State.new(math.random(2147483646))
-    local assets: presentation_resources.State = presentation_resources.new()
+    local assets: presentation_resources.State = presentation_resources.State.new()
     local function load_assets_async(): i32
-        return presentation_resources.load_async(assets)
+        return assets:load_async()
     end
 
     local function load(): unit
@@ -59,7 +59,7 @@ function install_ante_magic(): unit
     -- and the boss rush, where every duel is; `spell` is the starting spell
     -- picked on the menu's second list and carried for the whole run.
     local function begin_run(rush: bool, spell: spells.SpellKind): unit
-        if not presentation_resources.unlock_audio(assets) then return end
+        if not assets:unlock_audio() then return end
         duel:reset(city, rush, spell)
         screen = "game"
     end
@@ -78,7 +78,7 @@ function install_ante_magic(): unit
             menu_state:update(city, dt)
         else
             duel:steer_city(city, dt)
-            if presentation_resources.can_update(assets) then
+            if assets:can_update() then
                 play_flip_cues(assets, duel:update(city, dt))
             end
         end
@@ -99,10 +99,10 @@ function install_ante_magic(): unit
         graphics:clear("#09090b")
         graphics:push()
         graphics:scale(canvas.scale, canvas.scale)
-        presentation_resources.prepare(assets, graphics)
-        if not presentation_resources.draw_failure(assets, graphics) then
+        assets:prepare(graphics)
+        if not assets:draw_failure(graphics) then
             if city.cover < 1.0 then
-                duel:draw_vault(presentation_resources.surface(assets, graphics))
+                duel:draw_vault(assets:surface(graphics))
             end
             if city:visible() then
                 -- The menu's map is a drifting view of a city nobody is running,
@@ -230,7 +230,7 @@ function install_ante_magic(): unit
                 (running::engine.Session).suspend()
                 session = nil
             end
-            presentation_resources.dispose(assets)
+            assets:dispose()
         end,
     })
 end

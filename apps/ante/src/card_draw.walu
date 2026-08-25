@@ -250,7 +250,7 @@ end
 -- what the card does once there is nothing left to do to it.
 function pose_at(draw: Draw, clock: f64): card_warp.Pose
     local beat: Beat = beat_at(clock)
-    local pose: card_warp.Pose = card_warp.rest_pose(
+    local pose: card_warp.Pose = card_warp.Pose.rest(
         draw.width, draw.height, draw.to_x, draw.to_y)
     pose.grab_u = GRAB_U
     pose.grab_v = GRAB_V
@@ -323,7 +323,7 @@ end
 -- pose knows how far it has turned; this is only about which texture goes on
 -- the sheet.
 function shows_face(draw: Draw, clock: f64): bool
-    return not card_warp.facing_front(pose_at(draw, clock))
+    return not pose_at(draw, clock):facing_front()
 end
 
 -- How far back the ghosts of the flying card are, in seconds. Two frames and

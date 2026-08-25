@@ -50,8 +50,8 @@ const COLUMNS: i32 = 10
 const ROWS: i32 = 14
 
 function seen_at(clock: f64): card_warp.Mesh
-    local mesh: card_warp.Mesh = card_warp.new_mesh(COLUMNS, ROWS)
-    card_warp.build(mesh, card_draw.pose_at(drawing(), clock))
+    local mesh: card_warp.Mesh = card_warp.Mesh.new(COLUMNS, ROWS)
+    mesh:build(card_draw.pose_at(drawing(), clock))
     return mesh
 end
 

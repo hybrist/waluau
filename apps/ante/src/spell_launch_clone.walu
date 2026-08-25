@@ -8,11 +8,11 @@ type EffectShaders = effect_shaders.EffectShaders
 
 function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
     if cast.progress < 1.0 then
-        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        local head: spell_cast.Point = cast:at(cast.progress)
         for spore = 0::i32, 7::i32 do
             local t: f64 = cast.progress - (spore::f64) * 0.045
             if t > 0.0 then
-                local at: spell_cast.Point = spell_cast.at(cast, t)
+                local at: spell_cast.Point = cast:at(t)
                 graphics:set_color("#86efac99")
                 graphics:fill_circle(
                     at.x + math.sin((spore::f64) * 2.3) * 7.0,

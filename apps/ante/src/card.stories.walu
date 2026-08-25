@@ -33,7 +33,7 @@ const STAGE_SCALE = 1.2
 -- The card back, the display font, and the color shaders every story here
 -- draws with. One set is loaded for the whole file: Storybook moves between
 -- these stories constantly, and the assets do not change between them.
-local book = entity_story.new()
+local book = entity_story.Book.new()
 -- Loading is asynchronous and happens once, however many times a story is
 -- mounted. The clock is a story's own and restarts with it.
 local shared = { clock = 0.0 }
@@ -189,7 +189,7 @@ local sheet: {
     back: graphics_module.RenderTarget?,
     face: graphics_module.RenderTarget?,
     captured: bool
-} = { mesh = card_warp.new_mesh(DRAW_COLUMNS, DRAW_ROWS), back = nil, face = nil, captured = false }
+} = { mesh = card_warp.Mesh.new(DRAW_COLUMNS, DRAW_ROWS), back = nil, face = nil, captured = false }
 
 local function drawn_card(): game.Card
     return card(DRAWN_RANK, DRAWN_SUIT)
@@ -228,7 +228,7 @@ local function draw_pose(
     face_up: bool,
     alpha: f64
 ): unit
-    card_warp.build(sheet.mesh, pose)
+    sheet.mesh:build(pose)
     local target = sheet.back
     if face_up then
         target = sheet.face
@@ -435,9 +435,7 @@ end
 -- A card story is one card entity on a small flex stage. The stage does not
 -- know a card's dimensions; it reads them from the entity on every frame.
 local function card_scene(node: () -> entity.Node): storybook.Scene
-    return entity_story.scene(
-        book,
-        {
+    return book:scene({
             node = node,
             load = load,
             update = tick,
@@ -464,9 +462,7 @@ storybook.publish(
         storybook.story("Turning over", card_scene(turning)),
         storybook.story(
             "Every color",
-            entity_story.scene(
-                book,
-                {
+            book:scene({
                     node = colors,
                     load = load,
                     update = tick,
@@ -479,9 +475,7 @@ storybook.publish(
         ),
         storybook.story(
             "Drawn from the deck",
-            entity_story.scene(
-                book,
-                {
+            book:scene({
                     node = drawing_cards,
                     load = load,
                     update = tick,

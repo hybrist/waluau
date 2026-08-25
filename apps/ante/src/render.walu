@@ -587,7 +587,7 @@ function draw_throw_card(
         return
     end
     local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    card_warp.build(sheet, pose)
+    sheet:build(pose)
     -- Seen from behind, a card's face reads the wrong way round unless its
     -- source region is taken right to left.
     local source_x: f64 = 0.0

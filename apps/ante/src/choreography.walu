@@ -110,7 +110,7 @@ function State.new(): State
     return {
         fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 },
         session = new_session(),
-        sheet = card_warp.new_mesh(THROW_COLUMNS, THROW_ROWS),
+        sheet = card_warp.Mesh.new(THROW_COLUMNS, THROW_ROWS),
     }
 end
 

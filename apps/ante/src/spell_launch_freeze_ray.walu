@@ -9,7 +9,7 @@ type EffectShaders = effect_shaders.EffectShaders
 
 function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
     if cast.progress < 1.0 then
-        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        local head: spell_cast.Point = cast:at(cast.progress)
         graphics:set_color("#0c4a6e88")
         graphics:set_line_width(8.0)
         graphics:line(cast.origin.x, cast.origin.y, head.x, head.y)
@@ -19,7 +19,7 @@ function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast)
         for shard = 0::i32, 5::i32 do
             local t: f64 = cast.progress - (shard::f64) * 0.075
             if t > 0.0 then
-                local at: spell_cast.Point = spell_cast.at(cast, t)
+                local at: spell_cast.Point = cast:at(t)
                 graphics:line(at.x - 6.0, at.y + 3.0, at.x + 5.0, at.y - 5.0)
             end
         end

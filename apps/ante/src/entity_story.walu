@@ -9,7 +9,7 @@ local box = require("./box_layout")
 local entity = require("./entity")
 local presentation_resources = require("./presentation_resources")
 
-type Book = { assets: presentation_resources.State, started: bool }
+export type Book = { assets: presentation_resources.State, started: bool }
 
 type Scene = {
     node: () -> entity.Node,
@@ -26,22 +26,22 @@ type Scene = {
     mousemoved: ((f64, f64, f64, f64) -> unit)?
 }
 
-function new(): Book
-    return { assets = presentation_resources.new(), started = false }
+function Book.new(): Book
+    return { assets = presentation_resources.State.new(), started = false }
 end
 
-function load_assets(book: Book): i32
-    return presentation_resources.load_async(book.assets)
+function Book:load_assets(): i32
+    return self.assets:load_async()
 end
 
-function prepare(book: Book): unit
-    if book.started then
+function Book:prepare(): unit
+    if self.started then
         return
     end
-    book.started = true
+    self.started = true
     local loader: thread = coroutine.create(
         function(): i32
-            return load_assets(book)
+            return self:load_assets()
         end
     )
     coroutine.resume(loader)
@@ -55,11 +55,11 @@ function stage(node: entity.Node): entity.Node
     return entity.across({ justify = "center", align = "center" }, {node})
 end
 
-function scene(book: Book, spec: Scene): storybook.Scene
+function Book:scene(spec: Scene): storybook.Scene
     assert(spec.width > 0.0 and spec.height > 0.0 and spec.scale > 0.0)
 
     local function load(): unit
-        prepare(book)
+        self:prepare()
         local hook: (() -> unit)? = spec.load
         if hook ~= nil then
             hook()
@@ -67,8 +67,8 @@ function scene(book: Book, spec: Scene): storybook.Scene
     end
 
     local function draw(graphics: engine.Graphics, alpha: f64): unit
-        presentation_resources.prepare(book.assets, graphics)
-        local surface: entity.Surface = presentation_resources.surface(book.assets, graphics)
+        self.assets:prepare(graphics)
+        local surface: entity.Surface = self.assets:surface(graphics)
         graphics:push()
         graphics:scale(spec.scale, spec.scale)
         stage(
@@ -95,4 +95,4 @@ function scene(book: Book, spec: Scene): storybook.Scene
     }
 end
 
-return { new = new, stage = stage, scene = scene }
+return { stage = stage }

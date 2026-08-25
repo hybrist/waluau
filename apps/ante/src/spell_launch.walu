@@ -68,7 +68,7 @@ function step(
     local burst_color: string = "#4ade80"
     if kind ~= nil then
         local active: spells.SpellKind = kind::spells.SpellKind
-        local cast: spell_cast.Cast = spell_cast.new(clock, target_x, target_y)
+        local cast: spell_cast.Cast = spell_cast.Cast.new(clock, target_x, target_y)
         -- The single frame the carrier crosses into its target. A restored
         -- condition comes back already settled past this, so a hot reload
         -- never replays a landing that has already happened.
@@ -77,7 +77,7 @@ function step(
         burst_color = color(active)
         if active == spells.SpellKind.Firebolt then
             flight = cast.progress
-            local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+            local head: spell_cast.Point = cast:at(cast.progress)
             head_x = head.x
             head_y = head.y
         end
@@ -97,7 +97,7 @@ function draw(
     target_y: f64,
     sparks: spell_cast.Sparks
 ): unit
-    local cast: spell_cast.Cast = spell_cast.new(clock, target_x, target_y)
+    local cast: spell_cast.Cast = spell_cast.Cast.new(clock, target_x, target_y)
     if kind == spells.SpellKind.Firebolt then
         firebolt.draw(graphics, effects, cast, sparks.trail)
     elseif kind == spells.SpellKind.FreezeRay then

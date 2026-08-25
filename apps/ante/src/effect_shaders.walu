@@ -31,39 +31,39 @@ export type State = {
 }
 export type Diagnostics = { fatal_error: string, warnings: string }
 
-function new(): State
-    local gold: shader_program.State = shader_program.new(
+function State.new(): State
+    local gold: shader_program.State = shader_program.State.new(
         "ante.effects.gold-shimmer",
         "gold shimmer",
         false
     )
-    local defeat: shader_program.State = shader_program.new(
+    local defeat: shader_program.State = shader_program.State.new(
         "ante.effects.defeat-shroud",
         "defeat shroud",
         true
     )
-    local burn: shader_program.State = shader_program.new(
+    local burn: shader_program.State = shader_program.State.new(
         "ante.effects.card-burn",
         "card burn",
         false
     )
-    local red: shader_program.State = shader_program.new("ante.effects.red-fire", "red", false)
-    local blue: shader_program.State = shader_program.new(
+    local red: shader_program.State = shader_program.State.new("ante.effects.red-fire", "red", false)
+    local blue: shader_program.State = shader_program.State.new(
         "ante.effects.blue-caustics",
         "blue",
         false
     )
-    local black: shader_program.State = shader_program.new(
+    local black: shader_program.State = shader_program.State.new(
         "ante.effects.black-hole",
         "black",
         false
     )
-    local green: shader_program.State = shader_program.new(
+    local green: shader_program.State = shader_program.State.new(
         "ante.effects.green-growth",
         "green",
         false
     )
-    local ice: shader_program.State = shader_program.new("ante.effects.ice-freeze", "ice", false)
+    local ice: shader_program.State = shader_program.State.new("ante.effects.ice-freeze", "ice", false)
     return {
         shaders = {
             gold_shimmer = gold,
@@ -86,30 +86,30 @@ end
 
 -- Poll every source before rebuilding anything. Independent revisions stay
 -- current even when the shared vertex stage or another effect fails.
-function refresh(state: State, graphics: Graphics): unit
+function State:refresh(graphics: Graphics): unit
     local vertex_changed: bool = false
-    local vertex: shader_sources.SourceUpdate = state.vertex_source:poll()
+    local vertex: shader_sources.SourceUpdate = self.vertex_source:poll()
     if vertex.changed then
         vertex_changed = true
         if vertex.ok then
-            state.vertex_text = vertex.source
-            state.vertex_ready = true
-            state.vertex_error = ""
+            self.vertex_text = vertex.source
+            self.vertex_ready = true
+            self.vertex_error = ""
         else
-            state.vertex_ready = false
-            state.vertex_error = vertex.error.code .. ": " .. vertex.error.message
+            self.vertex_ready = false
+            self.vertex_error = vertex.error.code .. ": " .. vertex.error.message
         end
     end
 
     local changed: {bool} = {}
-    for program in state.programs do
-        table.insert(changed, shader_program.poll(program))
+    for program in self.programs do
+        table.insert(changed, program:poll())
     end
-    if not state.vertex_ready then
+    if not self.vertex_ready then
         return
     end
-    for index, program in state.programs do
-        shader_program.refresh(program, graphics, state.vertex_text, vertex_changed, changed[index])
+    for index, program in self.programs do
+        program:refresh(graphics, self.vertex_text, vertex_changed, changed[index])
     end
 end
 
@@ -123,12 +123,12 @@ function append_warning(warnings: string, warning: string): string
     return warnings .. warning
 end
 
-function diagnostics(state: State): Diagnostics
+function State:diagnostics(): Diagnostics
     local fatal_error: string = ""
     local warnings: string = ""
-    if #state.vertex_error > 0 then
-        for program in state.programs do
-            local error: string = program.label .. " " .. state.vertex_error
+    if #self.vertex_error > 0 then
+        for program in self.programs do
+            local error: string = program.label .. " " .. self.vertex_error
             if program.required then
                 fatal_error = error
             else
@@ -137,7 +137,7 @@ function diagnostics(state: State): Diagnostics
         end
         return { fatal_error = fatal_error, warnings = warnings }
     end
-    for program in state.programs do
+    for program in self.programs do
         if program.required then
             fatal_error = program.error
         else
@@ -147,15 +147,14 @@ function diagnostics(state: State): Diagnostics
     return { fatal_error = fatal_error, warnings = warnings }
 end
 
-function release(state: State, graphics: Graphics): unit
-    for program in state.programs do
-        shader_program.release(program, graphics)
+function State:release(graphics: Graphics): unit
+    for program in self.programs do
+        program:release(graphics)
     end
-    local noise: graphics_module.Texture? = state.shaders.noise_texture
+    local noise: graphics_module.Texture? = self.shaders.noise_texture
     if noise ~= nil then
         graphics:release_texture(noise::graphics_module.Texture)
     end
-    state.shaders.noise_texture = nil
+    self.shaders.noise_texture = nil
 end
 
-return { new = new, refresh = refresh, diagnostics = diagnostics, release = release }

@@ -11,7 +11,7 @@ local hand_fan = require("./entities/hand_fan")
 const WIDTH: u32 = 900
 const HEIGHT: u32 = 420
 const BACKGROUND: string = "#0b0b12"
-local book = entity_story.new()
+local book = entity_story.Book.new()
 
 type Position = "none" | "first" | "left-middle" | "middle" | "right-middle" | "last"
 local hand_count = storybook.range("count", 5, 1, 11, 1)
@@ -86,9 +86,7 @@ storybook.publish(
     {
         storybook.story(
             "Fan",
-            entity_story.scene(
-                book,
-                {
+            book:scene({
                     node = hand,
                     width = WIDTH,
                     height = HEIGHT,

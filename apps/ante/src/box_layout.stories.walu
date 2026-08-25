@@ -13,7 +13,7 @@ const BACKGROUND: string = "#09090b"
 const ROOT_KEY: i32 = 9000
 const LABEL_KEY: i32 = 1000
 const BUTTON_KEY: i32 = 2000
-local book = entity_story.new()
+local book = entity_story.Book.new()
 
 local row_count = storybook.range("count", 5, 1, 8, 1)
 local row_width = storybook.range("width", 600, 180, 760, 10)
@@ -353,9 +353,7 @@ function flex_pressure(): entity.Node
 end
 
 function scene(node: () -> entity.Node): storybook.Scene
-    return entity_story.scene(
-        book,
-        {
+    return book:scene({
             node = node,
             width = WIDTH::f64,
             height = HEIGHT::f64,
