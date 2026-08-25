@@ -3779,6 +3779,118 @@ fn type_checks_tostring_for_primitive_inputs() {
 }
 
 #[test]
+fn type_checks_tostring_after_untyped_multi_binding() {
+    let source = r#"
+        function pair(): (i32, i32)
+            return 1, 2
+        end
+
+        function entry(): string
+            local a, b = pair()
+            return tostring(a) .. tostring(b)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_tostring_after_nullable_field_narrowing() {
+    let source = r#"
+        type Options = { children: {string}? }
+
+        function entry(opts: Options?): string
+            if opts == nil then
+                return "none"
+            end
+            if opts.children ~= nil then
+                return tostring(#opts.children)
+            end
+            return "empty"
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_concat_with_string_and_numeric_operands() {
+    let source = r#"
+        function entry(a: i32, b: f64): string
+            local left: string = a .. " apples"
+            local right: string = "value=" .. b
+            local compound: string = "count="
+            compound ..= a
+            return left .. right .. compound
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rewrites_tostring_metamethod_to_resolved_method_call() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function SpellKind:__tostring(): string
+            if self == SpellKind.Firebolt then return "Firebolt" end
+            return "Freeze Ray"
+        end
+
+        function entry(kind: SpellKind): string
+            return tostring(kind)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let entry = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "entry")
+        .expect("entry function");
+    assert!(matches!(
+        &entry.body[0],
+        Stmt::Return(Expr::MethodCall {
+            name,
+            resolved_name: Some(resolved_name),
+            args,
+            ..
+        }) if name == "__tostring" && resolved_name == "SpellKind.__tostring" && args.is_empty()
+    ));
+}
+
+#[test]
+fn resolves_concat_metamethod() {
+    let source = r#"
+        type Label = { value: string }
+
+        function Label:__concat(suffix: string): string
+            return self.value .. suffix
+        end
+
+        function entry(label: Label): string
+            return label .. "!"
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let entry = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "entry")
+        .expect("entry function");
+    assert!(matches!(
+        &entry.body[0],
+        Stmt::Return(Expr::Binary {
+            op: BinaryOp::Concat,
+            resolved_name: Some(resolved_name),
+            ..
+        }) if resolved_name == "Label.__concat"
+    ));
+}
+
+#[test]
 fn type_checks_dynamic_type_and_number_builtins() {
     let source = r#"
         function entry(a: i32): string
@@ -4088,6 +4200,25 @@ fn narrows_pcall_payload_in_if_branches() {
     "#;
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("pcall payload should narrow in both branches");
+}
+
+#[test]
+fn preserves_recursive_local_function_scope_during_multi_binding_annotation() {
+    let source = r#"
+        function entry(): f64
+            local function recurse(depth: f64): f64
+                if depth == 0 then
+                    return 1
+                end
+                local ok, value = pcall(recurse, depth - 1)
+                assert(ok)
+                return value
+            end
+            return recurse(2)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("recursive local scope should survive annotation");
 }
 
 #[test]

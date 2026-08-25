@@ -86,6 +86,77 @@ fn leaves_compiler_generated_function_bodies_unmapped() {
 }
 
 #[test]
+fn lowers_numeric_concat_and_tostring_metamethod() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function SpellKind:__tostring(): string
+            if self == SpellKind.Firebolt then return "Firebolt" end
+            return "Freeze Ray"
+        end
+
+        type Greeting = { text: string }
+
+        function Greeting:__concat(suffix: string): string
+            return self.text .. suffix
+        end
+
+        function entry(greeting: Greeting, kind: SpellKind, count: i32): string
+            return greeting .. (" spell=" .. tostring(kind)
+                .. ", number=" .. kind::number
+                .. ", i32=" .. kind::i32
+                .. ", count=" .. count)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function");
+    assert!(entry.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::ToString {
+                    from: Type::Numeric(NumericType::I32),
+                    ..
+                }
+            )
+        })
+    }));
+    assert!(entry.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::Call { name, .. } if name == "Greeting.__concat"
+            )
+        })
+    }));
+    assert!(entry.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::ToString {
+                    from: Type::Numeric(NumericType::F64),
+                    ..
+                }
+            )
+        })
+    }));
+    assert!(entry.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::Call { name, .. } if name == "SpellKind.__tostring"
+            )
+        })
+    }));
+}
+
+#[test]
 fn preserves_files_for_linked_and_lifted_functions() {
     let alpha_source = "function alpha(): i32\n    return 11\nend\n";
     let beta_source = concat!(
