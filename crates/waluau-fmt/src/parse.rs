@@ -605,7 +605,12 @@ impl Parser {
             self.expect(&ident(), &mut c, "expected loop variable")?;
         }
         self.expect(&TokenKind::In, &mut c, "expected 'in'")?;
+        // The generic-for protocol takes an expression list:
+        // `iterator, state[, control]`. Commas are dropped and regenerated.
         c.push(self.parse_expr()?);
+        while self.eat(&TokenKind::Comma, &mut Vec::new()) {
+            c.push(self.parse_expr()?);
+        }
         self.expect(&TokenKind::Do, &mut c, "expected 'do'")?;
         c.push(self.parse_block(&[TokenKind::End])?);
         self.expect(&TokenKind::End, &mut c, "expected 'end'")?;

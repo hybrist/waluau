@@ -1272,32 +1272,23 @@ impl CoercionRewriter<'_> {
             }
             Stmt::ForIn {
                 names,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                self.rewrite_expr(iterator, None, vars, active);
+                for iterator in iterators.iter_mut() {
+                    self.rewrite_expr(iterator, None, vars, active);
+                }
                 let mut loop_scope = vars.clone();
-                if let Ok(Type::Array(element_ty)) =
-                    infer_expr(iterator, vars, self.fn_signatures, active, None)
-                {
-                    if names.len() == 1 {
-                        loop_scope.insert(
-                            names[0].clone(),
-                            binding_for(*element_ty, Rebindability::Const),
-                        );
-                    } else if names.len() == 2 {
-                        loop_scope.insert(
-                            names[0].clone(),
-                            binding_for(
-                                Type::Numeric(waluau_ast::NumericType::I32),
-                                Rebindability::Const,
-                            ),
-                        );
-                        loop_scope.insert(
-                            names[1].clone(),
-                            binding_for(*element_ty, Rebindability::Const),
-                        );
+                if let Ok(loop_types) = crate::statements::for_in_loop_value_types(
+                    iterators,
+                    names.len(),
+                    vars,
+                    self.fn_signatures,
+                    active,
+                ) {
+                    for (name, ty) in names.iter().zip(loop_types) {
+                        loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
                     }
                 }
                 self.rewrite_stmts(body, &mut loop_scope, active, expected_return);

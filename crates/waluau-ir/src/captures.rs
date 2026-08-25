@@ -196,11 +196,13 @@ fn collect_expr_captures_from_stmt(
         }
         Stmt::ForIn {
             symbol_ids,
-            iterator,
+            iterators,
             body,
             ..
         } => {
-            collect_expr_captures(iterator, bound, env, signatures, captures);
+            for iterator in iterators {
+                collect_expr_captures(iterator, bound, env, signatures, captures);
+            }
             let mut nested_bound = bound.clone();
             if let Some(ids) = symbol_ids {
                 for id in ids {
@@ -423,8 +425,12 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<SymbolId>) {
                 collect_nested_from_stmt(s, out);
             }
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            collect_nested_from_expr(iterator, out);
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            for iterator in iterators {
+                collect_nested_from_expr(iterator, out);
+            }
             for s in body {
                 collect_nested_from_stmt(s, out);
             }
@@ -607,11 +613,13 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<SymbolId>, out: &
             }
             Stmt::ForIn {
                 symbol_ids,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                collect_free_names_in_expr(iterator, bound, out);
+                for iterator in iterators {
+                    collect_free_names_in_expr(iterator, bound, out);
+                }
                 let mut nested_bound = bound.clone();
                 if let Some(ids) = symbol_ids {
                     for id in ids {

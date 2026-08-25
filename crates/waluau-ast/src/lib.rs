@@ -1015,7 +1015,14 @@ pub enum Stmt {
     ForIn {
         names: Vec<String>,
         symbol_ids: Option<Vec<SymbolId>>,
-        iterator: Expr,
+        /// The iterator expression list after `in` — one to three expressions.
+        /// A single expression is an array, a parameterless closure, a
+        /// compile-time special form (`pairs(...)`, `string.gmatch(...)`), or
+        /// a call returning an `(iterator, state, control)` triple. Two or
+        /// three expressions are the explicit Lua generic-for protocol:
+        /// `iterator, state[, control]`, where the loop calls
+        /// `iterator(state, control)` until the first result is nil.
+        iterators: Vec<Expr>,
         body: Vec<Stmt>,
     },
     Break,
@@ -1539,10 +1546,21 @@ impl Resolver {
             Stmt::ForIn {
                 names,
                 symbol_ids,
-                iterator,
+                iterators,
                 body,
             } => {
-                self.resolve_expr(iterator)?;
+                // A bare unbound `next` heading a multi-expression iterator
+                // list is the compile-time `next` builtin, not a value; a
+                // local named `next` still shadows it and binds normally.
+                let skip_builtin_next_head = iterators.len() >= 2
+                    && matches!(&iterators[0], Expr::Name(name, _, _) if name == "next")
+                    && self.lookup("next").is_none();
+                for (index, iterator) in iterators.iter_mut().enumerate() {
+                    if index == 0 && skip_builtin_next_head {
+                        continue;
+                    }
+                    self.resolve_expr(iterator)?;
+                }
                 self.enter_scope();
                 let mut ids = Vec::new();
                 for name in names {
@@ -1829,8 +1847,79 @@ pub fn enum_pairs_for_in(
     Ok(Stmt::ForIn {
         names: loop_names,
         symbol_ids: None,
-        iterator,
+        iterators: vec![iterator],
         body,
+    })
+}
+
+/// The target of a `for ... in next, t[, nil]` loop: the builtin `next`
+/// iterating a record's fields or an array's elements. Only fires for a bare
+/// unresolved `next` heading a multi-expression iterator list — a local named
+/// `next` resolves to a symbol and is treated as an ordinary iterator value.
+/// An explicit third expression must be the literal `nil` (Lua's `pairs(t)`
+/// expansion); any other control start has no meaning for `next`.
+pub fn for_in_builtin_next_target(iterators: &[Expr]) -> Option<Result<&Expr, Diagnostic>> {
+    let (head, target) = match iterators {
+        [head, target] => (head, target),
+        [head, target, control] => {
+            if !matches!(head, Expr::Name(name, None, _) if name == "next") {
+                return None;
+            }
+            if !matches!(control, Expr::Nil(_)) {
+                return Some(Err(Diagnostic::new(
+                    "the control start for a `next` iterator must be nil",
+                )));
+            }
+            (head, target)
+        }
+        _ => return None,
+    };
+    matches!(head, Expr::Name(name, None, _) if name == "next").then_some(Ok(target))
+}
+
+/// The pieces of a PIL-style stateful iterator function type
+/// `(S, C) -> (K?, V...)`, driving `for k, v... in f, s, c0` loops: the loop
+/// calls `f(s, control)` each iteration, stops when the first result is nil,
+/// and otherwise binds `k: K` (plus the values) and rebinds the control.
+pub struct IteratorProtocol {
+    /// `S`: the invariant state parameter.
+    pub state_ty: Type,
+    /// `C`: the control parameter, fed `c0` (or nil) then each `K`.
+    pub control_param_ty: Type,
+    /// `K`: the non-nil control result bound to the first loop variable.
+    pub control_ty: Type,
+    /// `V...`: the remaining loop-variable types.
+    pub value_types: Vec<Type>,
+    /// `[K?, V...]` as declared — the call's result slots.
+    pub return_slots: Vec<Type>,
+}
+
+/// Reads `f_ty` as an iterator-protocol function. `None` when the type is not
+/// a two-parameter function or its first return value is not nullable (the
+/// nil result is what ends the loop).
+pub fn iterator_protocol(f_ty: &Type) -> Option<IteratorProtocol> {
+    let Type::Function {
+        params,
+        return_type,
+        has_self: false,
+    } = f_ty
+    else {
+        return None;
+    };
+    let [state_ty, control_param_ty] = params.as_slice() else {
+        return None;
+    };
+    let return_slots = match return_type.as_ref() {
+        Type::Multi(slots) => slots.clone(),
+        other => vec![other.clone()],
+    };
+    let control_ty = return_slots.first()?.nullable_inner()?;
+    Some(IteratorProtocol {
+        state_ty: state_ty.clone(),
+        control_param_ty: control_param_ty.clone(),
+        control_ty,
+        value_types: return_slots[1..].to_vec(),
+        return_slots,
     })
 }
 

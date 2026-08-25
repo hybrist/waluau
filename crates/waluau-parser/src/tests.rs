@@ -3032,12 +3032,15 @@ fn desugars_enum_pairs_loop_into_variant_name_array() {
     let program = parse(source).expect("parse should succeed");
     let Stmt::ForIn {
         names,
-        iterator,
+        iterators,
         body,
         ..
     } = &program.functions[0].body[0]
     else {
         panic!("pairs over an enum should parse as a for-in loop");
+    };
+    let [iterator] = iterators.as_slice() else {
+        panic!("the enum pairs desugar produces a single iterator");
     };
     assert_eq!(
         names,
@@ -3091,13 +3094,13 @@ fn desugars_name_only_enum_pairs_loop() {
 
     let program = parse(source).expect("parse should succeed");
     let Stmt::ForIn {
-        names, iterator, ..
+        names, iterators, ..
     } = &program.functions[0].body[0]
     else {
         panic!("pairs over an enum should parse as a for-in loop");
     };
     assert_eq!(names, &vec!["name".to_string()]);
-    assert!(matches!(iterator, Expr::ArrayLiteral { .. }));
+    assert!(matches!(iterators.as_slice(), [Expr::ArrayLiteral { .. }]));
 }
 
 #[test]
@@ -3130,11 +3133,51 @@ fn pairs_over_non_enum_name_stays_a_plain_call() {
     "#;
 
     let program = parse(source).expect("parse should succeed");
-    let Stmt::ForIn { iterator, .. } = &program.functions[0].body[1] else {
+    let Stmt::ForIn { iterators, .. } = &program.functions[0].body[1] else {
         panic!("the loop should parse as a for-in");
     };
     assert!(
-        matches!(iterator, Expr::Call { .. }),
-        "a non-enum pairs iterator is left for the type checker, got {iterator:?}"
+        matches!(iterators.as_slice(), [Expr::Call { .. }]),
+        "a non-enum pairs iterator is left for the type checker, got {iterators:?}"
+    );
+}
+
+#[test]
+fn parses_iterator_expression_list() {
+    let source = r#"
+        function scan(): unit
+            for k, v in iter, state, -1 do
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::ForIn {
+        names, iterators, ..
+    } = &program.functions[0].body[0]
+    else {
+        panic!("expected a for-in loop");
+    };
+    assert_eq!(names, &vec!["k".to_string(), "v".to_string()]);
+    assert_eq!(iterators.len(), 3);
+    assert!(matches!(&iterators[0], Expr::Name(name, _, _) if name == "iter"));
+    assert!(matches!(&iterators[1], Expr::Name(name, _, _) if name == "state"));
+}
+
+#[test]
+fn rejects_more_than_three_iterator_expressions() {
+    let source = r#"
+        function scan(): unit
+            for k in a, b, c, d do
+            end
+        end
+    "#;
+
+    let error = parse(source).expect_err("four iterator expressions should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("for-in takes at most 3 iterator expressions"),
+        "{error}"
     );
 }

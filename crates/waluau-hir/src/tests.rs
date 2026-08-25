@@ -5615,3 +5615,182 @@ fn rejects_record_pairs_with_three_loop_variables() {
         "pairs for-in loop expects 1 or 2 loop variables, got 3"
     );
 }
+
+#[test]
+fn iterator_protocol_loop_type_checks() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            local n = i + 1
+            if n < #a then
+                return n, a[n]
+            end
+            return nil, 0
+        end
+
+        function total(nums: {i32}): i32
+            local sum: i32 = 0
+            for i, v in iter, nums, -1 do
+                sum = sum + v
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("protocol loop should check");
+}
+
+#[test]
+fn iterator_protocol_factory_loop_type_checks() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function my_ipairs(a: {i32}): (({i32}, i32) -> (i32?, i32), {i32}, i32)
+            return iter, a, -1
+        end
+
+        function total(nums: {i32}): i32
+            local sum: i32 = 0
+            for i, v in my_ipairs(nums) do
+                sum = sum + v
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("factory protocol loop should check");
+}
+
+#[test]
+fn next_over_record_and_array_type_checks() {
+    let source = r#"
+        function scan(): i32
+            local scores = { alice = 3::i32, bob = 5::i32 }
+            local total: i32 = 0
+            for name, score in next, scores do
+                total = total + score
+            end
+            local words = {"a", "b"}
+            for i, v in next, words do
+                total = total + i
+            end
+            return total
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("next loops should check");
+}
+
+#[test]
+fn rejects_iterator_with_non_nullable_first_return() {
+    let source = r#"
+        function bad(a: {i32}, i: i32): (i32, i32)
+            return i, 0
+        end
+
+        function scan(nums: {i32}): unit
+            for i, v in bad, nums, 0 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "the iterator function's first return value must be nullable — returning nil ends the loop"
+    );
+}
+
+#[test]
+fn rejects_omitted_control_start_for_non_nullable_control() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function scan(nums: {i32}): unit
+            for i, v in iter, nums do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "the iterator's control parameter i32 does not accept nil; pass an explicit control start: `for ... in f, state, start`"
+    );
+}
+
+#[test]
+fn rejects_binding_more_variables_than_the_iterator_produces() {
+    let source = r#"
+        function iter(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function scan(nums: {i32}): unit
+            for a, b, c in iter, nums, 0 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "for-in loop binds 3 variables, but the iterator produces 2 values"
+    );
+}
+
+#[test]
+fn rejects_next_over_non_iterable_value() {
+    let source = r#"
+        function scan(): unit
+            for k, v in next, 42 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "next iterates a record or an array, got f64"
+    );
+}
+
+#[test]
+fn rejects_non_nil_control_start_for_builtin_next() {
+    let source = r#"
+        function scan(): unit
+            local scores = { a = 1::i32 }
+            for k, v in next, scores, 5 do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "the control start for a `next` iterator must be nil"
+    );
+}
+
+#[test]
+fn shadowed_next_iterates_as_an_ordinary_protocol_function() {
+    let source = r#"
+        function step(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function scan(nums: {i32}): i32
+            local next = step
+            local total: i32 = 0
+            for i, v in next, nums, -1 do
+                total = total + v
+            end
+            return total
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("a shadowed next should check as a protocol iterator");
+}
