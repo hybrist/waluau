@@ -1093,6 +1093,33 @@ fn require_nullable_inner_type(ty: &Type) -> Result<(), Diagnostic> {
     }
 }
 
+/// The reserved `enum` type: "a value of any nominal enum", usable where a
+/// host boundary cannot commit to one enum declaration (e.g. the vitest
+/// `expect` extern). Every nominal enum coerces into it; the runtime
+/// representation is the enum's i32 ordinal. The name is reserved before any
+/// user declaration lookup, so `enum` always means this type.
+pub(crate) const ANY_ENUM_TYPE_NAME: &str = "enum";
+
+pub(crate) fn any_enum_type() -> Type {
+    Type::Opaque {
+        name: ANY_ENUM_TYPE_NAME.to_string(),
+        ty: Box::new(Type::Numeric(NumericType::I32)),
+        generic_extern: None,
+    }
+}
+
+fn resolve_any_enum_type(name: &str, type_args: &[Type]) -> Option<Result<Type, Diagnostic>> {
+    if name != ANY_ENUM_TYPE_NAME {
+        return None;
+    }
+    if !type_args.is_empty() {
+        return Some(Err(Diagnostic::new(
+            "'enum' does not accept type arguments".to_string(),
+        )));
+    }
+    Some(Ok(any_enum_type()))
+}
+
 fn readonly_type(inner: Type) -> Result<Type, Diagnostic> {
     if !inner.is_mutable_structural() {
         return Err(Diagnostic::new(format!(
@@ -1309,6 +1336,9 @@ fn resolve_type_refs_allowing_forward_refs(
                         .next()
                         .expect("readonly arity checked"),
                 );
+            }
+            if let Some(resolved) = resolve_any_enum_type(name, &resolved_args) {
+                return resolved;
             }
             if let Some(decl) = generic.get(name) {
                 if resolved_args.len() != decl.type_params.len() {
@@ -1807,6 +1837,9 @@ fn resolve_type_refs_fixpoint(
                         .next()
                         .expect("readonly arity checked"),
                 );
+            }
+            if let Some(resolved) = resolve_any_enum_type(name, &resolved_args) {
+                return resolved;
             }
             if let Some(decl) = generic.get(name) {
                 if resolved_args.len() != decl.type_params.len() {
@@ -4678,6 +4711,24 @@ fn type_check_and_infer_collect_inner(
 
     annotate_resolved_extern_members(&mut typed, &fn_signatures, &module_bindings, &reusable)
         .map_err(|error| vec![error])?;
+
+    // The top-level statements were cloned into `__waluau_top_level_init`
+    // before the checking and annotation passes, so only the function copy
+    // carries resolved member names (selected `expect` overloads, extern
+    // property getters like the vitest `:not` modifier) and desugared
+    // coercion sites. Sync the originals from that body so every consumer
+    // of `top_level` sees the same resolution; without this, IR passes that
+    // walk `top_level` re-resolve against erased types and fail on members
+    // that are only unique nominally.
+    if let Some(init) = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+    {
+        // Drop the synthesized trailing `return 0`.
+        let body_len = init.body.len().saturating_sub(1);
+        typed.top_level = init.body[..body_len].to_vec();
+    }
 
     if CompilerTimer::enabled() {
         eprintln!(

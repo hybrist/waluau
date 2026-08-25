@@ -216,7 +216,24 @@ The API (declared in `externs/vitest.walu`): `describe`, `it`, `test`,
 set follows the value's static type (numbers: `toBe`, `notToBe`,
 `toBeCloseTo`, `toBeGreaterThan[OrEqual]`, `toBeLessThan[OrEqual]`; strings:
 `toBe`, `notToBe`, `toContain`, `notToContain`, `toHaveLength`; booleans:
-`toBe`, `toBeTruthy`, `toBeFalsy`; externs: identity `toBe`/`notToBe`).
+`toBe`, `toBeTruthy`, `toBeFalsy`; externs: identity `toBe`/`notToBe`;
+enums: ordinal `toBe`/`notToBe`). Every expectation also chains the `:not`
+modifier (vitest's `.not`), negating the matcher that follows:
+
+```lua
+enum Suit { clubs, diamonds, hearts, spades }
+
+it("compares enums and negates matchers", function(): unit
+    expect(Suit.hearts):toBe(Suit.hearts)
+    expect(Suit.hearts):not:toBe(Suit.spades)
+    expect(add(2, 2)):not:toBe(5)
+end)
+```
+
+Enum values cross the host boundary as their i32 ordinals: matchers compare
+ordinals (failure messages show the numbers), and because declared host
+functions cannot be generic, `expect` accepts any enum — comparing values
+of two different enums type-checks and compares raw ordinals.
 Failed Waluau `assert(cond, msg)` calls surface as readable vitest failures
 with correct file/line info.
 

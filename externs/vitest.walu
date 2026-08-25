@@ -21,6 +21,7 @@ type NumberExpectation = extern
 type StringExpectation = extern
 type BoolExpectation = extern
 type ExternExpectation = extern
+type EnumExpectation = extern
 
 -- Suite structure. `test` is an alias for `it`; `xdescribe`/`xit` register
 -- skipped suites/tests (vitest describe.skip / it.skip); `todo` registers a
@@ -39,11 +40,25 @@ declare function before_all(body: () -> unit): unit
 declare function after_all(body: () -> unit): unit
 
 -- Expectations. Overload selection picks the variant matching the actual
--- value's type; integer widths coerce to the f64 variant.
+-- value's type; integer widths coerce to the f64 variant. Values of any
+-- nominal enum pick the `enum` variant: they cross the host boundary as
+-- their i32 ordinal, so matchers compare ordinals. The boundary erases
+-- which enum the ordinal came from (declared host functions cannot be
+-- generic), so comparing values of two different enums type-checks here
+-- and compares raw ordinals.
 declare function expect(value: f64): NumberExpectation
 declare function expect(value: string): StringExpectation
 declare function expect(value: bool): BoolExpectation
 declare function expect(value: extern): ExternExpectation
+declare function expect(value: enum): EnumExpectation
+
+-- `:not` negates the matcher that follows (vitest's `.not` modifier):
+-- expect(actual):not:toBe(other). Chaining `:not:not:` toggles back.
+declare property NumberExpectation:not: NumberExpectation
+declare property StringExpectation:not: StringExpectation
+declare property BoolExpectation:not: BoolExpectation
+declare property ExternExpectation:not: ExternExpectation
+declare property EnumExpectation:not: EnumExpectation
 
 declare function NumberExpectation:toBe(expected: f64): unit
 declare function NumberExpectation:notToBe(expected: f64): unit
@@ -67,3 +82,7 @@ declare function BoolExpectation:toBeFalsy(): unit
 -- Extern expectations compare by JS identity (vitest toBe).
 declare function ExternExpectation:toBe(expected: extern): unit
 declare function ExternExpectation:notToBe(expected: extern): unit
+
+-- Enum expectations compare by ordinal.
+declare function EnumExpectation:toBe(expected: enum): unit
+declare function EnumExpectation:notToBe(expected: enum): unit
