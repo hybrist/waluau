@@ -4937,17 +4937,6 @@ impl Builder<'_> {
             value: next_control_opt,
             ty: protocol.control_ty.clone(),
         });
-        // Loop headers branch with then = body, else = exit — the shape the
-        // structured-control-flow emitter recognizes — so negate the null
-        // test into a continue condition (there is no `not` instruction).
-        let false_value = self.emit(Instruction::Bool(false));
-        let continue_cond = self.emit(Instruction::Binary {
-            op: BinaryOp::Eq,
-            left: is_null,
-            right: false_value,
-            operand_ty: Type::Bool,
-            result_ty: Type::Bool,
-        });
         let exit_phis = self.create_exit_phis(exit, &phis);
         for (id, phi) in &phis {
             add_phi_incoming(&mut self.function, exit, exit_phis[id], (header, *phi));
@@ -4955,9 +4944,9 @@ impl Builder<'_> {
         self.set_terminator(
             header,
             Terminator::Branch {
-                condition: continue_cond,
-                then_block: loop_body,
-                else_block: exit,
+                condition: is_null,
+                then_block: exit,
+                else_block: loop_body,
             },
         );
 
