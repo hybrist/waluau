@@ -42,7 +42,7 @@ const SUBTITLE_INK: string = "#a1a1aa"
 function shell(): entity.Node
     return entity.measured(
         function(metrics: entity.Metrics): box.Intrinsic
-            return box.fixed(0.0, 0.0)
+            return box.Intrinsic.fixed(0.0, 0.0)
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
             local graphics = surface.graphics

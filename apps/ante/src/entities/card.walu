@@ -83,7 +83,7 @@ function sealed(card: game.Card, known: bool): Look
 end
 
 function intrinsic(): box.Intrinsic
-    return box.fixed(WIDTH, HEIGHT)
+    return box.Intrinsic.fixed(WIDTH, HEIGHT)
 end
 
 -- A filled rounded card silhouette made only from the WebGL2 drawing

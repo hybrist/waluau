@@ -13,7 +13,7 @@ local card = require("./card")
 const CAPTION_DROP: f64 = 0.0
 
 function intrinsic(): box.Intrinsic
-    return box.fixed(card.width, card.height)
+    return box.Intrinsic.fixed(card.width, card.height)
 end
 
 function draw_at(surface: entity.Surface, count: i32, x: f64, y: f64): unit

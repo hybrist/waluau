@@ -1420,6 +1420,10 @@ function draw_audio_error(
         105.0, top + 286.0, 10, "#fda4af")
 end
 
+function new_card_ash(): card_burn.CardAsh
+    return card_burn.CardAsh.new()
+end
+
 return {
     draw = draw,
     draw_shader_error = draw_shader_error,
@@ -1474,7 +1478,7 @@ return {
     fireball_formation = powered_card.fireball_formation,
     power_settled_clock = powered_card.settled_clock,
     -- The ash emitters choreography owns and ticks.
-    new_card_ash = card_burn.new_card_ash,
+    new_card_ash = new_card_ash,
     step_reveal_ash = card_burn.step_sheet_ash,
     step_table_card_ash = card_burn.step_table_card_ash,
     -- A spell's own emitters, on the same terms: choreography holds them and

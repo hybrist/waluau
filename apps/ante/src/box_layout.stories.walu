@@ -155,7 +155,7 @@ function draw_result(
 
     draw_text(graphics, title, 34.0, 34.0, 20, "#f4f4f5")
     draw_text(graphics, detail, 34.0, 56.0, 11, "#a1a1aa")
-    local measured_root: layout.Frame? = layout.frame(result, ROOT_KEY)
+    local measured_root: layout.Frame? = result:frame(ROOT_KEY)
     if measured_root ~= nil then
         local status: string = "FITS"
         local ink: string = "#4ade80"
@@ -181,7 +181,7 @@ function row_leaf(index: i32): layout.Tree
         92.0,
         preferred_height - 10.0
     )
-    return layout.flex(layout.leaf(index, intrinsic), 1.0 + ((index % 3)::f64), 1.0)
+    return layout.Tree.leaf(index, intrinsic):flex(1.0 + ((index % 3)::f64), 1.0)
 end
 
 function draw_intrinsic_row(graphics: engine.Graphics): unit
@@ -190,7 +190,7 @@ function draw_intrinsic_row(graphics: engine.Graphics): unit
     for index = 0::i32, count - 1 do
         table.insert(children, row_leaf(index))
     end
-    local root: layout.Tree = layout.flow(
+    local root: layout.Tree = layout.Tree.flow(
         ROOT_KEY,
         children,
         {
@@ -211,8 +211,8 @@ function draw_intrinsic_row(graphics: engine.Graphics): unit
         width = available_width,
         height = 220.0
     }
-    local result: layout.Result = layout.solve(root, bounds)
-    local natural: layout.Intrinsic = layout.measure(root)
+    local result: layout.Result = root:solve(bounds)
+    local natural: layout.Intrinsic = root:measure()
     draw_result(
         graphics,
         result,
@@ -230,11 +230,11 @@ function menu_button(index: i32, padding_x: f64, padding_y: f64): layout.Tree
     -- The label owns its text-like intrinsic measurement. Its button derives
     -- everything else by wrapping that leaf in a padded one-child flow.
     local label_width: f64 = 92.0 + ((index % 3)::f64) * 38.0
-    local label: layout.Tree = layout.leaf(
+    local label: layout.Tree = layout.Tree.leaf(
         LABEL_KEY + index,
         measured(label_width, label_width, label_width, 18.0, 18.0, 18.0, 14.0)
     )
-    return layout.flow(
+    return layout.Tree.flow(
         BUTTON_KEY + index,
         {label},
         {
@@ -255,7 +255,7 @@ function draw_nested_menu(graphics: engine.Graphics): unit
     for index = 0::i32, count - 1 do
         table.insert(buttons, menu_button(index, padding_x, padding_y))
     end
-    local root: layout.Tree = layout.flow(
+    local root: layout.Tree = layout.Tree.flow(
         ROOT_KEY,
         buttons,
         {
@@ -273,8 +273,8 @@ function draw_nested_menu(graphics: engine.Graphics): unit
         width = available_width,
         height = 330.0
     }
-    local result: layout.Result = layout.solve(root, bounds)
-    local natural: layout.Intrinsic = layout.measure(root)
+    local result: layout.Result = root:solve(bounds)
+    local natural: layout.Intrinsic = root:measure()
     draw_result(
         graphics,
         result,
@@ -287,11 +287,11 @@ function draw_nested_menu(graphics: engine.Graphics): unit
 end
 
 function draw_flex_pressure(graphics: engine.Graphics): unit
-    local first: layout.Tree = layout.leaf(0, measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
-    layout.flex(first, flex_grow_a.value()::f64, 1.0)
-    local second: layout.Tree = layout.leaf(1, measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
-    layout.flex(second, flex_grow_b.value()::f64, 1.0)
-    local root: layout.Tree = layout.flow(
+    local first: layout.Tree = layout.Tree.leaf(0, measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
+    first:flex(flex_grow_a.value()::f64, 1.0)
+    local second: layout.Tree = layout.Tree.leaf(1, measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
+    second:flex(flex_grow_b.value()::f64, 1.0)
+    local root: layout.Tree = layout.Tree.flow(
         ROOT_KEY,
         {first, second},
         {
@@ -312,7 +312,7 @@ function draw_flex_pressure(graphics: engine.Graphics): unit
         width = available_width,
         height = 180.0
     }
-    local result: layout.Result = layout.solve(root, bounds)
+    local result: layout.Result = root:solve(bounds)
     draw_result(
         graphics,
         result,

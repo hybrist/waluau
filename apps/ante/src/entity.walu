@@ -116,7 +116,7 @@ function sized(
 ): Node
     return {
         measure = function(metrics: Metrics): box.Intrinsic
-            return box.fixed(width, height)
+            return box.Intrinsic.fixed(width, height)
         end,
         paint = paint,
         grow = 0.0,
@@ -208,18 +208,18 @@ function build(
     local leaves: {box.Tree} = {}
     for index = 0::i32, #children - 1 do
         local child: Node = children[index]
-        local leaf: box.Tree = box.leaf(index, child.measure(metrics))
-        box.flex(leaf, child.grow, child.shrink)
+        local leaf: box.Tree = box.Tree.leaf(index, child.measure(metrics))
+        leaf:flex(child.grow, child.shrink)
         table.insert(leaves, leaf)
     end
-    return box.flow(ROOT_KEY, leaves, flow_style)
+    return box.Tree.flow(ROOT_KEY, leaves, flow_style)
 end
 
 function measure_flow(
     metrics: Metrics, children: {Node}, flow_style: box.Style
 ): box.Intrinsic
     local tree: box.Tree = build(metrics, children, flow_style)
-    return box.measure(tree)
+    return tree:measure()
 end
 
 -- Where each child of a flow landed, in child order. Hit testing reads this
@@ -229,10 +229,10 @@ function place(
     metrics: Metrics, children: {Node}, flow_style: box.Style, bounds: box.Rect
 ): {box.Rect}
     local tree: box.Tree = build(metrics, children, flow_style)
-    local result: box.Result = box.solve(tree, bounds)
+    local result: box.Result = tree:solve(bounds)
     local rects: {box.Rect} = {}
     for index = 0::i32, #children - 1 do
-        local frame: box.Frame? = box.frame(result, index)
+        local frame: box.Frame? = result:frame(index)
         if frame == nil then
             table.insert(rects, rect(bounds.x, bounds.y, 0.0, 0.0))
         else
@@ -268,7 +268,7 @@ end
 function layer(children: {Node}): Node
     return {
         measure = function(metrics: Metrics): box.Intrinsic
-            local total: box.Intrinsic = box.fixed(0.0, 0.0)
+            local total: box.Intrinsic = box.Intrinsic.fixed(0.0, 0.0)
             for child in children do
                 local value: box.Intrinsic = child.measure(metrics)
                 total = {

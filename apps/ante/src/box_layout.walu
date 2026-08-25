@@ -90,7 +90,7 @@ function validate_style(value: Style): unit
     validate_edges(value.padding)
 end
 
-function fixed(width: f64, height: f64): Intrinsic
+function Intrinsic.fixed(width: f64, height: f64): Intrinsic
     local value: Intrinsic = {
         min_width = width,
         preferred_width = width,
@@ -104,7 +104,7 @@ function fixed(width: f64, height: f64): Intrinsic
     return value
 end
 
-function leaf(key: i32, intrinsic: Intrinsic): Tree
+function Tree.leaf(key: i32, intrinsic: Intrinsic): Tree
     validate_intrinsic(intrinsic)
     return {
         kind = "leaf",
@@ -117,7 +117,7 @@ function leaf(key: i32, intrinsic: Intrinsic): Tree
     }
 end
 
-function flow(key: i32, children: {Tree}, style: Style): Tree
+function Tree.flow(key: i32, children: {Tree}, style: Style): Tree
     validate_style(style)
     local owned: {Tree} = {}
     for child in children do
@@ -136,12 +136,12 @@ end
 
 -- Flex factors belong to a node's relationship with its parent. Construction
 -- is the only mutable phase; measure and solve never change the tree.
-function flex(tree: Tree, grow: f64, shrink: f64): Tree
+function Tree:flex(grow: f64, shrink: f64): Tree
     assert(valid_number(grow) and grow >= 0.0)
     assert(valid_number(shrink) and shrink >= 0.0)
-    tree.grow = grow
-    tree.shrink = shrink
-    return tree
+    self.grow = grow
+    self.shrink = shrink
+    return self
 end
 
 function cap(value: f64): f64
@@ -174,12 +174,12 @@ end
 
 -- Bottom-up intrinsic measurement. A subtree is itself measurable content,
 -- useful both to its parent flow and to callers choosing an available region.
-function measure(node: Tree): Intrinsic
-    if node.kind == "leaf" then
-        return node.intrinsic
+function Tree:measure(): Intrinsic
+    if self.kind == "leaf" then
+        return self.intrinsic
     end
 
-    local horizontal: bool = node.style.axis == "row"
+    local horizontal: bool = self.style.axis == "row"
     local min_main: f64 = 0.0
     local preferred_main: f64 = 0.0
     local max_main: f64 = 0.0
@@ -194,8 +194,9 @@ function measure(node: Tree): Intrinsic
     local preferred_descent: f64 = 0.0
     local max_descent: f64 = 0.0
 
-    for child in node.children do
-        local value: Intrinsic = measure(child)
+    for child in self.children do
+        local child_tree: Tree = child
+        local value: Intrinsic = child_tree:measure()
         if horizontal then
             min_main += value.min_width
             preferred_main += value.preferred_width
@@ -204,7 +205,7 @@ function measure(node: Tree): Intrinsic
             preferred_cross = math.max(preferred_cross, value.preferred_height)
             max_cross = math.max(max_cross, value.max_height)
             baseline = math.max(baseline, child_baseline(value))
-            if node.style.align == "baseline" then
+            if self.style.align == "baseline" then
                 local min_child_baseline: f64 = baseline_at_height(value, value.min_height)
                 local preferred_child_baseline: f64 = child_baseline(value)
                 local max_child_baseline: f64 = baseline_at_height(value, value.max_height)
@@ -231,7 +232,7 @@ function measure(node: Tree): Intrinsic
         end
     end
 
-    if horizontal and node.style.align == "baseline" then
+    if horizontal and self.style.align == "baseline" then
         min_cross = min_ascent + min_descent
         preferred_cross = preferred_ascent + preferred_descent
         max_cross = cap(max_ascent + max_descent)
@@ -239,8 +240,8 @@ function measure(node: Tree): Intrinsic
     end
 
     local gaps: f64 = 0.0
-    if #node.children > 1 then
-        gaps = node.style.gap * ((#node.children - 1)::f64)
+    if #self.children > 1 then
+        gaps = self.style.gap * ((#self.children - 1)::f64)
     end
     min_main = nonnegative(min_main + gaps)
     preferred_main = math.max(min_main, preferred_main + gaps)
@@ -249,11 +250,11 @@ function measure(node: Tree): Intrinsic
     local padding_main: f64 = 0.0
     local padding_cross: f64 = 0.0
     if horizontal then
-        padding_main = node.style.padding.left + node.style.padding.right
-        padding_cross = node.style.padding.top + node.style.padding.bottom
+        padding_main = self.style.padding.left + self.style.padding.right
+        padding_cross = self.style.padding.top + self.style.padding.bottom
     else
-        padding_main = node.style.padding.top + node.style.padding.bottom
-        padding_cross = node.style.padding.left + node.style.padding.right
+        padding_main = self.style.padding.top + self.style.padding.bottom
+        padding_cross = self.style.padding.left + self.style.padding.right
     end
     min_main += padding_main
     preferred_main += padding_main
@@ -262,7 +263,7 @@ function measure(node: Tree): Intrinsic
     preferred_cross += padding_cross
     max_cross = cap(max_cross + padding_cross)
     if baseline >= 0.0 then
-        baseline += node.style.padding.top
+        baseline += self.style.padding.top
     end
 
     if horizontal then
@@ -460,7 +461,7 @@ function append_frame(frames: {Frame}, key: i32, rect: Rect, baseline: f64): uni
 end
 
 function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extents): unit
-    local own_measure: Intrinsic = measure(node)
+    local own_measure: Intrinsic = node:measure()
     include(extents, bounds)
     local absolute_baseline: f64 = -1.0
     if own_measure.baseline >= 0.0 then
@@ -490,7 +491,8 @@ function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extent
     local sizes: {f64} = {}
     local used: f64 = 0.0
     for child in node.children do
-        local value: Intrinsic = measure(child)
+        local child_tree: Tree = child
+        local value: Intrinsic = child_tree:measure()
         table.insert(measurements, value)
         local size: f64 = main_preferred(value, horizontal)
         table.insert(sizes, size)
@@ -576,13 +578,13 @@ function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extent
     end
 end
 
-function solve(tree: Tree, bounds: Rect): Result
+function Tree:solve(bounds: Rect): Result
     assert(valid_number(bounds.x) and valid_number(bounds.y))
     assert(valid_number(bounds.width) and bounds.width >= 0.0)
     assert(valid_number(bounds.height) and bounds.height >= 0.0)
     local frames: {Frame} = {}
     local extents: Extents = { set = false, left = 0.0, top = 0.0, right = 0.0, bottom = 0.0 }
-    arrange_node(tree, bounds, frames, extents)
+    arrange_node(self, bounds, frames, extents)
     local content: Rect = {
         x = extents.left,
         y = extents.top,
@@ -606,8 +608,8 @@ function solve(tree: Tree, bounds: Rect): Result
     }
 end
 
-function frame(result: Result, key: i32): Frame?
-    for item in result.frames do
+function Result:frame(key: i32): Frame?
+    for item in self.frames do
         if item.key == key then
             return item
         end
@@ -618,9 +620,9 @@ end
 -- Frames are emitted in paint order: containers before descendants and
 -- siblings in child order. Reverse lookup therefore gives overlapping content
 -- the same winner drawing gives it.
-function hit(result: Result, x: f64, y: f64): i32
-    for index = #result.frames - 1, 0::i32, -1::i32 do
-        local item: Frame = result.frames[index]
+function Result:hit(x: f64, y: f64): i32
+    for index = #self.frames - 1, 0::i32, -1::i32 do
+        local item: Frame = self.frames[index]
         local rect: Rect = item.rect
         if x >= rect.x and x <= rect.x + rect.width and y >= rect.y and y <= rect.y + rect.height then
             return item.key
@@ -630,13 +632,5 @@ function hit(result: Result, x: f64, y: f64): i32
 end
 
 return {
-    leaf = leaf,
-    flow = flow,
-    flex = flex,
-    measure = measure,
-    solve = solve,
-    fixed = fixed,
-    frame = frame,
-    hit = hit,
     unbounded = UNBOUNDED
 }

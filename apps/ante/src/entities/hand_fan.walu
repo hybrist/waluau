@@ -77,8 +77,8 @@ function dip_of(count: i32): f64
 end
 
 function intrinsic(count: i32): box.Intrinsic
-    if count <= 0 then return box.fixed(0.0, 0.0) end
-    return box.fixed(
+    if count <= 0 then return box.Intrinsic.fixed(0.0, 0.0) end
+    return box.Intrinsic.fixed(
         ((count - 1)::f64) * FAN_PITCH + card.width,
         card.height + dip_of(count) * 2.0)
 end
