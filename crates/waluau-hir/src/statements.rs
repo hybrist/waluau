@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use waluau_ast::{AssignOp, Expr, Function, NumericType, Rebindability, Stmt, Type};
+use waluau_ast::{AssignOp, BinaryOp, Expr, Function, NumericType, Rebindability, Stmt, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::builtins::{ASSERT, PCALL};
@@ -13,6 +13,22 @@ use super::signatures::{
     validate_type_in_scope, validate_type_param_list,
 };
 use super::{Binding, PcallLink, binding_for};
+
+fn assignment_value_expected(op: &AssignOp, target: &Type) -> Option<Type> {
+    match op {
+        AssignOp::Compound(BinaryOp::Concat) => None,
+        AssignOp::Set | AssignOp::Compound(_) => Some(target.clone()),
+    }
+}
+
+fn assignment_value_matches(op: &AssignOp, target: &Type, value: &Type) -> bool {
+    match op {
+        AssignOp::Compound(BinaryOp::Concat) => {
+            super::expressions::string_concat_operand_type(value)
+        }
+        AssignOp::Set | AssignOp::Compound(_) => target == value,
+    }
+}
 
 fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
@@ -1767,9 +1783,9 @@ fn check_stmt_inner(
                 vars,
                 fn_signatures,
                 active_type_params,
-                Some(existing.ty.clone()),
+                assignment_value_expected(op, &existing.ty),
             )?;
-            if existing.ty != value_ty {
+            if !assignment_value_matches(op, &existing.ty, &value_ty) {
                 return Err(Diagnostic::new(format!(
                     "assignment to '{}' expects {}, got {}",
                     name, existing.ty, value_ty
@@ -1849,9 +1865,9 @@ fn check_stmt_inner(
                 vars,
                 fn_signatures,
                 active_type_params,
-                Some(element_ty.clone()),
+                assignment_value_expected(op, &element_ty),
             )?;
-            if value_ty != element_ty {
+            if !assignment_value_matches(op, &element_ty, &value_ty) {
                 return Err(Diagnostic::new(format!(
                     "array element assignment expects {}, got {}",
                     element_ty, value_ty
@@ -1972,7 +1988,9 @@ fn check_stmt_inner(
                     vars,
                     fn_signatures,
                     active_type_params,
-                    existing_field.clone(),
+                    existing_field
+                        .as_ref()
+                        .and_then(|field_ty| assignment_value_expected(op, field_ty)),
                 )?;
                 if let AssignOp::Compound(bin_op) = *op {
                     let field_ty = existing_field.clone().ok_or_else(|| {
@@ -1981,7 +1999,9 @@ fn check_stmt_inner(
                             bin_op.compound_target_kind()
                         ))
                     })?;
-                    if !bin_op.compound_target_ok(&field_ty) || value_ty != field_ty {
+                    if !bin_op.compound_target_ok(&field_ty)
+                        || !assignment_value_matches(op, &field_ty, &value_ty)
+                    {
                         return Err(Diagnostic::new(format!(
                             "compound field assignment requires a {} field",
                             bin_op.compound_target_kind()
@@ -1989,7 +2009,7 @@ fn check_stmt_inner(
                     }
                 }
                 if let Some(ty) = fields.get(name) {
-                    if *ty != value_ty {
+                    if !assignment_value_matches(op, ty, &value_ty) {
                         return Err(Diagnostic::new(format!(
                             "field assignment to '{}.{}' expects {}, got {}",
                             base_name, name, ty, value_ty
@@ -2043,9 +2063,9 @@ fn check_stmt_inner(
                     vars,
                     fn_signatures,
                     active_type_params,
-                    Some(field_ty.clone()),
+                    assignment_value_expected(op, field_ty),
                 )?;
-                if value_ty != *field_ty {
+                if !assignment_value_matches(op, field_ty, &value_ty) {
                     return Err(Diagnostic::new(format!(
                         "field assignment to '{name}' expects {field_ty}, got {value_ty}",
                     )));

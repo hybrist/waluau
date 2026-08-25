@@ -3779,6 +3779,83 @@ fn type_checks_tostring_for_primitive_inputs() {
 }
 
 #[test]
+fn type_checks_concat_with_string_and_numeric_operands() {
+    let source = r#"
+        function entry(a: i32, b: f64): string
+            local left: string = a .. " apples"
+            local right: string = "value=" .. b
+            local compound: string = "count="
+            compound ..= a
+            return left .. right .. compound
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rewrites_tostring_metamethod_to_resolved_method_call() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function SpellKind:__tostring(): string
+            if self == SpellKind.Firebolt then return "Firebolt" end
+            return "Freeze Ray"
+        end
+
+        function entry(kind: SpellKind): string
+            return tostring(kind)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let entry = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "entry")
+        .expect("entry function");
+    assert!(matches!(
+        &entry.body[0],
+        Stmt::Return(Expr::MethodCall {
+            name,
+            resolved_name: Some(resolved_name),
+            args,
+            ..
+        }) if name == "__tostring" && resolved_name == "SpellKind.__tostring" && args.is_empty()
+    ));
+}
+
+#[test]
+fn resolves_concat_metamethod() {
+    let source = r#"
+        type Label = { value: string }
+
+        function Label:__concat(suffix: string): string
+            return self.value .. suffix
+        end
+
+        function entry(label: Label): string
+            return label .. "!"
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let entry = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "entry")
+        .expect("entry function");
+    assert!(matches!(
+        &entry.body[0],
+        Stmt::Return(Expr::Binary {
+            op: BinaryOp::Concat,
+            resolved_name: Some(resolved_name),
+            ..
+        }) if resolved_name == "Label.__concat"
+    ));
+}
+
+#[test]
 fn type_checks_dynamic_type_and_number_builtins() {
     let source = r#"
         function entry(a: i32): string

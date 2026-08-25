@@ -3531,9 +3531,20 @@ fn annotate_stmt_resolved_members(
             )?;
         }
         Stmt::Break | Stmt::Continue => {}
-        Stmt::ReturnMulti(values)
-        | Stmt::LetMulti { values, .. }
-        | Stmt::AssignMulti { values, .. } => {
+        Stmt::LetMulti { bindings, values } => {
+            for value in values {
+                annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+            }
+            for binding in bindings {
+                if let Some(ty) = &binding.ty {
+                    vars.insert(
+                        binding.name.clone(),
+                        binding_for(ty.clone(), binding.rebindability),
+                    );
+                }
+            }
+        }
+        Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
             for value in values {
                 annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
             }
@@ -3583,6 +3594,7 @@ fn annotate_expr_resolved_members(
             annotate_expr_resolved_members(right, vars, fn_signatures, active_type_params)?;
             let method = match op {
                 waluau_ast::BinaryOp::Add => Some("__add"),
+                waluau_ast::BinaryOp::Concat => Some("__concat"),
                 waluau_ast::BinaryOp::Sub => Some("__sub"),
                 waluau_ast::BinaryOp::Mul => Some("__mul"),
                 waluau_ast::BinaryOp::Div => Some("__div"),
@@ -3609,13 +3621,47 @@ fn annotate_expr_resolved_members(
             annotate_expr_resolved_members(then_expr, vars, fn_signatures, active_type_params)?;
             annotate_expr_resolved_members(else_expr, vars, fn_signatures, active_type_params)?;
         }
-        Expr::Call { callee, args, .. } => {
+        Expr::Call {
+            callee, args, span, ..
+        } => {
             let builtin_callee = is_builtin_callee(callee);
             if !builtin_callee {
                 annotate_expr_resolved_members(callee, vars, fn_signatures, active_type_params)?;
             }
             for arg in args.iter_mut() {
                 annotate_expr_resolved_members(arg, vars, fn_signatures, active_type_params)?;
+            }
+            // `tostring(value)` uses a declared `Type:__tostring()` method
+            // when one is available. Rewrite it to an ordinary resolved
+            // method call so nominal type erasure cannot lose the dispatch
+            // decision before IR lowering.
+            let tostring_method = if matches!(callee.as_ref(), Expr::Name(name, _, _) if name == "tostring")
+                && args.len() == 1
+            {
+                let receiver_ty =
+                    infer_expr(&args[0], vars, fn_signatures, active_type_params, None)?;
+                resolved_type_method_call_name(
+                    &receiver_ty,
+                    "__tostring",
+                    &[],
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                )?
+            } else {
+                None
+            };
+            if let Some(resolved_name) = tostring_method {
+                let receiver = args.remove(0);
+                *expr = Expr::MethodCall {
+                    receiver: Box::new(receiver),
+                    name: "__tostring".to_string(),
+                    resolved_name: Some(resolved_name),
+                    type_args: Vec::new(),
+                    args: Vec::new(),
+                    span: *span,
+                };
+                return Ok(());
             }
             // Direct calls to overloaded declared imports are rewritten to
             // the selected overload's unique internal name so IR lowering can

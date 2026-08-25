@@ -2569,7 +2569,7 @@ impl Builder<'_> {
         exit_phis
     }
 
-    fn lower_resolved_host_call(
+    fn lower_resolved_operator_call(
         &mut self,
         name: &str,
         args: &[&Expr],
@@ -2588,22 +2588,25 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let symbol_id = self.host_import_names.get(name).copied().ok_or_else(|| {
-            Diagnostic::new(format!(
-                "operator overload '{name}' must resolve to a declared host import"
-            ))
-        })?;
         let lowered_args = args
             .iter()
             .zip(param_types.iter())
             .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
             .collect::<Result<Vec<_>, _>>()?;
-        let value = self.emit(Instruction::HostCall {
-            name: name.to_string(),
-            symbol_id,
-            args: lowered_args,
-            return_type: return_type.clone(),
-        });
+        let value = if let Some(symbol_id) = self.host_import_names.get(name).copied() {
+            self.emit(Instruction::HostCall {
+                name: name.to_string(),
+                symbol_id,
+                args: lowered_args,
+                return_type: return_type.clone(),
+            })
+        } else {
+            self.emit(Instruction::Call {
+                name: name.to_string(),
+                symbol_id: None,
+                args: lowered_args,
+            })
+        };
         Ok((value, return_type))
     }
 
@@ -2850,7 +2853,8 @@ impl Builder<'_> {
                                 global,
                                 ty: to_runtime_type(&ty),
                             });
-                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            let rhs =
+                                self.lower_compound_rhs(*bin_op, value, &ty, env, types)?;
                             self.emit(Instruction::Binary {
                                 op: *bin_op,
                                 left: current,
@@ -2900,7 +2904,8 @@ impl Builder<'_> {
                                 index: index0,
                                 element_ty: ty.clone(),
                             });
-                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            let rhs =
+                                self.lower_compound_rhs(*bin_op, value, &ty, env, types)?;
                             let sum = self.emit(Instruction::Binary {
                                 op: *bin_op,
                                 left: current,
@@ -2934,7 +2939,8 @@ impl Builder<'_> {
                                     "unknown local '{name}' during IR lowering"
                                 ))
                             })?;
-                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            let rhs =
+                                self.lower_compound_rhs(*bin_op, value, &ty, env, types)?;
                             self.emit(Instruction::Binary {
                                 op: *bin_op,
                                 left: current,
@@ -3017,7 +3023,13 @@ impl Builder<'_> {
                             index,
                             element_ty: element_ty.clone(),
                         });
-                        let rhs = self.lower_expr(value, env, types, Some(element_ty.clone()))?;
+                        let rhs = self.lower_compound_rhs(
+                            *bin_op,
+                            value,
+                            &element_ty,
+                            env,
+                            types,
+                        )?;
                         self.emit(Instruction::Binary {
                             op: *bin_op,
                             left: current,
@@ -3147,7 +3159,13 @@ impl Builder<'_> {
                             field: name.clone(),
                             field_ty: field_ty.clone(),
                         });
-                        let rhs = self.lower_expr(value, env, types, Some(field_ty.clone()))?;
+                        let rhs = self.lower_compound_rhs(
+                            *bin_op,
+                            value,
+                            &field_ty,
+                            env,
+                            types,
+                        )?;
                         self.emit(Instruction::Binary {
                             op: *bin_op,
                             left: current,
@@ -5877,7 +5895,7 @@ impl Builder<'_> {
             } => {
                 if let Some(name) = resolved_name {
                     let (value, return_type) =
-                        self.lower_resolved_host_call(name, &[expr.as_ref()], env, types)?;
+                        self.lower_resolved_operator_call(name, &[expr.as_ref()], env, types)?;
                     return self.coerce_value(value, return_type, expected);
                 }
                 match op {
@@ -6194,7 +6212,7 @@ impl Builder<'_> {
                 }
                 _ => {
                     if let Some(name) = resolved_name {
-                        let (value, return_type) = self.lower_resolved_host_call(
+                        let (value, return_type) = self.lower_resolved_operator_call(
                             name,
                             &[left.as_ref(), right.as_ref()],
                             env,
@@ -6254,8 +6272,19 @@ impl Builder<'_> {
                             *op, left, right, operand_ty, env, types, expected,
                         );
                     }
-                    let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
-                    let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
+                    let (left, right) = if matches!(op, BinaryOp::Concat)
+                        && operand_ty == Type::String
+                    {
+                        (
+                            self.lower_string_concat_operand(left, env, types)?,
+                            self.lower_string_concat_operand(right, env, types)?,
+                        )
+                    } else {
+                        (
+                            self.lower_expr(left, env, types, Some(operand_ty.clone()))?,
+                            self.lower_expr(right, env, types, Some(operand_ty.clone()))?,
+                        )
+                    };
                     // Type the instruction by its operands; the coercion into
                     // a wider expected type (e.g. boxing into `unknown` for a
                     // yield payload) must go through `coerce_value` so the
@@ -7913,30 +7942,18 @@ impl Builder<'_> {
                 }
             }
             BinaryOp::Concat => {
-                let mut left_ty = first_of_multi(self.infer_expr_type(left, types, None)?);
-                if left_ty == Type::Unknown || matches!(left_ty, Type::Nullable(ref inner) if **inner == Type::String)
-                {
-                    // Dynamic or nullable-string operands concatenate as strings.
-                    left_ty = Type::String;
-                }
-                if left_ty == Type::String {
-                    let right_ty = self.infer_expr_type(right, types, Some(Type::String))?;
-                    if right_ty == Type::String {
-                        Ok(Type::String)
-                    } else {
-                        Err(Diagnostic::new(
-                            "could not resolve operand type during IR lowering",
-                        ))
-                    }
-                } else if left_ty == Type::Bytes {
-                    let right_ty = self.infer_expr_type(right, types, Some(Type::Bytes))?;
-                    if right_ty == Type::Bytes {
+                let left_ty = first_of_multi(self.infer_expr_type(left, types, None)?);
+                let right_ty = first_of_multi(self.infer_expr_type(right, types, None)?);
+                if left_ty == Type::Bytes || right_ty == Type::Bytes {
+                    if left_ty == Type::Bytes && right_ty == Type::Bytes {
                         Ok(Type::Bytes)
                     } else {
-                        Err(Diagnostic::new(
-                            "could not resolve operand type during IR lowering",
-                        ))
+                        Err(Diagnostic::new("could not resolve operand type during IR lowering"))
                     }
+                } else if string_concat_operand_type(&left_ty)
+                    && string_concat_operand_type(&right_ty)
+                {
+                    Ok(Type::String)
                 } else {
                     Err(Diagnostic::new(
                         "could not resolve operand type during IR lowering",
@@ -8941,6 +8958,39 @@ impl Builder<'_> {
             })
         };
         Some(self.coerce_value(value, Type::String, expected))
+    }
+
+    fn lower_string_concat_operand(
+        &mut self,
+        expr: &Expr,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let actual = first_of_multi(self.infer_expr_type(expr, types, None)?);
+        if actual.is_numeric() {
+            let value = self.lower_expr(expr, env, types, Some(actual.clone()))?;
+            Ok(self.emit(Instruction::ToString {
+                value,
+                from: actual,
+            }))
+        } else {
+            self.lower_expr(expr, env, types, Some(Type::String))
+        }
+    }
+
+    fn lower_compound_rhs(
+        &mut self,
+        op: BinaryOp,
+        expr: &Expr,
+        target_ty: &Type,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if op == BinaryOp::Concat && target_ty == &Type::String {
+            self.lower_string_concat_operand(expr, env, types)
+        } else {
+            self.lower_expr(expr, env, types, Some(target_ty.clone()))
+        }
     }
 
     fn lower_type_builtin_call(
@@ -12665,6 +12715,13 @@ fn tostring_supported_type(ty: &Type) -> bool {
                 | Type::Thread
                 | Type::Nullable(_)
         )
+}
+
+fn string_concat_operand_type(ty: &Type) -> bool {
+    ty == &Type::String
+        || ty == &Type::Unknown
+        || ty.is_numeric()
+        || matches!(ty, Type::Nullable(inner) if inner.as_ref() == &Type::String)
 }
 
 /// Collapses a multi-value type to the single value Lua adjusts it to.

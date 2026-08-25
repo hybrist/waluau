@@ -906,6 +906,11 @@ pub(super) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Dia
     let (actual, target) = (numeric_view(actual), numeric_view(target));
     match (&actual, &target) {
         (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
+        // Numeric-backed nominal enums may be explicitly viewed as any
+        // numeric representation (`kind::i32`, `kind::number`, and so on).
+        // The cast remains explicit, so this does not make enum values
+        // implicitly interchangeable with numbers.
+        (Type::Opaque { ty, .. }, Type::Numeric(_)) if ty.is_numeric() => Ok(()),
         (actual, Type::Opaque { ty, .. }) if actual == ty.as_ref() => Ok(()),
         // Boxing into / unboxing out of `unknown` (anyref) is an explicit cast.
         (_, Type::Unknown) | (Type::Unknown, _) => Ok(()),

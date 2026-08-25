@@ -124,13 +124,13 @@ pub(super) fn type_method_signature<'a>(
 fn binary_operator_method(op: &BinaryOp) -> Option<&'static str> {
     match op {
         BinaryOp::Add => Some("__add"),
+        BinaryOp::Concat => Some("__concat"),
         BinaryOp::Sub => Some("__sub"),
         BinaryOp::Mul => Some("__mul"),
         BinaryOp::Div => Some("__div"),
         BinaryOp::Pow => Some("__pow"),
         BinaryOp::FloorDiv
         | BinaryOp::Mod
-        | BinaryOp::Concat
         | BinaryOp::Less
         | BinaryOp::LessEq
         | BinaryOp::Greater
@@ -145,6 +145,7 @@ fn binary_operator_method(op: &BinaryOp) -> Option<&'static str> {
 fn binary_operator_symbol(op: &BinaryOp) -> Option<&'static str> {
     match op {
         BinaryOp::Add => Some("+"),
+        BinaryOp::Concat => Some(".."),
         BinaryOp::Sub => Some("-"),
         BinaryOp::Mul => Some("*"),
         BinaryOp::Div => Some("/"),
@@ -1593,50 +1594,45 @@ fn infer_expr_inner(
             op, left, right, ..
         } => match op {
             BinaryOp::Concat => {
-                let mut left_ty = first_of_multi(infer_expr(
+                let left_ty = first_of_multi(infer_expr(
                     left,
                     vars,
                     fn_signatures,
                     active_type_params,
                     None,
                 )?);
-                if left_ty == Type::Unknown
-                    || matches!(left_ty, Type::Nullable(ref inner) if **inner == Type::String)
-                {
-                    left_ty = Type::String;
-                }
-                if left_ty == Type::String {
-                    let right_ty = infer_expr(
-                        right,
-                        vars,
-                        fn_signatures,
-                        active_type_params,
-                        Some(Type::String),
-                    )?;
-                    if right_ty != Type::String {
-                        return Err(Diagnostic::new(
-                            "string concatenation requires both operands to be strings",
-                        ));
-                    }
-                    return coerce_type(Type::String, expected);
-                }
-                if left_ty == Type::Bytes {
-                    let right_ty = infer_expr(
-                        right,
-                        vars,
-                        fn_signatures,
-                        active_type_params,
-                        Some(Type::Bytes),
-                    )?;
-                    if right_ty != Type::Bytes {
+                let right_ty = first_of_multi(infer_expr(
+                    right,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )?);
+                if left_ty == Type::Bytes || right_ty == Type::Bytes {
+                    if left_ty != Type::Bytes || right_ty != Type::Bytes {
                         return Err(Diagnostic::new(
                             "bytes concatenation requires both operands to be bytes",
                         ));
                     }
                     return coerce_type(Type::Bytes, expected);
                 }
+                if string_concat_operand_type(&left_ty) && string_concat_operand_type(&right_ty) {
+                    return coerce_type(Type::String, expected);
+                }
+                if let Some((_, return_type)) = resolve_operator_overload(
+                    "__concat",
+                    &[left_ty.clone(), right_ty.clone()],
+                    fn_signatures,
+                )? {
+                    return coerce_type(return_type, expected);
+                }
+                if overload_eligible_type(&left_ty) || overload_eligible_type(&right_ty) {
+                    return Err(Diagnostic::new(format!(
+                        "operator '..' is not defined for {left_ty} and {right_ty}"
+                    )));
+                }
                 Err(Diagnostic::new(
-                    "concatenation requires both operands to be strings or both operands to be bytes",
+                    "concatenation requires string or number operands, or two bytes operands",
                 ))
             }
             BinaryOp::Add => {
@@ -2011,6 +2007,18 @@ fn infer_expr_inner(
             }
         },
     }
+}
+
+/// Values accepted by Lua-style string concatenation. Numeric operands are
+/// formatted as strings during IR lowering; dynamic and nullable-string
+/// operands retain the behavior supported before numeric coercion was added.
+pub(super) fn string_concat_operand_type(ty: &Type) -> bool {
+    ty == &Type::String
+        || ty == &Type::Unknown
+        || ty.is_numeric()
+        || ty.string_literal_union().is_some()
+        || ty.number_literal_union().is_some()
+        || matches!(ty, Type::Nullable(inner) if inner.as_ref() == &Type::String)
 }
 
 fn require_string_union_member(value: &str, members: &[String]) -> Result<(), Diagnostic> {

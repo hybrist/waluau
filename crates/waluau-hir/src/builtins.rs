@@ -499,6 +499,27 @@ pub(super) fn infer_tostring_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
+    if let Some((signature, _)) =
+        super::expressions::type_method_signature(&arg_ty, "__tostring", fn_signatures)
+    {
+        let super::signatures::FnSignature::Mono {
+            params,
+            return_type,
+            ..
+        } = signature
+        else {
+            return Some(Err(Diagnostic::new(
+                "__tostring must be a non-generic method",
+            )));
+        };
+        if params.len() != 1 {
+            return Some(Err(Diagnostic::new("__tostring must not accept arguments")));
+        }
+        if return_type != &Type::String {
+            return Some(Err(Diagnostic::new("__tostring must return string")));
+        }
+        return Some(coerce_type(Type::String, expected));
+    }
     if tostring_supported_type(&arg_ty) {
         Some(coerce_type(Type::String, expected))
     } else {
