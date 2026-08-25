@@ -9,6 +9,7 @@
 -- shop.
 
 local run_module = require("./run")
+local spells = require("./spells/spell")
 
 export type UseState = { run: run_module.State, key: i32 }
 
@@ -27,7 +28,7 @@ end
 
 -- Take one gold off the named spell's cast. The shop has already established
 -- that the spell is still carried and has room to become cheaper.
-function sharpen(kind: i32): Item
+function sharpen(kind: spells.SpellKind): Item
     return new(function(state: UseState): unit
         state.run:upgrade(state.run:slot_of(kind))
     end)
@@ -35,7 +36,7 @@ end
 
 -- Add the named spell at the destination chosen by the shop. That destination
 -- is either the next open key or the carried spell the player chose to trade.
-function learn(kind: i32): Item
+function learn(kind: spells.SpellKind): Item
     return new(function(state: UseState): unit
         state.run:learn(kind, state.key)
     end)

@@ -113,12 +113,6 @@ function spell_kind_from(value: i32): SpellKind?
     return nil
 end
 
-function new_spell(kind: i32): Spell
-    local checked: SpellKind? = spell_kind_from(kind)
-    assert(checked ~= nil)
-    return spells.Spell__new(checked::SpellKind)
-end
-
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
 -- run's own records — so nothing inside a duel can upgrade a spell.
@@ -1922,7 +1916,6 @@ return {
     formation_marks = formation_marks,
     snapshot = snapshot,
     restore = restore,
-    new_spell = new_spell,
     spell_kind_from = spell_kind_from,
     valid_card = valid_card,
     clone_spells = clone_spells,

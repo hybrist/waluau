@@ -22,11 +22,14 @@ local game = require("./game")
 local run_module = require("./run")
 local shop_item = require("./shop_item")
 local snapshot_data = require("./snapshot")
+local spells = require("./spells/spell")
 
 -- What a slot has for sale. Both of these name the spell they are about rather
 -- than a cast key, because a trade can move a spell off the key it was rolled
 -- against and an offer must not follow it.
-export type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+export type Goods =
+    Upgrade({ kind: spells.SpellKind })
+  | Spell({ kind: spells.SpellKind })
 
 -- What a slot draws from. A category can offer more than one kind of goods: the
 -- spell slots sell both sharpening a spell already carried and teaching a new
@@ -73,7 +76,7 @@ export type Row = {
     kind: RowKind,
     slot: i32,
     key: i32,
-    spell: i32,
+    spell: spells.SpellKind?,
     price: i32,
     sold: bool,
     available: bool
@@ -110,7 +113,7 @@ function spell_stock(run: run_module.State): {Goods}
             table.insert(pool, Upgrade({ kind = run.spells[slot].kind }))
         end
     end
-    for kind = 1::i32, game.spell_kind_count do
+    for _, kind in pairs(spells.SpellKind) do
         if not run:carries(kind) then
             table.insert(pool, Spell({ kind = kind }))
         end
@@ -199,12 +202,10 @@ function buy(
     return true
 end
 
--- The spell a goods is about, or 0 for goods that are about no spell. Drawing
--- reads this for the ink a line wears.
-function spell_kind_of(goods: Goods): i32
-    if Upgrade(upgrade) = goods then return upgrade.kind end
-    if Spell(spell) = goods then return spell.kind end
-    return 0
+function Goods:spell_kind(): spells.SpellKind?
+    if Upgrade(upgrade) = self then return upgrade.kind end
+    if Spell(spell) = self then return spell.kind end
+    return nil
 end
 
 -- Fill the visit from each category's stock, drawing without replacement so a
@@ -257,10 +258,10 @@ end
 
 -- The spell a pending question would hand over, or 0 when nothing is being
 -- asked. A screen naming the trade reads this.
-function pending_spell(state: State): i32
+function pending_spell(state: State): spells.SpellKind?
     local slot: i32 = pending_slot(state)
-    if slot < 0 or slot >= #state.slots then return 0 end
-    return spell_kind_of(state.slots[slot].goods)
+    if slot < 0 or slot >= #state.slots then return nil end
+    return state.slots[slot].goods:spell_kind()
 end
 
 -- One slot as a line. A sold line is never available, and neither is one the run
@@ -270,7 +271,7 @@ function slot_row(index: i32, slot: Slot, run: run_module.State): Row
         kind = "sale",
         slot = index,
         key = -1,
-        spell = spell_kind_of(slot.goods),
+        spell = slot.goods:spell_kind(),
         price = slot.price,
         sold = slot.sold,
         available = not slot.sold
@@ -301,7 +302,7 @@ function choice_rows(asking: Pending, state: State, run: run_module.State): {Row
         kind = "cancel",
         slot = -1,
         key = -1,
-        spell = 0,
+        spell = nil,
         price = 0,
         sold = false,
         available = true,
@@ -323,7 +324,7 @@ function rows(state: State, run: run_module.State): {Row}
         kind = "leave",
         slot = -1,
         key = -1,
-        spell = 0,
+        spell = nil,
         price = 0,
         sold = false,
         available = true,
@@ -428,12 +429,12 @@ end
 function append_goods(parts: {string}, goods: Goods): unit
     if Upgrade(upgrade) = goods then
         snapshot_data.append_enum(parts, "upgrade")
-        snapshot_data.append_i32(parts, upgrade.kind)
+        snapshot_data.append_i32(parts, upgrade.kind:tonumber()::i32)
         return
     end
     if Spell(spell) = goods then
         snapshot_data.append_enum(parts, "spell")
-        snapshot_data.append_i32(parts, spell.kind)
+        snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
     end
 end
 
@@ -476,8 +477,8 @@ function restore(snapshot_value: string): State?
         -- spells that exist, which is not a bound anything else would share.
         local tag: string = reader:next_string()
         if tag ~= "upgrade" and tag ~= "spell" then return nil end
-        local kind: i32 = reader:next_i32()
-        if kind < 1 or kind > game.spell_kind_count then return nil end
+        local kind = spells.SpellKind__from(reader:next_i32())
+        if kind == nil then return nil end
         local goods: Goods = Spell({ kind = kind })
         if tag == "upgrade" then goods = Upgrade({ kind = kind }) end
         local price: i32 = reader:next_i32()
@@ -531,7 +532,6 @@ return {
     destination = destination,
     choices_for = choices_for,
     item_for = item_for,
-    spell_kind_of = spell_kind_of,
     rows = rows,
     row_count = row_count,
     move = move,

@@ -56,11 +56,4 @@ function Spell.new(kind: SpellKind): Spell
     return { kind = kind, cost = DEFAULT_SPELL_COST }
 end
 
-function Spell__new(kind: SpellKind): Spell
-    return Spell.new(kind)
-end
-
-return {
-  Spell__new = Spell__new,
-  SpellKind__from = SpellKind__from,
-}
+return { SpellKind__from = SpellKind__from, DEFAULT_SPELL_COST = DEFAULT_SPELL_COST }

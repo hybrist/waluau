@@ -15,6 +15,7 @@ local spell_launch = require("./spell_launch")
 local run_module = require("./run")
 local shop = require("./shop")
 local layout = require("./layout")
+local spells = require("./spells/spell")
 
 -- The offers keep to a column down the left so the right of the screen stays
 -- the city map: where the run has got to and which house is next are as much

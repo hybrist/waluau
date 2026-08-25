@@ -19,7 +19,7 @@ end
 function SpellScroll:use(run: run_module.State)
   -- if the player already knows the spell, we increase the level.
   -- otherwise, we learn a new spell at the first open slot.
-  run:learn(self.kind::i32, 1)
+  run:learn(self.kind, 1)
 end
 
 function SpellScroll:describe(run: run_module.State): string

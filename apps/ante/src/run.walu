@@ -31,7 +31,7 @@ export type State = {
     hearts: i32,
     cleared: i32,
     spells: {game.Spell},
-    start_spell: i32,
+    start_spell: game.SpellKind,
     rush: bool
 }
 
@@ -62,13 +62,13 @@ const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
 -- the starting spell the run sets out with, and the whole of its opening
 -- loadout.
-function new(spell: i32, rush: bool): State
+function new(spell: spells.SpellKind, rush: bool): State
     return {
         duel = 1,
         gold = game.starting_gold,
         hearts = MAX_HEARTS,
         cleared = 0,
-        spells = { game.new_spell(spell) },
+        spells = { spells.Spell.new(spell) },
         start_spell = spell,
         rush = rush,
     }
@@ -237,7 +237,7 @@ function State:settle(cleared: bool, carried_gold: i32): Outcome
     return outcome
 end
 
-function State:restart(spell: i32, rush: bool): unit
+function State:restart(spell: game.SpellKind, rush: bool): unit
     local fresh: State = new(spell, rush)
     self.duel = fresh.duel
     self.gold = fresh.gold
@@ -309,9 +309,9 @@ function State:learn(kind: spells.SpellKind, slot: i32): bool
     end
     if slot < 0 or slot > #self.spells or slot >= MAX_SPELLS then return false end
     if slot == #self.spells then
-        table.insert(self.spells, spells.Spell__new(kind))
+        table.insert(self.spells, spells.Spell.new(kind))
     else
-        self.spells[slot] = spells.Spell__new(kind)
+        self.spells[slot] = spells.Spell.new(kind)
     end
     return true
 end
@@ -334,7 +334,7 @@ function snapshot(state: State): string
         snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
         snapshot_data.append_i32(parts, spell.cost)
     end
-    snapshot_data.append_i32(parts, state.start_spell)
+    snapshot_data.append_i32(parts, state.start_spell:tonumber()::i32)
     snapshot_data.append_bool(parts, state.rush)
     return table.concat(parts, ",")
 end
@@ -356,7 +356,8 @@ function restore(snapshot_value: string): State?
             kind = kind::game.SpellKind, cost = reader:next_i32(),
         })
     end
-    local start_spell: i32 = reader:next_i32()
+    local start_spell = game.spell_kind_from(reader:next_i32())
+    if start_spell == nil then return nil end
     local rush: bool = reader:next_bool()
     local restored: State = {
         duel = duel,
