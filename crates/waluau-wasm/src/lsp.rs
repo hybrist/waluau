@@ -451,4 +451,45 @@ mod tests {
             diagnostics_for(&messages, "file:///lib.walu").expect("lib diagnostics");
         assert_eq!(lib_diagnostics.len(), 1, "{lib_diagnostics:?}");
     }
+
+    #[test]
+    fn definitions_cross_virtual_module_namespace() {
+        let mut server = WaluauLanguageServer::new();
+        // This is the in-memory document batch that `analyzeProject` installs
+        // before the playground sends position requests through the worker.
+        server.inner.replace_documents(HashMap::from([
+            ("/e.walu".into(), "export enum E { A }".to_string()),
+            (
+                "/other.walu".into(),
+                "local e_lib = require(\"./e\")\n\nlocal e = e_lib.E.A".to_string(),
+            ),
+        ]));
+
+        for (id, character, expected_character) in [(1, 16, 12), (2, 18, 16)] {
+            let messages = send(
+                &mut server,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": "file:///other.walu"},
+                        "position": {"line": 2, "character": character},
+                    },
+                }),
+            );
+            let location = &messages[0]["result"];
+            assert_eq!(location["uri"], "file:///e.walu", "{location:?}");
+            assert_eq!(location["range"]["start"]["line"], 0, "{location:?}");
+            assert_eq!(
+                location["range"]["start"]["character"], expected_character,
+                "{location:?}"
+            );
+            assert_eq!(
+                location["range"]["end"]["character"],
+                expected_character + 1,
+                "{location:?}"
+            );
+        }
+    }
 }
