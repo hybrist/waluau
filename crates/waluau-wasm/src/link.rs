@@ -1126,11 +1126,14 @@ fn imported_enum_pairs_for_in(
 ) -> Result<Option<Stmt>, String> {
     let Stmt::ForIn {
         names,
-        iterator,
+        iterators,
         body,
         ..
     } = stmt
     else {
+        return Ok(None);
+    };
+    let [iterator] = iterators.as_slice() else {
         return Ok(None);
     };
     let Some(Expr::Field {
@@ -1279,8 +1282,12 @@ fn resolve_imported_enum_matches(
                 }
                 resolve_imported_enum_matches(body, type_namespaces)?;
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                resolve_imported_enum_expr(iterator, type_namespaces)?;
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    resolve_imported_enum_expr(iterator, type_namespaces)?;
+                }
                 resolve_imported_enum_matches(body, type_namespaces)?;
             }
             Stmt::ReturnMulti(values)
@@ -1805,8 +1812,12 @@ impl Rewriter<'_> {
                     self.rewrite_stmt_types(stmt);
                 }
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                self.rewrite_expr_types(iterator);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    self.rewrite_expr_types(iterator);
+                }
                 for stmt in body {
                     self.rewrite_stmt_types(stmt);
                 }
@@ -2145,11 +2156,13 @@ impl Rewriter<'_> {
             }
             Stmt::ForIn {
                 names,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                self.rewrite_expr(iterator, bound);
+                for iterator in iterators.iter_mut() {
+                    self.rewrite_expr(iterator, bound);
+                }
                 let mut inner = bound.clone();
                 for name in names {
                     inner.insert(name.clone());
@@ -2424,8 +2437,12 @@ fn strip_unused_namespace_lets_in_stmt(
             }
             strip_unused_namespace_lets(body, namespaces);
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            strip_unused_namespace_lets_in_expr(iterator, namespaces);
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            for iterator in iterators {
+                strip_unused_namespace_lets_in_expr(iterator, namespaces);
+            }
             strip_unused_namespace_lets(body, namespaces);
         }
         Stmt::ReturnMulti(values)
@@ -2652,11 +2669,13 @@ fn rename_stmt(
         }
         Stmt::ForIn {
             names,
-            iterator,
+            iterators,
             body,
             ..
         } => {
-            rename_expr(iterator, renames, available, shadowed);
+            for iterator in iterators.iter_mut() {
+                rename_expr(iterator, renames, available, shadowed);
+            }
             let mut inner_available = available.clone();
             let mut inner_shadowed = shadowed.clone();
             for name in names {
@@ -2845,8 +2864,13 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                     .is_some_and(|step_expr| expr_mentions_name(name, step_expr))
                 || stmt_mentions_name(name, body)
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            expr_mentions_name(name, iterator) || stmt_mentions_name(name, body)
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            iterators
+                .iter()
+                .any(|iterator| expr_mentions_name(name, iterator))
+                || stmt_mentions_name(name, body)
         }
         Stmt::ReturnMulti(values)
         | Stmt::LetMulti { values, .. }
@@ -2968,8 +2992,12 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                 }
                 collect_block(body, out);
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                collect_expr(iterator, out);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    collect_expr(iterator, out);
+                }
                 collect_block(body, out);
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => collect_expr(expr, out),
@@ -3114,14 +3142,17 @@ mod tests {
             .find_map(|stmt| match stmt {
                 Stmt::ForIn {
                     names,
-                    iterator,
+                    iterators,
                     body,
                     ..
-                } => Some((names, iterator, body)),
+                } => Some((names, iterators, body)),
                 _ => None,
             })
             .expect("the pairs loop should survive linking as a for-in");
-        let (names, iterator, body) = desugared;
+        let (names, iterators, body) = desugared;
+        let [iterator] = iterators.as_slice() else {
+            panic!("the enum pairs desugar produces a single iterator");
+        };
         assert_eq!(
             names,
             &vec![

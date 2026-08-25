@@ -7,7 +7,7 @@ use super::builtins::{ASSERT, PCALL};
 use super::expressions::{
     builtin_name, infer_expr, infer_expr_list, is_record_like, nominal_type_names,
 };
-use super::numeric::{infer_numeric_for_loop_type, is_extern_subtype_of};
+use super::numeric::{coerce_type, infer_numeric_for_loop_type, is_extern_subtype_of};
 use super::signatures::{
     FnSignature, active_type_param_set, generic_diagnostic, inference_diagnostic,
     validate_type_in_scope, validate_type_param_list,
@@ -269,30 +269,311 @@ pub(super) fn pairs_loop_value_types(
             super::module_type_display(&arg_ty)
         ))));
     };
+    Some(record_iteration_value_types("pairs", fields, names_len))
+}
+
+/// Loop-variable types for iterating a record's fields — via `pairs(rec)` or
+/// `next, rec`: the field-name string plus the shared field type. `what`
+/// names the iterating form in diagnostics.
+fn record_iteration_value_types(
+    what: &str,
+    fields: &BTreeMap<String, Type>,
+    names_len: usize,
+) -> Result<Vec<Type>, Diagnostic> {
     if names_len > 2 {
-        return Some(Err(Diagnostic::new(format!(
-            "pairs for-in loop expects 1 or 2 loop variables, got {names_len}"
-        ))));
+        return Err(Diagnostic::new(format!(
+            "{what} for-in loop expects 1 or 2 loop variables, got {names_len}"
+        )));
     }
     if names_len == 1 {
-        return Some(Ok(vec![Type::String]));
+        return Ok(vec![Type::String]);
     }
     let mut field_types = fields.iter();
     let Some((first_name, first_ty)) = field_types.next() else {
-        return Some(Err(Diagnostic::new(
-            "pairs over a record with no fields cannot bind a value variable",
+        return Err(Diagnostic::new(format!(
+            "{what} over a record with no fields cannot bind a value variable"
         )));
     };
     for (name, ty) in field_types {
         if ty != first_ty {
-            return Some(Err(Diagnostic::new(format!(
-                "pairs over a record requires every field to have the same type; '{first_name}' is {} but '{name}' is {}",
+            return Err(Diagnostic::new(format!(
+                "{what} over a record requires every field to have the same type; '{first_name}' is {} but '{name}' is {}",
                 super::module_type_display(first_ty),
                 super::module_type_display(ty)
-            ))));
+            )));
         }
     }
-    Some(Ok(vec![Type::String, first_ty.clone()]))
+    Ok(vec![Type::String, first_ty.clone()])
+}
+
+/// Loop-variable types for `for k[, v] in next, t`: record fields as
+/// (name, value) like `pairs`, or array elements as (index, value). Unlike a
+/// plain array loop, a single variable binds the index — `next` yields keys
+/// first.
+fn next_loop_value_types(
+    target: &Expr,
+    names_len: usize,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<Vec<Type>, Diagnostic> {
+    let arg_ty = infer_expr(target, vars, fn_signatures, active_type_params, None)?;
+    if arg_ty.is_readonly() {
+        return Err(Diagnostic::new(
+            "next over a read-only record view is not supported",
+        ));
+    }
+    if arg_ty.is_array() {
+        let element_ty = arg_ty
+            .element_type()
+            .expect("array type has an element type");
+        return match names_len {
+            1 => Ok(vec![Type::Numeric(NumericType::I32)]),
+            2 => Ok(vec![Type::Numeric(NumericType::I32), element_ty]),
+            _ => Err(Diagnostic::new(format!(
+                "next for-in loop expects 1 or 2 loop variables, got {names_len}"
+            ))),
+        };
+    }
+    let Some(fields) = waluau_ast::pairs_record_fields(&arg_ty) else {
+        return Err(Diagnostic::new(format!(
+            "next iterates a record or an array, got {}",
+            super::module_type_display(&arg_ty)
+        )));
+    };
+    record_iteration_value_types("next", fields, names_len)
+}
+
+/// Validates an iterator-protocol function type `(S, C) -> (K?, V...)`,
+/// including that the control result `K` can feed back into the control
+/// parameter `C`. Errors describe which part of the shape is wrong.
+fn require_iterator_protocol(f_ty: &Type) -> Result<waluau_ast::IteratorProtocol, Diagnostic> {
+    if let Some(protocol) = waluau_ast::iterator_protocol(f_ty) {
+        if coerce_type(
+            protocol.control_ty.clone(),
+            Some(protocol.control_param_ty.clone()),
+        )
+        .is_err()
+        {
+            return Err(Diagnostic::new(format!(
+                "the iterator's control result {} cannot feed back into its control parameter {}",
+                super::module_type_display(&protocol.control_ty),
+                super::module_type_display(&protocol.control_param_ty)
+            )));
+        }
+        return Ok(protocol);
+    }
+    match f_ty {
+        Type::Function { has_self: true, .. } => Err(Diagnostic::new(
+            "an iterator function must not take a self receiver",
+        )),
+        Type::Function { params, .. } if params.len() != 2 => Err(Diagnostic::new(format!(
+            "an iterator taking explicit state must have exactly 2 parameters (state, control), got {}",
+            params.len()
+        ))),
+        Type::Function { .. } => Err(Diagnostic::new(
+            "the iterator function's first return value must be nullable — returning nil ends the loop",
+        )),
+        other => Err(Diagnostic::new(format!(
+            "the iterator in `for ... in f, state` must be a function, got {}",
+            super::module_type_display(other)
+        ))),
+    }
+}
+
+/// The loop-variable types `[K, V...]` for a validated protocol iterator,
+/// checked against the number of bound names (fewer names are fine, as in
+/// Lua; more are an error).
+fn protocol_value_types(
+    protocol: waluau_ast::IteratorProtocol,
+    names_len: usize,
+) -> Result<Vec<Type>, Diagnostic> {
+    let available = 1 + protocol.value_types.len();
+    if names_len > available {
+        return Err(Diagnostic::new(format!(
+            "for-in loop binds {names_len} variables, but the iterator produces {available} values"
+        )));
+    }
+    Ok(std::iter::once(protocol.control_ty)
+        .chain(protocol.value_types)
+        .collect())
+}
+
+/// Protocol checking for the value form: a single iterator expression whose
+/// type is `(iterator, state[, control])` — what a hand-written `pairs`
+/// factory returns.
+fn protocol_loop_value_types_from_slots(
+    slots: &[Type],
+    names_len: usize,
+) -> Result<Vec<Type>, Diagnostic> {
+    let (f_ty, state_slot, control_slot) = match slots {
+        [f, s] => (f, s, None),
+        [f, s, c] => (f, s, Some(c)),
+        _ => {
+            return Err(Diagnostic::new(format!(
+                "for-in over a multi-value iterator expects (iterator, state[, control]), got {} values",
+                slots.len()
+            )));
+        }
+    };
+    let protocol = require_iterator_protocol(f_ty)?;
+    if coerce_type(state_slot.clone(), Some(protocol.state_ty.clone())).is_err() {
+        return Err(Diagnostic::new(format!(
+            "iterator state expected {}, got {}",
+            super::module_type_display(&protocol.state_ty),
+            super::module_type_display(state_slot)
+        )));
+    }
+    check_control_start_type(control_slot.cloned(), &protocol)?;
+    protocol_value_types(protocol, names_len)
+}
+
+/// The control start must coerce to the iterator's control parameter; when
+/// omitted, the loop starts the control at nil, so the parameter must accept
+/// nil.
+fn check_control_start_type(
+    control: Option<Type>,
+    protocol: &waluau_ast::IteratorProtocol,
+) -> Result<(), Diagnostic> {
+    match control {
+        Some(actual) => {
+            if coerce_type(actual.clone(), Some(protocol.control_param_ty.clone())).is_err() {
+                return Err(Diagnostic::new(format!(
+                    "iterator control start expected {}, got {}",
+                    super::module_type_display(&protocol.control_param_ty),
+                    super::module_type_display(&actual)
+                )));
+            }
+        }
+        None => {
+            if coerce_type(Type::Nil, Some(protocol.control_param_ty.clone())).is_err() {
+                return Err(Diagnostic::new(format!(
+                    "the iterator's control parameter {} does not accept nil; pass an explicit control start: `for ... in f, state, start`",
+                    super::module_type_display(&protocol.control_param_ty)
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The types a for-in loop binds, across every iterator form:
+///
+/// - `string.gmatch` / `pairs(...)` compile-time special forms,
+/// - a parameterless closure returning `(bool, V...)`,
+/// - an array (element, or 0-based index + element),
+/// - the generic-for protocol `for ... in f, s[, c0]` — the loop calls
+///   `f(s, control)` until the first result is nil (PIL 7.3), written as an
+///   explicit expression list, as `next, t`, or as one expression returning
+///   an `(iterator, state[, control])` multi-value.
+///
+/// May return more types than `names_len` (protocol iterators allow binding
+/// fewer variables); callers zip against the names.
+pub(super) fn for_in_loop_value_types(
+    iterators: &[Expr],
+    names_len: usize,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<Vec<Type>, Diagnostic> {
+    if let [iterator] = iterators {
+        if let Some(result) = gmatch_loop_value_types(iterator, names_len) {
+            return result;
+        }
+        if let Some(result) =
+            pairs_loop_value_types(iterator, names_len, vars, fn_signatures, active_type_params)
+        {
+            return result;
+        }
+        let iterator_ty = infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
+        return match iterator_ty {
+            Type::Multi(slots) => protocol_loop_value_types_from_slots(&slots, names_len),
+            Type::Function {
+                params,
+                return_type,
+                has_self: false,
+            } => {
+                if !params.is_empty() {
+                    return Err(Diagnostic::new(
+                        "for-in iterator function must not require parameters; pass explicit state with `for ... in f, state[, control]`",
+                    ));
+                }
+                let return_values = match *return_type {
+                    Type::Multi(values) => values,
+                    other => vec![other],
+                };
+                if return_values.len() != names_len + 1 {
+                    return Err(Diagnostic::new(format!(
+                        "for-in iterator expects {} return values (bool + {} loop values), got {}",
+                        names_len + 1,
+                        names_len,
+                        return_values.len()
+                    )));
+                }
+                if return_values[0] != Type::Bool {
+                    return Err(Diagnostic::new(
+                        "for-in iterator first return value must be bool",
+                    ));
+                }
+                Ok(return_values.into_iter().skip(1).collect())
+            }
+            array_ty if array_ty.is_array() => {
+                let element_ty = array_ty
+                    .element_type()
+                    .expect("array type has an element type");
+                match names_len {
+                    1 => Ok(vec![element_ty]),
+                    2 => Ok(vec![Type::Numeric(NumericType::I32), element_ty]),
+                    _ => Err(Diagnostic::new(format!(
+                        "array for-in loop expects 1 or 2 loop variables, got {names_len}"
+                    ))),
+                }
+            }
+            _ => Err(Diagnostic::new(
+                "for-in iterator must be a function or an array",
+            )),
+        };
+    }
+    // Symbols are not resolved yet during type checking, so the builtin
+    // `next` is discriminated by scope: any local or function named `next`
+    // shadows it and iterates as an ordinary protocol function.
+    let next_shadowed = vars.contains_key("next") || fn_signatures.contains_key("next");
+    if !next_shadowed && let Some(target) = waluau_ast::for_in_builtin_next_target(iterators) {
+        return next_loop_value_types(target?, names_len, vars, fn_signatures, active_type_params);
+    }
+    if iterators.len() > 3 {
+        return Err(Diagnostic::new(
+            "for-in takes at most 3 iterator expressions (iterator, state, control)",
+        ));
+    }
+    let f_ty = infer_expr(&iterators[0], vars, fn_signatures, active_type_params, None)?;
+    let protocol = require_iterator_protocol(&f_ty)?;
+    let state_actual = infer_expr(
+        &iterators[1],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(protocol.state_ty.clone()),
+    )?;
+    if coerce_type(state_actual.clone(), Some(protocol.state_ty.clone())).is_err() {
+        return Err(Diagnostic::new(format!(
+            "iterator state expected {}, got {}",
+            super::module_type_display(&protocol.state_ty),
+            super::module_type_display(&state_actual)
+        )));
+    }
+    let control_actual = match iterators.get(2) {
+        Some(control) => Some(infer_expr(
+            control,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(protocol.control_param_ty.clone()),
+        )?),
+        None => None,
+    };
+    check_control_start_type(control_actual, &protocol)?;
+    protocol_value_types(protocol, names_len)
 }
 
 /// Whether a pcall payload type can be soundly materialized from the `unknown`
@@ -1063,101 +1344,20 @@ fn collect_return_types_with_scope(
             }
             Stmt::ForIn {
                 names,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                if let Some(result) = gmatch_loop_value_types(iterator, names.len()) {
-                    let loop_value_types = result?;
-                    let mut loop_scope = scope.clone();
-                    for (name, ty) in names.iter().zip(loop_value_types) {
-                        loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
-                    }
-                    collect_return_types(
-                        body,
-                        &loop_scope,
-                        fn_signatures,
-                        active_type_params,
-                        returns,
-                    )?;
-                    continue;
-                }
-                if let Some(result) = pairs_loop_value_types(
-                    iterator,
+                let loop_value_types = for_in_loop_value_types(
+                    iterators,
                     names.len(),
                     &scope,
                     fn_signatures,
                     active_type_params,
-                ) {
-                    let loop_value_types = result?;
+                )?;
+                for iterator in iterators {
                     seal_record_locals_in_expr(iterator, &mut scope);
-                    let mut loop_scope = scope.clone();
-                    for (name, ty) in names.iter().zip(loop_value_types) {
-                        loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
-                    }
-                    collect_return_types(
-                        body,
-                        &loop_scope,
-                        fn_signatures,
-                        active_type_params,
-                        returns,
-                    )?;
-                    continue;
                 }
-                let iterator_ty =
-                    infer_expr(iterator, &scope, fn_signatures, active_type_params, None)?;
-                seal_record_locals_in_expr(iterator, &mut scope);
-                let loop_value_types = match iterator_ty {
-                    Type::Function {
-                        params,
-                        return_type,
-                        has_self: false,
-                    } => {
-                        if !params.is_empty() {
-                            return Err(Diagnostic::new(
-                                "for-in iterator function must not require parameters",
-                            ));
-                        }
-                        let return_values = match *return_type {
-                            Type::Multi(values) => values,
-                            other => vec![other],
-                        };
-                        if return_values.len() != names.len() + 1 {
-                            return Err(Diagnostic::new(format!(
-                                "for-in iterator expects {} return values (bool + {} loop values), got {}",
-                                names.len() + 1,
-                                names.len(),
-                                return_values.len()
-                            )));
-                        }
-                        if return_values[0] != Type::Bool {
-                            return Err(Diagnostic::new(
-                                "for-in iterator first return value must be bool",
-                            ));
-                        }
-                        return_values.into_iter().skip(1).collect::<Vec<_>>()
-                    }
-                    array_ty if array_ty.is_array() => {
-                        let element_ty = array_ty
-                            .element_type()
-                            .expect("array type has an element type");
-                        if names.len() == 1 {
-                            vec![element_ty]
-                        } else if names.len() == 2 {
-                            vec![Type::Numeric(NumericType::I32), element_ty]
-                        } else {
-                            return Err(Diagnostic::new(format!(
-                                "array for-in loop expects 1 or 2 loop variables, got {}",
-                                names.len()
-                            )));
-                        }
-                    }
-                    _ => {
-                        return Err(Diagnostic::new(
-                            "for-in iterator must be a function or an array",
-                        ));
-                    }
-                };
                 let mut loop_scope = scope.clone();
                 for (name, ty) in names.iter().zip(loop_value_types) {
                     loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
@@ -1422,7 +1622,7 @@ pub(super) fn primary_stmt_span(stmt: &Stmt) -> Option<waluau_ast::Span> {
         Stmt::IfCast { value, .. } => value.span(),
         Stmt::Match { value, .. } => value.span(),
         Stmt::NumericFor { start, .. } => start.span(),
-        Stmt::ForIn { iterator, .. } => iterator.span(),
+        Stmt::ForIn { iterators, .. } => iterators.first().and_then(|iterator| iterator.span()),
         Stmt::Return(value) => value.span(),
         Stmt::ReturnMulti(values) => values.first().and_then(|value| value.span()),
         Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
@@ -2024,80 +2224,20 @@ fn check_stmt_inner(
         }
         Stmt::ForIn {
             names,
-            iterator,
+            iterators,
             body,
             ..
         } => {
-            let loop_value_types = if let Some(result) =
-                gmatch_loop_value_types(iterator, names.len())
-            {
-                seal_record_locals_in_expr(iterator, vars);
-                result?
-            } else if let Some(result) = pairs_loop_value_types(
-                iterator,
+            let loop_value_types = for_in_loop_value_types(
+                iterators,
                 names.len(),
                 vars,
                 fn_signatures,
                 active_type_params,
-            ) {
+            )?;
+            for iterator in iterators {
                 seal_record_locals_in_expr(iterator, vars);
-                result?
-            } else {
-                let iterator_ty =
-                    infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
-                seal_record_locals_in_expr(iterator, vars);
-                match iterator_ty {
-                    Type::Function {
-                        params,
-                        return_type,
-                        has_self: false,
-                    } => {
-                        if !params.is_empty() {
-                            return Err(Diagnostic::new(
-                                "for-in iterator function must not require parameters",
-                            ));
-                        }
-                        let return_values = match *return_type {
-                            Type::Multi(values) => values,
-                            other => vec![other],
-                        };
-                        if return_values.len() != names.len() + 1 {
-                            return Err(Diagnostic::new(format!(
-                                "for-in iterator expects {} return values (bool + {} loop values), got {}",
-                                names.len() + 1,
-                                names.len(),
-                                return_values.len()
-                            )));
-                        }
-                        if return_values[0] != Type::Bool {
-                            return Err(Diagnostic::new(
-                                "for-in iterator first return value must be bool",
-                            ));
-                        }
-                        return_values.into_iter().skip(1).collect::<Vec<_>>()
-                    }
-                    array_ty if array_ty.is_array() => {
-                        let element_ty = array_ty
-                            .element_type()
-                            .expect("array type has an element type");
-                        if names.len() == 1 {
-                            vec![element_ty]
-                        } else if names.len() == 2 {
-                            vec![Type::Numeric(NumericType::I32), element_ty]
-                        } else {
-                            return Err(Diagnostic::new(format!(
-                                "array for-in loop expects 1 or 2 loop variables, got {}",
-                                names.len()
-                            )));
-                        }
-                    }
-                    _ => {
-                        return Err(Diagnostic::new(
-                            "for-in iterator must be a function or an array",
-                        ));
-                    }
-                }
-            };
+            }
             let mut loop_scope = vars.clone();
             for (name, ty) in names.iter().zip(loop_value_types) {
                 loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
@@ -2411,8 +2551,12 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
                     .is_some_and(|step_expr| expr_calls_name(step_expr, callee))
                 || body.iter().any(|stmt| stmt_calls_name(stmt, callee))
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            expr_calls_name(iterator, callee)
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            iterators
+                .iter()
+                .any(|iterator| expr_calls_name(iterator, callee))
                 || body.iter().any(|stmt| stmt_calls_name(stmt, callee))
         }
         Stmt::Break | Stmt::Continue => false,

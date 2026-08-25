@@ -178,8 +178,12 @@ fn collect_referenced_symbols_from_stmts(stmts: &[Stmt], symbols: &mut HashSet<S
                 }
                 collect_referenced_symbols_from_stmts(body, symbols);
             }
-            Stmt::ForIn { iterator, body, .. } => {
-                collect_referenced_symbols_from_expr(iterator, symbols);
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    collect_referenced_symbols_from_expr(iterator, symbols);
+                }
                 collect_referenced_symbols_from_stmts(body, symbols);
             }
             Stmt::ReturnMulti(values) | Stmt::LetMulti { values, .. } => {
@@ -1094,8 +1098,12 @@ fn collect_stmt_variant_tags(stmt: &Stmt, tag_ids: &mut BTreeMap<String, i32>) {
                 collect_stmt_variant_tags(stmt, tag_ids);
             }
         }
-        Stmt::ForIn { iterator, body, .. } => {
-            collect_expr_variant_tags(iterator, tag_ids);
+        Stmt::ForIn {
+            iterators, body, ..
+        } => {
+            for iterator in iterators {
+                collect_expr_variant_tags(iterator, tag_ids);
+            }
             for stmt in body {
                 collect_stmt_variant_tags(stmt, tag_ids);
             }
@@ -1383,12 +1391,12 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
         Stmt::ForIn {
             names,
             symbol_ids,
-            iterator,
+            iterators,
             body,
         } => Stmt::ForIn {
             names: names.clone(),
             symbol_ids: symbol_ids.clone(),
-            iterator: erase_expr_opaque_types(iterator),
+            iterators: iterators.iter().map(erase_expr_opaque_types).collect(),
             body: body.iter().map(erase_stmt_opaque_types).collect(),
         },
         Stmt::Break => Stmt::Break,
@@ -1851,7 +1859,7 @@ fn primary_stmt_span(stmt: &Stmt) -> Option<waluau_ast::Span> {
         Stmt::IfCast { value, .. } | Stmt::Match { value, .. } => value.span(),
         Stmt::Repeat { condition, .. } => condition.span(),
         Stmt::NumericFor { start, .. } => start.span(),
-        Stmt::ForIn { iterator, .. } => iterator.span(),
+        Stmt::ForIn { iterators, .. } => iterators.first().and_then(Expr::span),
         Stmt::ReturnMulti(values)
         | Stmt::LetMulti { values, .. }
         | Stmt::AssignMulti { values, .. } => values.first().and_then(Expr::span),
@@ -1958,10 +1966,26 @@ enum IndexedLoopBindings {
     /// `for v in arr` / `for i, v in arr`: the element, or the 0-based index
     /// plus the element.
     Array,
+    /// `for i[, v] in next, arr`: the 0-based index plus, when bound, the
+    /// element — `next` yields keys first, so one variable binds the index.
+    ArrayNext,
     /// `for name in pairs(rec)` / `for name, value in pairs(rec)`: the
     /// field-name element plus, when a value variable is bound, the field
     /// value read from a parallel array at the same index.
     RecordPairs { values: Option<(ValueId, Type)> },
+}
+
+/// Where a generic-for protocol loop gets its iterator, state, and control:
+/// an explicit `f, s[, c0]` expression list, or one expression whose type is
+/// an `(iterator, state[, control])` multi-value (a hand-written `pairs`
+/// factory call).
+enum ProtocolSource<'a> {
+    ExprList {
+        function: &'a Expr,
+        state: &'a Expr,
+        control: Option<&'a Expr>,
+    },
+    MultiValue { expr: &'a Expr, slots: Vec<Type> },
 }
 
 /// Recognizes `string.gmatch(s, p)` / `s:gmatch(p)` in for-in iterator
@@ -3418,11 +3442,11 @@ impl Builder<'_> {
             }
             Stmt::ForIn {
                 symbol_ids,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                self.lower_for_in(symbol_ids, iterator, body, env, types)?;
+                self.lower_for_in(symbol_ids, iterators, body, env, types)?;
             }
         }
         Ok(())
@@ -4678,52 +4702,340 @@ impl Builder<'_> {
     fn lower_for_in(
         &mut self,
         symbol_ids: &Option<Vec<SymbolId>>,
-        iterator: &Expr,
+        iterators: &[Expr],
         body: &[Stmt],
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let ids = symbol_ids.as_ref().expect("symbol_ids should be resolved");
-        if let Some((haystack_expr, pattern_expr)) = gmatch_iterator_args(iterator) {
-            return self.lower_for_in_gmatch(haystack_expr, pattern_expr, ids, body, env, types);
-        }
-        if let Some(record_expr) = waluau_ast::pairs_call_arg(iterator) {
-            return self.lower_for_in_record_pairs(record_expr, ids, body, env, types);
-        }
-        let iterator_ty = self.infer_expr_type(iterator, types, None)?;
-        if let Type::Array(element_ty) = &iterator_ty {
-            if ids.len() != 1 && ids.len() != 2 {
-                return Err(Diagnostic::new(format!(
-                    "array for-in loop expects 1 or 2 loop variables, got {}",
-                    ids.len()
-                )));
+        if let [iterator] = iterators {
+            if let Some((haystack_expr, pattern_expr)) = gmatch_iterator_args(iterator) {
+                return self
+                    .lower_for_in_gmatch(haystack_expr, pattern_expr, ids, body, env, types);
             }
-            let array_val = self.lower_expr(iterator, env, types, Some(iterator_ty.clone()))?;
-            return self.lower_indexed_for_in(
-                array_val,
-                element_ty,
-                IndexedLoopBindings::Array,
-                ids,
-                body,
-                env,
-                types,
-            );
+            if let Some(record_expr) = waluau_ast::pairs_call_arg(iterator) {
+                return self.lower_for_in_record_pairs(record_expr, ids, body, env, types);
+            }
+            let iterator_ty = self.infer_expr_type(iterator, types, None)?;
+            if let Type::Multi(slots) = &iterator_ty {
+                // One expression producing `(iterator, state[, control])`:
+                // the value form of the generic-for protocol.
+                return self.lower_for_in_protocol(
+                    ProtocolSource::MultiValue {
+                        expr: iterator,
+                        slots: slots.clone(),
+                    },
+                    ids,
+                    body,
+                    env,
+                    types,
+                );
+            }
+            if let Type::Array(element_ty) = &iterator_ty {
+                if ids.len() != 1 && ids.len() != 2 {
+                    return Err(Diagnostic::new(format!(
+                        "array for-in loop expects 1 or 2 loop variables, got {}",
+                        ids.len()
+                    )));
+                }
+                let array_val = self.lower_expr(iterator, env, types, Some(iterator_ty.clone()))?;
+                return self.lower_indexed_for_in(
+                    array_val,
+                    element_ty,
+                    IndexedLoopBindings::Array,
+                    ids,
+                    body,
+                    env,
+                    types,
+                );
+            }
+
+            let Type::Function {
+                params,
+                return_type,
+                ..
+            } = iterator_ty
+            else {
+                return Err(Diagnostic::new("for-in iterator must be a function"));
+            };
+            if !params.is_empty() {
+                return Err(Diagnostic::new(
+                    "for-in iterator function must not require parameters",
+                ));
+            }
+            return self.lower_for_in_function(*return_type, ids, iterator, body, env, types);
+        }
+        // `for k[, v] in next, t[, nil]`: the builtin `next` iterates a
+        // record's fields like `pairs`, or an array with the index bound
+        // first (`next` yields keys first, unlike a plain array loop).
+        if let Some(target) = waluau_ast::for_in_builtin_next_target(iterators) {
+            let target = target?;
+            let target_ty = self.infer_expr_type(target, types, None)?;
+            if let Type::Array(element_ty) = &target_ty {
+                if ids.len() != 1 && ids.len() != 2 {
+                    return Err(Diagnostic::new(format!(
+                        "next for-in loop expects 1 or 2 loop variables, got {}",
+                        ids.len()
+                    )));
+                }
+                let array_val = self.lower_expr(target, env, types, Some(target_ty.clone()))?;
+                return self.lower_indexed_for_in(
+                    array_val,
+                    element_ty,
+                    IndexedLoopBindings::ArrayNext,
+                    ids,
+                    body,
+                    env,
+                    types,
+                );
+            }
+            return self.lower_for_in_record_pairs(target, ids, body, env, types);
+        }
+        self.lower_for_in_protocol(
+            ProtocolSource::ExprList {
+                function: &iterators[0],
+                state: &iterators[1],
+                control: iterators.get(2),
+            },
+            ids,
+            body,
+            env,
+            types,
+        )
+    }
+
+    /// `for k, v... in f, s[, c0]` — the Lua generic-for protocol (PIL 7.3):
+    /// each iteration calls `f(s, control)`; a nil first result ends the
+    /// loop, otherwise it becomes the first loop variable and feeds back as
+    /// the next control value. The state is evaluated once; the control is a
+    /// loop-carried phi starting at `c0` (nil when omitted).
+    fn lower_for_in_protocol(
+        &mut self,
+        source: ProtocolSource<'_>,
+        ids: &[SymbolId],
+        body: &[Stmt],
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        let (f_ty, f_val, state_val, control_start) = match source {
+            ProtocolSource::ExprList {
+                function,
+                state,
+                control,
+            } => {
+                let f_ty = self.infer_expr_type(function, types, None)?;
+                let Some(protocol) = waluau_ast::iterator_protocol(&f_ty) else {
+                    return Err(Diagnostic::new(
+                        "for-in iterator list must start with an iterator function (state, control) -> (control?, values...)",
+                    ));
+                };
+                let f_val = self.lower_expr(function, env, types, Some(f_ty.clone()))?;
+                let state_val =
+                    self.lower_expr(state, env, types, Some(protocol.state_ty.clone()))?;
+                let control_start = match control {
+                    Some(expr) => {
+                        self.lower_expr(expr, env, types, Some(protocol.control_param_ty.clone()))?
+                    }
+                    None => self.emit(Instruction::Null {
+                        ty: protocol.control_param_ty.clone(),
+                    }),
+                };
+                (f_ty, f_val, state_val, control_start)
+            }
+            ProtocolSource::MultiValue { expr, slots } => {
+                let Some(protocol) = slots.first().and_then(waluau_ast::iterator_protocol)
+                else {
+                    return Err(Diagnostic::new(
+                        "for-in over a multi-value iterator expects (iterator, state[, control])",
+                    ));
+                };
+                let multi_val = self.lower_expr(expr, env, types, None)?;
+                let f_val = self.emit(Instruction::MultiGet {
+                    value: multi_val,
+                    index: 0,
+                    ty: slots[0].clone(),
+                });
+                let state_raw = self.emit(Instruction::MultiGet {
+                    value: multi_val,
+                    index: 1,
+                    ty: slots[1].clone(),
+                });
+                let state_val = self.coerce_value(
+                    state_raw,
+                    slots[1].clone(),
+                    Some(protocol.state_ty.clone()),
+                )?;
+                let control_start = if let Some(control_slot) = slots.get(2) {
+                    let raw = self.emit(Instruction::MultiGet {
+                        value: multi_val,
+                        index: 2,
+                        ty: control_slot.clone(),
+                    });
+                    self.coerce_value(
+                        raw,
+                        control_slot.clone(),
+                        Some(protocol.control_param_ty.clone()),
+                    )?
+                } else {
+                    self.emit(Instruction::Null {
+                        ty: protocol.control_param_ty.clone(),
+                    })
+                };
+                (slots[0].clone(), f_val, state_val, control_start)
+            }
+        };
+        let protocol =
+            waluau_ast::iterator_protocol(&f_ty).expect("protocol shape validated above");
+        let multi_return = protocol.return_slots.len() > 1;
+        let declared_return_ty = if multi_return {
+            Type::Multi(protocol.return_slots.clone())
+        } else {
+            protocol.return_slots[0].clone()
+        };
+        let first_slot_ty = protocol.return_slots[0].clone();
+
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        let mutated = collect_assigned_names(body);
+        self.current_block = header;
+        let mut loop_env = env.clone();
+        let loop_types = types.clone();
+        let mut phis = HashMap::new();
+        for id in &mutated {
+            if let Some(initial) = env.get(id).copied() {
+                let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
+                loop_env.insert(*id, phi);
+                self.function.value_symbols.insert(phi, *id);
+                phis.insert(*id, phi);
+            }
+        }
+        let control_phi = self.emit(Instruction::Phi(vec![(preheader, control_start)]));
+
+        let call = self.emit(Instruction::CallValue {
+            callee: f_val,
+            args: vec![state_val, control_phi],
+            params: vec![
+                protocol.state_ty.clone(),
+                protocol.control_param_ty.clone(),
+            ],
+            return_type: declared_return_ty,
+        });
+        let next_control_opt = if multi_return {
+            self.emit(Instruction::MultiGet {
+                value: call,
+                index: 0,
+                ty: first_slot_ty.clone(),
+            })
+        } else {
+            call
+        };
+        let is_null = self.emit(Instruction::IsNull {
+            value: next_control_opt,
+            ty: protocol.control_ty.clone(),
+        });
+        // Loop headers branch with then = body, else = exit — the shape the
+        // structured-control-flow emitter recognizes — so negate the null
+        // test into a continue condition (there is no `not` instruction).
+        let false_value = self.emit(Instruction::Bool(false));
+        let continue_cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Eq,
+            left: is_null,
+            right: false_value,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let exit_phis = self.create_exit_phis(exit, &phis);
+        for (id, phi) in &phis {
+            add_phi_incoming(&mut self.function, exit, exit_phis[id], (header, *phi));
+        }
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: continue_cond,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let mut body_env = loop_env.clone();
+        let mut body_types = loop_types.clone();
+        // Narrow the control result and compute the next control value before
+        // any user statement runs, so continue edges can reuse it.
+        let control_val = self.emit(Instruction::Cast {
+            value: next_control_opt,
+            from: first_slot_ty,
+            to: protocol.control_ty.clone(),
+        });
+        let next_control = self.coerce_value(
+            control_val,
+            protocol.control_ty.clone(),
+            Some(protocol.control_param_ty.clone()),
+        )?;
+        self.loop_stack.push(LoopContext {
+            header,
+            continue_target: header,
+            break_target: exit,
+            phis: phis.clone(),
+            carries: vec![LoopCarry {
+                phi: control_phi,
+                update: CarryUpdate::Invariant(next_control),
+            }],
+            exit_phis: exit_phis.clone(),
+        });
+
+        self.bind_loop_var(ids[0], control_val, &protocol.control_ty, &mut body_env);
+        body_types.insert(ids[0], protocol.control_ty.clone());
+        for (index, id) in ids.iter().enumerate().skip(1) {
+            let slot_ty = protocol.return_slots[index].clone();
+            let value = self.emit(Instruction::MultiGet {
+                value: call,
+                index,
+                ty: slot_ty.clone(),
+            });
+            self.bind_loop_var(*id, value, &slot_ty, &mut body_env);
+            body_types.insert(*id, slot_ty);
         }
 
-        let Type::Function {
-            params,
-            return_type,
-            ..
-        } = iterator_ty
-        else {
-            return Err(Diagnostic::new("for-in iterator must be a function"));
-        };
-        if !params.is_empty() {
-            return Err(Diagnostic::new(
-                "for-in iterator function must not require parameters",
-            ));
+        for stmt in body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
         }
-        self.lower_for_in_function(*return_type, ids, iterator, body, env, types)
+
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack must contain entry for protocol for-in loop");
+        let phis = loop_ctx.phis;
+        let body_exit = self.current_block;
+        if body_exit != DEAD_BLOCK {
+            self.set_terminator(body_exit, Terminator::Jump(header));
+            add_phi_incoming(
+                &mut self.function,
+                header,
+                control_phi,
+                (body_exit, next_control),
+            );
+            for (id, phi) in &phis {
+                if let Some(next_value) = body_env.get(id).copied() {
+                    add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
+                }
+            }
+        }
+
+        for (id, _) in phis {
+            let exit_phi = exit_phis[&id];
+            env.insert(id, exit_phi);
+            self.function.value_symbols.insert(exit_phi, id);
+        }
+        self.current_block = exit;
+        Ok(())
     }
 
     /// `for name, value in pairs(record_value)`: iterates the record's fields
@@ -4929,6 +5241,19 @@ impl Builder<'_> {
                         body_types.insert(ids[0], Type::Numeric(NumericType::I32));
                         self.bind_loop_var(ids[1], element_val, element_ty, &mut body_env);
                         body_types.insert(ids[1], element_ty.clone());
+                    }
+                }
+                IndexedLoopBindings::ArrayNext => {
+                    self.bind_loop_var(
+                        ids[0],
+                        index_phi,
+                        &Type::Numeric(NumericType::I32),
+                        &mut body_env,
+                    );
+                    body_types.insert(ids[0], Type::Numeric(NumericType::I32));
+                    if let Some(id) = ids.get(1) {
+                        self.bind_loop_var(*id, element_val, element_ty, &mut body_env);
+                        body_types.insert(*id, element_ty.clone());
                     }
                 }
                 IndexedLoopBindings::RecordPairs { values } => {

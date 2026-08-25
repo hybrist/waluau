@@ -809,88 +809,27 @@ impl<'a> Monomorphizer<'a> {
             Stmt::ForIn {
                 names,
                 symbol_ids,
-                iterator,
+                iterators,
                 body,
                 ..
             } => {
-                let rewritten_iterator = self.rewrite_expr(iterator, subst, active, types)?;
-                let mut body_types = types.clone();
-                // `for ... in string.gmatch(s, p)` loop variables take the
-                // pattern's capture types (whole match when there are none).
-                let gmatch_pattern = match iterator {
-                    Expr::Call { callee, args, .. }
-                        if args.len() == 2
-                            && matches!(
-                                callee.as_ref(),
-                                Expr::Field { base, name, .. }
-                                    if name == "gmatch"
-                                        && matches!(base.as_ref(), Expr::Name(ns, _, _) if ns == "string")
-                            ) =>
-                    {
-                        Some(&args[1])
-                    }
-                    Expr::MethodCall { name, args, .. } if name == "gmatch" && args.len() == 1 => {
-                        Some(&args[0])
-                    }
-                    _ => None,
-                };
-                if let Some(pattern_arg) = gmatch_pattern {
-                    let captures = waluau_ast::expr_pattern_captures(pattern_arg);
-                    let slot_types: Vec<Type> = if captures.is_empty() {
-                        vec![Type::String]
+                // A bare `next` heading a builtin iterator list is not a
+                // value; keep it as-is and rewrite the other expressions.
+                let builtin_next = waluau_ast::for_in_builtin_next_target(iterators).is_some();
+                let mut rewritten_iterators = Vec::with_capacity(iterators.len());
+                for (index, iterator) in iterators.iter().enumerate() {
+                    if index == 0 && builtin_next {
+                        rewritten_iterators.push(iterator.clone());
                     } else {
-                        captures.iter().map(|kind| kind.value_type()).collect()
-                    };
-                    if let Some(symbol_ids) = symbol_ids {
-                        for (symbol_id, ty) in symbol_ids.iter().zip(slot_types) {
-                            body_types.insert(*symbol_id, ty);
-                        }
-                    }
-                    return Ok(Stmt::ForIn {
-                        names: names.clone(),
-                        symbol_ids: symbol_ids.clone(),
-                        iterator: rewritten_iterator,
-                        body: self.rewrite_stmts(body, subst, active, &mut body_types)?,
-                    });
-                }
-                // `for ... in pairs(record_value)` binds the field-name string
-                // plus the record's shared field type (validated by the type
-                // checker before monomorphization).
-                if let Some(record_expr) = waluau_ast::pairs_call_arg(&rewritten_iterator) {
-                    let record_ty = self.infer_expr_type(record_expr, subst, types)?;
-                    if let Some(symbol_ids) = symbol_ids {
-                        if let Some(first) = symbol_ids.first() {
-                            body_types.insert(*first, Type::String);
-                        }
-                        if let Some(second) = symbol_ids.get(1)
-                            && let Some(value_ty) =
-                                waluau_ast::pairs_record_value_type(&record_ty)
-                        {
-                            body_types.insert(*second, value_ty);
-                        }
-                    }
-                    return Ok(Stmt::ForIn {
-                        names: names.clone(),
-                        symbol_ids: symbol_ids.clone(),
-                        iterator: rewritten_iterator,
-                        body: self.rewrite_stmts(body, subst, active, &mut body_types)?,
-                    });
-                }
-                let iterator_ty = self.infer_expr_type(iterator, subst, types)?;
-                if let Type::Array(element_ty) = &iterator_ty {
-                    if let Some(symbol_ids) = symbol_ids {
-                        if symbol_ids.len() == 1 {
-                            body_types.insert(symbol_ids[0], *element_ty.clone());
-                        } else if symbol_ids.len() == 2 {
-                            body_types.insert(symbol_ids[0], Type::Numeric(waluau_ast::NumericType::I32));
-                            body_types.insert(symbol_ids[1], *element_ty.clone());
-                        }
+                        rewritten_iterators.push(self.rewrite_expr(iterator, subst, active, types)?);
                     }
                 }
+                let mut body_types = types.clone();
+                self.for_in_body_types(iterators, &rewritten_iterators, symbol_ids, subst, types, &mut body_types)?;
                 Stmt::ForIn {
                     names: names.clone(),
                     symbol_ids: symbol_ids.clone(),
-                    iterator: rewritten_iterator,
+                    iterators: rewritten_iterators,
                     body: self.rewrite_stmts(body, subst, active, &mut body_types)?,
                 }
             }
@@ -951,6 +890,135 @@ impl<'a> Monomorphizer<'a> {
             },
             Stmt::Expr(expr) => Stmt::Expr(self.rewrite_expr(expr, subst, active, types)?),
         })
+    }
+
+    /// Seeds the loop-variable symbol types for a rewritten for-in statement,
+    /// mirroring the type checker's dispatch over the iterator forms. Original
+    /// expressions are used for inference (the ambient `types` map matches
+    /// them); the rewritten first expression is only consulted for the
+    /// `pairs(record)` shape, whose argument types may have been substituted.
+    fn for_in_body_types(
+        &self,
+        original_iterators: &[Expr],
+        rewritten_iterators: &[Expr],
+        symbol_ids: &Option<Vec<SymbolId>>,
+        subst: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
+        body_types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        let Some(symbol_ids) = symbol_ids else {
+            return Ok(());
+        };
+        if let [iterator] = original_iterators {
+            // `for ... in string.gmatch(s, p)` loop variables take the
+            // pattern's capture types (whole match when there are none).
+            let gmatch_pattern = match iterator {
+                Expr::Call { callee, args, .. }
+                    if args.len() == 2
+                        && matches!(
+                            callee.as_ref(),
+                            Expr::Field { base, name, .. }
+                                if name == "gmatch"
+                                    && matches!(base.as_ref(), Expr::Name(ns, _, _) if ns == "string")
+                        ) =>
+                {
+                    Some(&args[1])
+                }
+                Expr::MethodCall { name, args, .. } if name == "gmatch" && args.len() == 1 => {
+                    Some(&args[0])
+                }
+                _ => None,
+            };
+            if let Some(pattern_arg) = gmatch_pattern {
+                let captures = waluau_ast::expr_pattern_captures(pattern_arg);
+                let slot_types: Vec<Type> = if captures.is_empty() {
+                    vec![Type::String]
+                } else {
+                    captures.iter().map(|kind| kind.value_type()).collect()
+                };
+                for (symbol_id, ty) in symbol_ids.iter().zip(slot_types) {
+                    body_types.insert(*symbol_id, ty);
+                }
+                return Ok(());
+            }
+            // `for ... in pairs(record_value)` binds the field-name string
+            // plus the record's shared field type (validated by the type
+            // checker before monomorphization).
+            if let Some(record_expr) = waluau_ast::pairs_call_arg(&rewritten_iterators[0]) {
+                let record_ty = self.infer_expr_type(record_expr, subst, types)?;
+                if let Some(first) = symbol_ids.first() {
+                    body_types.insert(*first, Type::String);
+                }
+                if let Some(second) = symbol_ids.get(1)
+                    && let Some(value_ty) = waluau_ast::pairs_record_value_type(&record_ty)
+                {
+                    body_types.insert(*second, value_ty);
+                }
+                return Ok(());
+            }
+            match self.infer_expr_type(iterator, subst, types)? {
+                Type::Array(element_ty) => {
+                    if symbol_ids.len() == 1 {
+                        body_types.insert(symbol_ids[0], *element_ty);
+                    } else if symbol_ids.len() == 2 {
+                        body_types
+                            .insert(symbol_ids[0], Type::Numeric(waluau_ast::NumericType::I32));
+                        body_types.insert(symbol_ids[1], *element_ty);
+                    }
+                }
+                // One expression producing `(iterator, state[, control])`:
+                // the value form of the generic-for protocol.
+                Type::Multi(slots) => {
+                    if let Some(protocol) =
+                        slots.first().and_then(waluau_ast::iterator_protocol)
+                    {
+                        let slot_types: Vec<Type> = std::iter::once(protocol.control_ty)
+                            .chain(protocol.value_types)
+                            .collect();
+                        for (symbol_id, ty) in symbol_ids.iter().zip(slot_types) {
+                            body_types.insert(*symbol_id, ty);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+        // Explicit protocol list `f, s[, c0]`, or the builtin `next`.
+        if let Some(target) = waluau_ast::for_in_builtin_next_target(original_iterators) {
+            let target_ty = self.infer_expr_type(target?, subst, types)?;
+            if target_ty.is_array() {
+                let element_ty = target_ty
+                    .element_type()
+                    .expect("array type has an element type");
+                if let Some(first) = symbol_ids.first() {
+                    body_types.insert(*first, Type::Numeric(waluau_ast::NumericType::I32));
+                }
+                if let Some(second) = symbol_ids.get(1) {
+                    body_types.insert(*second, element_ty);
+                }
+            } else {
+                if let Some(first) = symbol_ids.first() {
+                    body_types.insert(*first, Type::String);
+                }
+                if let Some(second) = symbol_ids.get(1)
+                    && let Some(value_ty) = waluau_ast::pairs_record_value_type(&target_ty)
+                {
+                    body_types.insert(*second, value_ty);
+                }
+            }
+            return Ok(());
+        }
+        let f_ty = self.infer_expr_type(&original_iterators[0], subst, types)?;
+        if let Some(protocol) = waluau_ast::iterator_protocol(&f_ty) {
+            let slot_types: Vec<Type> = std::iter::once(protocol.control_ty)
+                .chain(protocol.value_types)
+                .collect();
+            for (symbol_id, ty) in symbol_ids.iter().zip(slot_types) {
+                body_types.insert(*symbol_id, ty);
+            }
+        }
+        Ok(())
     }
 
     fn rewrite_expr(

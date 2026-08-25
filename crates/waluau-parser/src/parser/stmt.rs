@@ -217,7 +217,18 @@ impl Parser {
                 name_spans.push(name_span);
             }
             self.expect_simple(TokenKind::In, "expected 'in' after for loop variables")?;
-            let iterator = self.parse_expr()?;
+            // One iterator expression, or the explicit generic-for protocol
+            // list `iterator, state[, control]`.
+            let mut iterators = vec![self.parse_expr()?];
+            while self.check_simple(&TokenKind::Comma) {
+                self.advance();
+                if iterators.len() == 3 {
+                    return Err(self.diagnostic_at_current(
+                        "for-in takes at most 3 iterator expressions (iterator, state, control)",
+                    ));
+                }
+                iterators.push(self.parse_expr()?);
+            }
             self.expect_simple(TokenKind::Do, "expected 'do' after for loop iterator")?;
             let scope_mark = self.definition_scope_mark();
             let visible_from = self.prev_token_end();
@@ -238,7 +249,8 @@ impl Parser {
             // local enum. Like `Enum.variant` access, the expansion happens in
             // the parser, which is the only stage that still knows the
             // variant list of a local enum.
-            if let Some(Expr::Name(enum_name, _, _)) = waluau_ast::pairs_call_arg(&iterator)
+            if let [iterator] = iterators.as_slice()
+                && let Some(Expr::Name(enum_name, _, _)) = waluau_ast::pairs_call_arg(iterator)
                 && let Some(variants) = self.enums.get(enum_name)
             {
                 return waluau_ast::enum_pairs_for_in(
@@ -253,7 +265,7 @@ impl Parser {
             return Ok(Stmt::ForIn {
                 names,
                 symbol_ids: None,
-                iterator,
+                iterators,
                 body,
             });
         }

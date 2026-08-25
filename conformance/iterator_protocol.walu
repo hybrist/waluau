@@ -1,0 +1,133 @@
+-- The Lua generic-for iterator protocol (PIL 7.3): `for k, v in f, s, c0`
+-- calls `f(s, control)` each iteration, stops when the first result is nil,
+-- and otherwise binds the result and feeds it back as the next control. The
+-- iterator type is `(S, C) -> (K?, V...)`; the loop binds `k: K` non-nil.
+
+local words = {"alpha", "beta", "gamma"}
+
+-- A hand-written stateless ipairs over waluau's 0-based arrays.
+function iter(a: {string}, i: i32): (i32?, string)
+    local n = i + 1
+    if n < #a then
+        return n, a[n]
+    end
+    return nil, ""
+end
+
+local seen = ""
+local isum: i32 = 0
+for i, v in iter, words, -1 do
+    seen = seen .. v
+    isum = isum + i
+end
+assert(seen == "alphabetagamma")
+assert(isum == 3)
+
+-- Binding only the control variable.
+local count: i32 = 0
+for i in iter, words, -1 do
+    count = count + 1
+end
+assert(count == 3)
+
+-- A factory returning the (iterator, state, control) triple: the value form
+-- of the protocol, i.e. a hand-written ipairs.
+function my_ipairs(a: {string}): (({string}, i32) -> (i32?, string), {string}, i32)
+    return iter, a, -1
+end
+
+local via_factory = ""
+for i, v in my_ipairs(words) do
+    via_factory = via_factory .. v
+end
+assert(via_factory == "alphabetagamma")
+
+-- A hand-written next over a record type with a nullable string control,
+-- and a hand-written pairs returning it: the full PIL pairs shape.
+type Scores = { alice: i32, bob: i32, carol: i32 }
+
+function my_next(t: Scores, k: string?): (string?, i32)
+    if k == nil then
+        return "alice", t.alice
+    end
+    if k == "alice" then
+        return "bob", t.bob
+    end
+    if k == "bob" then
+        return "carol", t.carol
+    end
+    return nil, 0
+end
+
+function my_pairs(t: Scores): ((Scores, string?) -> (string?, i32), Scores, string?)
+    return my_next, t, nil
+end
+
+local scores: Scores = { alice = 3, bob = 5, carol = 7 }
+local names = ""
+local total: i32 = 0
+for name, score in my_pairs(scores) do
+    names = names .. name .. ";"
+    total = total + score
+end
+assert(names == "alice;bob;carol;")
+assert(total == 15)
+
+-- The two-expression list starts the control at nil.
+local total2: i32 = 0
+for name, score in my_next, scores do
+    total2 = total2 + score
+end
+assert(total2 == 15)
+
+-- break and continue work like any other loop; the control keeps advancing
+-- across continue.
+local picked = ""
+for i, v in my_ipairs(words) do
+    if v == "alpha" then
+        continue
+    end
+    picked = picked .. v
+    if v == "beta" then
+        break
+    end
+end
+assert(picked == "beta")
+
+-- A capturing closure as the iterator, with the state passed alongside.
+function make_scaler(limit: i32): (i32, i32) -> (i32?, i32)
+    return function(scale: i32, i: i32): (i32?, i32)
+        local n = i + 1
+        if n < limit then
+            return n, n * scale
+        end
+        return nil, 0
+    end
+end
+
+local scaled: i32 = 0
+for i, v in make_scaler(4), 100, -1 do
+    scaled = scaled + v
+end
+assert(scaled == 600)
+
+-- Nested protocol loops over the same iterator value stay independent.
+local f = iter
+local grid: i32 = 0
+for i, v in f, words, -1 do
+    for j, w in f, words, -1 do
+        grid = grid + (i + 1) * (j + 1)
+    end
+end
+assert(grid == 36)
+
+-- Inside a generic function the loop survives monomorphization.
+function count_with<T>(tag: T, a: {string}): i32
+    local n: i32 = 0
+    for i, v in iter, a, -1 do
+        n = n + 1
+    end
+    return n
+end
+assert(count_with("x", words) == 3)
+assert(count_with(1.5, words) == 3)
