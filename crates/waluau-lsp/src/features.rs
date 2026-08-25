@@ -299,7 +299,17 @@ fn receiver_before(tokens: &[Token], end: usize) -> Option<Receiver> {
             TokenKind::Identifier(name) => {
                 match at.checked_sub(1).map(|before| &tokens[before].kind) {
                     Some(TokenKind::Dot) => accesses.push(Access::Field(name.clone())),
-                    Some(TokenKind::Colon) => accesses.push(Access::Method(name.clone())),
+                    // A method name is followed by its argument list. Without
+                    // that check, the annotation in `kind: spells.SpellKind`
+                    // is misread as the receiver chain `kind:spells`.
+                    Some(TokenKind::Colon)
+                        if matches!(
+                            tokens.get(at + 1).map(|token| &token.kind),
+                            Some(TokenKind::LParen)
+                        ) =>
+                    {
+                        accesses.push(Access::Method(name.clone()));
+                    }
                     // Nothing qualifies this identifier: it is the root.
                     _ => {
                         accesses.reverse();
@@ -891,6 +901,20 @@ fn resolve_target(
             if let Some(standing) =
                 receiver_standing(receiver, offset, &scope, load, TYPE_CHASE_DEPTH)
             {
+                // A required module's exported type names are namespaces, not
+                // values, so `member_definition` intentionally ignores them
+                // while chasing expressions such as `m.Point.new()`. At the
+                // final member, though, the type declaration itself is the
+                // navigation target (`m.SpellKind` in a type annotation).
+                if let Standing::Module(module) = &standing
+                    && let Some(definition) = module.definitions.iter().find(|definition| {
+                        definition.kind == DefinitionKind::TypeName
+                            && definition.name == *name
+                            && definition.exported
+                    })
+                {
+                    return Some(resolved_in_scope(definition, module, path));
+                }
                 if let Some((definition, definition_scope)) =
                     member_definition(&standing, name, load)
                 {
