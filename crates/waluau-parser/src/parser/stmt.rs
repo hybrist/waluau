@@ -234,6 +234,22 @@ impl Parser {
             let scope_end = self.current_scope_boundary();
             self.close_definition_scope(scope_mark, scope_end);
             self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
+            // `for name, value in pairs(Enum)` iterates the variants of a
+            // local enum. Like `Enum.variant` access, the expansion happens in
+            // the parser, which is the only stage that still knows the
+            // variant list of a local enum.
+            if let Some(Expr::Name(enum_name, _, _)) = waluau_ast::pairs_call_arg(&iterator)
+                && let Some(variants) = self.enums.get(enum_name)
+            {
+                return waluau_ast::enum_pairs_for_in(
+                    enum_name,
+                    enum_name,
+                    variants,
+                    names,
+                    body,
+                    iterator.span(),
+                );
+            }
             return Ok(Stmt::ForIn {
                 names,
                 symbol_ids: None,

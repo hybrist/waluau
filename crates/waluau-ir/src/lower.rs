@@ -1953,6 +1953,17 @@ enum CarryUpdate {
     },
 }
 
+/// How `lower_indexed_for_in` binds the loop variables for each element.
+enum IndexedLoopBindings {
+    /// `for v in arr` / `for i, v in arr`: the element, or the 0-based index
+    /// plus the element.
+    Array,
+    /// `for name in pairs(rec)` / `for name, value in pairs(rec)`: the
+    /// field-name element plus, when a value variable is bound, the field
+    /// value read from a parallel array at the same index.
+    RecordPairs { values: Option<(ValueId, Type)> },
+}
+
 /// Recognizes `string.gmatch(s, p)` / `s:gmatch(p)` in for-in iterator
 /// position and returns the (haystack, pattern) argument expressions.
 fn gmatch_iterator_args(iterator: &Expr) -> Option<(&Expr, &Expr)> {
@@ -4676,6 +4687,9 @@ impl Builder<'_> {
         if let Some((haystack_expr, pattern_expr)) = gmatch_iterator_args(iterator) {
             return self.lower_for_in_gmatch(haystack_expr, pattern_expr, ids, body, env, types);
         }
+        if let Some(record_expr) = waluau_ast::pairs_call_arg(iterator) {
+            return self.lower_for_in_record_pairs(record_expr, ids, body, env, types);
+        }
         let iterator_ty = self.infer_expr_type(iterator, types, None)?;
         if let Type::Array(element_ty) = &iterator_ty {
             if ids.len() != 1 && ids.len() != 2 {
@@ -4685,6 +4699,138 @@ impl Builder<'_> {
                 )));
             }
             let array_val = self.lower_expr(iterator, env, types, Some(iterator_ty.clone()))?;
+            return self.lower_indexed_for_in(
+                array_val,
+                element_ty,
+                IndexedLoopBindings::Array,
+                ids,
+                body,
+                env,
+                types,
+            );
+        }
+
+        let Type::Function {
+            params,
+            return_type,
+            ..
+        } = iterator_ty
+        else {
+            return Err(Diagnostic::new("for-in iterator must be a function"));
+        };
+        if !params.is_empty() {
+            return Err(Diagnostic::new(
+                "for-in iterator function must not require parameters",
+            ));
+        }
+        self.lower_for_in_function(*return_type, ids, iterator, body, env, types)
+    }
+
+    /// `for name, value in pairs(record_value)`: iterates the record's fields
+    /// in field order (alphabetical). Field names are compile-time constants,
+    /// so the loop reads them from a string array built here, with the field
+    /// values snapshot into a parallel array read by the same loop index. The
+    /// type checker guarantees every field shares one type before this runs.
+    fn lower_for_in_record_pairs(
+        &mut self,
+        record_expr: &Expr,
+        ids: &[SymbolId],
+        body: &[Stmt],
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        if ids.is_empty() || ids.len() > 2 {
+            return Err(Diagnostic::new(format!(
+                "pairs for-in loop expects 1 or 2 loop variables, got {}",
+                ids.len()
+            )));
+        }
+        let record_ty = self.infer_expr_type(record_expr, types, None)?;
+        let Some(fields) = waluau_ast::pairs_record_fields(&record_ty).cloned() else {
+            return Err(Diagnostic::new(
+                "pairs(...) requires an enum type or a record value",
+            ));
+        };
+        let record_val = self.lower_expr(record_expr, env, types, Some(record_ty.clone()))?;
+        let name_vals: Vec<ValueId> = fields
+            .keys()
+            .map(|name| self.emit(Instruction::String(name.clone())))
+            .collect();
+        let names_array = self.emit(Instruction::ArrayNew {
+            element_ty: Type::String,
+            elements: name_vals,
+        });
+        let values = if ids.len() == 2 {
+            let value_ty = fields
+                .values()
+                .next()
+                .expect("the type checker rejects binding a value from an empty record")
+                .clone();
+            // A local's storage record can differ from its checked type (e.g.
+            // a nullable slot narrowed to its inner type); read through the
+            // storage type and cast back, mirroring plain field access.
+            let storage_fields = match record_expr {
+                Expr::Name(_, Some(symbol_id), _) => {
+                    self.symbol_storage_types.get(symbol_id).cloned()
+                }
+                _ => None,
+            };
+            let mut value_vals = Vec::with_capacity(fields.len());
+            for (name, field_ty) in &fields {
+                let storage_field_ty = storage_fields
+                    .as_ref()
+                    .and_then(|ty| ty.record_field(name))
+                    .unwrap_or_else(|| field_ty.clone());
+                let value = self.emit(Instruction::StructGet {
+                    base: record_val,
+                    field: name.clone(),
+                    field_ty: storage_field_ty.clone(),
+                });
+                let value = if storage_field_ty.nullable_inner().as_ref() == Some(field_ty) {
+                    self.emit(Instruction::Cast {
+                        value,
+                        from: storage_field_ty,
+                        to: field_ty.clone(),
+                    })
+                } else {
+                    self.coerce_value(value, storage_field_ty, Some(field_ty.clone()))?
+                };
+                value_vals.push(value);
+            }
+            let values_array = self.emit(Instruction::ArrayNew {
+                element_ty: value_ty.clone(),
+                elements: value_vals,
+            });
+            Some((values_array, value_ty))
+        } else {
+            None
+        };
+        self.lower_indexed_for_in(
+            names_array,
+            &Type::String,
+            IndexedLoopBindings::RecordPairs { values },
+            ids,
+            body,
+            env,
+            types,
+        )
+    }
+
+    /// The shared index-driven loop behind array for-in and record `pairs`:
+    /// walks `array_val` from 0 to its length, binding loop variables per
+    /// `bindings` for each element.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_indexed_for_in(
+        &mut self,
+        array_val: ValueId,
+        element_ty: &Type,
+        bindings: IndexedLoopBindings,
+        ids: &[SymbolId],
+        body: &[Stmt],
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        {
             let array_len_init = self.emit(Instruction::ArrayLen { array: array_val });
             let const_zero = self.emit(Instruction::Number {
                 ty: NumericType::I32,
@@ -4765,22 +4911,39 @@ impl Builder<'_> {
             let element_val = self.emit(Instruction::ArrayGet {
                 array: array_val,
                 index: index_phi,
-                element_ty: *element_ty.clone(),
+                element_ty: element_ty.clone(),
             });
 
-            if ids.len() == 1 {
-                self.bind_loop_var(ids[0], element_val, element_ty, &mut body_env);
-                body_types.insert(ids[0], *element_ty.clone());
-            } else {
-                self.bind_loop_var(
-                    ids[0],
-                    index_phi,
-                    &Type::Numeric(NumericType::I32),
-                    &mut body_env,
-                );
-                body_types.insert(ids[0], Type::Numeric(NumericType::I32));
-                self.bind_loop_var(ids[1], element_val, element_ty, &mut body_env);
-                body_types.insert(ids[1], *element_ty.clone());
+            match &bindings {
+                IndexedLoopBindings::Array => {
+                    if ids.len() == 1 {
+                        self.bind_loop_var(ids[0], element_val, element_ty, &mut body_env);
+                        body_types.insert(ids[0], element_ty.clone());
+                    } else {
+                        self.bind_loop_var(
+                            ids[0],
+                            index_phi,
+                            &Type::Numeric(NumericType::I32),
+                            &mut body_env,
+                        );
+                        body_types.insert(ids[0], Type::Numeric(NumericType::I32));
+                        self.bind_loop_var(ids[1], element_val, element_ty, &mut body_env);
+                        body_types.insert(ids[1], element_ty.clone());
+                    }
+                }
+                IndexedLoopBindings::RecordPairs { values } => {
+                    self.bind_loop_var(ids[0], element_val, element_ty, &mut body_env);
+                    body_types.insert(ids[0], element_ty.clone());
+                    if let Some((values_array, value_ty)) = values {
+                        let value_val = self.emit(Instruction::ArrayGet {
+                            array: *values_array,
+                            index: index_phi,
+                            element_ty: value_ty.clone(),
+                        });
+                        self.bind_loop_var(ids[1], value_val, value_ty, &mut body_env);
+                        body_types.insert(ids[1], value_ty.clone());
+                    }
+                }
             }
 
             for stmt in body {
@@ -4837,23 +5000,22 @@ impl Builder<'_> {
                 self.function.value_symbols.insert(exit_phi, name);
             }
             self.current_block = exit;
-            return Ok(());
+            Ok(())
         }
+    }
 
-        let Type::Function {
-            params,
-            return_type,
-            ..
-        } = iterator_ty
-        else {
-            return Err(Diagnostic::new("for-in iterator must be a function"));
-        };
-        if !params.is_empty() {
-            return Err(Diagnostic::new(
-                "for-in iterator function must not require parameters",
-            ));
-        }
-        let return_values = match *return_type {
+    /// `for ... in iter` over a parameterless closure: the iterator is called
+    /// once per iteration, continuing while its first return value is true.
+    fn lower_for_in_function(
+        &mut self,
+        return_type: Type,
+        ids: &[SymbolId],
+        iterator: &Expr,
+        body: &[Stmt],
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        let return_values = match return_type {
             Type::Multi(values) => values,
             other => vec![other],
         };

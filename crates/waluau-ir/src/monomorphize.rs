@@ -853,6 +853,29 @@ impl<'a> Monomorphizer<'a> {
                         body: self.rewrite_stmts(body, subst, active, &mut body_types)?,
                     });
                 }
+                // `for ... in pairs(record_value)` binds the field-name string
+                // plus the record's shared field type (validated by the type
+                // checker before monomorphization).
+                if let Some(record_expr) = waluau_ast::pairs_call_arg(&rewritten_iterator) {
+                    let record_ty = self.infer_expr_type(record_expr, subst, types)?;
+                    if let Some(symbol_ids) = symbol_ids {
+                        if let Some(first) = symbol_ids.first() {
+                            body_types.insert(*first, Type::String);
+                        }
+                        if let Some(second) = symbol_ids.get(1)
+                            && let Some(value_ty) =
+                                waluau_ast::pairs_record_value_type(&record_ty)
+                        {
+                            body_types.insert(*second, value_ty);
+                        }
+                    }
+                    return Ok(Stmt::ForIn {
+                        names: names.clone(),
+                        symbol_ids: symbol_ids.clone(),
+                        iterator: rewritten_iterator,
+                        body: self.rewrite_stmts(body, subst, active, &mut body_types)?,
+                    });
+                }
                 let iterator_ty = self.infer_expr_type(iterator, subst, types)?;
                 if let Type::Array(element_ty) = &iterator_ty {
                     if let Some(symbol_ids) = symbol_ids {

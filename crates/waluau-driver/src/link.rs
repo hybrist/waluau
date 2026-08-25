@@ -1500,11 +1500,59 @@ fn exported_type_names(
 /// match patterns retain a dotted enum type plus symbolic arm names until the
 /// module graph is available here; this pass validates them and fills the
 /// ordinals consumed by HIR/IR.
+/// Desugars `for ... in pairs(mod.Enum)` over an imported enum into the same
+/// variant-name array loop the parser builds for a local enum. Returns the
+/// replacement statement, or `None` when the iterator has a different shape.
+fn imported_enum_pairs_for_in(
+    stmt: &mut Stmt,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) -> Result<Option<Stmt>, Diagnostic> {
+    let Stmt::ForIn {
+        names,
+        iterator,
+        body,
+        ..
+    } = stmt
+    else {
+        return Ok(None);
+    };
+    let Some(Expr::Field {
+        base,
+        name: enum_name,
+        ..
+    }) = waluau_ast::pairs_call_arg(iterator)
+    else {
+        return Ok(None);
+    };
+    let Expr::Name(namespace, _, _) = &**base else {
+        return Ok(None);
+    };
+    let Some(exported) = type_namespaces
+        .get(namespace)
+        .and_then(|types| types.get(enum_name))
+    else {
+        return Ok(None);
+    };
+    let Some(variants) = exported.enum_variants.clone() else {
+        return Ok(None);
+    };
+    let display_name = format!("{namespace}.{enum_name}");
+    let canonical_name = exported.canonical_name.clone();
+    let span = iterator.span();
+    let names = std::mem::take(names);
+    let body = std::mem::take(body);
+    waluau_ast::enum_pairs_for_in(&display_name, &canonical_name, &variants, names, body, span)
+        .map(Some)
+}
+
 fn resolve_imported_enum_matches(
     stmts: &mut [Stmt],
     type_namespaces: &HashMap<String, TypeNamespace>,
 ) -> Result<(), Diagnostic> {
     for stmt in stmts {
+        if let Some(replacement) = imported_enum_pairs_for_in(stmt, type_namespaces)? {
+            *stmt = replacement;
+        }
         match stmt {
             Stmt::Match {
                 value,

@@ -1,0 +1,10 @@
+-- conformance: error=pairs over a record requires every field to have the same type
+
+-- Binding a value variable requires every field to share one type; a
+-- heterogeneous record has no sound element type for the loop variable.
+-- (A single-variable loop that binds only the field names still works.)
+
+local mixed = { id = 7, label = "seven" }
+
+for name, value in pairs(mixed) do
+end
