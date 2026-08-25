@@ -61,6 +61,8 @@ describe("Konami divine intervention", function()
         expect(rules:view().middle[2].rank):toBe(12)
         expect(rules:view().player_hand[0].card.rank):toBe(13)
         expect(rules:view().player_hand[1].card.rank):toBe(14)
+        -- TODO(waluau-8hcy): Iterate rules:view().middle directly once for-in
+        -- headers preserve field types from method-call results.
         local revealed: game.View = rules:view()
         for card in revealed.middle do
             local suit: i32 = card.suit
