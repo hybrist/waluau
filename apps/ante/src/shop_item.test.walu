@@ -6,10 +6,11 @@ require("waluau:vitest")
 local game = require("./game")
 local run = require("./run")
 local shop_item = require("./shop_item")
+local spells = require("./spells/spell")
 
 describe("Ante Magic shop items", function()
     it("passes enough mutable state for independent run effects", function()
-        local state: run.State = run.new(game.spell_firebolt, false)
+        local state: run.State = run.new(spells.SpellKind.Firebolt, false)
         state.gold = 21
         state.hearts = 2
 
@@ -30,12 +31,12 @@ describe("Ante Magic shop items", function()
     end)
 
     it("uses the selected destination for an item which adds a spell", function()
-        local state: run.State = run.new(game.spell_firebolt, false)
-        local add_spell: shop_item.Item = shop_item.learn(game.spell_clone)
+        local state: run.State = run.new(spells.SpellKind.Firebolt, false)
+        local add_spell: shop_item.Item = shop_item.learn(spells.SpellKind.Clone)
 
         add_spell:use({ run = state, key = 1 })
 
         expect(state:spell_count()):toBe(2)
-        expect(state.spells[1].kind):toBe(game.spell_clone)
+        expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
     end)
 end)

@@ -11,6 +11,7 @@
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
 local game = require("../game")
+local spells = require("../spells/spell")
 local spell_cast = require("../spell_cast")
 local burn_particles = require("../burn_particles")
 local card_burn = require("../card_burn")
@@ -399,26 +400,27 @@ end
 
 -- How far the grave a spell opened has got, or NO_GRAVE when the spell is not
 -- the one that opens graves.
-function grave_progress(kind: i32, clock: f64): f64
-    if kind == game.spell_raise_card then return hand(clock) end
+function grave_progress(kind: spells.SpellKind?, clock: f64): f64
+    if kind == spells.SpellKind.RaiseCard then return hand(clock) end
     return NO_GRAVE
 end
 
 function draw_at(
     surface: entity.Surface, value: card.Look, x: f64, y: f64,
-    kind: i32, clock: f64, ash: card_burn.CardAsh, dust: particles.ParticleSystem
+    kind: spells.SpellKind?, clock: f64,
+    ash: card_burn.CardAsh, dust: particles.ParticleSystem
 ): unit
     local progress: f64 = hand(clock)
-    if kind == game.spell_firebolt then progress = fireball_formation(clock) end
-    if kind == 0 or value.hidden or progress <= 0.0 then
+    if kind == spells.SpellKind.Firebolt then progress = fireball_formation(clock) end
+    if kind == nil or value.hidden or progress <= 0.0 then
         card.draw_at(surface, value, x, y)
-    elseif kind == game.spell_firebolt then
+    elseif kind == spells.SpellKind.Firebolt then
         draw_fireball(surface, value, x, y, progress, ash)
-    elseif kind == game.spell_freeze_ray then
+    elseif kind == spells.SpellKind.FreezeRay then
         draw_freeze(surface, value, x, y, progress, clock)
-    elseif kind == game.spell_raise_card then
+    elseif kind == spells.SpellKind.RaiseCard then
         draw_raise(surface, value, x, y, progress, clock, dust)
-    elseif kind == game.spell_clone then
+    elseif kind == spells.SpellKind.Clone then
         draw_growth(surface, value, x, y, progress, clock)
     else
         card.draw_at(surface, value, x, y)
@@ -427,7 +429,7 @@ end
 
 -- The powered table_card as an entity: a card's box, whatever is standing on it.
 function node(
-    value: card.Look, kind: i32, clock: f64,
+    value: card.Look, kind: spells.SpellKind?, clock: f64,
     ash: card_burn.CardAsh, dust: particles.ParticleSystem
 ): entity.Node
     return entity.measured(

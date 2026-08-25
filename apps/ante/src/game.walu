@@ -6,7 +6,7 @@ local snapshot_data = require("./snapshot")
 local spells = require("./spells/spell")
 
 export type Suit = 0 | 1 | 2 | 3
-export type SpellKind = spells.SpellKind
+type SpellKind = spells.SpellKind
 type Winner = -1 | 0 | 1
 export type Side = -1 | 1
 
@@ -103,15 +103,6 @@ const STARTING_GOLD: i32 = 10
 const SPELL_COST: i32 = 5
 const SNAPSHOT_SCHEMA: string = "duel-state-v8"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
-
--- A spell as it is first learned: full price until something reduces it.
-function spell_kind_from(value: i32): SpellKind?
-    if value == 1 then return spells.SpellKind.Firebolt end
-    if value == 2 then return spells.SpellKind.FreezeRay end
-    if value == 3 then return spells.SpellKind.RaiseCard end
-    if value == 4 then return spells.SpellKind.Clone end
-    return nil
-end
 
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
@@ -1143,8 +1134,12 @@ function snapshot(state: State): string
     snapshot_data.append_bool(parts, state.finished)
     snapshot_data.append_bool(parts, state.boss)
     append_spells(parts, state.spells)
-    snapshot_data.append_i32(
-        parts, if state.cast_kind == nil then 0 else (state.cast_kind or spells.SpellKind.Firebolt)::i32)
+    local cast_kind: i32 = 0
+    if state.cast_kind ~= nil then
+        local active: SpellKind = state.cast_kind::SpellKind
+        cast_kind = active:tonumber()::i32
+    end
+    snapshot_data.append_i32(parts, cast_kind)
     return table.concat(parts, ",")
 end
 
@@ -1169,15 +1164,17 @@ function next_slots(reader: snapshot_data.Reader): {HandSlot}
     return slots
 end
 
-function next_spells(reader: snapshot_data.Reader): {Spell}
-    local spells: {Spell} = {}
+function next_spells(reader: snapshot_data.Reader): {Spell}?
+    local loadout: {Spell} = {}
     local length: i32 = reader:next_length()
     for _ = 1, length do
-        table.insert(spells, {
-            kind = reader:next_i32()::SpellKind, cost = reader:next_i32(),
+        local kind: SpellKind? = spells.SpellKind.from(reader:next_i32())
+        if kind == nil then return nil end
+        table.insert(loadout, {
+            kind = kind::SpellKind, cost = reader:next_i32(),
         })
     end
-    return spells
+    return loadout
 end
 
 function next_flags(reader: snapshot_data.Reader): {bool}
@@ -1350,7 +1347,9 @@ function restore(snapshot_value: string): State?
     local swap_middle_indices: {i32} = reader:next_indices()
     local finished: bool = reader:next_bool()
     local boss: bool = reader:next_bool()
-    local spells: {Spell} = next_spells(reader)
+    local maybe_loadout: {Spell}? = next_spells(reader)
+    if maybe_loadout == nil then return nil end
+    local loadout: {Spell} = maybe_loadout::{Spell}
     local cast_kind: i32 = reader:next_i32()
     if not reader:complete() then return nil end
     if not valid_cards(deck) or not valid_slots(player_hand)
@@ -1394,11 +1393,11 @@ function restore(snapshot_value: string): State?
     then
         return nil
     end
-    for spell in spells do
-        if spells.SpellKind__from(spell.kind::i32) == nil or spell.cost < 0 then return nil end
+    for spell in loadout do
+        if spell.cost < 0 then return nil end
     end
-    if cast_kind ~= 0 and spells.SpellKind__from(cast_kind) == nil then return nil end
-    local restored_cast_kind: SpellKind? = spells.SpellKind__from(cast_kind)
+    if cast_kind ~= 0 and spells.SpellKind.from(cast_kind) == nil then return nil end
+    local restored_cast_kind: SpellKind? = spells.SpellKind.from(cast_kind)
     local restored: State = {
         deck = deck,
         player_hand = player_hand,
@@ -1425,7 +1424,7 @@ function restore(snapshot_value: string): State?
         swap_middle_indices = swap_middle_indices,
         finished = finished,
         boss = boss,
-        spells = spells,
+        spells = loadout,
         cast_kind = restored_cast_kind,
     }
     return restored
@@ -1916,7 +1915,6 @@ return {
     formation_marks = formation_marks,
     snapshot = snapshot,
     restore = restore,
-    spell_kind_from = spell_kind_from,
     valid_card = valid_card,
     clone_spells = clone_spells,
     test_arrange_round = test_arrange_round,

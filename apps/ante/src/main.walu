@@ -21,6 +21,7 @@ local ink = require("./ink")
 local layout = require("./layout")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
+local spells = require("./spells/spell")
 
 const HOT_SNAPSHOT_SCHEMA: string = "duel-hmr-v4"
 -- The live screen marker plus the duel screen's five sections.
@@ -59,7 +60,7 @@ function install_ante_magic(): unit
     -- between the standard run — where every third duel is a boss battle —
     -- and the boss rush, where every duel is; `spell` is the starting spell
     -- picked on the menu's second list and carried for the whole run.
-    local function begin_run(rush: bool, spell: i32): unit
+    local function begin_run(rush: bool, spell: spells.SpellKind): unit
         if not presentation_resources.unlock_audio(assets) then return end
         game_screen.reset(duel, city, rush, spell)
         screen = "game"

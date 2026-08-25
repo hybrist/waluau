@@ -21,6 +21,7 @@
 
 local engine = require("waluau:engine")
 local game = require("./game")
+local spells = require("./spells/spell")
 local run_module = require("./run")
 local render = require("./render")
 local choreography = require("./choreography")
@@ -85,7 +86,7 @@ function decode_key(key: string): Key
 end
 
 function new(): State
-    local run: run_module.State = run_module.new(game.spell_firebolt, false)
+    local run: run_module.State = run_module.new(spells.SpellKind.Firebolt, false)
     return {
         run = run,
         rules = game.new(run:boss(), run.spells, run.gold),
@@ -133,7 +134,9 @@ end
 -- Start a run at its first duel. `rush` is the boss-rush run and `spell` the
 -- starting spell every duel of it is fought with; the entry module passes the
 -- menu's choices, and an in-game restart replays the same pair from duel one.
-function reset(state: State, city: city_map.State, rush: bool, spell: i32): unit
+function reset(
+    state: State, city: city_map.State, rush: bool, spell: spells.SpellKind
+): unit
     state.run:restart(spell, rush)
     close_fence(state)
     open_route(city)
@@ -389,9 +392,10 @@ end
 -- unaffordable attempt costs nothing; targeting mode ends either way.
 function confirm_cast(state: State, slot: i32, table_card: i32): unit
     if state.rules:cast_spell(slot, table_card) then
-        local kind: game.SpellKind? = state.rules:spell_kind(slot)
+        local kind: spells.SpellKind? = state.rules:spell_kind(slot)
         if kind ~= nil then
-            choreography.apply_power(state.presentation, kind::game.SpellKind, table_card)
+            choreography.apply_power(
+                state.presentation, kind::spells.SpellKind, table_card)
         end
     end
     state.ui.cast_slot = nil

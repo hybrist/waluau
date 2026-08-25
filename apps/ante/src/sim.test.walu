@@ -7,6 +7,7 @@ local game_fixture = require("../test/game_fixture")
 local run = require("./run")
 local flow = require("./flow")
 local snapshot_data = require("./snapshot")
+local spells = require("./spells/spell")
 
 const FIRST_ROUND: i32 = 1
 const LAST_ROUND: i32 = 3
@@ -18,15 +19,15 @@ end
 -- The loadout a duel that is not about spells is dealt: the one spell a fresh
 -- run sets out with, at full price.
 local function starter_loadout(): {game.Spell}
-    return { game.new_spell(game.spell_firebolt) }
+    return { spells.Spell.new(spells.SpellKind.Firebolt) }
 end
 
-local function loadout_of(kind: i32): {game.Spell}
-    return { game.new_spell(kind) }
+local function loadout_of(kind: spells.SpellKind): {game.Spell}
+    return { spells.Spell.new(kind) }
 end
 
-local function priced_spell(kind: i32, cost: i32): game.Spell
-    local spell: game.Spell = game.new_spell(kind)
+local function priced_spell(kind: spells.SpellKind, cost: i32): game.Spell
+    local spell: game.Spell = spells.Spell.new(kind)
     spell.cost = cost
     return spell
 end
@@ -515,7 +516,7 @@ describe("Ante Magic development snapshots", function()
     end)
 
     it("frames screen, run, rules, flow, and presentation payloads atomically", function()
-        local run_state: run.State = run.new(game.spell_clone, false)
+        local run_state: run.State = run.new(spells.SpellKind.Clone, false)
         local rules: game.State = game.new(false, starter_loadout(), game.starting_gold)
         local ui: flow.State = flow.new()
         ui.modal = "help"
@@ -541,7 +542,7 @@ describe("Ante Magic development snapshots", function()
             expect(restored_ui == nil):toBe(false)
             expect(payloads[4]):toBe("presentation")
             if restored_run ~= nil then
-                expect(restored_run.spells[0].kind):toBe(game.spell_clone)
+                expect(restored_run.spells[0].kind):toBe(spells.SpellKind.Clone)
             end
             if restored_ui ~= nil then expect(tostring(restored_ui.modal)):toBe("help") end
         end
@@ -778,24 +779,24 @@ describe("Ante Magic boss battle", function()
 
     it("restarts as the variant, loadout, and gold the reset asks for", function()
         math.randomseed(53)
-        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_gold)
-        state:reset(true, loadout_of(game.spell_clone), 23)
+        local state = game.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
+        state:reset(true, loadout_of(spells.SpellKind.Clone), 23)
         expect(state:is_boss()):toBe(true)
         expect(state:hand_size()):toBe(7)
-        expect((state:spell_kind(0) or 1)::i32):toBe(game.spell_clone)
+        expect(state:spell_kind(0)):toBe(spells.SpellKind.Clone)
         expect(state:gold()):toBe(23)
         -- A duel dealt a pair of spells is fought with both, each on its own
         -- key and at its own price.
         state:reset(false, {
-            game.new_spell(game.spell_freeze_ray),
-            priced_spell(game.spell_clone, 3),
+            spells.Spell.new(spells.SpellKind.FreezeRay),
+            priced_spell(spells.SpellKind.Clone, 3),
         }, game.starting_gold)
         expect(state:is_boss()):toBe(false)
         expect(state:hand_size()):toBe(5)
         expect(state:spell_count()):toBe(2)
-        expect((state:spell_kind(0) or 1)::i32):toBe(game.spell_freeze_ray)
+        expect(state:spell_kind(0)):toBe(spells.SpellKind.FreezeRay)
         expect(state:spell_cost(0)):toBe(game.spell_cost)
-        expect((state:spell_kind(1) or 1)::i32):toBe(game.spell_clone)
+        expect(state:spell_kind(1)):toBe(spells.SpellKind.Clone)
         expect(state:spell_cost(1)):toBe(3)
         expect(state:gold()):toBe(game.starting_gold)
     end)
@@ -804,9 +805,9 @@ end)
 describe("Ante Magic spell casting", function()
     it("charges each spell its own price and refuses the rest", function()
         math.randomseed(57)
-        local state = game.new(false, loadout_of(game.spell_raise_card), game.starting_gold)
+        local state = game.new(false, loadout_of(spells.SpellKind.RaiseCard), game.starting_gold)
         expect(state:spell_count()):toBe(1)
-        expect((state:spell_kind(0) or 1)::i32):toBe(game.spell_raise_card)
+        expect(state:spell_kind(0)):toBe(spells.SpellKind.RaiseCard)
         expect(state:spell_cost(0)):toBe(game.spell_cost)
         expect(state:gold()):toBe(10)
         expect(state:can_cast(0)):toBe(true)
@@ -824,8 +825,8 @@ describe("Ante Magic spell casting", function()
     it("casts either spell of a pair at the price on its own key", function()
         math.randomseed(58)
         local state = game.new(false, {
-            game.new_spell(game.spell_freeze_ray),
-            priced_spell(game.spell_clone, 2),
+            spells.Spell.new(spells.SpellKind.FreezeRay),
+            priced_spell(spells.SpellKind.Clone, 2),
         }, 4)
         -- Four gold covers the upgraded spell on key 2 but not the full-price
         -- one on key 1, and a slot the loadout does not have is never castable.
@@ -840,8 +841,8 @@ describe("Ante Magic spell casting", function()
         expect(state:is_frozen(0)):toBe(false)
         expect(state:cast_spell(0, 1)):toBe(false)
         state:reset(false, {
-            game.new_spell(game.spell_freeze_ray),
-            priced_spell(game.spell_clone, 2),
+            spells.Spell.new(spells.SpellKind.FreezeRay),
+            priced_spell(spells.SpellKind.Clone, 2),
         }, game.spell_cost)
         expect(state:cast_spell(0, 1)):toBe(true)
         expect(state:is_frozen(1)):toBe(true)
@@ -851,16 +852,16 @@ describe("Ante Magic spell casting", function()
     it("keeps the dealt loadout through development snapshots", function()
         math.randomseed(59)
         local state = game.new(false, {
-            game.new_spell(game.spell_freeze_ray),
-            priced_spell(game.spell_firebolt, 3),
+            spells.Spell.new(spells.SpellKind.FreezeRay),
+            priced_spell(spells.SpellKind.Firebolt, 3),
         }, game.starting_gold)
         state:cast_spell(0, 2)
         local restored: game.State? = game.restore(game.snapshot(state))
         expect(restored == nil):toBe(false)
         if restored ~= nil then
             expect(restored:spell_count()):toBe(2)
-            expect((restored:spell_kind(0) or 1)::i32):toBe(game.spell_freeze_ray)
-            expect((restored:spell_kind(1) or 1)::i32):toBe(game.spell_firebolt)
+            expect(restored:spell_kind(0)):toBe(spells.SpellKind.FreezeRay)
+            expect(restored:spell_kind(1)):toBe(spells.SpellKind.Firebolt)
             expect(restored:spell_cost(1)):toBe(3)
             expect(restored:is_frozen(2)):toBe(true)
             -- The last cast was the Freeze Ray, so a burn landing after a
@@ -870,7 +871,7 @@ describe("Ante Magic spell casting", function()
     end)
 
     it("keeps frozen table cards out of both sides' feints and thaws after resolution", function()
-        local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_gold)
+        local state = game.new(false, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -896,7 +897,7 @@ describe("Ante Magic spell casting", function()
 
     it("retains a table_card frozen after the swap for exactly one more round", function()
         math.randomseed(61)
-        local state = game.new(false, loadout_of(game.spell_freeze_ray), game.starting_gold)
+        local state = game.new(false, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
         finish_swap_phase(state)
         local retained = game.view(state).middle[1]
         local replaced_left = game.view(state).middle[0]
@@ -923,7 +924,7 @@ describe("Ante Magic spell casting", function()
 
     it("replaces a Firebolt target from the deck and returns the burned card", function()
         math.randomseed(61)
-        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_gold)
+        local state = game.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
         expect(state:cast_spell(0, 1)):toBe(true)
         local deck_before: i32 = game.view(state).deck_count
         local burned: game.Card = game.view(state).middle[1]
@@ -943,7 +944,7 @@ describe("Ante Magic spell casting", function()
 
     it("leaves the board unchanged for invalid Firebolt targets", function()
         math.randomseed(63)
-        local state = game.new(false, loadout_of(game.spell_firebolt), game.starting_gold)
+        local state = game.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
         expect(state:cast_spell(0, 1)):toBe(true)
         local before: string = game.snapshot(state)
 
@@ -955,8 +956,8 @@ describe("Ante Magic spell casting", function()
     it("burns a table_card only for a Firebolt this duel actually paid for", function()
         math.randomseed(67)
         local state = game.new(false, {
-            game.new_spell(game.spell_freeze_ray),
-            game.new_spell(game.spell_firebolt),
+            spells.Spell.new(spells.SpellKind.FreezeRay),
+            spells.Spell.new(spells.SpellKind.Firebolt),
         }, game.starting_gold)
         -- Carrying Firebolt is not casting it: nothing burns until the gold for
         -- one has changed hands.

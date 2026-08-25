@@ -8,15 +8,7 @@ export enum SpellKind {
   Clone,
 }
 
-function SpellKind.from(value: number): SpellKind?
-  if value == 1 then return SpellKind.Firebolt end
-  if value == 2 then return SpellKind.FreezeRay end
-  if value == 3 then return SpellKind.RaiseCard end
-  if value == 4 then return SpellKind.Clone end
-  return nil
-end
-
-function SpellKind__from(value: number): SpellKind?
+function SpellKind.from(value: i32): SpellKind?
   if value == 1 then return SpellKind.Firebolt end
   if value == 2 then return SpellKind.FreezeRay end
   if value == 3 then return SpellKind.RaiseCard end
@@ -56,4 +48,4 @@ function Spell.new(kind: SpellKind): Spell
     return { kind = kind, cost = DEFAULT_SPELL_COST }
 end
 
-return { SpellKind__from = SpellKind__from, DEFAULT_SPELL_COST = DEFAULT_SPELL_COST }
+return { DEFAULT_SPELL_COST = DEFAULT_SPELL_COST }

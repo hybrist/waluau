@@ -14,6 +14,7 @@ local particles = require("waluau:engine/particles")
 local effect_shaders = require("./effect_shaders")
 local spell_cast = require("./spell_cast")
 local spell_launch = require("./spell_launch")
+local spells = require("./spells/spell")
 local game = require("./game")
 local run_module = require("./run")
 local layout = require("./layout")
@@ -205,7 +206,7 @@ type Piles = {
     discards: {game.Card}
 }
 type SpellPresentation = {
-    kind: i32,
+    kind: spells.SpellKind?,
     clock: f64,
     target: i32
 }
@@ -843,7 +844,7 @@ end
 -- is drawn from.
 function step_spell_particles(
     spells: SpellParticles, viewport: layout.State,
-    kind: i32, clock: f64, target: i32, middle_count: i32, dt: f64
+    kind: spells.SpellKind?, clock: f64, target: i32, middle_count: i32, dt: f64
 ): unit
     -- A resolved terminal trick has already cleared the live community while
     -- its reveal is beginning. Likewise, a turn/river condition can briefly
@@ -861,7 +862,7 @@ end
 
 function draw_spell_launch(
     surface: entity.Surface, viewport: layout.State,
-    kind: i32, clock: f64, target: i32, middle_count: i32,
+    kind: spells.SpellKind?, clock: f64, target: i32, middle_count: i32,
     sparks: spell_cast.Sparks
 ): unit
     if middle_count <= 0 or target < 0 or target >= middle_count then return end
