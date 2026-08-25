@@ -1369,8 +1369,8 @@ function State:is_victory(): bool
     return self.finished and not held_by_arch_mage(self.computer_tricks)
 end
 
-function view_cleared(view: View): bool
-    return view.finished and not held_by_arch_mage(view.computer_tricks)
+function View:cleared(): bool
+    return self.finished and not held_by_arch_mage(self.computer_tricks)
 end
 
 function State:is_boss(): bool
@@ -1499,9 +1499,9 @@ end
 
 -- The same owner selection over a live board view: the side's current hand,
 -- each slot carrying its own watched mark.
-function view_side(view: View, owner: Side): readonly<{HandSlot}>
-    if owner > 0 then return view.player_hand end
-    return view.computer_hand
+function View:side(owner: Side): readonly<{HandSlot}>
+    if owner > 0 then return self.player_hand end
+    return self.computer_hand
 end
 
 -- Start over as the given variant: the mode, loadout, and opening gold are
@@ -1673,8 +1673,6 @@ function formation_marks(
 end
 
 return {
-    view_cleared = view_cleared,
-    view_side = view_side,
     trick_side = trick_side,
     opposite_side = opposite_side,
     hand_cards = hand_cards,
