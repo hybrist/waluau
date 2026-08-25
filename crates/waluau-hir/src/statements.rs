@@ -38,7 +38,7 @@ fn method_signature_name(base: &str, method: &str) -> String {
 /// names use their annotation; unannotated names (Luau allows mixing the two
 /// freely) fall back to the unconstrained type of their initializer slot, so
 /// a mixed declaration checks like a fully annotated one.
-fn expected_binding_types(
+pub(super) fn expected_binding_types(
     bindings: &[waluau_ast::Binding],
     values: &[Expr],
     vars: &HashMap<String, Binding>,

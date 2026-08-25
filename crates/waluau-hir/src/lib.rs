@@ -42,7 +42,7 @@ mod signatures;
 mod statements;
 
 use expressions::{
-    infer_expr, resolve_operator_overload, resolved_type_method_call_name,
+    infer_expr, infer_expr_list, resolve_operator_overload, resolved_type_method_call_name,
     resolved_type_property_getter_name, select_overload,
 };
 use signatures::{
@@ -750,6 +750,24 @@ fn annotate_inferred_expr_locals(
                 function.return_type = Some(inferred);
             }
             let mut scope = vars.clone();
+            if let (Some(name), Some(return_type)) = (&function.name, function.return_type.as_ref())
+            {
+                scope.insert(
+                    name.clone(),
+                    binding_for(
+                        Type::Function {
+                            params: function
+                                .params
+                                .iter()
+                                .map(|param| param.ty.clone())
+                                .collect(),
+                            return_type: Box::new(return_type.clone()),
+                            has_self: false,
+                        },
+                        Rebindability::Const,
+                    ),
+                );
+            }
             for param in &function.params {
                 scope.insert(
                     param.name.clone(),
@@ -912,7 +930,45 @@ fn annotate_inferred_stmt_locals(
                 annotate_inferred_expr_locals(base, vars, fn_signatures, active_type_params)?;
                 annotate_inferred_expr_locals(value, vars, fn_signatures, active_type_params)?;
             }
-            Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+            Stmt::LetMulti { bindings, values } => {
+                for value in values.iter_mut() {
+                    annotate_inferred_expr_locals(value, vars, fn_signatures, active_type_params)?;
+                }
+                let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
+                let actual = if any_typed {
+                    let expected = statements::expected_binding_types(
+                        bindings,
+                        values,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                    )?;
+                    infer_expr_list(
+                        values,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(&expected),
+                    )?
+                } else {
+                    infer_expr_list(values, vars, fn_signatures, active_type_params, None)?
+                };
+                let discriminant_link = statements::pcall_discriminant_types(
+                    bindings,
+                    values,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                );
+                for (binding, value_ty) in bindings.iter_mut().zip(actual) {
+                    let ty = binding.ty.get_or_insert(value_ty).clone();
+                    vars.insert(binding.name.clone(), binding_for(ty, binding.rebindability));
+                }
+                if let Some((when_true, when_false)) = discriminant_link {
+                    statements::link_pcall_bindings(bindings, when_true, when_false, vars);
+                }
+            }
+            Stmt::AssignMulti { values, .. } => {
                 for value in values {
                     annotate_inferred_expr_locals(value, vars, fn_signatures, active_type_params)?;
                 }
@@ -3280,6 +3336,23 @@ fn annotate_function_expr_resolved_members(
     let mut active_type_params = parent_type_params.clone();
     active_type_params.extend(active_type_param_set(&function.type_params));
     let mut vars = parent_vars.clone();
+    if let (Some(name), Some(return_type)) = (&function.name, function.return_type.as_ref()) {
+        vars.insert(
+            name.clone(),
+            binding_for(
+                Type::Function {
+                    params: function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    return_type: Box::new(return_type.clone()),
+                    has_self: false,
+                },
+                Rebindability::Const,
+            ),
+        );
+    }
     for param in &function.params {
         vars.insert(
             param.name.clone(),
@@ -3532,16 +3605,26 @@ fn annotate_stmt_resolved_members(
         }
         Stmt::Break | Stmt::Continue => {}
         Stmt::LetMulti { bindings, values } => {
-            for value in values {
+            for value in values.iter_mut() {
                 annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
             }
-            for binding in bindings {
+            let discriminant_link = statements::pcall_discriminant_types(
+                bindings,
+                values,
+                vars,
+                fn_signatures,
+                active_type_params,
+            );
+            for binding in bindings.iter() {
                 if let Some(ty) = &binding.ty {
                     vars.insert(
                         binding.name.clone(),
                         binding_for(ty.clone(), binding.rebindability),
                     );
                 }
+            }
+            if let Some((when_true, when_false)) = discriminant_link {
+                statements::link_pcall_bindings(bindings, when_true, when_false, vars);
             }
         }
         Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
@@ -3638,16 +3721,22 @@ fn annotate_expr_resolved_members(
             let tostring_method = if matches!(callee.as_ref(), Expr::Name(name, _, _) if name == "tostring")
                 && args.len() == 1
             {
-                let receiver_ty =
-                    infer_expr(&args[0], vars, fn_signatures, active_type_params, None)?;
-                resolved_type_method_call_name(
-                    &receiver_ty,
-                    "__tostring",
-                    &[],
-                    vars,
-                    fn_signatures,
-                    active_type_params,
-                )?
+                match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
+                    Ok(receiver_ty) => resolved_type_method_call_name(
+                        &receiver_ty,
+                        "__tostring",
+                        &[],
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                    )?,
+                    // Resolved-member annotation is a best-effort pass after
+                    // type checking. Field-sensitive narrowing can make an
+                    // expression valid without making it independently
+                    // inferable here; ordinary builtin tostring must keep
+                    // working in that case.
+                    Err(_) => None,
+                }
             } else {
                 None
             };
