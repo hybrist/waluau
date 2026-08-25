@@ -41,7 +41,7 @@ function install_ante_magic(): unit
     local screen: ActiveScreen = "menu"
     local menu_state: menu.State = menu.new()
     local duel: game_screen.State = game_screen.new()
-    local city: city_map.State = city_map.new(math.random(2147483646))
+    local city: city_map.State = city_map.State.new(math.random(2147483646))
     local assets: presentation_resources.State = presentation_resources.new()
     local function load_assets_async(): i32
         return presentation_resources.load_async(assets)
@@ -82,7 +82,7 @@ function install_ante_magic(): unit
                 play_flip_cues(assets, game_screen.update(duel, city, dt))
             end
         end
-        city_map.update(city, dt)
+        city:update(dt)
     end
 
     -- Three layers, bottom to top: the duel board, the city map over it, and
@@ -95,7 +95,7 @@ function install_ante_magic(): unit
         -- every screen can place its semantic regions in all available space.
         layout.update(graphics.width, graphics.height)
         local canvas: layout.State = layout.current()
-        city_map.resize(city, canvas.width, canvas.height)
+        city:resize(canvas.width, canvas.height)
         graphics:clear("#09090b")
         graphics:push()
         graphics:scale(canvas.scale, canvas.scale)
@@ -105,7 +105,7 @@ function install_ante_magic(): unit
                 game_screen.draw_vault(
                     duel, presentation_resources.surface(assets, graphics))
             end
-            if city_map.visible(city) then
+            if city:visible() then
                 -- The menu's map is a drifting view of a city nobody is running,
                 -- so it has no last duel to mark.
                 local landmark: i32 = -1

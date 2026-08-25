@@ -450,31 +450,31 @@ describe("Ante Magic duel verdicts", function()
     end)
 
     it("asks the run for what follows a verdict", function()
-        local keyboard: flow.State = flow.new()
-        local mouse: flow.State = flow.new()
+        local keyboard: flow.State = flow.State.new()
+        local mouse: flow.State = flow.State.new()
         keyboard.modal = "final"
         mouse.modal = "final"
-        expect(tostring(flow.gate(keyboard, true, false, true, "advance")))
+        expect(tostring(keyboard:gate(true, false, true, "advance")))
             :toBe("advance")
-        expect(tostring(flow.gate(mouse, true, false, true, "primary")))
+        expect(tostring(mouse:gate(true, false, true, "primary")))
             :toBe("advance")
         -- The verdict stays up until the screen deals whatever comes next.
         expect(tostring(keyboard.modal)):toBe("final")
         -- Restart is still its own answer: the whole run over again, rather
         -- than whatever duel the run would have moved to.
-        expect(tostring(flow.gate(keyboard, true, false, true, "restart")))
+        expect(tostring(keyboard:gate(true, false, true, "restart")))
             :toBe("reset")
         -- The ledger opens over the verdict, and closing it puts the verdict
         -- back: a settled board is not somewhere a run can be left standing.
-        expect(tostring(flow.gate(mouse, true, false, true, "history")))
+        expect(tostring(mouse:gate(true, false, true, "history")))
             :toBe("consumed")
         expect(tostring(mouse.modal)):toBe("history")
-        expect(tostring(flow.gate(mouse, true, false, true, "history")))
+        expect(tostring(mouse:gate(true, false, true, "history")))
             :toBe("consumed")
         expect(tostring(mouse.modal)):toBe("final")
-        expect(tostring(flow.gate(mouse, true, false, true, "help")))
+        expect(tostring(mouse:gate(true, false, true, "help")))
             :toBe("consumed")
-        expect(tostring(flow.gate(mouse, true, false, true, "advance")))
+        expect(tostring(mouse:gate(true, false, true, "advance")))
             :toBe("consumed")
         expect(tostring(mouse.modal)):toBe("final")
     end)

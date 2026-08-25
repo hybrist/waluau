@@ -244,8 +244,8 @@ end
 -- Walk far enough that the route holds that many stops. The map extends itself
 -- as the run asks for more of it, because a run has no last duel to generate
 -- up to.
-function ensure_stops(state: State, count: i32): unit
-    while #state.stops < count do walk_next(state) end
+function State:ensure_stops(count: i32): unit
+    while #self.stops < count do walk_next(self) end
 end
 
 function begin_route(state: State): unit
@@ -264,7 +264,7 @@ function begin_route(state: State): unit
     append_stop(state)
     state.travel = 0.0
     state.target = 0.0
-    ensure_stops(state, LOOKAHEAD)
+    state:ensure_stops(LOOKAHEAD)
 end
 
 -- Duels and vendors alternate along the route: the run sets out from the
@@ -278,8 +278,8 @@ function shop_stop(duel: i32): i32
     return duel * 2 - 2
 end
 
-function stop_count(state: State): i32
-    return #state.stops
+function State:stop_count(): i32
+    return #self.stops
 end
 
 -- Which duel a stop is, counting from one. Vendor stops answer with the duel
@@ -291,23 +291,23 @@ end
 -- Where on the route a fractional stop position stands. Past the generated end
 -- it stands on the last stop there is, so a caller that reads ahead of the walk
 -- never falls off the route.
-function position_at(state: State, travel: f64): Point
-    local last: i32 = #state.stops - 1
+function State:position_at(travel: f64): Point
+    local last: i32 = #self.stops - 1
     if last < 0 then return { x = CITY_WIDTH * 0.5, y = CITY_HEIGHT * 0.5 } end
-    if travel <= 0.0 then return { x = state.stops[0].x, y = state.stops[0].y } end
-    if travel >= last::f64 then return { x = state.stops[last].x, y = state.stops[last].y } end
+    if travel <= 0.0 then return { x = self.stops[0].x, y = self.stops[0].y } end
+    if travel >= last::f64 then return { x = self.stops[last].x, y = self.stops[last].y } end
     local base: i32 = math.floor(travel)::i32
     local fraction: f64 = travel - (base::f64)
-    local from: Stop = state.stops[base]
-    local into: Stop = state.stops[base + 1]
+    local from: Stop = self.stops[base]
+    local into: Stop = self.stops[base + 1]
     return {
         x = from.x + (into.x - from.x) * fraction,
         y = from.y + (into.y - from.y) * fraction,
     }
 end
 
-function position(state: State): Point
-    return position_at(state, state.travel)
+function State:position(): Point
+    return self:position_at(self.travel)
 end
 
 -- Two long, slightly different periods make a gentle sweep over the map that
@@ -331,7 +331,7 @@ function camera_target(state: State): Point
     if state.drifting then
         return { x = drift_center_x(state), y = drift_center_y(state) }
     end
-    return position(state)
+    return state:position()
 end
 
 -- Two raised to a power, for the octaves the push in walks. The language has no
@@ -482,13 +482,13 @@ end
 -- Put every moving value where it is heading, the dive included. Used when the
 -- map is not the picture on screen and therefore has nothing to animate for,
 -- which is what a development snapshot coming back is.
-function settle(state: State): unit
-    state.dive = state.dive_target
-    apply_dive(state)
-    place_camera(state)
+function State:settle(): unit
+    self.dive = self.dive_target
+    apply_dive(self)
+    place_camera(self)
 end
 
-function new(seed: i32): State
+function State.new(seed: i32): State
     local value: f64 = math.floor(math.abs(seed::f64))
     value = value - math.floor(value / (RANDOM_MODULUS - 1.0)) * (RANDOM_MODULUS - 1.0)
     local state: State = {
@@ -532,21 +532,21 @@ function new(seed: i32): State
     generate(state)
     begin_route(state)
     choose_streak(state, false)
-    settle(state)
+    state:settle()
     return state
 end
 
 -- The city camera consumes the live logical viewport. Resizing does not
 -- regenerate the route or move the party; it only changes how much city is
 -- visible and where a duel dive converges.
-function resize(state: State, width: f64, height: f64): unit
+function State:resize(width: f64, height: f64): unit
     if width < 1.0 or height < 1.0 then return end
-    if state.view_width == width and state.view_height == height then return end
-    state.view_width = width
-    state.view_height = height
-    apply_dive(state)
-    state.camera_x = clamp_camera_x(state, state.camera_x)
-    state.camera_y = clamp_camera_y(state, state.camera_y)
+    if self.view_width == width and self.view_height == height then return end
+    self.view_width = width
+    self.view_height = height
+    apply_dive(self)
+    self.camera_x = clamp_camera_x(self, self.camera_x)
+    self.camera_y = clamp_camera_y(self, self.camera_y)
 end
 
 -- A different city, and a different route through it. The menu redraws the map
@@ -556,101 +556,86 @@ end
 -- The dissolve is left running rather than settled: abandoning a duel for the
 -- menu asks for the map back, and the new city rises over the board being left
 -- instead of replacing it between two frames.
-function regenerate(state: State): unit
-    state.pan_clock = 0.0
-    state.drifting = true
-    state.dive_target = 0.0
-    generate(state)
-    begin_route(state)
-    choose_streak(state, false)
-    place_camera(state)
+function State:regenerate(): unit
+    self.pan_clock = 0.0
+    self.drifting = true
+    self.dive_target = 0.0
+    generate(self)
+    begin_route(self)
+    choose_streak(self, false)
+    place_camera(self)
 end
 
 -- Let go of the route: the camera sweeps the city instead of watching the
 -- duel. This is the menu's view of the map.
-function drift(state: State): unit
-    state.drifting = true
+function State:drift(): unit
+    self.drifting = true
 end
 
 -- Head for that stop, walking the streets in between. Everything past it that
 -- the map will need to draw as road ahead is generated here.
-function follow(state: State, stop: i32): unit
-    state.drifting = false
-    state.target = stop::f64
-    ensure_stops(state, stop + LOOKAHEAD)
+function State:follow(stop: i32): unit
+    self.drifting = false
+    self.target = stop::f64
+    self:ensure_stops(stop + LOOKAHEAD)
 end
 
 -- Stand on that stop with no walk at all: the route is being restarted, not
 -- travelled.
-function warp(state: State, stop: i32): unit
-    follow(state, stop)
-    place_camera(state)
+function State:warp(stop: i32): unit
+    self:follow(stop)
+    place_camera(self)
 end
 
 -- Come back out of the house, or go into it. Both are a request for the whole
 -- movement — the camera closing or opening, and the map handing the screen over
 -- or taking it back; `settle` is how a caller asks for it to have already
 -- happened.
-function show(state: State): unit
-    state.dive_target = 0.0
+function State:show(): unit
+    self.dive_target = 0.0
 end
 
-function hide(state: State): unit
-    state.dive_target = 1.0
+function State:hide(): unit
+    self.dive_target = 1.0
 end
 
 -- Whether the map still owes the screen anything. A duel that has fully taken
 -- over does not pay for a map draw underneath it.
-function visible(state: State): bool
-    return state.cover > 0.002
+function State:visible(): bool
+    return self.cover > 0.002
 end
 
-function update(state: State, dt: f64): unit
-    state.pan_clock += dt
-    state.streak_clock += dt
-    if state.streak_clock > state.streak_duration then
-        choose_streak(state, true)
+function State:update(dt: f64): unit
+    self.pan_clock += dt
+    self.streak_clock += dt
+    if self.streak_clock > self.streak_duration then
+        choose_streak(self, true)
     end
 
     -- The two movements take turns. On the map the duel walks; once it is on
     -- the doorstep the camera goes in after it, and coming back out the camera
     -- opens up before anyone steps into the street. Either way what is on the
     -- screen is one thing moving rather than two.
-    if state.dive <= 0.0 then
-        state.travel = step_toward(state.travel, state.target, dt / STOP_SECONDS)
+    if self.dive <= 0.0 then
+        self.travel = step_toward(self.travel, self.target, dt / STOP_SECONDS)
     end
-    if state.dive > state.dive_target or state.travel == state.target then
-        state.dive = step_toward(state.dive, state.dive_target, dt / DIVE_SECONDS)
+    if self.dive > self.dive_target or self.travel == self.target then
+        self.dive = step_toward(self.dive, self.dive_target, dt / DIVE_SECONDS)
     end
-    apply_dive(state)
+    apply_dive(self)
 
     -- The camera closes at a steady speed on the screen rather than in the
     -- city: a lag of a few paces is a soft follow on the map and half a room
     -- out of frame once the push in has magnified it twentyfold.
-    local aim: Point = camera_target(state)
-    local pan: f64 = approach(dt, CAMERA_RATE * state.zoom)
-    state.camera_x += (aim.x - state.camera_x) * pan
-    state.camera_y += (aim.y - state.camera_y) * pan
-    state.camera_x = clamp_camera_x(state, state.camera_x)
-    state.camera_y = clamp_camera_y(state, state.camera_y)
+    local aim: Point = camera_target(self)
+    local pan: f64 = approach(dt, CAMERA_RATE * self.zoom)
+    self.camera_x += (aim.x - self.camera_x) * pan
+    self.camera_y += (aim.y - self.camera_y) * pan
+    self.camera_x = clamp_camera_x(self, self.camera_x)
+    self.camera_y = clamp_camera_y(self, self.camera_y)
 end
 
 return {
-    new = new,
-    regenerate = regenerate,
-    drift = drift,
-    follow = follow,
-    warp = warp,
-    show = show,
-    hide = hide,
-    settle = settle,
-    visible = visible,
-    resize = resize,
-    update = update,
-    ensure_stops = ensure_stops,
-    position = position,
-    position_at = position_at,
-    stop_count = stop_count,
     stop_duel = stop_duel,
     duel_stop = duel_stop,
     shop_stop = shop_stop,

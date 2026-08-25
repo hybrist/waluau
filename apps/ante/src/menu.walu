@@ -80,7 +80,7 @@ function reset(state: State, city: city_map.State): unit
     state.stage = "main"
     state.rush_choice = false
     state.spell_cursor = 0
-    city_map.regenerate(city)
+    city:regenerate()
 end
 
 -- Aim the map: the title sits over a city sweeping past, and the spell list
@@ -88,11 +88,11 @@ end
 -- change of stage is a pan rather than a cut.
 function update(state: State, city: city_map.State, dt: f64): unit
     state.clock += dt
-    city_map.show(city)
+    city:show()
     if state.stage == "spell" then
-        city_map.follow(city, city_map.shop_stop(1))
+        city:follow(city_map.shop_stop(1))
     else
-        city_map.drift(city)
+        city:drift()
     end
 end
 

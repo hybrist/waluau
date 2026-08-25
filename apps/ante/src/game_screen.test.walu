@@ -23,7 +23,7 @@ describe("Ante Magic run health wiring", function()
     it("turns the last lost hand into a run-ending verdict and fresh run", function()
         math.randomseed(101)
         local screen: game_screen.State = game_screen.new()
-        local city: city_map.State = city_map.new(101)
+        local city: city_map.State = city_map.State.new(101)
         screen.run.hearts = 1
 
         finish_swap_phase(screen.rules)
@@ -33,7 +33,7 @@ describe("Ante Magic run health wiring", function()
             { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) },
             { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
         )
-        choreography.skip(screen.presentation)
+        screen.presentation:skip()
         screen.ui.play_picks = { 0, 1 }
 
         game_screen.keypressed(screen, city, "Enter")
@@ -42,7 +42,7 @@ describe("Ante Magic run health wiring", function()
         expect(screen.rules:is_finished()):toBe(false)
         expect(screen.ui.revealing):toBe(true)
 
-        choreography.finish_reveal(screen.presentation)
+        screen.presentation:finish_reveal()
         game_screen.keypressed(screen, city, "Enter")
         expect(tostring(screen.ui.modal)):toBe("final")
 

@@ -90,8 +90,8 @@ function new(): State
     return {
         run = run,
         rules = game.new(run:boss(), run.spells, run.gold),
-        ui = flow.new(),
-        presentation = choreography.new(),
+        ui = flow.State.new(),
+        presentation = choreography.State.new(),
         shop = shop.new(),
         intervention = divine_intervention.new(),
         leaving_fence = false,
@@ -111,12 +111,12 @@ end
 function deal_vault(state: State): unit
     local run: run_module.State = state.run
     state.rules:reset(run:boss(), run.spells, run.gold)
-    flow.reset(state.ui)
-    choreography.reset(state.presentation)
+    state.ui:reset()
+    state.presentation:reset()
     divine_intervention.reset(state.intervention)
     -- The opening deal is already reflected in rules state; choreography
     -- reveals that settled result as the screen comes alive.
-    choreography.opening_deal(game.view(state.rules), state.presentation)
+    state.presentation:opening_deal(game.view(state.rules))
 end
 
 function close_fence(state: State): unit
@@ -128,7 +128,7 @@ end
 -- spell was picked at, so the map is put back at the mouth of the route instead
 -- of walking the whole city back to it.
 function open_route(city: city_map.State): unit
-    city_map.warp(city, city_map.shop_stop(1))
+    city:warp(city_map.shop_stop(1))
 end
 
 -- Start a run at its first duel. `rush` is the boss-rush run and `spell` the
@@ -210,13 +210,13 @@ end
 -- the picture. Called every frame, resources loaded or not, so the walk between
 -- two stops keeps time with the run rather than with the asset loader.
 function steer_city(state: State, city: city_map.State, dt: f64): unit
-    city_map.follow(city, city_stop(state))
+    city:follow(city_stop(state))
     local standing: f64 = 0.0
     if on_map(state) then
-        city_map.show(city)
+        city:show()
         standing = 1.0
     else
-        city_map.hide(city)
+        city:hide()
     end
     state.fence_fade = fade_toward(
         state.fence_fade, standing, dt / FENCE_FADE_SECONDS)
@@ -229,8 +229,8 @@ function place_city(state: State, city: city_map.State): unit
     -- A whole fade's worth of time in one step is how this asks for the aim to
     -- have already arrived, offers included.
     steer_city(state, city, FENCE_FADE_SECONDS)
-    city_map.warp(city, city_stop(state))
-    city_map.settle(city)
+    city:warp(city_stop(state))
+    city:settle()
 end
 
 function fence_open(state: State): bool
@@ -285,17 +285,17 @@ function update(state: State, city: city_map.State, dt: f64): i32
     -- been left the duel is dealt and running, and the offers only wait for
     -- the map under them to finish dissolving before they are taken down.
     if on_map(state) then return 0 end
-    if state.leaving_fence and not city_map.visible(city) then close_fence(state) end
+    if state.leaving_fence and not city:visible() then close_fence(state) end
     if state.intervention.active then
-        choreography.update_fan(state.presentation, flow.fan_focus(state.ui, true), dt)
+        state.presentation:update_fan(state.ui:fan_focus(true), dt)
         local touched: {i32} = divine_intervention.update(state.intervention, dt)
         for target in touched do state.rules:divine_intervention(target) end
         return 0
     end
     local ui: flow.State = state.ui
     local presentation: choreography.State = state.presentation
-    local animating: bool = choreography.is_animating(presentation)
-    choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
+    local animating: bool = presentation:is_animating()
+    presentation:update_fan(ui:fan_focus(animating), dt)
     local community_count: i32 = state.rules:community_size()
     -- Rules rotate or clear the live board as soon as play resolves, while the
     -- reveal still presents the five cards recorded in the trick. Keep spell
@@ -304,25 +304,22 @@ function update(state: State, city: city_map.State, dt: f64): i32
         local revealed: game.Trick? = state.rules:last_trick()
         if revealed ~= nil then community_count = #(revealed::game.Trick).middle end
     end
-    local burned_table_card: i32 = choreography.update_power(
-        presentation, community_count, dt)
+    local burned_table_card: i32 = presentation:update_power(community_count, dt)
     if burned_table_card >= 0 then
         local discarded: game.Card? = state.rules:resolve_firebolt(burned_table_card)
         if discarded ~= nil then
             local rules_view: game.View = game.view(state.rules)
-            choreography.firebolt_resolved(
-                presentation,
-                discarded::game.Card,
+            presentation:firebolt_resolved(discarded::game.Card,
                 rules_view.middle[burned_table_card],
                 burned_table_card,
                 #rules_view.middle)
         end
     end
     if ui.revealing then
-        return choreography.update_reveal(presentation, dt)
+        return presentation:update_reveal(dt)
     end
     if ui.modal == "none" then
-        return choreography.update(presentation, dt)
+        return presentation:update(dt)
     end
     return 0
 end
@@ -332,14 +329,13 @@ end
 function draw_vault(state: State, surface: entity.Surface): unit
     local ui: flow.State = state.ui
     local aimed_slot: i32? = ui.cast_slot
-    choreography.draw(
+    state.presentation:draw(
         surface,
         game.view(state.rules),
         run_module.view(state.run, run_outcome(state)),
-        state.presentation,
         {
-            hand_focus = flow.fan_focus(
-                ui, choreography.is_animating(state.presentation)),
+            hand_focus = ui:fan_focus(
+                state.presentation:is_animating()),
             table_card_cursor = ui.table_card_cursor,
             cursor_area = ui.cursor_area,
             play_picks = ui.play_picks,
@@ -377,13 +373,13 @@ function submit_swap(state: State): unit
     else
         outcome = state.rules:resolve_swap(ui.swap_hand, ui.swap_table_cards)
     end
-    flow.clear_picks(ui)
+    ui:clear_picks()
     if outcome ~= nil then
         -- A resolved swap thaws every table_card, so a Freeze Ray standing on the
         -- board loses its condition with it. Which spell is standing there is
         -- the presentation's own reading, not a question for the loadout.
-        choreography.clear_freeze(state.presentation)
-        choreography.swap(outcome::game.SwapOutcome, state.presentation)
+        state.presentation:clear_freeze()
+        state.presentation:swap(outcome::game.SwapOutcome)
     end
 end
 
@@ -394,8 +390,7 @@ function confirm_cast(state: State, slot: i32, table_card: i32): unit
     if state.rules:cast_spell(slot, table_card) then
         local kind: spells.SpellKind? = state.rules:spell_kind(slot)
         if kind ~= nil then
-            choreography.apply_power(
-                state.presentation, kind::spells.SpellKind, table_card)
+            state.presentation:apply_power(kind::spells.SpellKind, table_card)
         end
     end
     state.ui.cast_slot = nil
@@ -408,11 +403,11 @@ function submit_round(state: State): unit
     if trick == nil then return end
     local resolved: game.Trick = trick::game.Trick
     if resolved.winner < 0 then state.run:lose_hand() end
-    choreography.record_burned_losers(state.presentation, resolved)
-    flow.begin_reveal(ui)
+    state.presentation:record_burned_losers(resolved)
+    ui:begin_reveal()
     -- A stalemate leaves both pairs standing, so this reveal has no pair to
     -- burn and its ash never starts.
-    choreography.begin_reveal(state.presentation, resolved.winner ~= 0)
+    state.presentation:begin_reveal(resolved.winner ~= 0)
 end
 
 -- The swap prompt has exactly two rows, so up and down both mean "the other
@@ -426,10 +421,10 @@ function toggle_cursor_area(ui: flow.State): unit
 end
 
 function consume_gate(state: State, city: city_map.State, command: flow.Command): bool
-    local result: flow.GateResult = flow.gate(
-        state.ui, vault_finished(state),
-        choreography.is_animating(state.presentation),
-        choreography.reveal_finished(state.presentation), command)
+    local result: flow.GateResult = state.ui:gate(
+        vault_finished(state),
+        state.presentation:is_animating(),
+        state.presentation:reveal_finished(), command)
     if result == "live" then return false end
     -- Restart is a run restart, not a redeal of the live duel: a duel the
     -- run already paid gold into cannot be fought a second time.
@@ -440,13 +435,13 @@ function consume_gate(state: State, city: city_map.State, command: flow.Command)
     elseif result == "refill" then
         local trick: game.Trick? = state.rules:last_trick()
         if trick ~= nil then
-            choreography.resolved_breach_cleanup(
-                game.view(state.rules), trick::game.Trick, state.presentation)
+            state.presentation:resolved_breach_cleanup(
+                game.view(state.rules), trick::game.Trick)
         end
     elseif result == "skip" then
-        choreography.skip(state.presentation)
+        state.presentation:skip()
     elseif result == "finish-reveal" then
-        choreography.finish_reveal(state.presentation)
+        state.presentation:finish_reveal()
     end
     return true
 end
@@ -486,11 +481,11 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
     if not vault_finished(state)
         and not ui.revealing
         and ui.modal == "none"
-        and not choreography.firebolt_pending(presentation)
+        and not presentation:firebolt_pending()
         and divine_intervention.keypressed(state.intervention, key)
     then
-        choreography.skip(presentation)
-        flow.clear_picks(ui)
+        presentation:skip()
+        ui:clear_picks()
         ui.cast_slot = nil
         return "none"
     end
@@ -498,7 +493,7 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
     -- and replacement. Other spell conditions are persistent and do not lock
     -- the board, but advancing the turn during this one-shot effect could make
     -- its target name a newly dealt table_card instead of the card the bolt hit.
-    if choreography.firebolt_pending(presentation) then return "none" end
+    if presentation:firebolt_pending() then return "none" end
     local cast_slot: i32 = cast_slot_for(key, rules:spell_count())
     if cast_slot >= 0 then
         if ui.modal ~= "none" or ui.revealing or vault_finished(state) then
@@ -514,8 +509,8 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
         -- The cast should respond on the first gesture. If the opening deal
         -- is still running, settle it before targeting begins so the table cards
         -- are visibly present for the aim cursor.
-        if choreography.is_animating(presentation) then
-            choreography.skip(presentation)
+        if presentation:is_animating() then
+            presentation:skip()
         end
         ui.cast_slot = cast_slot
         return "none"
@@ -586,12 +581,12 @@ function keypressed(state: State, city: city_map.State, key: string): ScreenActi
         end
     case Key.sort_ascending then
         local order: {i32} = rules:sort_player_hand(true)
-        flow.apply_hand_order(ui, order)
-        choreography.apply_hand_order(presentation, order)
+        ui:apply_hand_order(order)
+        presentation:apply_hand_order(order)
     case Key.sort_descending then
         local order: {i32} = rules:sort_player_hand(false)
-        flow.apply_hand_order(ui, order)
-        choreography.apply_hand_order(presentation, order)
+        ui:apply_hand_order(order)
+        presentation:apply_hand_order(order)
     case Key.pass then
         if rules:swap_open() then
             ui.swap_hand = {}
@@ -620,10 +615,10 @@ function mousemoved(state: State, x: f64, y: f64): unit
     end
     if state.intervention.active then return end
     local ui: flow.State = state.ui
-    if flow.gate(
-        ui, vault_finished(state),
-        choreography.is_animating(state.presentation),
-        choreography.reveal_finished(state.presentation), "none"
+    if ui:gate(
+        vault_finished(state),
+        state.presentation:is_animating(),
+        state.presentation:reveal_finished(), "none"
     ) ~= "live" then return end
     local at: render.Point = render.point(x, y)
     -- While aiming a cast, the pointer only steers the table_card the spell would
@@ -634,7 +629,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
         if target >= 0 then ui.table_card_cursor = target end
         return
     end
-    local hand: i32 = choreography.hit_hand(state.presentation, at)
+    local hand: i32 = state.presentation:hit_hand(at)
     if hand >= 0 then
         ui.cursor_area = "hand"
         ui.hand_cursor = hand
@@ -667,7 +662,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         return
     end
     if state.intervention.active then return end
-    if choreography.firebolt_pending(state.presentation) then return end
+    if state.presentation:firebolt_pending() then return end
     if consume_gate(state, city, "primary") then return end
 
     local ui: flow.State = state.ui
@@ -685,7 +680,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         end
         return
     end
-    local hand: i32 = choreography.hit_hand(state.presentation, at)
+    local hand: i32 = state.presentation:hit_hand(at)
     if hand >= 0 then
         ui.cursor_area = "hand"
         ui.hand_cursor = hand
@@ -724,8 +719,8 @@ function snapshot(state: State): {string}
     return {
         run_module.snapshot(state.run),
         game.snapshot(state.rules),
-        flow.snapshot(state.ui),
-        choreography.snapshot(state.presentation),
+        state.ui:snapshot(),
+        state.presentation:snapshot(),
         shop.snapshot(state.shop),
     }
 end
@@ -739,8 +734,8 @@ function restore(
 ): State?
     local run: run_module.State? = run_module.restore(run_payload)
     local rules: game.State? = game.restore(rules_payload)
-    local ui: flow.State? = flow.restore(ui_payload)
-    local presentation: choreography.State? = choreography.restore(presentation_payload)
+    local ui: flow.State? = flow.State.restore(ui_payload)
+    local presentation: choreography.State? = choreography.State.restore(presentation_payload)
     local intermission: shop.State? = shop.restore(shop_payload)
     if run == nil then return nil end
     if rules == nil then return nil end

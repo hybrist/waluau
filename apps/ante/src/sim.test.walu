@@ -529,7 +529,7 @@ describe("Ante Magic development snapshots", function()
     it("frames screen, run, rules, flow, and presentation payloads atomically", function()
         local run_state: run.State = run.new(spells.SpellKind.Clone, false)
         local rules: game.State = game.new(false, starter_loadout(), game.starting_gold)
-        local ui: flow.State = flow.new()
+        local ui: flow.State = flow.State.new()
         ui.modal = "help"
 
         -- The shape the entry module packs for hot replacement: sections stay
@@ -542,7 +542,7 @@ describe("Ante Magic development snapshots", function()
             sections = {
                 run.snapshot(run_state),
                 game.snapshot(rules),
-                flow.snapshot(ui),
+                ui:snapshot(),
                 "presentation",
             },
         }
@@ -555,7 +555,7 @@ describe("Ante Magic development snapshots", function()
             expect(#decoded.sections):toBe(4)
             local restored_run: run.State? = run.restore(decoded.sections[0])
             local restored_rules: game.State? = game.restore(decoded.sections[1])
-            local restored_ui: flow.State? = flow.restore(decoded.sections[2])
+            local restored_ui: flow.State? = flow.State.restore(decoded.sections[2])
             expect(restored_run == nil):toBe(false)
             expect(restored_rules == nil):toBe(false)
             expect(restored_ui == nil):toBe(false)
@@ -569,59 +569,59 @@ describe("Ante Magic development snapshots", function()
         -- Trailing garbage fails the frame as a whole; a section fed to the
         -- wrong module fails that section's own schema check.
         expect(json.unpack<HotFrame>(framed .. "|extra") == nil):toBe(true)
-        expect(run.restore(flow.snapshot(ui)) == nil):toBe(true)
+        expect(run.restore(ui:snapshot()) == nil):toBe(true)
     end)
 
     it("rejects inconsistent spell-targeting payloads", function()
         -- A cast slot names a loadout key, which is never negative. The old
         -- casting-flag inconsistency cannot be written any more: the slot is
         -- one nullable field.
-        local ui: flow.State = flow.new()
+        local ui: flow.State = flow.State.new()
         local negative_slot: i32 = -1
         ui.cast_slot = negative_slot
-        expect(flow.restore(flow.snapshot(ui)) == nil):toBe(true)
+        expect(flow.State.restore(ui:snapshot()) == nil):toBe(true)
     end)
 
     it("rejects a modal another build wrote", function()
         -- The modal is a literal union that decodes as a plain string, so its
         -- domain is restore's to check.
-        local ui: flow.State = flow.new()
+        local ui: flow.State = flow.State.new()
         ui.modal = "help"
         local unknown_modal: string =
-            string.gsub(flow.snapshot(ui), '"modal":"help"', '"modal":"attic"')
-        expect(flow.restore(flow.snapshot(ui)) == nil):toBe(false)
-        expect(flow.restore(unknown_modal) == nil):toBe(true)
+            string.gsub(ui:snapshot(), '"modal":"help"', '"modal":"attic"')
+        expect(flow.State.restore(ui:snapshot()) == nil):toBe(false)
+        expect(flow.State.restore(unknown_modal) == nil):toBe(true)
     end)
 end)
 
 describe("Ante Magic duel flow", function()
     it("applies the same modal and animation gates to both input adapters", function()
-        local keyboard: flow.State = flow.new()
-        local mouse: flow.State = flow.new()
+        local keyboard: flow.State = flow.State.new()
+        local mouse: flow.State = flow.State.new()
         keyboard.modal = "help"
         mouse.modal = "help"
 
-        expect(tostring(flow.gate(keyboard, false, false, false, "advance"))):toBe("consumed")
-        expect(tostring(flow.gate(mouse, false, false, false, "primary"))):toBe("consumed")
+        expect(tostring(keyboard:gate(false, false, false, "advance"))):toBe("consumed")
+        expect(tostring(mouse:gate(false, false, false, "primary"))):toBe("consumed")
         expect(tostring(keyboard.modal)):toBe("none")
         expect(tostring(mouse.modal)):toBe("none")
 
-        expect(tostring(flow.gate(keyboard, false, true, false, "advance"))):toBe("skip")
-        expect(tostring(flow.gate(mouse, false, true, false, "primary"))):toBe("skip")
+        expect(tostring(keyboard:gate(false, true, false, "advance"))):toBe("skip")
+        expect(tostring(mouse:gate(false, true, false, "primary"))):toBe("skip")
     end)
 
     it("finishes a reveal before advancing to round cleanup", function()
-        local ui: flow.State = flow.new()
-        flow.begin_reveal(ui)
+        local ui: flow.State = flow.State.new()
+        ui:begin_reveal()
 
-        expect(tostring(flow.gate(ui, false, false, false, "advance"))):toBe("finish-reveal")
+        expect(tostring(ui:gate(false, false, false, "advance"))):toBe("finish-reveal")
         expect(ui.revealing):toBe(true)
-        expect(tostring(flow.gate(ui, false, false, true, "advance"))):toBe("refill")
+        expect(tostring(ui:gate(false, false, true, "advance"))):toBe("refill")
         expect(ui.revealing):toBe(false)
 
-        flow.begin_reveal(ui)
-        expect(tostring(flow.gate(ui, true, false, false, "primary"))):toBe("finish-reveal")
-        expect(tostring(flow.gate(ui, true, false, true, "primary"))):toBe("consumed")
+        ui:begin_reveal()
+        expect(tostring(ui:gate(true, false, false, "primary"))):toBe("finish-reveal")
+        expect(tostring(ui:gate(true, false, true, "primary"))):toBe("consumed")
         expect(tostring(ui.modal)):toBe("final")
     end)
 end)
