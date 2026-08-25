@@ -30,7 +30,7 @@ function draw_at(
 end
 
 function node(cards: {game.Card}, count: i32): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return card.intrinsic()
         end,

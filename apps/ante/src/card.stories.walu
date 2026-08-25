@@ -149,7 +149,7 @@ end
 const FLIP_PERIOD = 1.7
 
 local function turning(): entity.Node
-    return entity.sized(
+    return entity.Node.sized(
         card_entity.width,
         card_entity.height,
         function(surface: entity.Surface, bounds: box.Rect): unit
@@ -378,7 +378,7 @@ local function drawing(index: i32, count: i32): card_draw.Draw
 end
 
 local function drawing_cards(): entity.Node
-    return entity.sized(
+    return entity.Node.sized(
         DRAW_WIDTH,
         DRAW_HEIGHT,
         function(surface: entity.Surface, bounds: box.Rect): unit
@@ -409,21 +409,21 @@ local function drawing_cards(): entity.Node
                                 if card_draw.ghost_visible(past) then
                                     draw_pose(
                                         graphics,
-                                        card_draw.pose_at(draw, past),
-                                        card_draw.shows_face(draw, past),
+                                        draw:pose_at(past),
+                                        draw:shows_face(past),
                                         0.16 + 0.1 * (ghost::f64)
                                     )
                                 end
                             end
                         end
 
-                        local pose = card_draw.pose_at(draw, clock)
+                        local pose = draw:pose_at(clock)
                         local hold = 0.0
                         if clock >= card_draw.flight_end then
                             hold = 1.0
                         end
                         draw_hold(graphics, pose, hold)
-                        draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
+                        draw_pose(graphics, pose, draw:shows_face(clock), 1.0)
                     end
                 end
             end

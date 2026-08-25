@@ -51,7 +51,7 @@ const ROWS: i32 = 14
 
 function seen_at(clock: f64): card_warp.Mesh
     local mesh: card_warp.Mesh = card_warp.Mesh.new(COLUMNS, ROWS)
-    mesh:build(card_draw.pose_at(drawing(), clock))
+    mesh:build(drawing():pose_at(clock))
     return mesh
 end
 
@@ -84,7 +84,7 @@ function progress(clock: f64): f64
 end
 
 function pose(clock: f64): card_warp.Pose
-    return card_draw.pose_at(drawing(), clock)
+    return drawing():pose_at(clock)
 end
 
 describe("the card's path out of the deck", function(): unit
@@ -129,7 +129,7 @@ describe("the card's path out of the deck", function(): unit
         local beyond: f64 = 0.0
         for step = 0::i32, SAMPLES do
             local clock: f64 = card_draw.flight_end * (step::f64) / (SAMPLES::f64)
-            local centre: card_warp.Pose = card_draw.pose_at(asked, clock)
+            local centre: card_warp.Pose = asked:pose_at(clock)
             local run_x: f64 = CAUGHT_X - DECK_X
             local run_y: f64 = CAUGHT_Y - DECK_Y
             local past: f64 = ((centre.center_x - DECK_X) * run_x
@@ -145,7 +145,7 @@ describe("the card's path out of the deck", function(): unit
         local length: f64 = journey_length()
         for step = 0::i32, SAMPLES do
             local clock: f64 = card_draw.land_end * (step::f64) / (SAMPLES::f64)
-            local centre: card_warp.Pose = card_draw.pose_at(parked, clock)
+            local centre: card_warp.Pose = parked:pose_at(clock)
             local run_x: f64 = CAUGHT_X - DECK_X
             local run_y: f64 = CAUGHT_Y - DECK_Y
             local reached: f64 = ((centre.center_x - DECK_X) * run_x
@@ -178,10 +178,10 @@ describe("the card's arc off the surface", function(): unit
     it("tops out at exactly the height it is asked for", function(): unit
         local high: card_draw.Draw = thrown(0.05, 320.0)
         high.arc = "even"
-        local apex: f64 = card_draw.pose_at(high, card_draw.flight_end * 0.5).rise
+        local apex: f64 = high:pose_at(card_draw.flight_end * 0.5).rise
         expect(apex):toBeCloseTo(320.0, 6)
         local flat: card_draw.Draw = thrown(0.05, 0.0)
-        expect(card_draw.pose_at(flat, card_draw.flight_end * 0.5).rise):toBeCloseTo(0.0, 9)
+        expect(flat:pose_at(card_draw.flight_end * 0.5).rise):toBeCloseTo(0.0, 9)
     end)
 
     -- The arc dial only moves the apex in time. A late arc is still low at
@@ -190,12 +190,12 @@ describe("the card's arc off the surface", function(): unit
     it("puts the top of the arc where the dial asks", function(): unit
         local late: card_draw.Draw = thrown(0.05, 270.0)
         late.arc = "late"
-        expect(card_draw.pose_at(late, card_draw.flight_end * 0.7).rise)
-            :toBeGreaterThan(card_draw.pose_at(late, card_draw.flight_end * 0.5).rise)
+        expect(late:pose_at(card_draw.flight_end * 0.7).rise)
+            :toBeGreaterThan(late:pose_at(card_draw.flight_end * 0.5).rise)
         local early: card_draw.Draw = thrown(0.05, 270.0)
         early.arc = "early"
-        expect(card_draw.pose_at(early, card_draw.flight_end * 0.3).rise)
-            :toBeGreaterThan(card_draw.pose_at(early, card_draw.flight_end * 0.5).rise)
+        expect(early:pose_at(card_draw.flight_end * 0.3).rise)
+            :toBeGreaterThan(early:pose_at(card_draw.flight_end * 0.5).rise)
     end)
 
     -- The end of the flight is the slam: the sweep has all but arrived, so
@@ -236,16 +236,16 @@ describe("the card's turn", function(): unit
     end)
 
     it("leaves the deck sealed and lands face up", function(): unit
-        expect(card_draw.shows_face(drawing(), 0.0)):toBe(false)
-        expect(card_draw.shows_face(drawing(), 0.2)):toBe(false)
-        expect(card_draw.shows_face(drawing(), card_draw.land_end)):toBe(true)
+        expect(drawing():shows_face(0.0)):toBe(false)
+        expect(drawing():shows_face(0.2)):toBe(false)
+        expect(drawing():shows_face(card_draw.land_end)):toBe(true)
     end)
 
     it("keeps the face up for the whole hover", function(): unit
         for step = 0::i32, 40::i32 do
             local clock: f64 = card_draw.land_end
                 + (card_draw.total_seconds() - card_draw.land_end) * (step::f64) / 40.0
-            expect(card_draw.shows_face(drawing(), clock)):toBe(true)
+            expect(drawing():shows_face(clock)):toBe(true)
         end
     end)
 end)

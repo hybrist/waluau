@@ -9,7 +9,7 @@ local entity = require("../entity")
 local orb_track = require("./orb_track")
 
 function node(state: game.View, run: run_module.View): entity.Node
-    return entity.across({
+    return entity.Node.across({
         justify = "center",
         align = "center",
     }, {

@@ -25,7 +25,7 @@ function field_of(bounds: box.Rect): box.Rect
 end
 
 function node(): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return box.Intrinsic.fixed(PAD_X * 2.0, FIELD_HEIGHT)
         end,

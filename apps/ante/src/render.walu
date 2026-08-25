@@ -572,8 +572,8 @@ function draw_throw_card(
         rise = THROW_RISE,
         arc = "very-late"
     }
-    local pose: card_warp.Pose = card_draw.pose_at(throw, clock)
-    local face_up: bool = card_draw.shows_face(throw, clock)
+    local pose: card_warp.Pose = throw:pose_at(clock)
+    local face_up: bool = throw:shows_face(clock)
     local target: graphics_module.RenderTarget? = card.capture(
         surface, card.look(anim.card, false, false, not face_up, false, anim.known))
     if target == nil then
@@ -886,14 +886,14 @@ function draw_hud(
     state: game.View, run: run_module.View
 ): unit
     local band: entity.Node = hud.node(state, run)
-    band.paint(surface, header_band(entity.metrics_of(surface), band, viewport))
+    band.paint(surface, header_band(surface:metrics(), band, viewport))
 end
 
 function draw_footer(
     surface: entity.Surface, viewport: layout.State,
     state: game.View, run: run_module.View
 ): unit
-    local metrics: entity.Metrics = entity.metrics_of(surface)
+    local metrics: entity.Metrics = surface:metrics()
     local strip: entity.Node = footer.node(state, run)
     local bounds: box.Rect = footer_band(metrics, strip, viewport)
     strip.paint(surface, bounds)
@@ -1193,7 +1193,7 @@ function draw_computer_row(surface: entity.Surface, frame: Frame): unit
     local slots: {entity.Node} = {}
     for i = 0::i32, #state.computer_hand - 1 do
         if hidden[i] then
-            table.insert(slots, entity.sized(
+            table.insert(slots, entity.Node.sized(
                 card.width, card.height,
                 function(surface: entity.Surface, bounds: box.Rect): unit end))
         else
@@ -1231,7 +1231,7 @@ function draw_actions(
 ): unit
     action_bar.node(actions).paint(surface, band)
     local rects: {box.Rect} = entity.place(
-        entity.metrics_of(surface), action_bar.capsules(actions),
+        surface:metrics(), action_bar.capsules(actions),
         action_bar.bar_style(), band)
     targets.commit = rects[0]
     if #rects > 1 then targets.pass = rects[1] end
@@ -1325,7 +1325,7 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
     local slots: {entity.Node} = {}
     for i = 0::i32, #state.middle - 1 do
         if table_card_hidden[i] then
-            table.insert(slots, entity.sized(
+            table.insert(slots, entity.Node.sized(
                 card.width, card.height,
                 function(surface: entity.Surface, bounds: box.Rect): unit end))
         else

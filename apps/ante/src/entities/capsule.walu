@@ -21,7 +21,7 @@ const QUIET_EDGE: string = "#52525b"
 const QUIET_INK: string = "#8a8a92"
 
 function width_of(metrics: entity.Metrics, text: string): f64
-    return entity.text_width(metrics, text, LABEL_SIZE) + PAD_X * 2.0
+    return metrics:text_width(text, LABEL_SIZE) + PAD_X * 2.0
 end
 
 function intrinsic(metrics: entity.Metrics, text: string): box.Intrinsic
@@ -62,7 +62,7 @@ function draw_at(
 end
 
 function node(text: string, active: bool): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic(metrics, text)
         end,

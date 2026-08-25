@@ -20,7 +20,7 @@ describe("ability diamond", function(): unit
     it("keeps all four sockets in the HUD with one carried spell", function(): unit
         local state: game.State = game.State.new(
             false, { spells.Spell.new(spells.SpellKind.Firebolt) }, game.starting_gold)
-        local size = ability_diamond.node(state:view()).measure(entity.headless())
+        local size = ability_diamond.node(state:view()).measure(entity.Metrics.headless())
 
         expect(size.preferred_width):toBe(ability_diamond.width)
         expect(size.preferred_height):toBe(ability_diamond.height)

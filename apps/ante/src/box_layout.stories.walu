@@ -327,7 +327,7 @@ end
 -- that canvas, while the outer Storybook stage still measures and centres the
 -- laboratory like every game entity.
 function laboratory(draw: (engine.Graphics) -> unit): entity.Node
-    return entity.sized(
+    return entity.Node.sized(
         WIDTH::f64,
         HEIGHT::f64,
         function(surface: entity.Surface, bounds: layout.Rect): unit

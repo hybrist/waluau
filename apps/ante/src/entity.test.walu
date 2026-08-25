@@ -13,17 +13,17 @@ local modal = require("./entities/modal")
 local verdict = require("./entities/verdict")
 
 function blank(width: f64, height: f64): entity.Node
-    return entity.sized(
+    return entity.Node.sized(
         width, height, function(surface: entity.Surface, bounds: box.Rect): unit end)
 end
 
 function metrics(): entity.Metrics
-    return entity.headless()
+    return entity.Metrics.headless()
 end
 
 describe("entity boundary", function(): unit
     it("measures a flow as the box layout of its children", function(): unit
-        local band: entity.Node = entity.flow(
+        local band: entity.Node = entity.Node.flow(
             { blank(40.0, 20.0), blank(60.0, 30.0), blank(50.0, 24.0) },
             entity.row(10.0, "start", "start"))
 
@@ -50,7 +50,7 @@ describe("entity boundary", function(): unit
 
     it("lets a stretch spacer absorb the room left over", function(): unit
         local children: {entity.Node} = {
-            blank(40.0, 20.0), entity.stretch(1.0), blank(50.0, 20.0),
+            blank(40.0, 20.0), entity.Node.stretch(1.0), blank(50.0, 20.0),
         }
         local rects: {box.Rect} = entity.place(
             metrics(), children,
@@ -62,7 +62,7 @@ describe("entity boundary", function(): unit
     end)
 
     it("measures a layer as the largest of its children", function(): unit
-        local stack: entity.Node = entity.layer({
+        local stack: entity.Node = entity.Node.layer({
             blank(40.0, 60.0), blank(90.0, 20.0),
         })
 
@@ -72,7 +72,7 @@ describe("entity boundary", function(): unit
     end)
 
     it("takes a band's height from the entity rather than the caller", function(): unit
-        local stack: entity.Node = entity.flow(
+        local stack: entity.Node = entity.Node.flow(
             { blank(40.0, 20.0), blank(40.0, 30.0) },
             entity.column(5.0, "start", "start"))
 
@@ -246,7 +246,7 @@ end)
 
 describe("named flow options", function(): unit
     it("stacks children down a column", function(): unit
-        local size: box.Intrinsic = entity.down(
+        local size: box.Intrinsic = entity.Node.down(
             { gap = 6.0 }, { blank(40.0, 20.0), blank(60.0, 30.0) }
         ).measure(metrics())
 
@@ -255,7 +255,7 @@ describe("named flow options", function(): unit
     end)
 
     it("lays children across a row", function(): unit
-        local size: box.Intrinsic = entity.across(
+        local size: box.Intrinsic = entity.Node.across(
             { gap = 10.0 }, { blank(40.0, 20.0), blank(60.0, 30.0) }
         ).measure(metrics())
 
@@ -265,10 +265,10 @@ describe("named flow options", function(): unit
 
     it("means the same thing as the style it names", function(): unit
         local children: {entity.Node} = { blank(40.0, 20.0), blank(60.0, 30.0) }
-        local named: box.Intrinsic = entity.across(
+        local named: box.Intrinsic = entity.Node.across(
             { gap = 10.0, justify = "center", align = "end" },
             children).measure(metrics())
-        local spelled: box.Intrinsic = entity.flow(
+        local spelled: box.Intrinsic = entity.Node.flow(
             children,
             entity.row(10.0, "center", "end")).measure(metrics())
 
@@ -284,7 +284,7 @@ describe("named flow options", function(): unit
             metrics(), children, entity.row(0.0, "start", "start"),
             entity.rect(0.0, 0.0, 200.0, 40.0))
         local defaulted: box.Intrinsic =
-            entity.across({ gap = 0.0 }, children).measure(metrics())
+            entity.Node.across({ gap = 0.0 }, children).measure(metrics())
 
         expect(rects[0].x):toBe(0.0)
         expect(defaulted.preferred_width):toBe(100.0)

@@ -52,7 +52,7 @@ end
 -- its own flex factors, so available width is distributed through the same
 -- layout path the entity uses on the live board.
 function stage(node: entity.Node): entity.Node
-    return entity.across({ justify = "center", align = "center" }, {node})
+    return entity.Node.across({ justify = "center", align = "center" }, {node})
 end
 
 function Book:scene(spec: Scene): storybook.Scene

@@ -432,7 +432,7 @@ function node(
     value: card.Look, kind: spells.SpellKind?, clock: f64,
     ash: card_burn.CardAsh, dust: particles.ParticleSystem
 ): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return card.intrinsic()
         end,

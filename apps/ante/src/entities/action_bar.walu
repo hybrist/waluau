@@ -37,14 +37,14 @@ function capsules(actions: {Action}): {entity.Node}
 end
 
 function node(actions: {Action}): entity.Node
-    return entity.flow(capsules(actions), bar_style())
+    return entity.Node.flow(capsules(actions), bar_style())
 end
 
 -- A band with nothing to commit still says what the board is waiting for. The
 -- prompt takes the same rectangle the capsules would have, so the two states
 -- of the band occupy the same place on the board.
 function prompt(text: string): entity.Node
-    return entity.flow(
+    return entity.Node.flow(
         { label.centered(text, PROMPT_SIZE, PROMPT_INK) },
         entity.row(0.0, "center", "center"))
 end

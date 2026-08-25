@@ -79,7 +79,7 @@ end
 -- are. `preferred` is the pitch the row keeps when it has the room; a narrower
 -- rectangle tightens it.
 function node(children: {entity.Node}, preferred: f64): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic(#children, preferred)
         end,

@@ -29,7 +29,7 @@ function draw_at(surface: entity.Surface, count: i32, x: f64, y: f64): unit
 end
 
 function node(count: i32): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic()
         end,

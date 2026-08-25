@@ -160,7 +160,7 @@ end
 -- the animation lands so state that has already changed is not revealed ahead
 -- of it.
 function node(looks: {card.Look}, parts: {f64}, hidden: {bool}): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic(#looks)
         end,
