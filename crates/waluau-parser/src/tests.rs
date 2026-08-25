@@ -1,6 +1,6 @@
 use super::{parse, parse_with_path};
 use waluau_ast::{
-    AssignOp, BinaryOp, FunctionName, NumberLiteral, NumberLiteralUnion, NumberUnionMember,
+    AssignOp, BinaryOp, Expr, FunctionName, NumberLiteral, NumberLiteralUnion, NumberUnionMember,
     NumericType, Rebindability, Stmt, Type, UnaryOp,
 };
 
@@ -2321,6 +2321,65 @@ fn parses_dot_named_function_declaration() {
     // `:` method sugar there is no implicit self parameter.
     assert_eq!(function.name, FunctionName::Simple("State.new".to_string()));
     assert_eq!(function.params.len(), 1);
+}
+
+#[test]
+fn enum_member_access_falls_back_to_declared_statics() {
+    // `SpellKind.from` names no variant but a dot-named function later in
+    // the file declares it, so the access stays a field access for later
+    // stages instead of failing as a variant typo.
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function lookup(value: i32): SpellKind?
+            return SpellKind.from(value)
+        end
+
+        function SpellKind.from(value: i32): SpellKind?
+            if value == 1 then return SpellKind.Firebolt end
+            if value == 2 then return SpellKind.FreezeRay end
+            return nil
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::Return(Expr::Call { callee, .. }) = &program.functions[0].body[0] else {
+        panic!(
+            "lookup should return a call: {:?}",
+            program.functions[0].body
+        );
+    };
+    assert!(
+        matches!(
+            &**callee,
+            Expr::Field { base, name, .. }
+                if name == "from"
+                    && matches!(&**base, Expr::Name(name, _, _) if name == "SpellKind")
+        ),
+        "the static access should stay a field access: {callee:?}"
+    );
+}
+
+#[test]
+fn rejects_unknown_enum_member_without_matching_static() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function broken(): SpellKind
+            return SpellKind.Firebot
+        end
+
+        function SpellKind.from(value: i32): SpellKind?
+            return nil
+        end
+    "#;
+
+    let error = parse(source).expect_err("parse should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("unknown enum variant 'SpellKind.Firebot'")
+    );
 }
 
 #[test]

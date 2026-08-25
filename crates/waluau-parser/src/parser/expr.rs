@@ -342,6 +342,24 @@ impl Parser {
                     && let Some(variants) = self.enums.get(enum_name)
                 {
                     let Some(ordinal) = variants.iter().position(|variant| variant == &name) else {
+                        // A dot-named static (`function SpellKind.from`)
+                        // shares the enum's namespace; leave it as a field
+                        // access for later stages to resolve.
+                        if self
+                            .dotted_functions
+                            .contains(&format!("{enum_name}.{name}"))
+                        {
+                            expr = Expr::Field {
+                                base: Box::new(expr),
+                                name,
+                                resolved_name: None,
+                                span: Some(Span {
+                                    start: start_pos,
+                                    end: end_pos,
+                                }),
+                            };
+                            continue;
+                        }
                         return Err(Diagnostic::new(format!(
                             "unknown enum variant '{enum_name}.{name}'"
                         )));
