@@ -10,12 +10,12 @@
 
 local run_module = require("./run")
 
-type UseState = { run: run_module.State, key: i32 }
+export type UseState = { run: run_module.State, key: i32 }
 
 -- A bought item has one operation. Independently constructed effects all cross
 -- this same method seam, including effects authored in tests or in future stock
 -- categories.
-type Item = { effect: (UseState) -> unit }
+export type Item = { effect: (UseState) -> unit }
 
 function new(effect: (UseState) -> unit): Item
     return { effect = effect }

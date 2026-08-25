@@ -1,0 +1,33 @@
+local run_module = require("../run")
+local spells = require("../spells/spell")
+
+type Item = {
+  can_use: (self, run: run_module.State) -> bool,
+  use: (self, run: run_module.State) -> unit,
+  describe: (self, run: run_module.State) -> string,
+}
+
+type SpellScroll = Item & {
+  kind: spells.SpellKind,
+}
+
+function SpellScroll:can_use(run: run_module.State)
+  -- if this is a new spell and the player has no open slots, they can't use this scroll.
+  return false
+end
+
+function SpellScroll:use(run: run_module.State)
+  -- if the player already knows the spell, we increase the level.
+  -- otherwise, we learn a new spell at the first open slot.
+  run:learn(self.kind::i32, 1)
+end
+
+function SpellScroll:describe(run: run_module.State): string
+  -- if the player already knows the spell, we increase the level.
+  -- otherwise, we learn a new spell at the first open slot.
+  return self.kind:__tostring() .. " (level 1)"
+end
+
+function SpellScroll.new(kind: spells.SpellKind): SpellScroll
+  return { kind = kind }
+end

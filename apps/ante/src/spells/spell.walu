@@ -1,0 +1,66 @@
+-- What a freshly learned spell charges per cast, before a run sharpens it.
+const DEFAULT_SPELL_COST: i32 = 5
+
+export enum SpellKind {
+  Firebolt,
+  FreezeRay,
+  RaiseCard,
+  Clone,
+}
+
+function SpellKind.from(value: number): SpellKind?
+  if value == 1 then return SpellKind.Firebolt end
+  if value == 2 then return SpellKind.FreezeRay end
+  if value == 3 then return SpellKind.RaiseCard end
+  if value == 4 then return SpellKind.Clone end
+  return nil
+end
+
+function SpellKind__from(value: number): SpellKind?
+  if value == 1 then return SpellKind.Firebolt end
+  if value == 2 then return SpellKind.FreezeRay end
+  if value == 3 then return SpellKind.RaiseCard end
+  if value == 4 then return SpellKind.Clone end
+  return nil
+end
+
+function SpellKind:tonumber(): number
+  if self == SpellKind.Firebolt then return 1 end
+  if self == SpellKind.FreezeRay then return 2 end
+  if self == SpellKind.RaiseCard then return 3 end
+  if self == SpellKind.Clone then return 4 end
+  assert(false, "Unknown SpellKind")
+  return 0
+end
+
+function SpellKind:__tostring(): string
+  if self == SpellKind.Firebolt then
+    return "Firebolt"
+  elseif self == SpellKind.FreezeRay then
+    return "Freeze Ray"
+  elseif self == SpellKind.RaiseCard then
+    return "Raise Card"
+  elseif self == SpellKind.Clone then
+    return "Clone"
+  else
+    return "Unknown Spell"
+  end
+end
+
+export type Spell = {
+  kind: SpellKind,
+  cost: i32,
+}
+
+function Spell.new(kind: SpellKind): Spell
+    return { kind = kind, cost = DEFAULT_SPELL_COST }
+end
+
+function Spell__new(kind: SpellKind): Spell
+    return Spell.new(kind)
+end
+
+return {
+  Spell__new = Spell__new,
+  SpellKind__from = SpellKind__from,
+}

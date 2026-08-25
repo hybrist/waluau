@@ -13,6 +13,7 @@
 
 local game = require("./game")
 local snapshot_data = require("./snapshot")
+local spells = require("./spells/spell")
 
 -- `duel` is 1-based and counts every attempt in the sequence, cleared or
 -- live. `gold` is what the live duel was dealt, not what it has left: the
@@ -257,7 +258,7 @@ end
 
 -- Whether the loadout already holds that kind of spell, and therefore whether
 -- an intermission has anything new to offer in it.
-function State:carries(kind: i32): bool
+function State:carries(kind: spells.SpellKind): bool
     for spell in self.spells do
         if spell.kind == kind then return true end
     end
@@ -271,7 +272,7 @@ end
 -- Which key that kind of spell answers to, or -1 when the loadout does not
 -- carry it. An offer made about a spell names the spell rather than the key, so
 -- that a trade moving spells between keys cannot silently redirect it.
-function State:slot_of(kind: i32): i32
+function State:slot_of(kind: spells.SpellKind): i32
     for slot, spell in self.spells do
         if spell.kind == kind then return slot end
     end
@@ -302,15 +303,15 @@ end
 -- has room, which is how the second spell gets its own key; naming an occupied
 -- slot trades that spell away for the new one, which is the only way to take a
 -- third.
-function State:learn(kind: i32, slot: i32): bool
-    if kind <= 0 or kind > game.spell_kind_count or self:carries(kind) then
+function State:learn(kind: spells.SpellKind, slot: i32): bool
+    if self:carries(kind) then
         return false
     end
     if slot < 0 or slot > #self.spells or slot >= MAX_SPELLS then return false end
     if slot == #self.spells then
-        table.insert(self.spells, game.new_spell(kind))
+        table.insert(self.spells, spells.Spell__new(kind))
     else
-        self.spells[slot] = game.new_spell(kind)
+        self.spells[slot] = spells.Spell__new(kind)
     end
     return true
 end
@@ -330,7 +331,7 @@ function snapshot(state: State): string
     snapshot_data.append_i32(parts, state.hearts)
     snapshot_data.append_i32(parts, #state.spells)
     for spell in state.spells do
-        snapshot_data.append_i32(parts, spell.kind)
+        snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
         snapshot_data.append_i32(parts, spell.cost)
     end
     snapshot_data.append_i32(parts, state.start_spell)
