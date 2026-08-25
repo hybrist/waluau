@@ -6428,7 +6428,7 @@ fn emit_nullable_box_cast(
                 out.instruction(&Instruction::End);
                 return Ok(());
             }
-            if !matches!(to, Type::Numeric(_) | Type::Bool) {
+            if !matches!(to, Type::Numeric(_) | Type::Bool | Type::TypedArray(_)) {
                 return Err(Diagnostic::new(format!(
                     "cannot cast nullable {from} to {to} during wasm emission"
                 )));
@@ -6452,7 +6452,7 @@ fn emit_nullable_box_cast(
                     out.instruction(&Instruction::RefNull(HeapType::Concrete(to_box)));
                     Ok(())
                 }
-                Type::Numeric(_) | Type::Bool => {
+                Type::Numeric(_) | Type::Bool | Type::TypedArray(_) => {
                     out.instruction(&Instruction::LocalGet(source_local));
                     emit_cast(out, from.clone(), to_inner, registry)?;
                     out.instruction(&Instruction::StructNew(to_box));

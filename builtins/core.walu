@@ -16,6 +16,43 @@ declare function tostring(value: unknown): string
 declare function tonumber(value: unknown): f64
 declare function tonumber(value: unknown, base: i32): f64
 
+-- Internal host primitives used by the compiler-specialized `json` module.
+-- User code calls `json.pack(value)` and `json.unpack<T>(text)`; these stay
+-- hidden from completion and carry only JSON-compatible scalar values and
+-- integer handles across the Wasm/JavaScript seam.
+declare function __json_pack_reset(): unit
+declare function __json_pack_null(): i32
+declare function __json_pack_bool(value: bool): i32
+declare function __json_pack_i32(value: i32): i32
+declare function __json_pack_u32(value: u32): i32
+declare function __json_pack_i64(value: i64): i32
+declare function __json_pack_u64(value: u64): i32
+declare function __json_pack_f32(value: f32): i32
+declare function __json_pack_f64(value: f64): i32
+declare function __json_pack_string(value: string): i32
+declare function __json_pack_bytes(value: bytes): i32
+declare function __json_pack_array(): i32
+declare function __json_pack_array_push(array: i32, value: i32): unit
+declare function __json_pack_object(): i32
+declare function __json_pack_object_set(object: i32, key: string, value: i32): unit
+declare function __json_pack_finish(root: i32): string
+
+declare function __json_unpack_start(value: string, schema: string): string
+declare function __json_unpack_is_null(node: i32): bool
+declare function __json_unpack_bool(node: i32): bool
+declare function __json_unpack_i32(node: i32): i32
+declare function __json_unpack_u32(node: i32): u32
+declare function __json_unpack_i64(node: i32): i64
+declare function __json_unpack_u64(node: i32): u64
+declare function __json_unpack_f32(node: i32): f32
+declare function __json_unpack_f64(node: i32): f64
+declare function __json_unpack_string(node: i32): string
+declare function __json_unpack_bytes(node: i32): bytes
+declare function __json_unpack_array_len(node: i32): i32
+declare function __json_unpack_array_get(node: i32, index: i32): i32
+declare function __json_unpack_object_get(node: i32, key: string): i32
+declare function __json_unpack_variant_is(node: i32, tag: string): bool
+
 -- Lua pattern-matching primitives backing `string.find`/`string.match`/
 -- `string.gmatch`/`string.gsub`. `pm_find`/`pm_match` return 1 when a match
 -- was found and 0 otherwise; on success the match bounds and captures are

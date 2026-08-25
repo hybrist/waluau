@@ -686,7 +686,7 @@ fn is_builtin_callee(expr: &Expr) -> bool {
             Expr::Name(namespace, _, _)
                 if matches!(
                     namespace.as_str(),
-                    "bit32" | "coroutine" | "promise" | "string" | "table"
+                    "bit32" | "coroutine" | "json" | "promise" | "string" | "table"
                 )
         ),
         _ => false,
@@ -2810,6 +2810,7 @@ fn initial_top_level_names(program: &Program) -> HashSet<String> {
         "math".to_string(),
         "coroutine".to_string(),
         "promise".to_string(),
+        "json".to_string(),
         "table".to_string(),
         "string".to_string(),
         "bit32".to_string(),
