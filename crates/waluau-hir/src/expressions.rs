@@ -388,8 +388,8 @@ pub(super) fn select_overload<'a>(
         let mut cost = (variant.params.len() - total_args) as u32;
         let mut candidate_viable = true;
         for (arg, param) in args.iter().zip(variant.params.iter().skip(receiver_len)) {
-            let exact = infer_expr(arg, vars, fn_signatures, active_type_params, None)
-                .is_ok_and(|actual| actual == *param);
+            let unconstrained = infer_expr(arg, vars, fn_signatures, active_type_params, None).ok();
+            let exact = unconstrained.as_ref().is_some_and(|actual| actual == param);
             if exact {
                 continue;
             }
@@ -403,6 +403,29 @@ pub(super) fn select_overload<'a>(
             .is_ok()
             {
                 cost += 1;
+                // Wrapping a non-nullable value into a nullable parameter
+                // costs an extra point, so when both shapes are declared the
+                // same-shape overload wins instead of tying: `expect(4)`
+                // picks `(f64)` over `(f64?)` and `expect(Suit.hearts)`
+                // picks `(enum)` over `(enum?)`. Symmetrically, a nullable
+                // value reaching a `bool` parameter only through the
+                // value-discarding truthiness rule is a last resort, so a
+                // same-shape nullable overload wins: `expect(maybe_suit)`
+                // picks `(enum?)` over `(bool)`.
+                if matches!(param, Type::Nullable(_))
+                    && unconstrained
+                        .as_ref()
+                        .is_some_and(|actual| !matches!(actual, Type::Nullable(_) | Type::Nil))
+                {
+                    cost += 1;
+                }
+                if matches!(param, Type::Bool)
+                    && unconstrained
+                        .as_ref()
+                        .is_some_and(|actual| matches!(actual, Type::Nullable(_)))
+                {
+                    cost += 1;
+                }
             } else {
                 candidate_viable = false;
                 break;

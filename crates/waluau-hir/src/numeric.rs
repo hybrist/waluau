@@ -373,6 +373,30 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             other if is_extern_subtype_of(&other, &expected_inner) => {
                 Ok(Type::Nullable(expected_inner))
             }
+            // A nullable enum erases into the reserved nullable `enum?` the
+            // same way its non-nullable value does (see the expected-Opaque
+            // arm below): both sides box the i32 ordinal identically.
+            Type::Nullable(ref actual_inner)
+                if matches!(
+                    expected_inner.as_ref(),
+                    Type::Opaque { name, .. } if name == super::ANY_ENUM_TYPE_NAME
+                ) && matches!(
+                    actual_inner.as_ref(),
+                    Type::Opaque { ty, .. } if ty.is_numeric()
+                ) =>
+            {
+                Ok(Type::Nullable(expected_inner))
+            }
+            // A nullable actual converts to a different nullable expectation
+            // only through the explicit arms above (same inner, alias
+            // identity, extern subtype, enum erasure). Falling through would
+            // let the whole nullable re-enter scalar coercions — e.g. every
+            // `X?` reads as truthy `bool`, which must not make `X?` an
+            // implicit `bool?`.
+            other @ Type::Nullable(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {other} to {}?",
+                expected_inner
+            ))),
             other => coerce_type(other.clone(), Some((*expected_inner).clone()))
                 .map(|_| Type::Nullable(expected_inner.clone()))
                 .map_err(|_| {

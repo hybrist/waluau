@@ -22,6 +22,10 @@ type StringExpectation = extern
 type BoolExpectation = extern
 type ExternExpectation = extern
 type EnumExpectation = extern
+type NullableNumberExpectation = extern
+type NullableStringExpectation = extern
+type NullableBoolExpectation = extern
+type NullableEnumExpectation = extern
 
 -- Suite structure. `test` is an alias for `it`; `xdescribe`/`xit` register
 -- skipped suites/tests (vitest describe.skip / it.skip); `todo` registers a
@@ -52,6 +56,21 @@ declare function expect(value: bool): BoolExpectation
 declare function expect(value: extern): ExternExpectation
 declare function expect(value: enum): EnumExpectation
 
+-- Nullable expectations add nil checks (`toBeNil`/`notToBeNil`) next to the
+-- value matchers. Nullable numerics do not implicitly widen (an `i32?` never
+-- reads as an `f64?`: the runtime boxes differ), so each width declares its
+-- own overload; a non-nullable value always prefers its same-shape overload
+-- above. Nullable primitives reach the host as plain values or nil.
+declare function expect(value: f64?): NullableNumberExpectation
+declare function expect(value: f32?): NullableNumberExpectation
+declare function expect(value: i32?): NullableNumberExpectation
+declare function expect(value: u32?): NullableNumberExpectation
+declare function expect(value: i64?): NullableNumberExpectation
+declare function expect(value: u64?): NullableNumberExpectation
+declare function expect(value: string?): NullableStringExpectation
+declare function expect(value: bool?): NullableBoolExpectation
+declare function expect(value: enum?): NullableEnumExpectation
+
 -- `:not` negates the matcher that follows (vitest's `.not` modifier):
 -- expect(actual):not:toBe(other). Chaining `:not:not:` toggles back.
 declare property NumberExpectation:not: NumberExpectation
@@ -59,6 +78,10 @@ declare property StringExpectation:not: StringExpectation
 declare property BoolExpectation:not: BoolExpectation
 declare property ExternExpectation:not: ExternExpectation
 declare property EnumExpectation:not: EnumExpectation
+declare property NullableNumberExpectation:not: NullableNumberExpectation
+declare property NullableStringExpectation:not: NullableStringExpectation
+declare property NullableBoolExpectation:not: NullableBoolExpectation
+declare property NullableEnumExpectation:not: NullableEnumExpectation
 
 declare function NumberExpectation:toBe(expected: f64): unit
 declare function NumberExpectation:notToBe(expected: f64): unit
@@ -86,3 +109,25 @@ declare function ExternExpectation:notToBe(expected: extern): unit
 -- Enum expectations compare by ordinal.
 declare function EnumExpectation:toBe(expected: enum): unit
 declare function EnumExpectation:notToBe(expected: enum): unit
+
+-- Nullable expectations: the expected value of a `toBe` matcher is the
+-- non-nullable inner value; nil-ness is asserted with `toBeNil`/`notToBeNil`
+-- (a nil actual simply fails `toBe`).
+declare function NullableNumberExpectation:toBe(expected: f64): unit
+declare function NullableNumberExpectation:notToBe(expected: f64): unit
+declare function NullableNumberExpectation:toBeNil(): unit
+declare function NullableNumberExpectation:notToBeNil(): unit
+
+declare function NullableStringExpectation:toBe(expected: string): unit
+declare function NullableStringExpectation:notToBe(expected: string): unit
+declare function NullableStringExpectation:toBeNil(): unit
+declare function NullableStringExpectation:notToBeNil(): unit
+
+declare function NullableBoolExpectation:toBe(expected: bool): unit
+declare function NullableBoolExpectation:toBeNil(): unit
+declare function NullableBoolExpectation:notToBeNil(): unit
+
+declare function NullableEnumExpectation:toBe(expected: enum): unit
+declare function NullableEnumExpectation:notToBe(expected: enum): unit
+declare function NullableEnumExpectation:toBeNil(): unit
+declare function NullableEnumExpectation:notToBeNil(): unit

@@ -104,6 +104,60 @@ fn any_enum_value_never_flows_back_into_a_specific_enum() {
 }
 
 #[test]
+fn nullable_enum_coerces_into_nullable_any_enum_param() {
+    let source = r#"
+        enum Direction { north, south }
+
+        declare function ordinal_of(value: enum?): i32
+
+        local maybe: Direction? = Direction.south
+        local first: i32 = ordinal_of(maybe)
+        local second: i32 = ordinal_of(Direction.north)
+        local third: i32 = ordinal_of(nil)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn nullable_value_is_not_an_implicit_nullable_bool() {
+    let source = r#"
+        enum Direction { north, south }
+
+        local maybe: Direction? = Direction.south
+        local flag: bool? = maybe
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert Direction? to bool?"
+    );
+}
+
+#[test]
+fn overload_selection_prefers_same_shape_over_nullable_wrapping() {
+    let source = r#"
+        enum Direction { north, south }
+
+        declare function probe(value: f64): string
+        declare function probe(value: f64?): string
+        declare function probe(value: bool): string
+        declare function probe(value: enum): string
+        declare function probe(value: enum?): string
+
+        local plain: string = probe(4)
+        local from_enum: string = probe(Direction.north)
+        local maybe: Direction? = Direction.south
+        local from_nullable_enum: string = probe(maybe)
+        local maybe_number: f64? = 1.5
+        local from_nullable_number: string = probe(maybe_number)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn not_property_chain_resolves_through_declared_extern_property() {
     let source = r#"
         type Expectation = extern
