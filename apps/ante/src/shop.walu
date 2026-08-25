@@ -21,7 +21,6 @@
 local game = require("./game")
 local run_module = require("./run")
 local shop_item = require("./shop_item")
-local snapshot_data = require("./snapshot")
 local spells = require("./spells/spell")
 
 -- What a slot has for sale. Both of these name the spell they are about rather
@@ -89,8 +88,7 @@ const UPGRADE_PRICE: i32 = 4
 const UPGRADE_PRICE_STEP: i32 = 2
 const LEARN_PRICE: i32 = 7
 
-const SNAPSHOT_SCHEMA: string = "duel-shop-v3"
-const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
+const SNAPSHOT_SCHEMA: string = "duel-shop-v4"
 
 -- The shape of a visit, written out here so the layout sits next to the
 -- categories it names. Two lines of stock, however many things the run could in
@@ -424,96 +422,89 @@ function keypressed(state: State, run: run_module.State, key: string): ShopResul
     return "stay"
 end
 
--- Each variant writes its own tag and then its own payload, so what a kind of
--- goods carries stays that kind's business on the way out as much as in memory.
-function append_goods(parts: {string}, goods: Goods): unit
-    if Upgrade(upgrade) = goods then
-        snapshot_data.append_enum(parts, "upgrade")
-        snapshot_data.append_i32(parts, upgrade.kind:tonumber()::i32)
-        return
-    end
-    if Spell(spell) = goods then
-        snapshot_data.append_enum(parts, "spell")
-        snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
-    end
-end
+-- What a snapshot writes of one slot. The live Slot also carries its Item,
+-- which is behavior rather than data: restore rebuilds it from the goods.
+type SnapshotSlot = { category: Category, goods: Goods, price: i32, sold: bool }
+
+-- Development snapshots ride the built-in JSON codec. The wrapper record
+-- carries the schema marker, and unpacking already validates the shape, the
+-- goods tags included; the category, a literal union that decodes as a plain
+-- string, is checked by restore itself.
+type Snapshot = {
+    schema: string,
+    open: bool,
+    slots: {SnapshotSlot},
+    cursor: i32,
+    pending: Pending?
+}
 
 function snapshot(state: State): string
-    local parts: {string} = { SNAPSHOT_SCHEMA }
-    snapshot_data.append_bool(parts, state.open)
-    snapshot_data.append_i32(parts, #state.slots)
+    local slots: {SnapshotSlot} = {}
     for slot in state.slots do
-        snapshot_data.append_enum(parts, slot.category)
-        append_goods(parts, slot.goods)
-        snapshot_data.append_i32(parts, slot.price)
-        snapshot_data.append_bool(parts, slot.sold)
+        table.insert(slots, {
+            category = slot.category,
+            goods = slot.goods,
+            price = slot.price,
+            sold = slot.sold,
+        })
     end
-    snapshot_data.append_i32(parts, state.cursor)
-    local pending: Pending? = state.pending
-    snapshot_data.append_bool(parts, pending ~= nil)
-    if pending ~= nil then
-        snapshot_data.append_i32(parts, pending.slot)
-        snapshot_data.append_indices(parts, pending.choices)
-    end
-    return table.concat(parts, ",")
-end
-
-function category_from(token: string): Category?
-    if token == "spells" then return "spells" end
-    return nil
+    local payload: Snapshot = {
+        schema = SNAPSHOT_SCHEMA,
+        open = state.open,
+        slots = slots,
+        cursor = state.cursor,
+        pending = state.pending,
+    }
+    return json.pack(payload)
 end
 
 function restore(snapshot_value: string): State?
-    local reader: snapshot_data.Reader = snapshot_data.reader(
-        snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
-    if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
-    local open: bool = reader:next_bool()
+    local decoded = json.unpack<Snapshot>(snapshot_value)
+    if decoded == nil then return nil end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+    local decoded_slots: {SnapshotSlot} = decoded.slots
+    if #decoded_slots > #slot_layout() then return nil end
+    if decoded.cursor < 0 then return nil end
     local slots: {Slot} = {}
-    local slot_count: i32 = reader:next_length()
-    for _ = 1, slot_count do
-        local category: Category? = category_from(reader:next_string())
-        if category == nil then return nil end
-        -- Each variant checks its own payload: a spell kind is bounded by the
-        -- spells that exist, which is not a bound anything else would share.
-        local tag: string = reader:next_string()
-        if tag ~= "upgrade" and tag ~= "spell" then return nil end
-        local kind = spells.SpellKind.from(reader:next_i32())
+    for slot in decoded_slots do
+        -- `Category` currently has a single member, which the compiler widens
+        -- to a plain string in the decoded shape, so membership is checked
+        -- here rather than by the decoder.
+        local category_known: bool = false
+        for known in slot_layout() do
+            if known == slot.category then category_known = true end
+        end
+        if not category_known then return nil end
+        -- A spell kind is bounded by the spells that exist, which is not a
+        -- bound the JSON shape carries; a quoted price is never negative.
+        local kind: spells.SpellKind? = slot.goods:spell_kind()
         if kind == nil then return nil end
-        local goods: Goods = Spell({ kind = kind })
-        if tag == "upgrade" then goods = Upgrade({ kind = kind }) end
-        local price: i32 = reader:next_i32()
-        if price < 0 then return nil end
+        if not spells.SpellKind.valid(kind::spells.SpellKind) then return nil end
+        if slot.price < 0 then return nil end
         table.insert(slots, {
-            category = category::Category,
-            goods = goods,
-            item = item_for(goods),
-            price = price,
-            sold = reader:next_bool(),
+            category = slot.category,
+            goods = slot.goods,
+            item = item_for(slot.goods),
+            price = slot.price,
+            sold = slot.sold,
         })
     end
-    local cursor: i32 = reader:next_i32()
-    local pending: Pending? = nil
-    if reader:next_bool() then
-        local slot: i32 = reader:next_i32()
-        local choices: {i32} = reader:next_indices()
+    local pending: Pending? = decoded.pending
+    if pending ~= nil then
         -- A pending question names one of this visit's slots, and the keys it
         -- offers to trade away are keys the loadout could hold.
-        if slot < 0 or slot >= #slots then return nil end
-        for key in choices do
+        local question: Pending = pending::Pending
+        if question.slot < 0 or question.slot >= #slots then return nil end
+        for key in question.choices do
             if key < 0 or key >= run_module.max_spells then return nil end
         end
-        pending = { slot = slot, choices = choices }
     end
-    local restored: State = {
-        open = open,
+    return {
+        open = decoded.open,
         slots = slots,
-        cursor = cursor,
+        cursor = decoded.cursor,
         pending = pending,
     }
-    if not reader:complete() then return nil end
-    if #slots > #slot_layout() then return nil end
-    if cursor < 0 then return nil end
-    return restored
 end
 
 return {

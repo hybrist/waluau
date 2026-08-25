@@ -440,29 +440,40 @@ describe("Ante Magic shop controls", function()
             expect(shop.snapshot(visit)):toBe(encoded)
         end
 
-        -- A payload from another build, or one this build could not have
-        -- written, is a normal refusal rather than a crash.
-        local intact: string =
-            "duel-shop-v3,1,2,spells,upgrade,1,4,0,spells,spell,2,7,0,0,0"
-        expect(shop.restore(intact) == nil):toBe(false)
-        expect(shop.restore("duel-shop-v2,1,0,0,-1") == nil):toBe(true)
-        expect(shop.restore(intact .. ",unexpected") == nil):toBe(true)
-        -- An unknown category, an unknown kind of goods, a spell that does not
-        -- exist, and a negative price each fail on their own terms.
-        expect(shop.restore(
-            "duel-shop-v3,1,1,relics,upgrade,1,4,0,0,0") == nil):toBe(true)
-        expect(shop.restore(
-            "duel-shop-v3,1,1,spells,charm,1,4,0,0,0") == nil):toBe(true)
-        expect(shop.restore(
-            "duel-shop-v3,1,1,spells,spell,9,7,0,0,0") == nil):toBe(true)
-        expect(shop.restore(
-            "duel-shop-v3,1,1,spells,spell,2,-1,0,0,0") == nil):toBe(true)
-        -- A pending question must name a slot of this visit.
-        expect(shop.restore(
-            "duel-shop-v3,1,1,spells,spell,2,7,0,0,1,4,1,0") == nil):toBe(true)
-        -- A trade key the loadout could never hold is refused the same way.
-        expect(shop.restore(
-            "duel-shop-v3,1,1,spells,spell,2,7,0,0,1,0,1,9") == nil):toBe(true)
+        -- A payload from another build — the old token wire format, a JSON
+        -- payload carrying a stale schema marker, or one with trailing
+        -- garbage — is a normal refusal rather than a crash.
+        expect(shop.restore("duel-shop-v3,1,0,0,-1") == nil):toBe(true)
+        local stale_schema: string =
+            string.gsub(encoded, "duel%-shop%-v4", "duel-shop-v3")
+        expect(shop.restore(stale_schema) == nil):toBe(true)
+        expect(shop.restore(encoded .. ",unexpected") == nil):toBe(true)
+        -- An unknown category, an unknown kind of goods, and a spell that does
+        -- not exist each fail on their own terms: the first two are shape the
+        -- decoder checks, the kind a domain only this build knows.
+        local unknown_category: string =
+            string.gsub(encoded, '"category":"spells"', '"category":"relics"')
+        expect(shop.restore(unknown_category) == nil):toBe(true)
+        local unknown_goods: string =
+            string.gsub(encoded, '"tag":"Spell"', '"tag":"Charm"')
+        expect(shop.restore(unknown_goods) == nil):toBe(true)
+        local unknown_spell: string =
+            string.gsub(encoded, '"kind":%d+', '"kind":9')
+        expect(shop.restore(unknown_spell) == nil):toBe(true)
+        -- A negative price, a pending question naming a slot the visit does
+        -- not have, and a trade key the loadout could never hold are refused
+        -- the same way.
+        local negative_price: string =
+            string.gsub(encoded, '"price":7', '"price":-1')
+        expect(shop.restore(negative_price) == nil):toBe(true)
+        -- "slot" appears only inside the pending question, so this renames
+        -- the slot it points at.
+        local absent_slot: string =
+            string.gsub(encoded, '"slot":1', '"slot":4')
+        expect(shop.restore(absent_slot) == nil):toBe(true)
+        local impossible_key: string =
+            string.gsub(encoded, '"choices":%[0', '"choices":[9')
+        expect(shop.restore(impossible_key) == nil):toBe(true)
 
         -- Closing the shop leaves nothing of the visit behind.
         shop.close(intermission)

@@ -2,7 +2,6 @@
 -- colors, cards as cards, and the computer as the Opponent; the underlying
 -- five-card hand, exchange, wager, and trick rules remain unchanged.
 
-local snapshot_data = require("./snapshot")
 local spells = require("./spells/spell")
 
 export type Suit = 0 | 1 | 2 | 3
@@ -101,8 +100,7 @@ const BOSS_HAND_SIZE: i32 = 3 + (MAX_ROUNDS - 1) * 2
 const STARTING_GOLD: i32 = 10
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "duel-state-v8"
-const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
+const SNAPSHOT_SCHEMA: string = "duel-state-v9"
 
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
@@ -1046,191 +1044,20 @@ function State:play(first: i32, second: i32): Trick?
     return trick
 end
 
--- Development snapshots intentionally use a small, explicit schema instead of
--- reflecting arbitrary tables. That keeps incompatibility a normal false
--- result when the rules state changes, rather than turning this into a
--- long-lived save-game format.
-function append_cards(parts: {string}, cards: readonly<{Card}>): unit
-    snapshot_data.append_i32(parts, #cards)
-    for card in cards do
-        snapshot_data.append_i32(parts, card.rank)
-        snapshot_data.append_i32(parts, card.suit)
-    end
-end
-
-function append_slots(parts: {string}, slots: readonly<{HandSlot}>): unit
-    snapshot_data.append_i32(parts, #slots)
-    for slot in slots do
-        snapshot_data.append_i32(parts, slot.card.rank)
-        snapshot_data.append_i32(parts, slot.card.suit)
-        snapshot_data.append_bool(parts, slot.known)
-    end
-end
-
-function append_spells(parts: {string}, spells: readonly<{Spell}>): unit
-    snapshot_data.append_i32(parts, #spells)
-    for spell in spells do
-        snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
-        snapshot_data.append_i32(parts, spell.cost)
-    end
-end
-
-function append_flags(parts: {string}, flags: readonly<{bool}>): unit
-    snapshot_data.append_i32(parts, #flags)
-    for flag in flags do snapshot_data.append_bool(parts, flag) end
-end
-
-function append_trick(parts: {string}, trick: Trick): unit
-    snapshot_data.append_i32(parts, trick.round)
-    append_cards(parts, trick.middle)
-    append_flags(parts, trick.frozen_middle)
-    append_slots(parts, trick.player_hand)
-    append_slots(parts, trick.computer_hand)
-    append_cards(parts, trick.player_cards)
-    append_cards(parts, trick.computer_cards)
-    append_cards(parts, trick.player_formation)
-    append_cards(parts, trick.computer_formation)
-    snapshot_data.append_i32(parts, trick.player_first)
-    snapshot_data.append_i32(parts, trick.player_second)
-    snapshot_data.append_i32(parts, trick.computer_first)
-    snapshot_data.append_i32(parts, trick.computer_second)
-    snapshot_data.append_i32(parts, trick.player_value)
-    snapshot_data.append_i32(parts, trick.computer_value)
-    snapshot_data.append_i32(parts, trick.winner)
-    snapshot_data.append_i32(parts, trick.points)
-    snapshot_data.append_i32(parts, trick.pot)
-    snapshot_data.append_i32(parts, trick.player_wager)
-    snapshot_data.append_i32(parts, trick.computer_wager)
-    snapshot_data.append_i32(parts, trick.swap_winner)
-    snapshot_data.append_i32(parts, trick.swap_count)
-end
+-- Development snapshots ride the built-in JSON codec, which specializes to
+-- the State shape at this call site. Incompatibility stays a normal nil
+-- result when the rules state changes — a payload from a differently shaped
+-- build fails to unpack, and the schema marker rejects one whose shape
+-- happens to survive — rather than turning this into a long-lived save-game
+-- format. Unpacking already validates the shape; literal-union fields such
+-- as Suit and Winner decode as their base numeric type, so their domains are
+-- checked below with the rest of the semantics a well-shaped payload can
+-- still get wrong.
+type Snapshot = { schema: string, state: State }
 
 function snapshot(state: State): string
-    local parts: {string} = { SNAPSHOT_SCHEMA }
-    append_cards(parts, state.deck)
-    append_slots(parts, state.player_hand)
-    append_slots(parts, state.computer_hand)
-    append_cards(parts, state.middle)
-    append_flags(parts, state.frozen_middle)
-    snapshot_data.append_i32(parts, #state.history)
-    for trick in state.history do append_trick(parts, trick) end
-    snapshot_data.append_i32(parts, state.round)
-    snapshot_data.append_i32(parts, state.player_points)
-    snapshot_data.append_i32(parts, state.player_tricks)
-    snapshot_data.append_i32(parts, state.computer_tricks)
-    snapshot_data.append_i32(parts, state.last_player_value)
-    snapshot_data.append_i32(parts, state.last_computer_value)
-    snapshot_data.append_i32(parts, state.last_winner)
-    snapshot_data.append_bool(parts, state.swap_open)
-    snapshot_data.append_i32(parts, state.pot)
-    snapshot_data.append_i32(parts, state.player_wager)
-    snapshot_data.append_i32(parts, state.computer_wager)
-    snapshot_data.append_i32(parts, state.player_swap_max)
-    snapshot_data.append_i32(parts, state.computer_swap_max)
-    snapshot_data.append_i32(parts, state.swap_winner)
-    snapshot_data.append_i32(parts, state.swap_count)
-    snapshot_data.append_indices(parts, state.swap_hand_indices)
-    snapshot_data.append_indices(parts, state.swap_middle_indices)
-    snapshot_data.append_bool(parts, state.finished)
-    snapshot_data.append_bool(parts, state.boss)
-    append_spells(parts, state.spells)
-    local cast_kind: i32 = 0
-    if state.cast_kind ~= nil then
-        local active: SpellKind = state.cast_kind::SpellKind
-        cast_kind = active:tonumber()::i32
-    end
-    snapshot_data.append_i32(parts, cast_kind)
-    return table.concat(parts, ",")
-end
-
-function next_cards(reader: snapshot_data.Reader): {Card}
-    local cards: {Card} = {}
-    local length: i32 = reader:next_length()
-    for _ = 1, length do
-        table.insert(cards, { rank = reader:next_i32(), suit = reader:next_i32()::Suit })
-    end
-    return cards
-end
-
-function next_slots(reader: snapshot_data.Reader): {HandSlot}
-    local slots: {HandSlot} = {}
-    local length: i32 = reader:next_length()
-    for _ = 1, length do
-        table.insert(slots, {
-            card = { rank = reader:next_i32(), suit = reader:next_i32()::Suit },
-            known = reader:next_bool(),
-        })
-    end
-    return slots
-end
-
-function next_spells(reader: snapshot_data.Reader): {Spell}?
-    local loadout: {Spell} = {}
-    local length: i32 = reader:next_length()
-    for _ = 1, length do
-        local kind: SpellKind? = spells.SpellKind.from(reader:next_i32())
-        if kind == nil then return nil end
-        table.insert(loadout, {
-            kind = kind::SpellKind, cost = reader:next_i32(),
-        })
-    end
-    return loadout
-end
-
-function next_flags(reader: snapshot_data.Reader): {bool}
-    local flags: {bool} = {}
-    local length: i32 = reader:next_length()
-    for _ = 1, length do table.insert(flags, reader:next_bool()) end
-    return flags
-end
-
-function next_trick(reader: snapshot_data.Reader): Trick
-    local round: i32 = reader:next_i32()
-    local middle: {Card} = next_cards(reader)
-    local frozen_middle: {bool} = next_flags(reader)
-    local player_hand: {HandSlot} = next_slots(reader)
-    local computer_hand: {HandSlot} = next_slots(reader)
-    local player_cards: {Card} = next_cards(reader)
-    local computer_cards: {Card} = next_cards(reader)
-    local player_formation: {Card} = next_cards(reader)
-    local computer_formation: {Card} = next_cards(reader)
-    local player_first: i32 = reader:next_i32()
-    local player_second: i32 = reader:next_i32()
-    local computer_first: i32 = reader:next_i32()
-    local computer_second: i32 = reader:next_i32()
-    local player_value: i32 = reader:next_i32()
-    local computer_value: i32 = reader:next_i32()
-    local winner: i32 = reader:next_i32()
-    local points: i32 = reader:next_i32()
-    local pot: i32 = reader:next_i32()
-    local player_wager: i32 = reader:next_i32()
-    local computer_wager: i32 = reader:next_i32()
-    local swap_winner: i32 = reader:next_i32()
-    local swap_count: i32 = reader:next_i32()
-    return {
-        round = round,
-        middle = middle,
-        frozen_middle = frozen_middle,
-        player_hand = player_hand,
-        computer_hand = computer_hand,
-        player_cards = player_cards,
-        computer_cards = computer_cards,
-        player_formation = player_formation,
-        computer_formation = computer_formation,
-        player_first = player_first,
-        player_second = player_second,
-        computer_first = computer_first,
-        computer_second = computer_second,
-        player_value = player_value,
-        computer_value = computer_value,
-        winner = winner::Winner,
-        points = points,
-        pot = pot,
-        player_wager = player_wager,
-        computer_wager = computer_wager,
-        swap_winner = swap_winner::Winner,
-        swap_count = swap_count,
-    }
+    local payload: Snapshot = { schema = SNAPSHOT_SCHEMA, state = state }
+    return json.pack(payload)
 end
 
 function valid_winner(value: i32): bool
@@ -1318,115 +1145,82 @@ function valid_trick(trick: Trick): bool
 end
 
 function restore(snapshot_value: string): State?
-    local reader: snapshot_data.Reader = snapshot_data.reader(snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
-    if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
-    local deck: {Card} = next_cards(reader)
-    local player_hand: {HandSlot} = next_slots(reader)
-    local computer_hand: {HandSlot} = next_slots(reader)
-    local middle: {Card} = next_cards(reader)
-    local frozen_middle: {bool} = next_flags(reader)
-    local history: {Trick} = {}
-    local history_length: i32 = reader:next_length()
-    for _ = 1, history_length do table.insert(history, next_trick(reader)) end
-    local round: i32 = reader:next_i32()
-    local player_points: i32 = reader:next_i32()
-    local player_tricks: i32 = reader:next_i32()
-    local computer_tricks: i32 = reader:next_i32()
-    local last_player_value: i32 = reader:next_i32()
-    local last_computer_value: i32 = reader:next_i32()
-    local last_winner: i32 = reader:next_i32()
-    local swap_open: bool = reader:next_bool()
-    local pot: i32 = reader:next_i32()
-    local player_wager: i32 = reader:next_i32()
-    local computer_wager: i32 = reader:next_i32()
-    local player_swap_max: i32 = reader:next_i32()
-    local computer_swap_max: i32 = reader:next_i32()
-    local swap_winner: i32 = reader:next_i32()
-    local swap_count: i32 = reader:next_i32()
-    local swap_hand_indices: {i32} = reader:next_indices()
-    local swap_middle_indices: {i32} = reader:next_indices()
-    local finished: bool = reader:next_bool()
-    local boss: bool = reader:next_bool()
-    local maybe_loadout: {Spell}? = next_spells(reader)
-    if maybe_loadout == nil then return nil end
-    local loadout: {Spell} = maybe_loadout::{Spell}
-    local cast_kind: i32 = reader:next_i32()
-    if not reader:complete() then return nil end
-    if not valid_cards(deck) or not valid_slots(player_hand)
-        or not valid_slots(computer_hand) or not valid_cards(middle)
+    local decoded = json.unpack<Snapshot>(snapshot_value)
+    if decoded == nil then return nil end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+    local restored: State = decoded.state
+    if not valid_cards(restored.deck) or not valid_slots(restored.player_hand)
+        or not valid_slots(restored.computer_hand)
+        or not valid_cards(restored.middle)
     then
         return nil
     end
-    if #frozen_middle ~= #middle then return nil end
-    if finished then
-        if #middle ~= 0 or swap_open then return nil end
-    elseif #middle < OPENING_COMMUNITY_SIZE or #middle > MAX_COMMUNITY_SIZE then
+    if #restored.frozen_middle ~= #restored.middle then return nil end
+    if restored.finished then
+        if #restored.middle ~= 0 or restored.swap_open then return nil end
+    elseif #restored.middle < OPENING_COMMUNITY_SIZE
+        or #restored.middle > MAX_COMMUNITY_SIZE
+    then
         return nil
     end
-    if not finished and not swap_open and #middle ~= MAX_COMMUNITY_SIZE then return nil end
-    if #history > MAX_ROUNDS or round < 1 or round > MAX_ROUNDS then return nil end
-    for trick in history do
+    if not restored.finished and not restored.swap_open
+        and #restored.middle ~= MAX_COMMUNITY_SIZE
+    then
+        return nil
+    end
+    if #restored.history > MAX_ROUNDS
+        or restored.round < 1 or restored.round > MAX_ROUNDS
+    then
+        return nil
+    end
+    for trick in restored.history do
         if not valid_trick(trick) then return nil end
     end
-    if player_points < 0 or player_tricks < 0 or computer_tricks < 0 then return nil end
-    if not valid_winner(last_winner) or not valid_winner(swap_winner) then return nil end
-    if pot < 0 or player_wager < 0 or computer_wager < 0
-        or pot ~= player_wager + computer_wager
+    if restored.player_points < 0 or restored.player_tricks < 0
+        or restored.computer_tricks < 0
     then
         return nil
     end
-    if player_swap_max < 0 or player_swap_max > MAX_COMMUNITY_SIZE
-        or computer_swap_max < 0 or computer_swap_max > MAX_COMMUNITY_SIZE
-        or player_wager < player_swap_max or computer_wager < computer_swap_max
-        or (player_swap_max == 0 and player_wager ~= 0)
-        or (computer_swap_max == 0 and computer_wager ~= 0)
-        or (swap_open and player_swap_max == #middle
-            and computer_swap_max == #middle)
+    if not valid_winner(restored.last_winner::i32)
+        or not valid_winner(restored.swap_winner::i32)
     then
         return nil
     end
-    if swap_count < 0 or swap_count > MAX_COMMUNITY_SIZE
-        or #swap_hand_indices ~= swap_count
-        or #swap_middle_indices ~= swap_count
-        or not valid_indices(swap_hand_indices, BOSS_HAND_SIZE)
-        or not valid_indices(swap_middle_indices, MAX_COMMUNITY_SIZE)
+    if restored.pot < 0 or restored.player_wager < 0 or restored.computer_wager < 0
+        or restored.pot ~= restored.player_wager + restored.computer_wager
     then
         return nil
     end
-    for spell in loadout do
+    if restored.player_swap_max < 0 or restored.player_swap_max > MAX_COMMUNITY_SIZE
+        or restored.computer_swap_max < 0
+        or restored.computer_swap_max > MAX_COMMUNITY_SIZE
+        or restored.player_wager < restored.player_swap_max
+        or restored.computer_wager < restored.computer_swap_max
+        or (restored.player_swap_max == 0 and restored.player_wager ~= 0)
+        or (restored.computer_swap_max == 0 and restored.computer_wager ~= 0)
+        or (restored.swap_open and restored.player_swap_max == #restored.middle
+            and restored.computer_swap_max == #restored.middle)
+    then
+        return nil
+    end
+    if restored.swap_count < 0 or restored.swap_count > MAX_COMMUNITY_SIZE
+        or #restored.swap_hand_indices ~= restored.swap_count
+        or #restored.swap_middle_indices ~= restored.swap_count
+        or not valid_indices(restored.swap_hand_indices, BOSS_HAND_SIZE)
+        or not valid_indices(restored.swap_middle_indices, MAX_COMMUNITY_SIZE)
+    then
+        return nil
+    end
+    -- A spell kind is bounded by the spells that exist, which the JSON shape
+    -- alone does not know; a dealt cast cost is never negative.
+    for spell in restored.spells do
+        if not spells.SpellKind.valid(spell.kind) then return nil end
         if spell.cost < 0 then return nil end
     end
-    if cast_kind ~= 0 and spells.SpellKind.from(cast_kind) == nil then return nil end
-    local restored_cast_kind: SpellKind? = spells.SpellKind.from(cast_kind)
-    local restored: State = {
-        deck = deck,
-        player_hand = player_hand,
-        computer_hand = computer_hand,
-        middle = middle,
-        frozen_middle = frozen_middle,
-        history = history,
-        round = round,
-        player_points = player_points,
-        player_tricks = player_tricks,
-        computer_tricks = computer_tricks,
-        last_player_value = last_player_value,
-        last_computer_value = last_computer_value,
-        last_winner = last_winner::Winner,
-        swap_open = swap_open,
-        pot = pot,
-        player_wager = player_wager,
-        computer_wager = computer_wager,
-        player_swap_max = player_swap_max,
-        computer_swap_max = computer_swap_max,
-        swap_winner = swap_winner::Winner,
-        swap_count = swap_count,
-        swap_hand_indices = swap_hand_indices,
-        swap_middle_indices = swap_middle_indices,
-        finished = finished,
-        boss = boss,
-        spells = loadout,
-        cast_kind = restored_cast_kind,
-    }
+    local cast_kind: SpellKind? = restored.cast_kind
+    if cast_kind ~= nil then
+        if not spells.SpellKind.valid(cast_kind::SpellKind) then return nil end
+    end
     return restored
 end
 

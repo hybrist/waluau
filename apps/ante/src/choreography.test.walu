@@ -28,15 +28,17 @@ describe("Ante Magic presentation choreography", function()
 
 
     it("rejects invalid restored spell conditions", function()
-        -- The same body with a resting condition restores, so each rejection
+        -- The same body with the condition intact restores, so each rejection
         -- below is the condition failing and not a malformed snapshot.
-        expect(choreography.restore("target-presentation-v5,5,0,0,0") == nil):toBe(false)
-        expect(choreography.restore(
-            "target-presentation-v5,5,0,1,0") == nil):toBe(true)
-        expect(choreography.restore(
-            "target-presentation-v5,5,9,0,0") == nil):toBe(true)
-        expect(choreography.restore(
-            "target-presentation-v5,5,1,5,0") == nil):toBe(true)
+        local state: choreography.State = choreography.new()
+        choreography.apply_power(state, spells.SpellKind.Firebolt, 1)
+        local encoded: string = choreography.snapshot(state)
+        expect(choreography.restore(encoded) == nil):toBe(false)
+        -- A spell that does not exist, and a target past the community row.
+        local unknown_kind: string = string.gsub(encoded, '"kind":%d+', '"kind":9')
+        expect(choreography.restore(unknown_kind) == nil):toBe(true)
+        local far_target: string = string.gsub(encoded, '"target":%d+', '"target":5')
+        expect(choreography.restore(far_target) == nil):toBe(true)
     end)
 
     it("does not index a community slot after the board has cleared", function()

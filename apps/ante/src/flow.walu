@@ -2,8 +2,6 @@
 -- phase ordering, action acceptance, focus, pending binds, and development
 -- snapshot ownership live here.
 
-local snapshot_data = require("./snapshot")
-
 -- A non-nil `cast_slot` is the spell-targeting mode: entered by a cast key, it points
 -- table_card_cursor at the table_card the spell would hit until the player confirms or
 -- cancels. While it holds, ordinary binding input is suspended. Its value is
@@ -32,8 +30,7 @@ export type State = {
 }
 
 const FAN_CLOSED: i32 = -1
-const UI_SNAPSHOT_SCHEMA: string = "duel-flow-v5"
-const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
+const UI_SNAPSHOT_SCHEMA: string = "duel-flow-v6"
 
 function new(): State
     return {
@@ -170,67 +167,35 @@ function gate(
     return "live"
 end
 
+-- Development snapshots ride the built-in JSON codec. The wrapper record
+-- carries the schema marker, and unpacking already validates the shape.
+-- Literal-union fields decode as plain strings, so the modal and cursor-area
+-- domains are checked by restore itself.
+type Snapshot = { schema: string, state: State }
+
 function snapshot(state: State): string
-    local parts: {string} = { UI_SNAPSHOT_SCHEMA }
-    snapshot_data.append_i32(parts, state.hand_cursor)
-    snapshot_data.append_i32(parts, state.table_card_cursor)
-    snapshot_data.append_enum(parts, state.cursor_area)
-    snapshot_data.append_indices(parts, state.play_picks)
-    snapshot_data.append_indices(parts, state.swap_hand)
-    snapshot_data.append_indices(parts, state.swap_table_cards)
-    snapshot_data.append_enum(parts, state.modal)
-    snapshot_data.append_bool(parts, state.revealing)
-    snapshot_data.append_bool(parts, state.cast_slot ~= nil)
-    snapshot_data.append_i32(parts, state.cast_slot or 0)
-    return table.concat(parts, ",")
-end
-
-function cursor_area_from(token: string): CursorArea?
-    if token == "hand" then return "hand" end
-    if token == "table-cards" then return "table-cards" end
-    return nil
-end
-
-function modal_from(token: string): Modal?
-    if token == "none" then return "none" end
-    if token == "history" then return "history" end
-    if token == "help" then return "help" end
-    if token == "final" then return "final" end
-    return nil
+    local payload: Snapshot = { schema = UI_SNAPSHOT_SCHEMA, state = state }
+    return json.pack(payload)
 end
 
 function restore(snapshot_value: string): State?
-    local reader: snapshot_data.Reader = snapshot_data.reader(
-        snapshot_value, UI_SNAPSHOT_COLLECTION_LIMIT)
-    if reader:next_string() ~= UI_SNAPSHOT_SCHEMA then return nil end
-    local hand_cursor: i32 = reader:next_i32()
-    local table_card_cursor: i32 = reader:next_i32()
-    local cursor_area: CursorArea? = cursor_area_from(reader:next_string())
-    if cursor_area == nil then return nil end
-    local play_picks: {i32} = reader:next_indices()
-    local swap_hand: {i32} = reader:next_indices()
-    local swap_table_cards: {i32} = reader:next_indices()
-    local modal: Modal? = modal_from(reader:next_string())
-    if modal == nil then return nil end
-    local revealing: bool = reader:next_bool()
-    local casting: bool = reader:next_bool()
-    local cast_slot: i32 = reader:next_i32()
-    if casting and cast_slot < 0 then return nil end
-    if not casting and cast_slot ~= 0 then return nil end
-    local restored_cast_slot: i32? = nil
-    if casting then restored_cast_slot = cast_slot end
-    local restored: State = {
-        hand_cursor = hand_cursor,
-        table_card_cursor = table_card_cursor,
-        cursor_area = cursor_area::CursorArea,
-        play_picks = play_picks,
-        swap_hand = swap_hand,
-        swap_table_cards = swap_table_cards,
-        modal = modal::Modal,
-        revealing = revealing,
-        cast_slot = restored_cast_slot,
-    }
-    if not reader:complete() then return nil end
+    local decoded = json.unpack<Snapshot>(snapshot_value)
+    if decoded == nil then return nil end
+    if decoded.schema ~= UI_SNAPSHOT_SCHEMA then return nil end
+    local restored: State = decoded.state
+    -- An unknown modal or cursor area is another build's payload.
+    if restored.modal ~= "none" and restored.modal ~= "history"
+        and restored.modal ~= "help" and restored.modal ~= "final"
+    then
+        return nil
+    end
+    if restored.cursor_area ~= "hand" and restored.cursor_area ~= "table-cards" then
+        return nil
+    end
+    -- The slot being aimed is a cast key, never negative. Whether the
+    -- restored loadout has a spell under that key is the screen module's
+    -- cross-check, since only it sees both halves.
+    if (restored.cast_slot or 0) < 0 then return nil end
     return restored
 end
 

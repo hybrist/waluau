@@ -250,7 +250,6 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `shader-sources.js` | Convention-based fragment discovery shared by Vite and shader behavior tests. |
 | `src/shaders/` | Shared vertex stage and independently reloadable effect fragment stages. |
 | `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
-| `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence, ante table and endless tail, persistent hearts, mana carryover, the carried loadout, and run outcomes. |

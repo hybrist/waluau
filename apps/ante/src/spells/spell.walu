@@ -16,13 +16,14 @@ function SpellKind.from(value: i32): SpellKind?
   return nil
 end
 
-function SpellKind:tonumber(): number
-  if self == SpellKind.Firebolt then return 1 end
-  if self == SpellKind.FreezeRay then return 2 end
-  if self == SpellKind.RaiseCard then return 3 end
-  if self == SpellKind.Clone then return 4 end
-  assert(false, "Unknown SpellKind")
-  return 0
+-- Whether a value that arrived through a decoder names a spell this build
+-- knows. JSON unpacking checks an enum's shape (an integer), not its domain,
+-- so a restore asks this before trusting a kind.
+function SpellKind.valid(value: SpellKind): bool
+  for _, member in pairs(SpellKind) do
+    if value == member then return true end
+  end
+  return false
 end
 
 function SpellKind:__tostring(): string
