@@ -93,8 +93,7 @@ describe(
                     "center",
                     0.0
                 )
-                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 150.0, height = 60.0 }
-                )
+                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 150.0, height = 60.0 })
 
                 local first: layout.Frame = frame_at(result, 1)
                 local second: layout.Frame = frame_at(result, 2)
@@ -119,8 +118,7 @@ describe(
                     "start",
                     0.0
                 )
-                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 140.0, height = 20.0 }
-                )
+                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 140.0, height = 20.0 })
 
                 expect(frame_at(result, 1).rect.width):toBe(60.0)
                 expect(frame_at(result, 2).rect.width):toBe(80.0)
@@ -139,14 +137,12 @@ describe(
                     0.0
                 )
 
-                local fitted: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 100.0, height = 20.0 }
-                )
+                local fitted: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 100.0, height = 20.0 })
                 expect(frame_at(fitted, 1).rect.width):toBe(50.0)
                 expect(frame_at(fitted, 2).rect.width):toBe(50.0)
                 expect(fitted.overflowed):toBe(false)
 
-                local overflow: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 60.0, height = 20.0 }
-                )
+                local overflow: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 60.0, height = 20.0 })
                 expect(frame_at(overflow, 1).rect.width):toBe(40.0)
                 expect(frame_at(overflow, 2).rect.width):toBe(40.0)
                 expect(overflow.overflow_x):toBe(20.0)
@@ -211,8 +207,7 @@ describe(
                     "baseline",
                     0.0
                 )
-                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 100.0, height = 40.0 }
-                )
+                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 100.0, height = 40.0 })
 
                 local first: layout.Frame = frame_at(result, 1)
                 local second: layout.Frame = frame_at(result, 2)
@@ -254,8 +249,7 @@ describe(
                 local measured: layout.Intrinsic = root:measure()
                 expect(measured.preferred_height):toBe(36.0)
 
-                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 60.0, height = 36.0 }
-                )
+                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 60.0, height = 36.0 })
                 expect(frame_at(result, 1).baseline):toBe(18.0)
                 expect(frame_at(result, 2).baseline):toBe(18.0)
                 expect(frame_at(result, 2).rect.y):toBe(16.0)
@@ -276,8 +270,7 @@ describe(
                     "start",
                     0.0
                 )
-                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 80.0, height = 30.0 }
-                )
+                local result: layout.Result = root:solve({ x = 0.0, y = 0.0, width = 80.0, height = 30.0 })
 
                 expect(result:hit(10.0, 10.0)):toBe(1)
                 expect(result:hit(35.0, 10.0)):toBe(2)
