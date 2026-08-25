@@ -235,6 +235,66 @@ pub(super) fn gmatch_loop_value_types(
     Some(Ok(slot_types))
 }
 
+/// Loop-variable types for `for ... in pairs(record_value)`: the field-name
+/// string plus the shared field type. Iteration order is the record's field
+/// order (alphabetical), and every field must have the same type — the loop
+/// binds one value variable, so heterogeneous records have no sound element
+/// type. `pairs` over an enum type never reaches the checker: the parser and
+/// the module linkers expand it into an array loop over the variant names.
+pub(super) fn pairs_loop_value_types(
+    iterator: &Expr,
+    names_len: usize,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Option<Result<Vec<Type>, Diagnostic>> {
+    let record_expr = waluau_ast::pairs_call_arg(iterator)?;
+    let arg_ty = match infer_expr(record_expr, vars, fn_signatures, active_type_params, None) {
+        Ok(ty) => ty,
+        Err(diagnostic) => return Some(Err(diagnostic)),
+    };
+    if arg_ty.is_readonly() {
+        return Some(Err(Diagnostic::new(
+            "pairs over a read-only record view is not supported",
+        )));
+    }
+    if arg_ty.is_array() {
+        return Some(Err(Diagnostic::new(
+            "pairs(...) requires an enum type or a record value; arrays iterate directly: `for i, v in arr`",
+        )));
+    }
+    let Some(fields) = waluau_ast::pairs_record_fields(&arg_ty) else {
+        return Some(Err(Diagnostic::new(format!(
+            "pairs(...) requires an enum type or a record value, got {}",
+            super::module_type_display(&arg_ty)
+        ))));
+    };
+    if names_len > 2 {
+        return Some(Err(Diagnostic::new(format!(
+            "pairs for-in loop expects 1 or 2 loop variables, got {names_len}"
+        ))));
+    }
+    if names_len == 1 {
+        return Some(Ok(vec![Type::String]));
+    }
+    let mut field_types = fields.iter();
+    let Some((first_name, first_ty)) = field_types.next() else {
+        return Some(Err(Diagnostic::new(
+            "pairs over a record with no fields cannot bind a value variable",
+        )));
+    };
+    for (name, ty) in field_types {
+        if ty != first_ty {
+            return Some(Err(Diagnostic::new(format!(
+                "pairs over a record requires every field to have the same type; '{first_name}' is {} but '{name}' is {}",
+                super::module_type_display(first_ty),
+                super::module_type_display(ty)
+            ))));
+        }
+    }
+    Some(Ok(vec![Type::String, first_ty.clone()]))
+}
+
 /// Whether a pcall payload type can be soundly materialized from the `unknown`
 /// storage slot by a runtime unbox cast when narrowing applies.
 pub(super) fn is_narrowable_pcall_payload(ty: &Type) -> bool {
@@ -1009,6 +1069,28 @@ fn collect_return_types_with_scope(
             } => {
                 if let Some(result) = gmatch_loop_value_types(iterator, names.len()) {
                     let loop_value_types = result?;
+                    let mut loop_scope = scope.clone();
+                    for (name, ty) in names.iter().zip(loop_value_types) {
+                        loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
+                    }
+                    collect_return_types(
+                        body,
+                        &loop_scope,
+                        fn_signatures,
+                        active_type_params,
+                        returns,
+                    )?;
+                    continue;
+                }
+                if let Some(result) = pairs_loop_value_types(
+                    iterator,
+                    names.len(),
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    let loop_value_types = result?;
+                    seal_record_locals_in_expr(iterator, &mut scope);
                     let mut loop_scope = scope.clone();
                     for (name, ty) in names.iter().zip(loop_value_types) {
                         loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
@@ -1949,6 +2031,15 @@ fn check_stmt_inner(
             let loop_value_types = if let Some(result) =
                 gmatch_loop_value_types(iterator, names.len())
             {
+                seal_record_locals_in_expr(iterator, vars);
+                result?
+            } else if let Some(result) = pairs_loop_value_types(
+                iterator,
+                names.len(),
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
                 seal_record_locals_in_expr(iterator, vars);
                 result?
             } else {

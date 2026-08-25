@@ -1722,6 +1722,118 @@ impl Resolver {
     }
 }
 
+/// The argument of a `pairs(x)` call, when `expr` has exactly that shape.
+/// `pairs` is not a runtime value: it only has meaning in for-in iterator
+/// position, where the parser, the linkers, and the type checker each give it
+/// a compile-time expansion.
+pub fn pairs_call_arg(expr: &Expr) -> Option<&Expr> {
+    let Expr::Call {
+        callee,
+        type_args,
+        args,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    if !type_args.is_empty() || args.len() != 1 {
+        return None;
+    }
+    match callee.as_ref() {
+        Expr::Name(name, _, _) if name == "pairs" => Some(&args[0]),
+        _ => None,
+    }
+}
+
+/// The field map behind a record value iterated with `pairs`, looking through
+/// nominal aliases. Read-only views are deliberately not peeled: their field
+/// projection rules are richer than a plain read, so the type checker rejects
+/// them with a dedicated diagnostic instead of silently dropping the
+/// capability.
+pub fn pairs_record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
+    match ty {
+        Type::Record(fields) => Some(fields),
+        Type::Opaque { ty, .. } => pairs_record_fields(ty),
+        _ => None,
+    }
+}
+
+/// The shared field type of a record iterated with `pairs`. `None` when the
+/// type is not a record or has no fields. The type checker rejects mixed
+/// field types before lowering, so the first field's type is authoritative.
+pub fn pairs_record_value_type(ty: &Type) -> Option<Type> {
+    pairs_record_fields(ty).and_then(|fields| fields.values().next().cloned())
+}
+
+/// The loop-index temporary introduced when `for name, value in pairs(Enum)`
+/// is desugared into an array loop over the variant names.
+pub const ENUM_PAIRS_ORDINAL: &str = "__enum_pairs_ordinal";
+
+/// Desugars `for <names> in pairs(<Enum>) do <body> end` into an array for-in
+/// over the variant-name strings. Variant ordinals are their 0-based
+/// declaration position — the same value the array loop index takes — so a
+/// two-variable loop rebuilds the enum value by casting the index:
+///
+/// ```text
+/// for __enum_pairs_ordinal, name in {"A", "B"} do
+///     local value = __enum_pairs_ordinal :: Enum
+///     <body>
+/// end
+/// ```
+///
+/// `type_name` is the enum type to cast ordinals back into: the source name
+/// for a local enum, the canonical linked name for an imported one.
+pub fn enum_pairs_for_in(
+    enum_display_name: &str,
+    type_name: &str,
+    variants: &[String],
+    names: Vec<String>,
+    body: Vec<Stmt>,
+    span: Option<Span>,
+) -> Result<Stmt, Diagnostic> {
+    if names.is_empty() || names.len() > 2 {
+        return Err(Diagnostic::new(format!(
+            "pairs over enum '{enum_display_name}' yields a variant name and value; expected 1 or 2 loop variables, got {}",
+            names.len()
+        )));
+    }
+    let iterator = Expr::ArrayLiteral {
+        elements: variants
+            .iter()
+            .map(|variant| Expr::String(variant.clone(), span))
+            .collect(),
+        span,
+    };
+    let (loop_names, body) = if let [name, value] = names.as_slice() {
+        let value_binding = Stmt::Let {
+            name: value.clone(),
+            symbol_id: None,
+            rebindability: Rebindability::Const,
+            ty: None,
+            value: Expr::Cast {
+                expr: Box::new(Expr::Name(ENUM_PAIRS_ORDINAL.to_string(), None, span)),
+                ty: Type::Named {
+                    name: type_name.to_string(),
+                    type_args: Vec::new(),
+                },
+                span,
+            },
+        };
+        let mut new_body = Vec::with_capacity(body.len() + 1);
+        new_body.push(value_binding);
+        new_body.extend(body);
+        (vec![ENUM_PAIRS_ORDINAL.to_string(), name.clone()], new_body)
+    } else {
+        (names, body)
+    };
+    Ok(Stmt::ForIn {
+        names: loop_names,
+        symbol_ids: None,
+        iterator,
+        body,
+    })
+}
+
 /// Resolve every name in `program` to a [`SymbolId`], stamping the ids into
 /// the AST in place. Returns the source name of each declared symbol so later
 /// stages can label Wasm locals in the emitted `name` section.

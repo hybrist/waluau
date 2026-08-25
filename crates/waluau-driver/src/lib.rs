@@ -2873,6 +2873,50 @@ end
     }
 
     #[test]
+    fn compile_file_iterates_imported_enum_with_pairs() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("spells.walu"),
+            r#"
+                export enum SpellKind { Firebolt, FreezeRay, RaiseCard, Clone }
+
+                function noop(): i32
+                    return 0
+                end
+
+                return { noop = noop }
+            "#,
+        )
+        .expect("spells module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local spells = require("./spells")
+
+                local names = ""
+                local ordinals: i32 = 0
+                for name, kind in pairs(spells.SpellKind) do
+                    names = names .. name .. ";"
+                    ordinals = ordinals * 10 + (kind :: i32)
+                end
+                assert(names == "Firebolt;FreezeRay;RaiseCard;Clone;")
+                assert(ordinals == 123)
+
+                local count: i32 = 0
+                for name in pairs(spells.SpellKind) do
+                    count = count + 1
+                end
+                assert(count == 4)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_resolves_type_statics_through_require_bindings() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

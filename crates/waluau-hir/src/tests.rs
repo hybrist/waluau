@@ -5480,3 +5480,138 @@ fn plain_interface_literals_omit_the_identity_field() {
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("plain interface literals should still check");
 }
+
+#[test]
+fn enum_pairs_loop_type_checks() {
+    let source = r#"
+        enum SpellKind { Firebolt, FreezeRay }
+
+        function catalog(): string
+            local out = ""
+            for name, kind in pairs(SpellKind) do
+                out = out .. name
+                assert(kind == SpellKind.Firebolt or kind == SpellKind.FreezeRay)
+            end
+            return out
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("enum pairs loop should check");
+}
+
+#[test]
+fn record_pairs_loop_type_checks() {
+    let source = r#"
+        function total(): i32
+            local scores = { alice = 3::i32, bob = 5::i32 }
+            local sum: i32 = 0
+            for name, score in pairs(scores) do
+                sum = sum + score
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("record pairs loop should check");
+}
+
+#[test]
+fn record_pairs_name_only_loop_allows_mixed_field_types() {
+    let source = r#"
+        function keys(): string
+            local mixed = { id = 7::i32, label = "seven" }
+            local out = ""
+            for key in pairs(mixed) do
+                out = out .. key
+            end
+            return out
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("name-only record pairs loop should check");
+}
+
+#[test]
+fn rejects_record_pairs_value_over_mixed_field_types() {
+    let source = r#"
+        function broken(): unit
+            local mixed = { id = 7::i32, label = "seven" }
+            for key, value in pairs(mixed) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs over a record requires every field to have the same type; 'id' is i32 but 'label' is string"
+    );
+}
+
+#[test]
+fn rejects_pairs_over_non_record_value() {
+    let source = r#"
+        function broken(): unit
+            for key, value in pairs(42) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs(...) requires an enum type or a record value, got f64"
+    );
+}
+
+#[test]
+fn rejects_pairs_over_array_with_iteration_hint() {
+    let source = r#"
+        function broken(): unit
+            local arr = {1, 2, 3}
+            for key, value in pairs(arr) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs(...) requires an enum type or a record value; arrays iterate directly: `for i, v in arr`"
+    );
+}
+
+#[test]
+fn rejects_pairs_over_readonly_record_view() {
+    let source = r#"
+        type Model = { count: i32 }
+
+        function scan(view: readonly<Model>): unit
+            for key, value in pairs(view) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs over a read-only record view is not supported"
+    );
+}
+
+#[test]
+fn rejects_record_pairs_with_three_loop_variables() {
+    let source = r#"
+        function broken(): unit
+            local scores = { alice = 3::i32 }
+            for a, b, c in pairs(scores) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "pairs for-in loop expects 1 or 2 loop variables, got 3"
+    );
+}
