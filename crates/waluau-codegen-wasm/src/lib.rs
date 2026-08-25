@@ -3819,23 +3819,18 @@ fn try_emit_structured_fast_path(
                 )?;
                 return Ok(true);
             }
-            // repeat-until: check -> exit/body with body eventually jumping to check.
+            // The same header-check loop with inverted branch polarity:
+            // then = exit (Return), else = body jumping back. Emitted
+            // check-first exactly like the `while` arm above, branching out
+            // on a true condition instead of a negated one. The header is
+            // still evaluated before the first iteration — this is not
+            // `repeat`: a `Stmt::Repeat` CFG puts a Jump-terminated body
+            // block (not the Branch block) at the entry's jump target, so it
+            // never reaches this matcher and takes the general path instead.
             if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
                 && else_bb
                     .is_some_and(|b| matches!(b.terminator, Terminator::Jump(t) if t == second.id))
             {
-                let body = function
-                    .blocks
-                    .values()
-                    .find(|b| {
-                        matches!(b.terminator, Terminator::Jump(t) if t == second.id)
-                            && b.id != second.id
-                    })
-                    .ok_or_else(|| {
-                        Diagnostic::new(
-                            "unsupported repeat-until CFG shape for structured wasm emission",
-                        )
-                    })?;
                 emit_block_instructions(
                     out,
                     function,
@@ -3846,20 +3841,9 @@ fn try_emit_structured_fast_path(
                     local_plan,
                     value_defs,
                 )?;
-                emit_phi_copies(out, function, entry.id, body.id, local_plan)?;
+                emit_phi_copies(out, function, entry.id, second.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(
-                    out,
-                    function,
-                    body,
-                    0,
-                    ctx,
-                    value_types,
-                    local_plan,
-                    value_defs,
-                )?;
-                emit_phi_copies(out, function, body.id, second.id, local_plan)?;
                 emit_block_instructions(
                     out,
                     function,
@@ -3872,7 +3856,18 @@ fn try_emit_structured_fast_path(
                 )?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::BrIf(1));
-                emit_phi_copies(out, function, second.id, body.id, local_plan)?;
+                emit_phi_copies(out, function, second.id, else_block, local_plan)?;
+                emit_block_instructions(
+                    out,
+                    function,
+                    else_bb.expect("checked above"),
+                    0,
+                    ctx,
+                    value_types,
+                    local_plan,
+                    value_defs,
+                )?;
+                emit_phi_copies(out, function, else_block, second.id, local_plan)?;
                 out.instruction(&Instruction::Br(0));
                 out.instruction(&Instruction::End);
                 out.instruction(&Instruction::End);

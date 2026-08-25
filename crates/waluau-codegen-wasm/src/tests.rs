@@ -3274,3 +3274,81 @@ fn incremental_emit_preserves_the_name_section() {
         "expected a local named 'result', got: {locals:?}"
     );
 }
+
+#[test]
+fn structured_fast_path_emits_inverted_polarity_loop_headers_faithfully() {
+    // A generic-for protocol loop lowers to a 4-block header-check loop whose
+    // header branches then = exit, else = body — the opposite polarity of a
+    // `while` header. The second fast-path loop arm once claimed this shape
+    // but emitted the body before the check and could even select the entry
+    // block as the body (dropping the real one), which validated fine and ran
+    // as an infinite loop. Guard the faithful emission: the fast path is
+    // taken (one structured loop, no PC-dispatch `unreachable` backstops),
+    // the header's null check appears exactly once, and the loop body is
+    // present (the control unbox reads the nullable box struct).
+    let source = r#"
+function iter(a: {i32}, i: i32): (i32?, i32)
+    local n = i + 1
+    if n < #a then
+        return n, a[n]
+    end
+    return nil, 0
+end
+
+function sum_plain(a: {i32}): i32
+    local total: i32 = 0
+    for i, v in iter, a, -1 do
+        total = total + v
+    end
+    return total
+end
+"#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let func_index = wasm_export_func_index(&wasm, "sum_plain").expect("sum_plain export");
+    let code_index = func_index - wasm_function_import_count(&wasm);
+    let mut entry = 0u32;
+    let mut loops = 0;
+    let mut null_checks = 0;
+    let mut struct_gets = 0;
+    let mut unreachables = 0;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::CodeSectionEntry(body) = payload {
+            if entry != code_index {
+                entry += 1;
+                continue;
+            }
+            let mut reader = body.get_operators_reader().expect("ops should decode");
+            while !reader.eof() {
+                match reader.read().expect("op should decode") {
+                    Operator::Loop { .. } => loops += 1,
+                    Operator::RefIsNull => null_checks += 1,
+                    Operator::StructGet { .. } => struct_gets += 1,
+                    Operator::Unreachable => unreachables += 1,
+                    _ => {}
+                }
+            }
+            break;
+        }
+    }
+    assert_eq!(loops, 1, "the loop must emit as one structured wasm loop");
+    assert_eq!(
+        null_checks, 1,
+        "the header's nil check must appear exactly once — a duplicated or dropped check means the entry block was mistaken for the loop body"
+    );
+    assert!(
+        struct_gets >= 1,
+        "the loop body must be emitted: narrowing the control value reads the nullable box struct"
+    );
+    assert_eq!(
+        unreachables, 0,
+        "the structured fast path should handle this shape rather than falling back to PC dispatch"
+    );
+}
