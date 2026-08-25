@@ -4053,6 +4053,30 @@ fn disambiguate_declared_import_overloads(
         for (position, index) in kept.into_iter().enumerate() {
             let declared = &mut program.declared_imports[index];
             declared.name = waluau_ast::overload_variant_name(&name, position);
+            // Overload variants share their host (wasm import) name by
+            // default: a wasm module may import the same name once per
+            // signature, and one JS function serves them all. That breaks
+            // down when a variant's signature involves nullable primitives —
+            // those cross the boundary as typed nullable box refs that the
+            // JS runtime unwraps per signature, and a shared name would
+            // apply one variant's unboxing to every other variant's calls.
+            // Give such variants a signature-derived host name of their own
+            // (`expect#f64?`), so each import name keeps exactly one
+            // signature.
+            if declared
+                .params
+                .iter()
+                .any(|param| boxes_as_nullable_primitive(&param.ty))
+                || boxes_as_nullable_primitive(&declared.return_type)
+            {
+                let signature = declared
+                    .params
+                    .iter()
+                    .map(|param| param.ty.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                declared.host_name = format!("{}#{signature}", declared.host_name);
+            }
             variants.push(OverloadVariant {
                 name: declared.name.clone(),
                 params: declared
@@ -4076,6 +4100,20 @@ fn disambiguate_declared_import_overloads(
     }
 
     Ok(overload_sets)
+}
+
+/// Whether a declared-import boundary type crosses to the host as a typed
+/// nullable box ref (`i32?`, `bool?`, `enum?`, a nullable enum, …) rather
+/// than a plain JS value.
+fn boxes_as_nullable_primitive(ty: &Type) -> bool {
+    let Type::Nullable(inner) = ty else {
+        return false;
+    };
+    match inner.as_ref() {
+        Type::Numeric(_) | Type::Bool => true,
+        Type::Opaque { ty, .. } => ty.is_numeric() || matches!(ty.as_ref(), Type::Bool),
+        _ => false,
+    }
 }
 
 /// Drops exact re-declarations of a constant (e.g. the same builtin declared

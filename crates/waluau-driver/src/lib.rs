@@ -1590,6 +1590,55 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_supports_nullable_expectations() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("nullable.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                require("waluau:vitest")
+
+                enum Direction { north, east }
+
+                it("nullable expectations", function(): unit
+                    local maybe: Direction? = Direction.north
+                    expect(maybe):not:toBeNil()
+                    expect(maybe):toBe(Direction.north)
+                    expect(maybe):not:toBe(Direction.east)
+
+                    local maybe_number: f64? = 4.5
+                    expect(maybe_number):toBe(4.5)
+                    local maybe_text: string? = nil
+                    expect(maybe_text):toBeNil()
+                    local maybe_flag: bool? = true
+                    expect(maybe_flag):toBe(true)
+                end)
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm = super::compile_file(&input_path).expect("nullable expectations should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "expect#enum?""#),
+            "nullable-primitive expect overloads should import under \
+             signature-derived host names:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "expect#f64?""#),
+            "each nullable-primitive signature should get its own import name:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "NullableEnumExpectation.toBeNil""#),
+            "nullable matchers should import under their extern type names:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "NullableEnumExpectation.get/not""#),
+            "the :not modifier should resolve on nullable expectations:\n{wat}"
+        );
+    }
+
+    #[test]
     fn compile_file_resolves_vitest_namespace_binding() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("suite.test.walu");
