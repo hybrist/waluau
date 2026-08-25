@@ -28,9 +28,9 @@ function draw_at(surface: entity.Surface, bounds: box.Rect): unit
 end
 
 function node(): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
-            return box.fixed(0.0, 0.0)
+            return box.Intrinsic.fixed(0.0, 0.0)
         end,
         draw_at)
 end

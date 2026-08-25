@@ -81,14 +81,14 @@ end
 function ledger(
     left_label: string, left_value: i32, right_label: string, right_value: i32
 ): entity.Node
-    return entity.wide(entity.flow({
+    return entity.Node.flow({
         figure(
             left_label, HEADLINE_INK, tostring(left_value), FIGURE_INK,
             LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
         figure(
             right_label, OWED_INK, tostring(right_value), OWED_INK,
             LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
-    }, entity.row(LEDGER_GAP, "center", "start")))
+    }, entity.row(LEDGER_GAP, "center", "start")):wide()
 end
 
 -- What the run walks away with. A lost duel has only what it took; the other
@@ -142,17 +142,17 @@ end
 function body(state: game.View, run: run_module.View): entity.Node
     local lines: {entity.Node} = {
         tally(state, run),
-        entity.gap(0.0, BLOCK_GAP),
+        entity.Node.gap(0.0, BLOCK_GAP),
         label.middle(
             "ROUNDS WON " .. tostring(state.player_tricks) .. " / 5",
             NOTE_SIZE, NOTE_INK),
-        entity.gap(0.0, BLOCK_GAP),
+        entity.Node.gap(0.0, BLOCK_GAP),
     }
     for line in onward(run) do table.insert(lines, line) end
-    table.insert(lines, entity.gap(0.0, BLOCK_GAP))
+    table.insert(lines, entity.Node.gap(0.0, BLOCK_GAP))
     table.insert(lines, label.middle(
         "R RESTARTS THE RUN   M RETURNS TO MENU", KEYS_SIZE, QUIET_INK))
-    return entity.flow(
+    return entity.Node.flow(
         lines, entity.column(BLOCK_GAP * 0.5, "start", "stretch"))
 end
 

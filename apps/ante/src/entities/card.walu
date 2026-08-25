@@ -83,7 +83,7 @@ function sealed(card: game.Card, known: bool): Look
 end
 
 function intrinsic(): box.Intrinsic
-    return box.fixed(WIDTH, HEIGHT)
+    return box.Intrinsic.fixed(WIDTH, HEIGHT)
 end
 
 -- A filled rounded card silhouette made only from the WebGL2 drawing
@@ -528,7 +528,7 @@ end
 -- in, and a rectangle of any other size scales the whole printed object into
 -- it rather than reflowing the rank, constellation, and paper inside it.
 function node(value: Look): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic()
         end,

@@ -77,8 +77,8 @@ function dip_of(count: i32): f64
 end
 
 function intrinsic(count: i32): box.Intrinsic
-    if count <= 0 then return box.fixed(0.0, 0.0) end
-    return box.fixed(
+    if count <= 0 then return box.Intrinsic.fixed(0.0, 0.0) end
+    return box.Intrinsic.fixed(
         ((count - 1)::f64) * FAN_PITCH + card.width,
         card.height + dip_of(count) * 2.0)
 end
@@ -160,7 +160,7 @@ end
 -- the animation lands so state that has already changed is not revealed ahead
 -- of it.
 function node(looks: {card.Look}, parts: {f64}, hidden: {bool}): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic(#looks)
         end,

@@ -20,12 +20,12 @@ const DRAG_X: f64 = 0.6
 const DRAG_Y: f64 = -0.8
 
 function rest(): card_warp.Pose
-    return card_warp.rest_pose(WIDTH, HEIGHT, CENTER_X, CENTER_Y)
+    return card_warp.Pose.rest(WIDTH, HEIGHT, CENTER_X, CENTER_Y)
 end
 
 function built(pose: card_warp.Pose): card_warp.Mesh
-    local mesh: card_warp.Mesh = card_warp.new_mesh(COLUMNS, ROWS)
-    card_warp.build(mesh, pose)
+    local mesh: card_warp.Mesh = card_warp.Mesh.new(COLUMNS, ROWS)
+    mesh:build(pose)
     return mesh
 end
 
@@ -104,9 +104,9 @@ describe("a corner pull", function(): unit
     -- The hand is on the corner, so the corner is the one part of the sheet
     -- that is never early and never late.
     it("hands the held corner its whole lead, whatever the sheet does", function(): unit
-        expect(card_warp.pull_weight(rest(), 1.0, 1.0)):toBeCloseTo(1.0, 9)
-        expect(card_warp.pull_weight(pulled(0.0, 40.0), 1.0, 1.0)):toBeCloseTo(1.0, 9)
-        expect(card_warp.pull_weight(pulled(1.4, 40.0), 1.0, 1.0)):toBeCloseTo(1.0, 9)
+        expect(rest():pull_weight(1.0, 1.0)):toBeCloseTo(1.0, 9)
+        expect(pulled(0.0, 40.0):pull_weight(1.0, 1.0)):toBeCloseTo(1.0, 9)
+        expect(pulled(1.4, 40.0):pull_weight(1.0, 1.0)):toBeCloseTo(1.0, 9)
     end)
 
     -- The corner goes the whole distance and the far side of the card takes
@@ -164,13 +164,13 @@ describe("a corner pull", function(): unit
         local pose: card_warp.Pose = pulled(0.0, 4000.0)
         pose.stretch_limit = 1.2
         local diagonal: f64 = math.sqrt(WIDTH * WIDTH + HEIGHT * HEIGHT)
-        expect(card_warp.limited_pull(pose)):toBeCloseTo(0.2 * diagonal, 6)
+        expect(pose:limited_pull()):toBeCloseTo(0.2 * diagonal, 6)
     end)
 
     it("leaves a pull inside the limit exactly as it was asked for", function(): unit
         local pose: card_warp.Pose = pulled(0.0, 5.0)
         pose.stretch_limit = 1.2
-        expect(card_warp.limited_pull(pose)):toBeCloseTo(5.0, 6)
+        expect(pose:limited_pull()):toBeCloseTo(5.0, 6)
     end)
 
     -- With the sheet level with the corner there is no gap to draw, and since
@@ -229,11 +229,11 @@ describe("a card turning over", function(): unit
     it("shows one face until it has gone a quarter turn, and the other after", function(): unit
         local pose: card_warp.Pose = rest()
         pose.flip = 1.2
-        expect(card_warp.facing_front(pose)):toBe(true)
+        expect(pose:facing_front()):toBe(true)
         pose.flip = 1.9
-        expect(card_warp.facing_front(pose)):toBe(false)
+        expect(pose:facing_front()):toBe(false)
         pose.flip = 3.4
-        expect(card_warp.facing_front(pose)):toBe(false)
+        expect(pose:facing_front()):toBe(false)
     end)
 
     it("narrows to nothing edge on", function(): unit

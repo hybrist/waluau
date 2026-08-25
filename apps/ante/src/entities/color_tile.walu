@@ -19,7 +19,7 @@ const NAME_INK: string = "#b5b5bd"
 local NAMES: {string} = { "RED", "BLUE", "BLACK", "GREEN" }
 
 function node(suit: i32): entity.Node
-    return entity.sized(
+    return entity.Node.sized(
         WIDTH, HEIGHT,
         function(surface: entity.Surface, bounds: box.Rect): unit
             local graphics = surface.graphics

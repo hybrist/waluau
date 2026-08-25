@@ -17,7 +17,7 @@ const ALIGN_CENTER: i32 = 1
 const ALIGN_RIGHT: i32 = 2
 
 function measure(metrics: entity.Metrics, value: string, size: f64): box.Intrinsic
-    local width: f64 = entity.text_width(metrics, value, size)
+    local width: f64 = metrics:text_width(value, size)
     return {
         min_width = width,
         preferred_width = width,
@@ -37,13 +37,13 @@ function pen_x(bounds: box.Rect, width: f64, align: i32): f64
 end
 
 function node(value: string, size: f64, color: string, align: i32): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return measure(metrics, value, size)
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
-            local width: f64 = entity.text_width(
-                entity.metrics_of(surface), value, size)
+            local width: f64 = surface:metrics():text_width(
+                value, size)
             ink.text(
                 surface.graphics, value,
                 pen_x(bounds, width, align), bounds.y + size, size, color)
@@ -54,9 +54,9 @@ end
 -- aligns its type inside that. A centred caption needs a box to be centred in;
 -- this is how it gets one without a caller measuring the column for it.
 function filling(value: string, size: f64, color: string, align: i32): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
-            local width: f64 = entity.text_width(metrics, value, size)
+            local width: f64 = metrics:text_width(value, size)
             return {
                 min_width = width,
                 preferred_width = width,
@@ -68,8 +68,8 @@ function filling(value: string, size: f64, color: string, align: i32): entity.No
             }
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
-            local width: f64 = entity.text_width(
-                entity.metrics_of(surface), value, size)
+            local width: f64 = surface:metrics():text_width(
+                value, size)
             ink.text(
                 surface.graphics, value,
                 pen_x(bounds, width, align), bounds.y + size, size, color)

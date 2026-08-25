@@ -45,13 +45,13 @@ end
 function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
     local children: {box.Tree} = {}
     for index = 0::i32, count - 1 do
-        table.insert(children, box.leaf(index, card.intrinsic()))
+        table.insert(children, box.Tree.leaf(index, card.intrinsic()))
     end
-    local root: box.Tree = box.flow(-1, children, row_style(pitch))
-    local result: box.Result = box.solve(root, bounds)
+    local root: box.Tree = box.Tree.flow(-1, children, row_style(pitch))
+    local result: box.Result = root:solve(bounds)
     local rects: {box.Rect} = {}
     for index = 0::i32, count - 1 do
-        local frame: box.Frame? = box.frame(result, index)
+        local frame: box.Frame? = result:frame(index)
         if frame == nil then
             table.insert(rects, entity.rect(bounds.x, bounds.y, card.width, card.height))
         else
@@ -69,9 +69,9 @@ end
 -- it decides how much of the board to hand over.
 function intrinsic(count: i32, pitch: f64): box.Intrinsic
     if count <= 0 then
-        return box.fixed(0.0, 0.0)
+        return box.Intrinsic.fixed(0.0, 0.0)
     end
-    return box.fixed(((count - 1)::f64) * pitch + card.width, card.height)
+    return box.Intrinsic.fixed(((count - 1)::f64) * pitch + card.width, card.height)
 end
 
 -- Children rather than cards: a table_card carrying a spell condition draws itself
@@ -79,7 +79,7 @@ end
 -- are. `preferred` is the pitch the row keeps when it has the room; a narrower
 -- rectangle tightens it.
 function node(children: {entity.Node}, preferred: f64): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic(#children, preferred)
         end,

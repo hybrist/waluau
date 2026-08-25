@@ -8,7 +8,7 @@ type EffectShaders = effect_shaders.EffectShaders
 
 function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
     if cast.progress < 1.0 then
-        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        local head: spell_cast.Point = cast:at(cast.progress)
         graphics:set_color("#12091ddd")
         graphics:fill_circle(head.x, head.y, 18.0)
         spell_cast.draw_ellipse(graphics, head.x, head.y, 22.0, 10.0, "#a3e635", 1.7)

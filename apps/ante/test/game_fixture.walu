@@ -10,7 +10,7 @@ function arrange_breach(
     player_hand: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    game.test_arrange_round(state, middle, player_hand, computer_hand)
+    state:test_arrange_round(middle, player_hand, computer_hand)
 end
 
 function arrange_arch_mage(
@@ -18,7 +18,7 @@ function arrange_arch_mage(
     middle: {game.Card},
     computer_hand: {game.Card}
 ): unit
-    game.test_arrange_opponent(state, middle, computer_hand)
+    state:test_arrange_opponent(middle, computer_hand)
 end
 
 function arrange_player(
@@ -26,17 +26,17 @@ function arrange_player(
     player_hand: {game.Card},
     player_known: {bool}
 ): unit
-    game.test_arrange_player(state, player_hand, player_known)
+    state:test_arrange_player(player_hand, player_known)
 end
 
 function set_player_points(state: game.State, points: i32): unit
-    game.test_set_player_points(state, points)
+    state:test_set_player_points(points)
 end
 
 -- Force a finished duel holding the given number of table cards for the Opponent,
 -- so run-level tests reach a verdict without playing three rounds out.
 function finish(state: game.State, computer_tricks: i32): unit
-    game.test_finish(state, computer_tricks)
+    state:test_finish(computer_tricks)
 end
 
 function set_swap_trace(
@@ -44,7 +44,7 @@ function set_swap_trace(
     hand_indices: {i32},
     middle_indices: {i32}
 ): unit
-    game.test_set_swap_trace(state, hand_indices, middle_indices)
+    state:test_set_swap_trace(hand_indices, middle_indices)
 end
 
 return {

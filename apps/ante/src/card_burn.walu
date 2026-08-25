@@ -159,7 +159,7 @@ function new_table_card_ash(seed: i32): particles.ParticleSystem
     return system
 end
 
-function new_card_ash(): CardAsh
+function CardAsh.new(): CardAsh
     return {
         reveal_first = new_sheet_ash(401),
         reveal_second = new_sheet_ash(929),
@@ -364,7 +364,6 @@ function draw_reappearance(
 end
 
 return {
-    new_card_ash = new_card_ash,
     step_sheet_ash = step_sheet_ash,
     step_table_card_ash = step_table_card_ash,
     draw_ash = draw_ash,

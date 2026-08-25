@@ -40,9 +40,9 @@ const TITLE_INK: string = "#fbbf24"
 const SUBTITLE_INK: string = "#a1a1aa"
 
 function shell(): entity.Node
-    return entity.measured(
+    return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
-            return box.fixed(0.0, 0.0)
+            return box.Intrinsic.fixed(0.0, 0.0)
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
             local graphics = surface.graphics
@@ -55,16 +55,16 @@ function shell(): entity.Node
 end
 
 function node(title: string, subtitle: string, body: entity.Node): entity.Node
-    local content: entity.Node = entity.flow({
+    local content: entity.Node = entity.Node.flow({
         label.left(title, TITLE_SIZE, TITLE_INK),
         label.left(subtitle, SUBTITLE_SIZE, SUBTITLE_INK),
-        entity.gap(0.0, HEAD_GAP - TITLE_GAP),
+        entity.Node.gap(0.0, HEAD_GAP - TITLE_GAP),
         body,
     }, entity.style(
         "column", TITLE_GAP, "start", "stretch",
         entity.edges(PAD_X, PAD_TOP, PAD_X, PAD_BOTTOM)))
-    return entity.layer({
-        shell(), entity.gap(FLOOR_WIDTH, FLOOR_HEIGHT), content,
+    return entity.Node.layer({
+        shell(), entity.Node.gap(FLOOR_WIDTH, FLOOR_HEIGHT), content,
     })
 end
 
@@ -73,7 +73,7 @@ end
 -- so what is fitted is the modal's real size rather than an authored guess at
 -- it.
 function show(surface: entity.Surface, viewport: box.Rect, content: entity.Node): unit
-    local size: box.Intrinsic = content.measure(entity.metrics_of(surface))
+    local size: box.Intrinsic = content.measure(surface:metrics())
     local width: f64 = size.preferred_width
     local height: f64 = size.preferred_height
     local fit: f64 = 1.0
@@ -113,7 +113,7 @@ function keys_line(text: string): entity.Node
 end
 
 function column(children: {entity.Node}, gap: f64): entity.Node
-    return entity.flow(
+    return entity.Node.flow(
         children, entity.column(gap, "start", "stretch"))
 end
 

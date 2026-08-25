@@ -97,7 +97,7 @@ function slot_layout(): {Category}
     return { "spells", "spells" }
 end
 
-function new(): State
+function State.new(): State
     return { open = false, slots = {}, cursor = 0, pending = nil }
 end
 
@@ -129,8 +129,8 @@ end
 -- What that goods costs the run as things stand. Priced once, when the visit
 -- rolls it: a spell can only be sharpened once at a given shop, so the step it
 -- is on cannot move between the roll and the press.
-function price_of(goods: Goods, run: run_module.State): i32
-    if Upgrade(upgrade) = goods then
+function Goods:price_of(run: run_module.State): i32
+    if Upgrade(upgrade) = self then
         local slot: i32 = run:slot_of(upgrade.kind)
         if slot < 0 or slot >= #run.spells then return UPGRADE_PRICE end
         local taken: i32 = game.spell_cost - run.spells[slot].cost
@@ -142,11 +142,11 @@ end
 -- Whether the run could take that goods on at all, leaving gold out of it: the
 -- purse is checked once, where the row is built. A spell traded away since the
 -- roll is what closes an upgrade offer that named it.
-function goods_available(goods: Goods, run: run_module.State): bool
-    if Upgrade(upgrade) = goods then
+function Goods:goods_available(run: run_module.State): bool
+    if Upgrade(upgrade) = self then
         return run:can_sharpen(run:slot_of(upgrade.kind))
     end
-    if Spell(spell) = goods then
+    if Spell(spell) = self then
         return not run:carries(spell.kind)
     end
     return false
@@ -154,16 +154,16 @@ end
 
 -- Where the goods would go if it were bought now: the loadout key a new spell
 -- takes by itself, and -1 once the loadout is full and something has to go.
-function destination(goods: Goods, run: run_module.State): i32
-    if goods is Spell then return run:open_slot() end
+function Goods:destination(run: run_module.State): i32
+    if self is Spell then return run:open_slot() end
     return 0
 end
 
 -- What a full run could trade away to make room for that goods. Empty for goods
 -- that always have somewhere to be.
-function choices_for(goods: Goods, run: run_module.State): {i32}
+function Goods:choices_for(run: run_module.State): {i32}
     local keys: {i32} = {}
-    if goods is Spell then
+    if self is Spell then
         for slot = 0::i32, #run.spells - 1 do table.insert(keys, slot) end
     end
     return keys
@@ -172,29 +172,27 @@ end
 -- Pair selection metadata with the independently implemented effect it buys.
 -- Restoring a visit uses the same mapping, so executable behavior is rebuilt
 -- rather than written into the snapshot.
-function item_for(goods: Goods): shop_item.Item
-    if Upgrade(upgrade) = goods then
-        return shop_item.sharpen(upgrade.kind)
+function Goods:item_for(): shop_item.Item
+    if Upgrade(upgrade) = self then
+        return shop_item.Item.sharpen(upgrade.kind)
     end
-    if Spell(spell) = goods then
-        return shop_item.learn(spell.kind)
+    if Spell(spell) = self then
+        return shop_item.Item.learn(spell.kind)
     end
     assert(false)
-    return shop_item.new(function(state: shop_item.UseState): unit end)
+    return shop_item.Item.new(function(state: shop_item.UseState): unit end)
 end
 
 -- Commit payment, then hand the mutation to the item. `key` is the loadout key
 -- a new spell takes, which is the open one unless a full loadout has named what
 -- it trades away; items that do not need a destination ignore it. Availability
 -- is checked before any mutation, so a refused purchase costs nothing.
-function buy(
-    goods: Goods,
-    item: shop_item.Item,
+function Goods:buy(item: shop_item.Item,
     run: run_module.State,
     key: i32,
     price: i32
 ): bool
-    if not goods_available(goods, run) then return false end
+    if not self:goods_available(run) then return false end
     if not run:spend(price) then return false end
     item:use({ run = run, key = key })
     return true
@@ -220,8 +218,8 @@ function roll_slots(run: run_module.State): {Slot}
             table.insert(slots, {
                 category = category,
                 goods = goods,
-                item = item_for(goods),
-                price = price_of(goods, run),
+                item = goods:item_for(),
+                price = goods:price_of(run),
                 sold = false,
             })
         end
@@ -229,37 +227,37 @@ function roll_slots(run: run_module.State): {Slot}
     return slots
 end
 
-function open_for(state: State, run: run_module.State): unit
-    state.open = true
-    state.slots = roll_slots(run)
-    state.cursor = 0
-    state.pending = nil
+function State:open_for(run: run_module.State): unit
+    self.open = true
+    self.slots = roll_slots(run)
+    self.cursor = 0
+    self.pending = nil
 end
 
-function close(state: State): unit
-    state.open = false
-    state.slots = {}
-    state.cursor = 0
-    state.pending = nil
+function State:close(): unit
+    self.open = false
+    self.slots = {}
+    self.cursor = 0
+    self.pending = nil
 end
 
-function choosing(state: State): bool
-    return state.pending ~= nil
+function State:choosing(): bool
+    return self.pending ~= nil
 end
 
 -- The shop slot a pending question is about, or -1 when nothing is being asked.
-function pending_slot(state: State): i32
-    local pending: Pending? = state.pending
+function State:pending_slot(): i32
+    local pending: Pending? = self.pending
     if pending ~= nil then return pending.slot end
     return -1
 end
 
 -- The spell a pending question would hand over, or 0 when nothing is being
 -- asked. A screen naming the trade reads this.
-function pending_spell(state: State): spells.SpellKind?
-    local slot: i32 = pending_slot(state)
-    if slot < 0 or slot >= #state.slots then return nil end
-    return state.slots[slot].goods:spell_kind()
+function State:pending_spell(): spells.SpellKind?
+    local slot: i32 = self:pending_slot()
+    if slot < 0 or slot >= #self.slots then return nil end
+    return self.slots[slot].goods:spell_kind()
 end
 
 -- One slot as a line. A sold line is never available, and neither is one the run
@@ -273,7 +271,7 @@ function slot_row(index: i32, slot: Slot, run: run_module.State): Row
         price = slot.price,
         sold = slot.sold,
         available = not slot.sold
-            and goods_available(slot.goods, run)
+            and slot.goods:goods_available(run)
             and run.gold >= slot.price,
     }
 end
@@ -284,7 +282,7 @@ end
 function choice_rows(asking: Pending, state: State, run: run_module.State): {Row}
     local list: {Row} = {}
     local slot: Slot = state.slots[asking.slot]
-    local live: bool = goods_available(slot.goods, run)
+    local live: bool = slot.goods:goods_available(run)
     for key in asking.choices do
         table.insert(list, {
             kind = "choice",
@@ -311,11 +309,11 @@ end
 -- The lines of the shop as it stands. While a purchase is asking what it
 -- displaces, those are the only lines there are: the sale is already in progress
 -- and the other slots would be answering a different question.
-function rows(state: State, run: run_module.State): {Row}
+function State:rows(run: run_module.State): {Row}
     local list: {Row} = {}
-    local pending: Pending? = state.pending
-    if pending ~= nil then return choice_rows(pending, state, run) end
-    for index, slot in state.slots do
+    local pending: Pending? = self.pending
+    if pending ~= nil then return choice_rows(pending, self, run) end
+    for index, slot in self.slots do
         table.insert(list, slot_row(index, slot, run))
     end
     table.insert(list, {
@@ -330,20 +328,20 @@ function rows(state: State, run: run_module.State): {Row}
     return list
 end
 
-function row_count(state: State, run: run_module.State): i32
-    return #rows(state, run)
+function State:row_count(run: run_module.State): i32
+    return #self:rows(run)
 end
 
-function move(state: State, run: run_module.State, delta: i32): unit
-    local count: i32 = row_count(state, run)
-    state.cursor = (state.cursor + delta + count) % count
+function State:move(run: run_module.State, delta: i32): unit
+    local count: i32 = self:row_count(run)
+    self.cursor = (self.cursor + delta + count) % count
 end
 
 -- Point the cursor at the row the pointer is over. Dead space between lines
 -- leaves the cursor where it was, the way hovering the board does.
-function focus(state: State, run: run_module.State, row: i32): unit
-    if row < 0 or row >= row_count(state, run) then return end
-    state.cursor = row
+function State:focus(run: run_module.State, row: i32): unit
+    if row < 0 or row >= self:row_count(run) then return end
+    self.cursor = row
 end
 
 -- Buy what the named slot is selling into `key`. The slot is marked sold rather
@@ -351,70 +349,70 @@ end
 -- purchase which had to ask a question returns to where it started. Slots keep
 -- their order and every one of them takes a line, so a slot number is a row
 -- number here.
-function commit(state: State, run: run_module.State, slot: i32, key: i32): unit
-    if slot < 0 or slot >= #state.slots then return end
-    local sale: Slot = state.slots[slot]
+function State:commit(run: run_module.State, slot: i32, key: i32): unit
+    if slot < 0 or slot >= #self.slots then return end
+    local sale: Slot = self.slots[slot]
     if sale.sold then return end
-    if not buy(sale.goods, sale.item, run, key, sale.price) then return end
+    if not sale.goods:buy(sale.item, run, key, sale.price) then return end
     sale.sold = true
-    state.pending = nil
-    state.cursor = slot
+    self.pending = nil
+    self.cursor = slot
 end
 
 -- Back out of the question without buying. The offer is still for sale and the
 -- cursor is back on it.
-function cancel(state: State): unit
-    local asked: i32 = pending_slot(state)
+function State:cancel(): unit
+    local asked: i32 = self:pending_slot()
     if asked < 0 then return end
-    state.pending = nil
-    state.cursor = asked
+    self.pending = nil
+    self.cursor = asked
 end
 
 -- Buy, or start being asked what a purchase displaces, or leave. A line the
 -- purse cannot cover — or one already bought — is simply not bought: the cursor
 -- stays on it rather than the press falling through to something else.
-function activate(state: State, run: run_module.State): ShopResult
-    local list: {Row} = rows(state, run)
-    if state.cursor < 0 or state.cursor >= #list then return "stay" end
-    local row: Row = list[state.cursor]
+function State:activate(run: run_module.State): ShopResult
+    local list: {Row} = self:rows(run)
+    if self.cursor < 0 or self.cursor >= #list then return "stay" end
+    local row: Row = list[self.cursor]
     if row.kind == "leave" then return "leave" end
     if row.kind == "cancel" then
-        cancel(state)
+        self:cancel()
         return "stay"
     end
     if not row.available then return "stay" end
     if row.kind == "choice" then
-        commit(state, run, row.slot, row.key)
+        self:commit(run, row.slot, row.key)
         return "stay"
     end
     -- A loadout with room takes the goods by itself; a full one has to be asked
     -- which of what it holds makes way.
-    local goods: Goods = state.slots[row.slot].goods
-    local key: i32 = destination(goods, run)
+    local goods: Goods = self.slots[row.slot].goods
+    local key: i32 = goods:destination(run)
     if key < 0 then
-        state.pending = { slot = row.slot, choices = choices_for(goods, run) }
-        state.cursor = 0
+        self.pending = { slot = row.slot, choices = goods:choices_for(run) }
+        self.cursor = 0
         return "stay"
     end
-    commit(state, run, row.slot, key)
+    self:commit(run, row.slot, key)
     return "stay"
 end
 
-function keypressed(state: State, run: run_module.State, key: string): ShopResult
+function State:keypressed(run: run_module.State, key: string): ShopResult
     if key == "ArrowUp" or key == "w" or key == "W" then
-        move(state, run, -1)
+        self:move(run, -1)
         return "stay"
     end
     if key == "ArrowDown" or key == "s" or key == "S" then
-        move(state, run, 1)
+        self:move(run, 1)
         return "stay"
     end
-    if key == "Enter" or key == " " then return activate(state, run) end
+    if key == "Enter" or key == " " then return self:activate(run) end
     -- Escape backs out of a pending question, and otherwise out of the shop: the
     -- next duel is always one press away.
     if key == "Escape" then
-        if choosing(state) then
-            cancel(state)
+        if self:choosing() then
+            self:cancel()
             return "stay"
         end
         return "leave"
@@ -438,9 +436,9 @@ type Snapshot = {
     pending: Pending?
 }
 
-function snapshot(state: State): string
+function State:snapshot(): string
     local slots: {SnapshotSlot} = {}
-    for slot in state.slots do
+    for slot in self.slots do
         table.insert(slots, {
             category = slot.category,
             goods = slot.goods,
@@ -450,15 +448,15 @@ function snapshot(state: State): string
     end
     local payload: Snapshot = {
         schema = SNAPSHOT_SCHEMA,
-        open = state.open,
+        open = self.open,
         slots = slots,
-        cursor = state.cursor,
-        pending = state.pending,
+        cursor = self.cursor,
+        pending = self.pending,
     }
     return json.pack(payload)
 end
 
-function restore(snapshot_value: string): State?
+function State.restore(snapshot_value: string): State?
     local decoded = json.unpack<Snapshot>(snapshot_value)
     if decoded == nil then return nil end
     if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
@@ -484,7 +482,7 @@ function restore(snapshot_value: string): State?
         table.insert(slots, {
             category = slot.category,
             goods = slot.goods,
-            item = item_for(slot.goods),
+            item = slot.goods:item_for(),
             price = slot.price,
             sold = slot.sold,
         })
@@ -508,28 +506,9 @@ function restore(snapshot_value: string): State?
 end
 
 return {
-    new = new,
-    open_for = open_for,
-    close = close,
-    choosing = choosing,
-    pending_slot = pending_slot,
-    pending_spell = pending_spell,
     slot_layout = slot_layout,
     spell_stock = spell_stock,
     category_stock = category_stock,
     roll_slots = roll_slots,
-    price_of = price_of,
-    goods_available = goods_available,
-    destination = destination,
-    choices_for = choices_for,
-    item_for = item_for,
-    rows = rows,
-    row_count = row_count,
-    move = move,
-    focus = focus,
-    activate = activate,
-    keypressed = keypressed,
-    snapshot = snapshot,
-    restore = restore,
     learn_price = LEARN_PRICE,
 }

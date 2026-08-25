@@ -90,7 +90,7 @@ function draw(
         trail:draw(graphics, 0.0, 0.0)
     end
     if flying then
-        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        local head: spell_cast.Point = cast:at(cast.progress)
         burn_particles.draw(graphics, head.x, head.y, 34.0, 22.0, -0.55, "#ef4444", embers_ok)
         burn_particles.draw(graphics, head.x + 3.0, head.y, 20.0, 10.0, -0.55, "#fff7d6", embers_ok)
     end

@@ -197,7 +197,7 @@ end)
 
 describe("Ante Magic swaps", function()
     it("deals the turn and river after passes, then ends the swap phase", function()
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -208,42 +208,42 @@ describe("Ante Magic swaps", function()
         expect(flop == nil):toBe(false)
         assert(flop ~= nil)
         local resolved_flop: game.SwapOutcome = flop::game.SwapOutcome
-        expect(game.view(state).player_swap_max):toBe(0)
-        expect(game.view(state).computer_swap_max):toBe(0)
-        expect(game.view(state).swap_open):toBe(true)
-        expect(#game.view(state).middle):toBe(4)
+        expect(state:view().player_swap_max):toBe(0)
+        expect(state:view().computer_swap_max):toBe(0)
+        expect(state:view().swap_open):toBe(true)
+        expect(#state:view().middle):toBe(4)
         expect(resolved_flop.dealt == nil):toBe(false)
 
         local turn: game.SwapOutcome? = state:resolve_swap({}, {})
         expect(turn == nil):toBe(false)
         assert(turn ~= nil)
         local resolved_turn: game.SwapOutcome = turn::game.SwapOutcome
-        expect(game.view(state).swap_open):toBe(true)
-        expect(#game.view(state).middle):toBe(5)
+        expect(state:view().swap_open):toBe(true)
+        expect(#state:view().middle):toBe(5)
         expect(resolved_turn.dealt == nil):toBe(false)
 
         local river: game.SwapOutcome? = state:resolve_swap({}, {})
         expect(river == nil):toBe(false)
         assert(river ~= nil)
         local resolved_river: game.SwapOutcome = river::game.SwapOutcome
-        expect(game.view(state).swap_open):toBe(false)
-        expect(#game.view(state).middle):toBe(5)
+        expect(state:view().swap_open):toBe(false)
+        expect(#state:view().middle):toBe(5)
         expect(resolved_river.dealt == nil):toBe(true)
     end)
 
     it("exchanges a winning proposal once, then deals the next community card", function()
         math.randomseed(7)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
             { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
         )
         state:play(0, 1)
-        expect(#game.view(state).history):toBe(0)
-        local old_hand = game.view(state).player_hand[0].card
-        local old_middle = game.view(state).middle[0]
-        local old_deck_size: i32 = game.view(state).deck_count
+        expect(#state:view().history):toBe(0)
+        local old_hand = state:view().player_hand[0].card
+        local old_middle = state:view().middle[0]
+        local old_deck_size: i32 = state:view().deck_count
         local outcome: game.SwapOutcome? = state:resolve_swap({ 0 }, { 0 })
         assert(outcome ~= nil)
         local won_feint: game.SwapOutcome = outcome::game.SwapOutcome
@@ -255,7 +255,7 @@ describe("Ante Magic swaps", function()
         local outcome_outgoing_rank: i32 = won_feint.outgoing[0].rank
         local outcome_incoming_rank: i32 = won_feint.incoming[0].rank
 
-        expect(game.view(state).swap_open):toBe(true)
+        expect(state:view().swap_open):toBe(true)
         expect(outcome_winner):toBe(1)
         expect(outcome_hand_count):toBe(1)
         expect(outcome_hand_index):toBe(0)
@@ -263,78 +263,78 @@ describe("Ante Magic swaps", function()
         expect(outcome_middle_index):toBe(0)
         expect(outcome_outgoing_rank):toBe(old_hand.rank)
         expect(outcome_incoming_rank):toBe(old_middle.rank)
-        expect(game.view(state).swap_winner):toBe(1)
-        expect(game.view(state).swap_count):toBe(1)
-        expect(#game.view(state).swap_hand_indices):toBe(1)
-        expect(game.view(state).swap_hand_indices[0]):toBe(0)
-        expect(#game.view(state).swap_middle_indices):toBe(1)
-        expect(game.view(state).swap_middle_indices[0]):toBe(0)
-        expect(game.view(state).player_points):toBe(9)
-        expect(game.view(state).pot):toBe(1)
-        expect(game.view(state).player_hand[0].card.rank):toBe(old_middle.rank)
-        expect(game.view(state).player_hand[0].card.suit):toBe(old_middle.suit)
-        expect(game.view(state).middle[0].rank):toBe(old_hand.rank)
-        expect(game.view(state).middle[0].suit):toBe(old_hand.suit)
+        expect(state:view().swap_winner):toBe(1)
+        expect(state:view().swap_count):toBe(1)
+        expect(#state:view().swap_hand_indices):toBe(1)
+        expect(state:view().swap_hand_indices[0]):toBe(0)
+        expect(#state:view().swap_middle_indices):toBe(1)
+        expect(state:view().swap_middle_indices[0]):toBe(0)
+        expect(state:view().player_points):toBe(9)
+        expect(state:view().pot):toBe(1)
+        expect(state:view().player_hand[0].card.rank):toBe(old_middle.rank)
+        expect(state:view().player_hand[0].card.suit):toBe(old_middle.suit)
+        expect(state:view().middle[0].rank):toBe(old_hand.rank)
+        expect(state:view().middle[0].suit):toBe(old_hand.suit)
         expect(won_feint.dealt == nil):toBe(false)
-        expect(#game.view(state).middle):toBe(4)
-        expect(game.view(state).deck_count):toBe(old_deck_size - 1)
-        local visible_deck_count: i32 = game.view(state).deck_count
+        expect(#state:view().middle):toBe(4)
+        expect(state:view().deck_count):toBe(old_deck_size - 1)
+        local visible_deck_count: i32 = state:view().deck_count
         expect(visible_deck_count):toBe(old_deck_size - 1)
-        expect(game.view(state).player_hand[0].known):toBe(true)
-        expect(game.view(state).player_hand[1].known):toBe(false)
-        expect(game.view(state).player_hand[2].known):toBe(false)
-        expect(game.view(state).player_hand[3].known):toBe(false)
-        expect(game.view(state).player_hand[4].known):toBe(false)
-        for i = 0::i32, 4::i32 do expect(game.view(state).computer_hand[i].known):toBe(false) end
+        expect(state:view().player_hand[0].known):toBe(true)
+        expect(state:view().player_hand[1].known):toBe(false)
+        expect(state:view().player_hand[2].known):toBe(false)
+        expect(state:view().player_hand[3].known):toBe(false)
+        expect(state:view().player_hand[4].known):toBe(false)
+        for i = 0::i32, 4::i32 do expect(state:view().computer_hand[i].known):toBe(false) end
 
         expect(state:resolve_swap({ 1 }, { 1 }) == nil):toBe(true)
-        expect(game.view(state).player_wager):toBe(1)
-        expect(game.view(state).swap_count):toBe(1)
+        expect(state:view().player_wager):toBe(1)
+        expect(state:view().swap_count):toBe(1)
     end)
 
     it("re-packs watched marks with the hand after a trick", function()
         math.randomseed(46)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
             { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
         )
-        local marked_card = game.view(state).middle[0]
+        local marked_card = state:view().middle[0]
         state:resolve_swap({ 3 }, { 0 })
-        expect(game.view(state).swap_winner):toBe(1)
-        expect(game.view(state).player_hand[3].known):toBe(true)
+        expect(state:view().swap_winner):toBe(1)
+        expect(state:view().player_hand[3].known):toBe(true)
         finish_swap_phase(state)
         local played: game.Trick? = state:play(0, 1)
         assert(played ~= nil)
 
-        expect(#game.view(state).player_hand):toBe(5)
-        expect(#game.view(state).player_hand):toBe(5)
-        local trick = game.view(state).history[0]
+        expect(#state:view().player_hand):toBe(5)
+        expect(#state:view().player_hand):toBe(5)
+        local trick = state:view().history[0]
         local played_round: i32 = (played::game.Trick).round
         expect(played_round):toBe(trick.round)
         expect(trick.player_hand[3].known):toBe(true)
         expect(trick.player_hand[1].known):toBe(false)
         expect(trick.player_hand[3].card.rank):toBe(marked_card.rank)
         expect(trick.player_hand[3].card.suit):toBe(marked_card.suit)
-        expect(game.view(state).player_hand[1].known):toBe(true)
-        expect(game.view(state).player_hand[0].known):toBe(false)
-        expect(game.view(state).player_hand[1].card.rank):toBe(marked_card.rank)
-        expect(game.view(state).player_hand[1].card.suit):toBe(marked_card.suit)
-        expect(game.view(state).player_hand[2].known):toBe(false)
-        expect(game.view(state).player_hand[3].known):toBe(false)
-        expect(game.view(state).player_hand[4].known):toBe(false)
+        expect(state:view().player_hand[1].known):toBe(true)
+        expect(state:view().player_hand[0].known):toBe(false)
+        expect(state:view().player_hand[1].card.rank):toBe(marked_card.rank)
+        expect(state:view().player_hand[1].card.suit):toBe(marked_card.suit)
+        expect(state:view().player_hand[2].known):toBe(false)
+        expect(state:view().player_hand[3].known):toBe(false)
+        expect(state:view().player_hand[4].known):toBe(false)
     end)
 
     it("sorts cards and watched marks without mutating the deal", function()
         math.randomseed(48)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_player(
             state,
             { card(3, 2), card(14, 1), card(3, 1), card(9, 2), card(14, 3) },
             { false, true, false, false, false }
         )
-        local deck_size: i32 = game.view(state).deck_count
+        local deck_size: i32 = state:view().deck_count
         local rank_order = state:sort_player_hand(false)
 
         expect(#rank_order):toBe(5)
@@ -343,21 +343,21 @@ describe("Ante Magic swaps", function()
         expect(rank_order[2]):toBe(3)
         expect(rank_order[3]):toBe(2)
         expect(rank_order[4]):toBe(0)
-        expect(game.view(state).player_hand[0].card.rank):toBe(14)
-        expect(game.view(state).player_hand[0].card.suit):toBe(1)
-        expect(game.view(state).player_hand[1].card.rank):toBe(14)
-        expect(game.view(state).player_hand[1].card.suit):toBe(3)
-        expect(game.view(state).player_hand[2].card.rank):toBe(9)
-        expect(game.view(state).player_hand[2].card.suit):toBe(2)
-        expect(game.view(state).player_hand[3].card.rank):toBe(3)
-        expect(game.view(state).player_hand[3].card.suit):toBe(1)
-        expect(game.view(state).player_hand[4].card.rank):toBe(3)
-        expect(game.view(state).player_hand[4].card.suit):toBe(2)
-        expect(game.view(state).player_hand[0].known):toBe(true)
-        expect(game.view(state).player_hand[1].known):toBe(false)
-        expect(game.view(state).player_hand[2].known):toBe(false)
-        expect(game.view(state).player_hand[3].known):toBe(false)
-        expect(game.view(state).player_hand[4].known):toBe(false)
+        expect(state:view().player_hand[0].card.rank):toBe(14)
+        expect(state:view().player_hand[0].card.suit):toBe(1)
+        expect(state:view().player_hand[1].card.rank):toBe(14)
+        expect(state:view().player_hand[1].card.suit):toBe(3)
+        expect(state:view().player_hand[2].card.rank):toBe(9)
+        expect(state:view().player_hand[2].card.suit):toBe(2)
+        expect(state:view().player_hand[3].card.rank):toBe(3)
+        expect(state:view().player_hand[3].card.suit):toBe(1)
+        expect(state:view().player_hand[4].card.rank):toBe(3)
+        expect(state:view().player_hand[4].card.suit):toBe(2)
+        expect(state:view().player_hand[0].known):toBe(true)
+        expect(state:view().player_hand[1].known):toBe(false)
+        expect(state:view().player_hand[2].known):toBe(false)
+        expect(state:view().player_hand[3].known):toBe(false)
+        expect(state:view().player_hand[4].known):toBe(false)
 
         local color_order = state:sort_player_hand(true)
         expect(color_order[0]):toBe(0)
@@ -365,69 +365,69 @@ describe("Ante Magic swaps", function()
         expect(color_order[2]):toBe(2)
         expect(color_order[3]):toBe(4)
         expect(color_order[4]):toBe(1)
-        expect(game.view(state).player_hand[0].card.rank):toBe(14)
-        expect(game.view(state).player_hand[0].card.suit):toBe(1)
-        expect(game.view(state).player_hand[1].card.rank):toBe(3)
-        expect(game.view(state).player_hand[1].card.suit):toBe(1)
-        expect(game.view(state).player_hand[2].card.rank):toBe(9)
-        expect(game.view(state).player_hand[2].card.suit):toBe(2)
-        expect(game.view(state).player_hand[3].card.rank):toBe(3)
-        expect(game.view(state).player_hand[3].card.suit):toBe(2)
-        expect(game.view(state).player_hand[4].card.rank):toBe(14)
-        expect(game.view(state).player_hand[4].card.suit):toBe(3)
-        expect(game.view(state).player_hand[0].known):toBe(true)
-        expect(game.view(state).player_hand[1].known):toBe(false)
-        expect(game.view(state).deck_count):toBe(deck_size)
-        expect(#game.view(state).middle):toBe(3)
-        expect(#game.view(state).computer_hand):toBe(5)
+        expect(state:view().player_hand[0].card.rank):toBe(14)
+        expect(state:view().player_hand[0].card.suit):toBe(1)
+        expect(state:view().player_hand[1].card.rank):toBe(3)
+        expect(state:view().player_hand[1].card.suit):toBe(1)
+        expect(state:view().player_hand[2].card.rank):toBe(9)
+        expect(state:view().player_hand[2].card.suit):toBe(2)
+        expect(state:view().player_hand[3].card.rank):toBe(3)
+        expect(state:view().player_hand[3].card.suit):toBe(2)
+        expect(state:view().player_hand[4].card.rank):toBe(14)
+        expect(state:view().player_hand[4].card.suit):toBe(3)
+        expect(state:view().player_hand[0].known):toBe(true)
+        expect(state:view().player_hand[1].known):toBe(false)
+        expect(state:view().deck_count):toBe(deck_size)
+        expect(#state:view().middle):toBe(3)
+        expect(#state:view().computer_hand):toBe(5)
     end)
 
     it("uses proposed cards as the wager and rejects unaffordable proposals", function()
-        local two_card_state = game.new(false, starter_loadout(), game.starting_gold)
+        local two_card_state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             two_card_state,
             { card(10, 0), card(11, 0), card(12, 0) },
             { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
         )
         two_card_state:resolve_swap({ 0, 1 }, { 0, 1 })
-        expect(game.view(two_card_state).player_wager):toBe(2)
-        expect(game.view(two_card_state).player_points):toBe(8)
-        expect(game.view(two_card_state).pot):toBe(2)
+        expect(two_card_state:view().player_wager):toBe(2)
+        expect(two_card_state:view().player_points):toBe(8)
+        expect(two_card_state:view().pot):toBe(2)
 
-        local unaffordable_state = game.new(false, starter_loadout(), game.starting_gold)
+        local unaffordable_state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.set_player_points(unaffordable_state, 1)
         unaffordable_state:resolve_swap({ 0, 1 }, { 0, 1 })
-        expect(game.view(unaffordable_state).swap_open):toBe(true)
-        expect(game.view(unaffordable_state).player_wager):toBe(0)
+        expect(unaffordable_state:view().swap_open):toBe(true)
+        expect(unaffordable_state:view().player_wager):toBe(0)
     end)
 
     it("lets the Opponent make an unrestricted three-card swap", function()
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
             { card(10, 0), card(11, 0), card(12, 0), card(13, 0), card(14, 0) }
         )
-        local swap = game.best_swap(game.hand_cards(game.view(state).computer_hand), game.view(state).middle)
+        local swap = game.best_swap(game.hand_cards(state:view().computer_hand), state:view().middle)
         expect(#swap.hand_indices):toBe(3)
         expect(#swap.middle_indices):toBe(3)
         state:resolve_swap({}, {})
 
-        expect(game.view(state).computer_wager):toBe(3)
-        expect(game.view(state).pot):toBe(3)
-        expect(game.view(state).swap_winner):toBe(-1)
-        expect(game.view(state).player_points):toBe(10)
-        for index in swap.hand_indices do expect(game.view(state).computer_hand[index].known):toBe(true) end
+        expect(state:view().computer_wager):toBe(3)
+        expect(state:view().pot):toBe(3)
+        expect(state:view().swap_winner):toBe(-1)
+        expect(state:view().player_points):toBe(10)
+        for index in swap.hand_indices do expect(state:view().computer_hand[index].known):toBe(true) end
         local marked_slots: i32 = 0
         for i = 0::i32, 4::i32 do
-            if game.view(state).computer_hand[i].known then marked_slots += 1 end
-            expect(game.view(state).player_hand[i].known):toBe(false)
+            if state:view().computer_hand[i].known then marked_slots += 1 end
+            expect(state:view().player_hand[i].known):toBe(false)
         end
         expect(marked_slots):toBe(3)
     end)
 
     it("carries a maxed flop into four- and five-card swap opportunities", function()
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -435,37 +435,37 @@ describe("Ante Magic swaps", function()
         )
 
         state:resolve_swap({}, {})
-        expect(game.view(state).computer_swap_max):toBe(3)
-        expect(#game.view(state).middle):toBe(4)
+        expect(state:view().computer_swap_max):toBe(3)
+        expect(#state:view().middle):toBe(4)
         expect(state:minimum_swap()):toBe(4)
         expect(state:resolve_swap({ 0, 1 }, { 0, 1 }) == nil):toBe(true)
-        expect(game.view(state).player_wager):toBe(0)
+        expect(state:view().player_wager):toBe(0)
 
         local turn_raise: game.SwapOutcome? = state:resolve_swap(
             { 0, 1, 2, 3 }, { 0, 1, 2, 3 })
         expect(turn_raise == nil):toBe(false)
-        expect(game.view(state).player_swap_max):toBe(4)
-        expect(game.view(state).computer_swap_max):toBe(3)
-        expect(game.view(state).swap_open):toBe(true)
-        expect(#game.view(state).middle):toBe(5)
+        expect(state:view().player_swap_max):toBe(4)
+        expect(state:view().computer_swap_max):toBe(3)
+        expect(state:view().swap_open):toBe(true)
+        expect(#state:view().middle):toBe(5)
         expect(state:minimum_swap()):toBe(5)
-        expect(game.view(state).player_wager):toBe(4)
-        expect(game.view(state).computer_wager):toBe(3)
-        expect(game.view(state).pot):toBe(7)
+        expect(state:view().player_wager):toBe(4)
+        expect(state:view().computer_wager):toBe(3)
+        expect(state:view().pot):toBe(7)
 
         local river_raise: game.SwapOutcome? = state:resolve_swap(
             { 0, 1, 2, 3, 4 }, { 0, 1, 2, 3, 4 })
         expect(river_raise == nil):toBe(false)
-        expect(game.view(state).player_swap_max):toBe(5)
-        expect(game.view(state).swap_open):toBe(false)
-        expect(game.view(state).player_wager):toBe(9)
-        expect(game.view(state).pot):toBe(12)
+        expect(state:view().player_swap_max):toBe(5)
+        expect(state:view().swap_open):toBe(false)
+        expect(state:view().player_wager):toBe(9)
+        expect(state:view().pot):toBe(12)
 
         force_player_win(state)
         expect(state:play(0, 1) == nil):toBe(false)
-        expect(game.view(state).swap_open):toBe(true)
-        expect(game.view(state).player_swap_max):toBe(0)
-        expect(game.view(state).computer_swap_max):toBe(0)
+        expect(state:view().swap_open):toBe(true)
+        expect(state:view().player_swap_max):toBe(0)
+        expect(state:view().computer_swap_max):toBe(0)
         expect(state:minimum_swap()):toBe(1)
     end)
 
@@ -489,7 +489,7 @@ end)
 describe("Ante Magic development snapshots", function()
     it("round-trips the complete rules state and rejects incompatible data", function()
         math.randomseed(49)
-        local state: game.State = game.new(false, starter_loadout(), game.starting_gold)
+        local state: game.State = game.State.new(false, starter_loadout(), game.starting_gold)
         state:resolve_swap({ 0 }, { 1 })
         finish_swap_phase(state)
         force_player_win(state)
@@ -497,39 +497,39 @@ describe("Ante Magic development snapshots", function()
         state:resolve_swap({}, {})
         game_fixture.set_swap_trace(state, { 2 }, { 0 })
 
-        local encoded: string = game.snapshot(state)
-        local restored: game.State? = game.restore(encoded)
+        local encoded: string = state:snapshot()
+        local restored: game.State? = game.State.restore(encoded)
         expect(restored == nil):toBe(false)
         if restored ~= nil then
-            expect(game.snapshot(restored)):toBe(encoded)
-            expect(#game.view(restored).history):toBe(1)
-            expect(game.view(restored).history[0].player_value):toBe(game.view(state).history[0].player_value)
-            expect(game.view(restored).player_hand[0].known):toBe(game.view(state).player_hand[0].known)
-            expect(game.view(restored).computer_hand[0].known):toBe(game.view(state).computer_hand[0].known)
-            expect(game.view(restored).swap_hand_indices[0]):toBe(2)
-            expect(game.view(restored).swap_middle_indices[0]):toBe(0)
+            expect(restored:snapshot()):toBe(encoded)
+            expect(#restored:view().history):toBe(1)
+            expect(restored:view().history[0].player_value):toBe(state:view().history[0].player_value)
+            expect(restored:view().player_hand[0].known):toBe(state:view().player_hand[0].known)
+            expect(restored:view().computer_hand[0].known):toBe(state:view().computer_hand[0].known)
+            expect(restored:view().swap_hand_indices[0]):toBe(2)
+            expect(restored:view().swap_middle_indices[0]):toBe(0)
         end
 
-        expect(game.restore("duel-state-v0,0") == nil):toBe(true)
-        expect(game.restore(encoded .. ",unexpected") == nil):toBe(true)
+        expect(game.State.restore("duel-state-v0,0") == nil):toBe(true)
+        expect(game.State.restore(encoded .. ",unexpected") == nil):toBe(true)
         -- The nullable last-cast kind: a decoder must reject kinds outside
         -- the closed spell domain, which the JSON shape alone does not know.
         local invalid_cast: string =
             string.gsub(encoded, '"cast_kind":null', '"cast_kind":99')
         expect(invalid_cast == encoded):toBe(false)
-        expect(game.restore(invalid_cast) == nil):toBe(true)
+        expect(game.State.restore(invalid_cast) == nil):toBe(true)
         -- Winner columns are literal unions that decode as plain integers, so
         -- their domain is restore's to check.
         local invalid_winner: string =
             string.gsub(encoded, '"last_winner":%-?%d+', '"last_winner":9')
         expect(invalid_winner == encoded):toBe(false)
-        expect(game.restore(invalid_winner) == nil):toBe(true)
+        expect(game.State.restore(invalid_winner) == nil):toBe(true)
     end)
 
     it("frames screen, run, rules, flow, and presentation payloads atomically", function()
-        local run_state: run.State = run.new(spells.SpellKind.Clone, false)
-        local rules: game.State = game.new(false, starter_loadout(), game.starting_gold)
-        local ui: flow.State = flow.new()
+        local run_state: run.State = run.State.new(spells.SpellKind.Clone, false)
+        local rules: game.State = game.State.new(false, starter_loadout(), game.starting_gold)
+        local ui: flow.State = flow.State.new()
         ui.modal = "help"
 
         -- The shape the entry module packs for hot replacement: sections stay
@@ -540,9 +540,9 @@ describe("Ante Magic development snapshots", function()
             schema = "target-test-frame",
             screen = "game",
             sections = {
-                run.snapshot(run_state),
-                game.snapshot(rules),
-                flow.snapshot(ui),
+                run_state:snapshot(),
+                rules:snapshot(),
+                ui:snapshot(),
                 "presentation",
             },
         }
@@ -553,9 +553,9 @@ describe("Ante Magic development snapshots", function()
             expect(decoded.schema):toBe("target-test-frame")
             expect(decoded.screen):toBe("game")
             expect(#decoded.sections):toBe(4)
-            local restored_run: run.State? = run.restore(decoded.sections[0])
-            local restored_rules: game.State? = game.restore(decoded.sections[1])
-            local restored_ui: flow.State? = flow.restore(decoded.sections[2])
+            local restored_run: run.State? = run.State.restore(decoded.sections[0])
+            local restored_rules: game.State? = game.State.restore(decoded.sections[1])
+            local restored_ui: flow.State? = flow.State.restore(decoded.sections[2])
             expect(restored_run == nil):toBe(false)
             expect(restored_rules == nil):toBe(false)
             expect(restored_ui == nil):toBe(false)
@@ -569,59 +569,59 @@ describe("Ante Magic development snapshots", function()
         -- Trailing garbage fails the frame as a whole; a section fed to the
         -- wrong module fails that section's own schema check.
         expect(json.unpack<HotFrame>(framed .. "|extra") == nil):toBe(true)
-        expect(run.restore(flow.snapshot(ui)) == nil):toBe(true)
+        expect(run.State.restore(ui:snapshot()) == nil):toBe(true)
     end)
 
     it("rejects inconsistent spell-targeting payloads", function()
         -- A cast slot names a loadout key, which is never negative. The old
         -- casting-flag inconsistency cannot be written any more: the slot is
         -- one nullable field.
-        local ui: flow.State = flow.new()
+        local ui: flow.State = flow.State.new()
         local negative_slot: i32 = -1
         ui.cast_slot = negative_slot
-        expect(flow.restore(flow.snapshot(ui)) == nil):toBe(true)
+        expect(flow.State.restore(ui:snapshot()) == nil):toBe(true)
     end)
 
     it("rejects a modal another build wrote", function()
         -- The modal is a literal union that decodes as a plain string, so its
         -- domain is restore's to check.
-        local ui: flow.State = flow.new()
+        local ui: flow.State = flow.State.new()
         ui.modal = "help"
         local unknown_modal: string =
-            string.gsub(flow.snapshot(ui), '"modal":"help"', '"modal":"attic"')
-        expect(flow.restore(flow.snapshot(ui)) == nil):toBe(false)
-        expect(flow.restore(unknown_modal) == nil):toBe(true)
+            string.gsub(ui:snapshot(), '"modal":"help"', '"modal":"attic"')
+        expect(flow.State.restore(ui:snapshot()) == nil):toBe(false)
+        expect(flow.State.restore(unknown_modal) == nil):toBe(true)
     end)
 end)
 
 describe("Ante Magic duel flow", function()
     it("applies the same modal and animation gates to both input adapters", function()
-        local keyboard: flow.State = flow.new()
-        local mouse: flow.State = flow.new()
+        local keyboard: flow.State = flow.State.new()
+        local mouse: flow.State = flow.State.new()
         keyboard.modal = "help"
         mouse.modal = "help"
 
-        expect(tostring(flow.gate(keyboard, false, false, false, "advance"))):toBe("consumed")
-        expect(tostring(flow.gate(mouse, false, false, false, "primary"))):toBe("consumed")
+        expect(tostring(keyboard:gate(false, false, false, "advance"))):toBe("consumed")
+        expect(tostring(mouse:gate(false, false, false, "primary"))):toBe("consumed")
         expect(tostring(keyboard.modal)):toBe("none")
         expect(tostring(mouse.modal)):toBe("none")
 
-        expect(tostring(flow.gate(keyboard, false, true, false, "advance"))):toBe("skip")
-        expect(tostring(flow.gate(mouse, false, true, false, "primary"))):toBe("skip")
+        expect(tostring(keyboard:gate(false, true, false, "advance"))):toBe("skip")
+        expect(tostring(mouse:gate(false, true, false, "primary"))):toBe("skip")
     end)
 
     it("finishes a reveal before advancing to round cleanup", function()
-        local ui: flow.State = flow.new()
-        flow.begin_reveal(ui)
+        local ui: flow.State = flow.State.new()
+        ui:begin_reveal()
 
-        expect(tostring(flow.gate(ui, false, false, false, "advance"))):toBe("finish-reveal")
+        expect(tostring(ui:gate(false, false, false, "advance"))):toBe("finish-reveal")
         expect(ui.revealing):toBe(true)
-        expect(tostring(flow.gate(ui, false, false, true, "advance"))):toBe("refill")
+        expect(tostring(ui:gate(false, false, true, "advance"))):toBe("refill")
         expect(ui.revealing):toBe(false)
 
-        flow.begin_reveal(ui)
-        expect(tostring(flow.gate(ui, true, false, false, "primary"))):toBe("finish-reveal")
-        expect(tostring(flow.gate(ui, true, false, true, "primary"))):toBe("consumed")
+        ui:begin_reveal()
+        expect(tostring(ui:gate(true, false, false, "primary"))):toBe("finish-reveal")
+        expect(tostring(ui:gate(true, false, true, "primary"))):toBe("consumed")
         expect(tostring(ui.modal)):toBe("final")
     end)
 end)
@@ -629,65 +629,65 @@ end)
 describe("Ante Magic game flow", function()
     it("ends after two player wins in best of three", function()
         math.randomseed(42)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         
         -- Round 1: Player wins
         finish_swap_phase(state)
         force_player_win(state)
         state:play(0, 1)
-        expect(game.view(state).player_tricks):toBe(1)
-        expect(game.view(state).finished):toBe(false)
+        expect(state:view().player_tricks):toBe(1)
+        expect(state:view().finished):toBe(false)
         
         -- Round 2: Player wins and game ends (best of 3 means first to 2 wins)
         finish_swap_phase(state)
         force_player_win(state)
         state:play(0, 1)
 
-        expect(game.view(state).finished):toBe(true)
-        expect(game.view(state).player_tricks):toBe(2)
-        expect(game.view(state).computer_tricks):toBe(0)
+        expect(state:view().finished):toBe(true)
+        expect(state:view().player_tricks):toBe(2)
+        expect(state:view().computer_tricks):toBe(0)
     end)
 
     it("ends immediately on the Opponent's second win", function()
         math.randomseed(43)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         for expected_round = FIRST_ROUND, 2 do
             finish_swap_phase(state)
             force_computer_win(state)
             state:play(0, 1)
-            local trick = game.view(state).history[expected_round - 1]
+            local trick = state:view().history[expected_round - 1]
             expect(trick.winner):toBe(-1)
             expect(trick.points):toBe(0)
-            if expected_round < 2 then expect(game.view(state).finished):toBe(false) end
+            if expected_round < 2 then expect(state:view().finished):toBe(false) end
         end
 
-        expect(game.view(state).finished):toBe(true)
-        expect(game.view(state).computer_tricks):toBe(2)
-        expect(game.view(state).player_tricks):toBe(0)
-        expect(#game.view(state).history):toBe(2)
-        expect(#game.view(state).middle):toBe(0)
+        expect(state:view().finished):toBe(true)
+        expect(state:view().computer_tricks):toBe(2)
+        expect(state:view().player_tricks):toBe(0)
+        expect(#state:view().history):toBe(2)
+        expect(#state:view().middle):toBe(0)
     end)
 
     it("keeps a stalemate open and refunds its wager", function()
         math.randomseed(44)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         finish_swap_phase(state)
         force_stalemate(state)
-        local points: i32 = game.view(state).player_points
+        local points: i32 = state:view().player_points
         state:play(0, 1)
 
-        expect(game.view(state).history[0].winner):toBe(0)
-        expect(game.view(state).history[0].points):toBe(0)
-        expect(game.view(state).player_tricks):toBe(0)
-        expect(game.view(state).computer_tricks):toBe(0)
-        expect(game.view(state).player_points):toBe(points)
-        expect(game.view(state).finished):toBe(false)
-        expect(game.view(state).round):toBe(2)
+        expect(state:view().history[0].winner):toBe(0)
+        expect(state:view().history[0].points):toBe(0)
+        expect(state:view().player_tricks):toBe(0)
+        expect(state:view().computer_tricks):toBe(0)
+        expect(state:view().player_points):toBe(points)
+        expect(state:view().finished):toBe(false)
+        expect(state:view().round):toBe(2)
     end)
 
     it("does not count a stalemate as a second Opponent hold", function()
         math.randomseed(45)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         -- First opponent win
         finish_swap_phase(state)
         force_computer_win(state)
@@ -698,12 +698,12 @@ describe("Ante Magic game flow", function()
         force_stalemate(state)
         state:play(0, 1)
 
-        expect(#game.view(state).history):toBe(2)
-        expect(game.view(state).history[1].winner):toBe(0)
-        expect(game.view(state).computer_tricks):toBe(1)
-        expect(game.view(state).player_tricks):toBe(0)
-        expect(game.view(state).finished):toBe(false)
-        expect(game.view(state).round):toBe(3)
+        expect(#state:view().history):toBe(2)
+        expect(state:view().history[1].winner):toBe(0)
+        expect(state:view().computer_tricks):toBe(1)
+        expect(state:view().player_tricks):toBe(0)
+        expect(state:view().finished):toBe(false)
+        expect(state:view().round):toBe(3)
     end)
 end)
 
@@ -711,7 +711,7 @@ end)
 -- whatever the hands currently hold: the player keeps a royal pair against
 -- the fixed table_card row while the Opponent holds a ladder that never beats it.
 local function force_boss_player_win(state: game.State): unit
-    local count: i32 = #game.view(state).player_hand
+    local count: i32 = #state:view().player_hand
     local player: {game.Card} = { card(13, 0), card(14, 0) }
     for rank = 2, count - 1 do table.insert(player, card(rank, 1)) end
     local computer: {game.Card} = {}
@@ -725,51 +725,51 @@ end
 describe("Ante Magic boss battle", function()
     it("deals seven cards and never replaces a spent one", function()
         math.randomseed(50)
-        local state = game.new(true, starter_loadout(), game.starting_gold)
+        local state = game.State.new(true, starter_loadout(), game.starting_gold)
         expect(state:is_boss()):toBe(true)
-        expect(game.view(state).deck_count):toBe(35)
-        expect(#game.view(state).player_hand):toBe(7)
-        expect(#game.view(state).computer_hand):toBe(7)
-        expect(#game.view(state).middle):toBe(3)
-        expect(game.view(state).player_points):toBe(10)
-        expect(game.view(state).swap_open):toBe(true)
+        expect(state:view().deck_count):toBe(35)
+        expect(#state:view().player_hand):toBe(7)
+        expect(#state:view().computer_hand):toBe(7)
+        expect(#state:view().middle):toBe(3)
+        expect(state:view().player_points):toBe(10)
+        expect(state:view().swap_open):toBe(true)
 
         -- Round 1: Player wins
-        expect(game.view(state).round):toBe(1)
-        expect(game.view(state).finished):toBe(false)
-        expect(#game.view(state).player_hand):toBe(7)
-        expect(#game.view(state).computer_hand):toBe(7)
+        expect(state:view().round):toBe(1)
+        expect(state:view().finished):toBe(false)
+        expect(#state:view().player_hand):toBe(7)
+        expect(#state:view().computer_hand):toBe(7)
         finish_swap_phase(state)
         force_boss_player_win(state)
         state:play(0, 1)
-        expect(game.view(state).player_tricks):toBe(1)
-        expect(game.view(state).finished):toBe(false)
+        expect(state:view().player_tricks):toBe(1)
+        expect(state:view().finished):toBe(false)
         
         -- Round 2: Player wins and game ends (best of 3 means first to 2 wins)
-        expect(game.view(state).round):toBe(2)
-        expect(#game.view(state).player_hand):toBe(5)
-        expect(#game.view(state).computer_hand):toBe(5)
+        expect(state:view().round):toBe(2)
+        expect(#state:view().player_hand):toBe(5)
+        expect(#state:view().computer_hand):toBe(5)
         finish_swap_phase(state)
         force_boss_player_win(state)
         state:play(0, 1)
 
-        expect(game.view(state).finished):toBe(true)
-        expect(game.view(state).player_tricks):toBe(2)
-        expect(#game.view(state).player_hand):toBe(3)
-        expect(#game.view(state).computer_hand):toBe(3)
-        expect(#game.view(state).middle):toBe(0)
-        expect(game.view(state).deck_count):toBe(28)
+        expect(state:view().finished):toBe(true)
+        expect(state:view().player_tricks):toBe(2)
+        expect(#state:view().player_hand):toBe(3)
+        expect(#state:view().computer_hand):toBe(3)
+        expect(#state:view().middle):toBe(0)
+        expect(state:view().deck_count):toBe(28)
     end)
 
     it("keeps the standard game's five-card deal and replacements", function()
         math.randomseed(52)
-        local state = game.new(false, starter_loadout(), game.starting_gold)
+        local state = game.State.new(false, starter_loadout(), game.starting_gold)
         expect(state:is_boss()):toBe(false)
         finish_swap_phase(state)
         force_player_win(state)
         state:play(0, 1)
-        expect(#game.view(state).player_hand):toBe(5)
-        expect(#game.view(state).computer_hand):toBe(5)
+        expect(#state:view().player_hand):toBe(5)
+        expect(#state:view().computer_hand):toBe(5)
     end)
 
     it("searches the whole seven-card hand for the best swap", function()
@@ -793,18 +793,18 @@ describe("Ante Magic boss battle", function()
 
     it("round-trips the variant through development snapshots", function()
         math.randomseed(51)
-        local state = game.new(true, starter_loadout(), game.starting_gold)
-        local encoded: string = game.snapshot(state)
-        local restored: game.State? = game.restore(encoded)
+        local state = game.State.new(true, starter_loadout(), game.starting_gold)
+        local encoded: string = state:snapshot()
+        local restored: game.State? = game.State.restore(encoded)
         expect(restored == nil):toBe(false)
         if restored ~= nil then
             expect(restored:is_boss()):toBe(true)
-            expect(#game.view(restored).player_hand):toBe(7)
-            expect(game.snapshot(restored)):toBe(encoded)
+            expect(#restored:view().player_hand):toBe(7)
+            expect(restored:snapshot()):toBe(encoded)
         end
 
-        local standard: game.State = game.new(false, starter_loadout(), game.starting_gold)
-        local restored_standard: game.State? = game.restore(game.snapshot(standard))
+        local standard: game.State = game.State.new(false, starter_loadout(), game.starting_gold)
+        local restored_standard: game.State? = game.State.restore(standard:snapshot())
         expect(restored_standard == nil):toBe(false)
         if restored_standard ~= nil then
             expect(restored_standard:is_boss()):toBe(false)
@@ -813,7 +813,7 @@ describe("Ante Magic boss battle", function()
 
     it("restarts as the variant, loadout, and gold the reset asks for", function()
         math.randomseed(53)
-        local state = game.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
+        local state = game.State.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
         state:reset(true, loadout_of(spells.SpellKind.Clone), 23)
         expect(state:is_boss()):toBe(true)
         expect(state:hand_size()):toBe(7)
@@ -839,7 +839,7 @@ end)
 describe("Ante Magic spell casting", function()
     it("charges each spell its own price and refuses the rest", function()
         math.randomseed(57)
-        local state = game.new(false, loadout_of(spells.SpellKind.RaiseCard), game.starting_gold)
+        local state = game.State.new(false, loadout_of(spells.SpellKind.RaiseCard), game.starting_gold)
         expect(state:spell_count()):toBe(1)
         expect(state:spell_kind(0)):toBe(spells.SpellKind.RaiseCard)
         expect(state:spell_cost(0)):toBe(game.spell_cost)
@@ -858,7 +858,7 @@ describe("Ante Magic spell casting", function()
 
     it("casts either spell of a pair at the price on its own key", function()
         math.randomseed(58)
-        local state = game.new(false, {
+        local state = game.State.new(false, {
             spells.Spell.new(spells.SpellKind.FreezeRay),
             priced_spell(spells.SpellKind.Clone, 2),
         }, 4)
@@ -885,12 +885,12 @@ describe("Ante Magic spell casting", function()
 
     it("keeps the dealt loadout through development snapshots", function()
         math.randomseed(59)
-        local state = game.new(false, {
+        local state = game.State.new(false, {
             spells.Spell.new(spells.SpellKind.FreezeRay),
             priced_spell(spells.SpellKind.Firebolt, 3),
         }, game.starting_gold)
         state:cast_spell(0, 2)
-        local restored: game.State? = game.restore(game.snapshot(state))
+        local restored: game.State? = game.State.restore(state:snapshot())
         expect(restored == nil):toBe(false)
         if restored ~= nil then
             expect(restored:spell_count()):toBe(2)
@@ -905,7 +905,7 @@ describe("Ante Magic spell casting", function()
     end)
 
     it("keeps frozen table cards out of both sides' feints and thaws after resolution", function()
-        local state = game.new(false, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
+        local state = game.State.new(false, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -931,12 +931,12 @@ describe("Ante Magic spell casting", function()
 
     it("retains a table_card frozen after the swap for exactly one more round", function()
         math.randomseed(61)
-        local state = game.new(false, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
+        local state = game.State.new(false, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
         finish_swap_phase(state)
-        local retained = game.view(state).middle[1]
-        local replaced_left = game.view(state).middle[0]
-        local replaced_right = game.view(state).middle[2]
-        local deck_size: i32 = game.view(state).deck_count
+        local retained = state:view().middle[1]
+        local replaced_left = state:view().middle[0]
+        local replaced_right = state:view().middle[2]
+        local deck_size: i32 = state:view().deck_count
 
         expect(state:cast_spell(0, 1)):toBe(true)
         local trick: game.Trick? = state:play(0, 1)
@@ -948,21 +948,21 @@ describe("Ante Magic spell casting", function()
         expect(resolved.frozen_middle[2]):toBe(false)
         expect(resolved.frozen_middle[3]):toBe(false)
         expect(resolved.frozen_middle[4]):toBe(false)
-        expect(game.view(state).middle[1].rank):toBe(retained.rank)
-        expect(game.view(state).middle[1].suit):toBe(retained.suit)
-        expect(game.view(state).middle[0].rank == replaced_left.rank and game.view(state).middle[0].suit == replaced_left.suit):toBe(false)
-        expect(game.view(state).middle[2].rank == replaced_right.rank and game.view(state).middle[2].suit == replaced_right.suit):toBe(false)
-        expect(game.view(state).deck_count):toBe(deck_size - 6)
+        expect(state:view().middle[1].rank):toBe(retained.rank)
+        expect(state:view().middle[1].suit):toBe(retained.suit)
+        expect(state:view().middle[0].rank == replaced_left.rank and state:view().middle[0].suit == replaced_left.suit):toBe(false)
+        expect(state:view().middle[2].rank == replaced_right.rank and state:view().middle[2].suit == replaced_right.suit):toBe(false)
+        expect(state:view().deck_count):toBe(deck_size - 6)
         expect(state:is_frozen(1)):toBe(false)
     end)
 
     it("replaces a Firebolt target from the deck and returns the burned card", function()
         math.randomseed(61)
-        local state = game.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
+        local state = game.State.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
         expect(state:cast_spell(0, 1)):toBe(true)
-        local deck_before: i32 = game.view(state).deck_count
-        local burned: game.Card = game.view(state).middle[1]
-        local replacement: game.Card = game.test_next_draw(state)
+        local deck_before: i32 = state:view().deck_count
+        local burned: game.Card = state:view().middle[1]
+        local replacement: game.Card = state:test_next_draw()
 
         local discarded: game.Card? = state:resolve_firebolt(1)
 
@@ -971,25 +971,25 @@ describe("Ante Magic spell casting", function()
             expect((discarded::game.Card).rank):toBe(burned.rank)
             expect((discarded::game.Card).suit):toBe(burned.suit)
         end
-        expect(game.view(state).middle[1].rank):toBe(replacement.rank)
-        expect(game.view(state).middle[1].suit):toBe(replacement.suit)
-        expect(game.view(state).deck_count):toBe(deck_before - 1)
+        expect(state:view().middle[1].rank):toBe(replacement.rank)
+        expect(state:view().middle[1].suit):toBe(replacement.suit)
+        expect(state:view().deck_count):toBe(deck_before - 1)
     end)
 
     it("leaves the board unchanged for invalid Firebolt targets", function()
         math.randomseed(63)
-        local state = game.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
+        local state = game.State.new(false, loadout_of(spells.SpellKind.Firebolt), game.starting_gold)
         expect(state:cast_spell(0, 1)):toBe(true)
-        local before: string = game.snapshot(state)
+        local before: string = state:snapshot()
 
         expect(state:resolve_firebolt(-1) == nil):toBe(true)
         expect(state:resolve_firebolt(3) == nil):toBe(true)
-        expect(game.snapshot(state)):toBe(before)
+        expect(state:snapshot()):toBe(before)
     end)
 
     it("burns a table_card only for a Firebolt this duel actually paid for", function()
         math.randomseed(67)
-        local state = game.new(false, {
+        local state = game.State.new(false, {
             spells.Spell.new(spells.SpellKind.FreezeRay),
             spells.Spell.new(spells.SpellKind.Firebolt),
         }, game.starting_gold)

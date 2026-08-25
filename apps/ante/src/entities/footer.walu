@@ -30,7 +30,7 @@ function menu(): entity.Node
 end
 
 function stats(state: game.View, run: run_module.View): entity.Node
-    return padded_caption(entity.down({ gap = 4.0, align = "start" }, {
+    return padded_caption(entity.Node.down({ gap = 4.0, align = "start" }, {
         label.left(
             "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
             HINT_SIZE, HEART_INK),
@@ -41,14 +41,14 @@ function stats(state: game.View, run: run_module.View): entity.Node
 end
 
 function node(state: game.View, run: run_module.View): entity.Node
-    return entity.layer({
-        entity.across(
+    return entity.Node.layer({
+        entity.Node.across(
             { justify = "start", align = "end" },
             { stats(state, run) }),
-        entity.across(
+        entity.Node.across(
             { justify = "center", align = "end" },
             { menu() }),
-        entity.across(
+        entity.Node.across(
             { justify = "end", align = "end" },
             { ability_diamond.node(state) }),
     })

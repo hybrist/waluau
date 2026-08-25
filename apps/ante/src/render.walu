@@ -572,8 +572,8 @@ function draw_throw_card(
         rise = THROW_RISE,
         arc = "very-late"
     }
-    local pose: card_warp.Pose = card_draw.pose_at(throw, clock)
-    local face_up: bool = card_draw.shows_face(throw, clock)
+    local pose: card_warp.Pose = throw:pose_at(clock)
+    local face_up: bool = throw:shows_face(clock)
     local target: graphics_module.RenderTarget? = card.capture(
         surface, card.look(anim.card, false, false, not face_up, false, anim.known))
     if target == nil then
@@ -587,7 +587,7 @@ function draw_throw_card(
         return
     end
     local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    card_warp.build(sheet, pose)
+    sheet:build(pose)
     -- Seen from behind, a card's face reads the wrong way round unless its
     -- source region is taken right to left.
     local source_x: f64 = 0.0
@@ -886,14 +886,14 @@ function draw_hud(
     state: game.View, run: run_module.View
 ): unit
     local band: entity.Node = hud.node(state, run)
-    band.paint(surface, header_band(entity.metrics_of(surface), band, viewport))
+    band.paint(surface, header_band(surface:metrics(), band, viewport))
 end
 
 function draw_footer(
     surface: entity.Surface, viewport: layout.State,
     state: game.View, run: run_module.View
 ): unit
-    local metrics: entity.Metrics = entity.metrics_of(surface)
+    local metrics: entity.Metrics = surface:metrics()
     local strip: entity.Node = footer.node(state, run)
     local bounds: box.Rect = footer_band(metrics, strip, viewport)
     strip.paint(surface, bounds)
@@ -1193,7 +1193,7 @@ function draw_computer_row(surface: entity.Surface, frame: Frame): unit
     local slots: {entity.Node} = {}
     for i = 0::i32, #state.computer_hand - 1 do
         if hidden[i] then
-            table.insert(slots, entity.sized(
+            table.insert(slots, entity.Node.sized(
                 card.width, card.height,
                 function(surface: entity.Surface, bounds: box.Rect): unit end))
         else
@@ -1231,7 +1231,7 @@ function draw_actions(
 ): unit
     action_bar.node(actions).paint(surface, band)
     local rects: {box.Rect} = entity.place(
-        entity.metrics_of(surface), action_bar.capsules(actions),
+        surface:metrics(), action_bar.capsules(actions),
         action_bar.bar_style(), band)
     targets.commit = rects[0]
     if #rects > 1 then targets.pass = rects[1] end
@@ -1325,7 +1325,7 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
     local slots: {entity.Node} = {}
     for i = 0::i32, #state.middle - 1 do
         if table_card_hidden[i] then
-            table.insert(slots, entity.sized(
+            table.insert(slots, entity.Node.sized(
                 card.width, card.height,
                 function(surface: entity.Surface, bounds: box.Rect): unit end))
         else
@@ -1420,6 +1420,10 @@ function draw_audio_error(
         105.0, top + 286.0, 10, "#fda4af")
 end
 
+function new_card_ash(): card_burn.CardAsh
+    return card_burn.CardAsh.new()
+end
+
 return {
     draw = draw,
     draw_shader_error = draw_shader_error,
@@ -1474,7 +1478,7 @@ return {
     fireball_formation = powered_card.fireball_formation,
     power_settled_clock = powered_card.settled_clock,
     -- The ash emitters choreography owns and ticks.
-    new_card_ash = card_burn.new_card_ash,
+    new_card_ash = new_card_ash,
     step_reveal_ash = card_burn.step_sheet_ash,
     step_table_card_ash = card_burn.step_table_card_ash,
     -- A spell's own emitters, on the same terms: choreography holds them and

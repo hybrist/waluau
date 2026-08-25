@@ -204,13 +204,13 @@ type Point3 = { x: f64, y: f64, z: f64 }
 
 -- Where the card is at a moment of the flight, in all three dimensions:
 -- the sweep across the screen and the arc off the surface, one point.
-function flight_at(draw: Draw, part: f64): Point3
+function Draw:flight_at(part: f64): Point3
     local swept: f64 = ease_out_back(
-        part ^ FLIGHT_ATTACK, back_coefficient(draw.overshoot))
+        part ^ FLIGHT_ATTACK, back_coefficient(self.overshoot))
     return {
-        x = draw.from_x + (draw.to_x - draw.from_x) * swept,
-        y = draw.from_y + (draw.to_y - draw.from_y) * swept,
-        z = draw.rise * ease_arc(arc_warp(draw.arc, part))
+        x = self.from_x + (self.to_x - self.from_x) * swept,
+        y = self.from_y + (self.to_y - self.from_y) * swept,
+        z = self.rise * ease_arc(arc_warp(self.arc, part))
     }
 end
 
@@ -221,14 +221,14 @@ end
 -- choreographed beside it.
 const SPEED_EPSILON: f64 = 0.01
 
-function velocity_at(draw: Draw, part: f64): Point3
+function Draw:velocity_at(part: f64): Point3
     local before: f64 = part - SPEED_EPSILON
     local after: f64 = part + SPEED_EPSILON
     if before < 0.0 then before = 0.0 end
     if after > 1.0 then after = 1.0 end
     if after <= before then return { x = 0.0, y = 0.0, z = 0.0 } end
-    local a: Point3 = flight_at(draw, before)
-    local b: Point3 = flight_at(draw, after)
+    local a: Point3 = self:flight_at(before)
+    local b: Point3 = self:flight_at(after)
     local window: f64 = after - before
     return {
         x = (b.x - a.x) / window,
@@ -248,22 +248,22 @@ end
 
 -- The whole pose, at one moment. The hover is not a fourth beat so much as
 -- what the card does once there is nothing left to do to it.
-function pose_at(draw: Draw, clock: f64): card_warp.Pose
+function Draw:pose_at(clock: f64): card_warp.Pose
     local beat: Beat = beat_at(clock)
-    local pose: card_warp.Pose = card_warp.rest_pose(
-        draw.width, draw.height, draw.to_x, draw.to_y)
+    local pose: card_warp.Pose = card_warp.Pose.rest(
+        self.width, self.height, self.to_x, self.to_y)
     pose.grab_u = GRAB_U
     pose.grab_v = GRAB_V
-    pose.stretch_limit = draw.stretch_limit
+    pose.stretch_limit = self.stretch_limit
 
     if beat.index == "flight" then
-        local here: Point3 = flight_at(draw, beat.part)
+        local here: Point3 = self:flight_at(beat.part)
         pose.center_x = here.x
         pose.center_y = here.y
         pose.rise = here.z
         pose.flip = -math.pi * (beat.part ^ FLIP_ATTACK)
 
-        local vel: Point3 = velocity_at(draw, beat.part)
+        local vel: Point3 = self:velocity_at(beat.part)
         local speed: f64 = math.sqrt(
             vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
 
@@ -282,8 +282,8 @@ function pose_at(draw: Draw, clock: f64): card_warp.Pose
         -- Travel's stretch, along the screen part of the motion and sized by
         -- it. The z part of the momentum already shapes the sheet through the
         -- pull; the in-plane stretch answers to the in-plane speed.
-        local run_x: f64 = draw.to_x - draw.from_x
-        local run_y: f64 = draw.to_y - draw.from_y
+        local run_x: f64 = self.to_x - self.from_x
+        local run_y: f64 = self.to_y - self.from_y
         local run: f64 = math.sqrt(run_x * run_x + run_y * run_y)
         local flat: f64 = math.sqrt(vel.x * vel.x + vel.y * vel.y)
         if run > 0.0 and flat > 0.0 then
@@ -302,15 +302,15 @@ function pose_at(draw: Draw, clock: f64): card_warp.Pose
     elseif beat.index == "land" then
         pose.flip = -math.pi
         local hit: f64 = ease_arc(beat.part)
-        pose.axis_x = draw.to_x - draw.from_x
-        pose.axis_y = draw.to_y - draw.from_y
+        pose.axis_x = self.to_x - self.from_x
+        pose.axis_y = self.to_y - self.from_y
         pose.axial = 1.0 - LAND_SQUASH * hit
         pose.scale = 1.0 + LAND_SPLAT * hit
     else
         local held: f64 = beat.part
         pose.tilt = HOVER_TILT * math.sin(held * math.pi * 2.0 / HOVER_TILT_PERIOD)
         pose.flip = -math.pi + HOVER_FLIP * math.sin(held * math.pi * 2.0 / HOVER_FLIP_PERIOD)
-        pose.center_y = draw.to_y
+        pose.center_y = self.to_y
             + HOVER_RISE * math.sin(held * math.pi * 2.0 / HOVER_RISE_PERIOD)
         -- A card held in the air is never quite still and never quite the same
         -- size, because whatever is holding it is not a hand.
@@ -322,8 +322,8 @@ end
 -- Whether the card at this moment shows the face the deck was hiding. The
 -- pose knows how far it has turned; this is only about which texture goes on
 -- the sheet.
-function shows_face(draw: Draw, clock: f64): bool
-    return not card_warp.facing_front(pose_at(draw, clock))
+function Draw:shows_face(clock: f64): bool
+    return not self:pose_at(clock):facing_front()
 end
 
 -- How far back the ghosts of the flying card are, in seconds. Two frames and
@@ -350,8 +350,6 @@ end
 
 return {
     beat_at = beat_at,
-    pose_at = pose_at,
-    shows_face = shows_face,
     trails = trails,
     ghost_offsets = ghost_offsets,
     ghost_visible = ghost_visible,

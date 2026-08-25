@@ -34,17 +34,17 @@ type ActiveScreen = "menu" | "game"
 type HotSnapshot = { schema: string, screen: ActiveScreen, sections: {string} }
 
 function play_flip_cues(assets: presentation_resources.State, count: i32): unit
-    for _ = 1, count do presentation_resources.play_flip(assets) end
+    for _ = 1, count do assets:play_flip() end
 end
 
 function install_ante_magic(): unit
     local screen: ActiveScreen = "menu"
-    local menu_state: menu.State = menu.new()
-    local duel: game_screen.State = game_screen.new()
-    local city: city_map.State = city_map.new(math.random(2147483646))
-    local assets: presentation_resources.State = presentation_resources.new()
+    local menu_state: menu.State = menu.State.new()
+    local duel: game_screen.State = game_screen.State.new()
+    local city: city_map.State = city_map.State.new(math.random(2147483646))
+    local assets: presentation_resources.State = presentation_resources.State.new()
     local function load_assets_async(): i32
-        return presentation_resources.load_async(assets)
+        return assets:load_async()
     end
 
     local function load(): unit
@@ -59,13 +59,13 @@ function install_ante_magic(): unit
     -- and the boss rush, where every duel is; `spell` is the starting spell
     -- picked on the menu's second list and carried for the whole run.
     local function begin_run(rush: bool, spell: spells.SpellKind): unit
-        if not presentation_resources.unlock_audio(assets) then return end
-        game_screen.reset(duel, city, rush, spell)
+        if not assets:unlock_audio() then return end
+        duel:reset(city, rush, spell)
         screen = "game"
     end
 
     local function leave_run(): unit
-        menu.reset(menu_state, city)
+        menu_state:reset(city)
         screen = "menu"
     end
 
@@ -75,14 +75,14 @@ function install_ante_magic(): unit
         -- to aim, so its walk between two stops keeps time with the run rather
         -- than with the asset loader.
         if screen == "menu" then
-            menu.update(menu_state, city, dt)
+            menu_state:update(city, dt)
         else
-            game_screen.steer_city(duel, city, dt)
-            if presentation_resources.can_update(assets) then
-                play_flip_cues(assets, game_screen.update(duel, city, dt))
+            duel:steer_city(city, dt)
+            if assets:can_update() then
+                play_flip_cues(assets, duel:update(city, dt))
             end
         end
-        city_map.update(city, dt)
+        city:update(dt)
     end
 
     -- Three layers, bottom to top: the duel board, the city map over it, and
@@ -95,31 +95,30 @@ function install_ante_magic(): unit
         -- every screen can place its semantic regions in all available space.
         layout.update(graphics.width, graphics.height)
         local canvas: layout.State = layout.current()
-        city_map.resize(city, canvas.width, canvas.height)
+        city:resize(canvas.width, canvas.height)
         graphics:clear("#09090b")
         graphics:push()
         graphics:scale(canvas.scale, canvas.scale)
-        presentation_resources.prepare(assets, graphics)
-        if not presentation_resources.draw_failure(assets, graphics) then
+        assets:prepare(graphics)
+        if not assets:draw_failure(graphics) then
             if city.cover < 1.0 then
-                game_screen.draw_vault(
-                    duel, presentation_resources.surface(assets, graphics))
+                duel:draw_vault(assets:surface(graphics))
             end
-            if city_map.visible(city) then
+            if city:visible() then
                 -- The menu's map is a drifting view of a city nobody is running,
                 -- so it has no last duel to mark.
                 local landmark: i32 = -1
                 if screen ~= "menu" then
-                    landmark = game_screen.landmark_stop(duel)
+                    landmark = duel:landmark_stop()
                 end
                 city_map_render.draw(
                     city, graphics, ink.color_ink(city.streak_suit),
                     city.cover, landmark)
             end
             if screen == "menu" then
-                menu.draw(menu_state, canvas, graphics, assets.effects, assets.sound_finished)
-            elseif game_screen.fence_open(duel) then
-                game_screen.draw_fence(duel, city, canvas, graphics)
+                menu_state:draw(canvas, graphics, assets.effects, assets.sound_finished)
+            elseif duel:fence_open() then
+                duel:draw_fence(city, canvas, graphics)
             end
         end
         graphics:pop()
@@ -127,19 +126,19 @@ function install_ante_magic(): unit
 
     local function menu_action(action: menu.MenuAction): unit
         if action == "start" then
-            begin_run(false, menu.selected_spell(menu_state))
+            begin_run(false, menu_state:selected_spell())
         elseif action == "start-rush" then
-            begin_run(true, menu.selected_spell(menu_state))
+            begin_run(true, menu_state:selected_spell())
         end
     end
 
     local function keypressed(key: string): unit
         if #assets.fatal_audio_code > 0 then return end
         if screen == "menu" then
-            menu_action(menu.keypressed(menu_state, key))
+            menu_action(menu_state:keypressed(key))
             return
         end
-        if game_screen.keypressed(duel, city, key) == "exit" then
+        if duel:keypressed(city, key) == "exit" then
             leave_run()
         end
     end
@@ -150,10 +149,10 @@ function install_ante_magic(): unit
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
         if screen == "menu" then
-            menu.mousemoved(menu_state, canvas, x, y)
+            menu_state:mousemoved(canvas, x, y)
             return
         end
-        game_screen.mousemoved(duel, x, y)
+        duel:mousemoved(x, y)
     end
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
@@ -162,10 +161,10 @@ function install_ante_magic(): unit
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
         if screen == "menu" then
-            menu_action(menu.mousepressed(menu_state, canvas, x, y, button))
+            menu_action(menu_state:mousepressed(canvas, x, y, button))
             return
         end
-        game_screen.mousepressed(duel, city, x, y, button)
+        duel:mousepressed(city, x, y, button)
     end
 
     -- No configured viewport: the canvas takes the browser's space and the
@@ -193,7 +192,7 @@ function install_ante_magic(): unit
             local payload: HotSnapshot = {
                 schema = HOT_SNAPSHOT_SCHEMA,
                 screen = screen,
-                sections = game_screen.snapshot(duel),
+                sections = duel:snapshot(),
             }
             return json.pack(payload)
         end,
@@ -211,17 +210,17 @@ function install_ante_magic(): unit
             -- would restore.
             if #decoded.sections ~= HOT_SNAPSHOT_SECTIONS then return false end
             local payloads: {string} = decoded.sections
-            local restored: game_screen.State? = game_screen.restore(
+            local restored: game_screen.State? = game_screen.State.restore(
                 payloads[0], payloads[1], payloads[2], payloads[3], payloads[4])
             if restored == nil then return false end
             duel = restored::game_screen.State
-            menu.reset(menu_state, city)
+            menu_state:reset(city)
             screen = decoded.screen
             -- A restored run is set down where it stands rather than played
             -- back to it: the map takes the duel's stop with no walk and no
             -- dissolve left to run.
             if decoded.screen == "game" then
-                game_screen.place_city(duel, city)
+                duel:place_city(city)
             end
             return true
         end,
@@ -231,7 +230,7 @@ function install_ante_magic(): unit
                 (running::engine.Session).suspend()
                 session = nil
             end
-            presentation_resources.dispose(assets)
+            assets:dispose()
         end,
     })
 end

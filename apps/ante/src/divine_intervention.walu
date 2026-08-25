@@ -14,15 +14,15 @@ const FIRST_CONTACT: f64 = 0.58
 const CONTACT_STEP: f64 = 0.52
 const TOTAL_SECONDS: f64 = 3.18
 
-function new(): State
+function State.new(): State
     return { matched = 0, active = false, clock = 0.0, converted = 0 }
 end
 
-function reset(state: State): unit
-    state.matched = 0
-    state.active = false
-    state.clock = 0.0
-    state.converted = 0
+function State:reset(): unit
+    self.matched = 0
+    self.active = false
+    self.clock = 0.0
+    self.converted = 0
 end
 
 function sequence_key(index: i32): string
@@ -43,22 +43,22 @@ end
 -- Returns true only for the keystroke that completes the code. A wrong key
 -- restarts at one when it is itself the first Up, preserving the useful
 -- overlap in sequences such as Up, Up, Up, Down...
-function keypressed(state: State, key: string): bool
-    if state.active then return false end
+function State:keypressed(key: string): bool
+    if self.active then return false end
     local value: string = normalized(key)
-    if value == sequence_key(state.matched) then
-        state.matched += 1
+    if value == sequence_key(self.matched) then
+        self.matched += 1
     elseif value == sequence_key(0) then
         -- Up, Up, Up still ends in the opening Up, Up pair.
-        if state.matched == 2 then state.matched = 2 else state.matched = 1 end
+        if self.matched == 2 then self.matched = 2 else self.matched = 1 end
     else
-        state.matched = 0
+        self.matched = 0
     end
-    if state.matched < 10 then return false end
-    state.matched = 0
-    state.active = true
-    state.clock = 0.0
-    state.converted = 0
+    if self.matched < 10 then return false end
+    self.matched = 0
+    self.active = true
+    self.clock = 0.0
+    self.converted = 0
     return true
 end
 
@@ -68,28 +68,24 @@ end
 
 -- Advances the flight and returns every newly touched card. A list keeps a
 -- long frame from dropping conversions if it crosses more than one landing.
-function update(state: State, dt: f64): {i32}
+function State:update(dt: f64): {i32}
     local due: {i32} = {}
-    if not state.active then return due end
-    state.clock += dt
-    while state.converted < TARGET_COUNT
-        and state.clock >= contact_time(state.converted)
+    if not self.active then return due end
+    self.clock += dt
+    while self.converted < TARGET_COUNT
+        and self.clock >= contact_time(self.converted)
     do
-        table.insert(due, state.converted)
-        state.converted += 1
+        table.insert(due, self.converted)
+        self.converted += 1
     end
-    if state.clock >= TOTAL_SECONDS then
-        state.clock = TOTAL_SECONDS
-        state.active = false
+    if self.clock >= TOTAL_SECONDS then
+        self.clock = TOTAL_SECONDS
+        self.active = false
     end
     return due
 end
 
 return {
-    new = new,
-    reset = reset,
-    keypressed = keypressed,
-    update = update,
     contact_time = contact_time,
     target_count = TARGET_COUNT,
     total_seconds = TOTAL_SECONDS,

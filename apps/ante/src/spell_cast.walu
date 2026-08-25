@@ -40,7 +40,7 @@ function clamp(value: f64): f64
     return value
 end
 
-function new(clock: f64, target_x: f64, target_y: f64): Cast
+function Cast.new(clock: f64, target_x: f64, target_y: f64): Cast
     return {
         clock = clock,
         progress = clamp(clock / TRAVEL_SECONDS),
@@ -49,13 +49,13 @@ function new(clock: f64, target_x: f64, target_y: f64): Cast
     }
 end
 
-function at(cast: Cast, progress: f64): Point
+function Cast:at(progress: f64): Point
     local inverse: f64 = 1.0 - progress
-    local control_x: f64 = cast.origin.x + (cast.target.x - cast.origin.x) * 0.315
-    local control_y: f64 = cast.target.y - 34.0
+    local control_x: f64 = self.origin.x + (self.target.x - self.origin.x) * 0.315
+    local control_y: f64 = self.target.y - 34.0
     return {
-        x = inverse * inverse * cast.origin.x + 2.0 * inverse * progress * control_x + progress * progress * cast.target.x,
-        y = inverse * inverse * cast.origin.y + 2.0 * inverse * progress * control_y + progress * progress * cast.target.y
+        x = inverse * inverse * self.origin.x + 2.0 * inverse * progress * control_x + progress * progress * self.target.x,
+        y = inverse * inverse * self.origin.y + 2.0 * inverse * progress * control_y + progress * progress * self.target.y
     }
 end
 
@@ -172,8 +172,6 @@ end
 
 return {
     travel_seconds = TRAVEL_SECONDS,
-    new = new,
-    at = at,
     draw_ellipse = draw_ellipse,
     new_burst = new_burst,
     step_burst = step_burst,

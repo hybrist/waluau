@@ -38,7 +38,7 @@ function cell(text: string, size: f64, color: string, width: f64): entity.Node
 end
 
 function row(trick: readonly<game.Trick>): entity.Node
-    return entity.across({ align = "baseline" }, {
+    return entity.Node.across({ align = "baseline" }, {
         cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
         cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
         label.left(

@@ -175,13 +175,13 @@ function draw(
     if alpha <= 0.0 then return end
     local panel_y: f64 = panel_top(viewport)
     local panel_h: f64 = viewport.height - panel_y - 56.0
-    local choosing: bool = shop.choosing(state)
+    local choosing: bool = state:choosing()
     ink.panel(
         graphics, PANEL_X, panel_y, PANEL_W, panel_h,
         ink.fade("#09090b", alpha * 0.94), ink.fade("#a1a1aa", alpha))
     ink.text(graphics, "THE SHOP", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
     local subtitle: string = "GOLD SPENT HERE WILL NOT ENTER DUEL " .. tostring(run.duel)
-    local offered: spells.SpellKind? = shop.pending_spell(state)
+    local offered: spells.SpellKind? = state:pending_spell()
     if choosing then
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end
@@ -198,7 +198,7 @@ function draw(
         graphics, "TARGET " .. tostring(run:target()) .. " TO CLEAR IT",
         550.0, panel_y + 95.0, 9, ink.fade("#b45309", alpha))
 
-    local rows: {shop.Row} = shop.rows(state, run)
+    local rows: {shop.Row} = state:rows(run)
     for index, row in rows do
         draw_row(
             graphics, viewport, row, row_label(state, row, run, offered),

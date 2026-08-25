@@ -105,7 +105,7 @@ export type Mesh = {
     front: bool
 }
 
-function rest_pose(width: f64, height: f64, center_x: f64, center_y: f64): Pose
+function Pose.rest(width: f64, height: f64, center_x: f64, center_y: f64): Pose
     return {
         width = width,
         height = height,
@@ -143,7 +143,7 @@ function filled(count: i32): {f64}
     return values
 end
 
-function new_mesh(columns: i32, rows: i32): Mesh
+function Mesh.new(columns: i32, rows: i32): Mesh
     local count: i32 = point_count(columns, rows)
     return {
         columns = columns,
@@ -161,38 +161,38 @@ end
 -- How far a point sits along the diagonal that runs to the held corner: one
 -- at the corner itself, zero at the corner opposite it, and a half at the two
 -- corners either side. Everything the pull does is a function of this.
-function grip_coordinate(pose: Pose, u: f64, v: f64): f64
-    local toward_u: f64 = math.abs(u - (1.0 - pose.grab_u))
-    local toward_v: f64 = math.abs(v - (1.0 - pose.grab_v))
+function Pose:grip_coordinate(u: f64, v: f64): f64
+    local toward_u: f64 = math.abs(u - (1.0 - self.grab_u))
+    local toward_v: f64 = math.abs(v - (1.0 - self.grab_v))
     return (toward_u + toward_v) * 0.5
 end
 
 -- The share of the corner's lead that reaches a point. At the held corner it
 -- is always exactly one, whatever the rest of the sheet is doing — the corner
 -- is where the hand is, so it is never the thing that lags or overshoots.
-function pull_weight(pose: Pose, u: f64, v: f64): f64
-    local along: f64 = grip_coordinate(pose, u, v)
-    return pose.follow + (1.0 - pose.follow) * (along ^ pose.grip)
+function Pose:pull_weight(u: f64, v: f64): f64
+    local along: f64 = self:grip_coordinate(u, v)
+    return self.follow + (1.0 - self.follow) * (along ^ self.grip)
 end
 
 -- The length of the lead once the stretch limit has had its say. The limit is
 -- a multiple of the rest diagonal, because the pull runs corner to corner.
-function limited_pull(pose: Pose): f64
-    local diagonal: f64 = math.sqrt(pose.width * pose.width + pose.height * pose.height)
+function Pose:limited_pull(): f64
+    local diagonal: f64 = math.sqrt(self.width * self.width + self.height * self.height)
     local reach: f64 = math.sqrt(
-        pose.pull_x * pose.pull_x + pose.pull_y * pose.pull_y + pose.pull_z * pose.pull_z)
-    local spread: f64 = reach * math.abs(1.0 - pose.follow)
-    local allowed: f64 = (pose.stretch_limit - 1.0) * diagonal
+        self.pull_x * self.pull_x + self.pull_y * self.pull_y + self.pull_z * self.pull_z)
+    local spread: f64 = reach * math.abs(1.0 - self.follow)
+    local allowed: f64 = (self.stretch_limit - 1.0) * diagonal
     if allowed <= 0.0 or spread <= allowed or reach <= 0.0 then return reach end
     return reach * allowed / spread
 end
 
 -- How much longer the sheet has become along the pull, which is what it has
 -- to narrow across to pay for.
-function stretch_ratio(pose: Pose, reach: f64): f64
-    local diagonal: f64 = math.sqrt(pose.width * pose.width + pose.height * pose.height)
+function Pose:stretch_ratio(reach: f64): f64
+    local diagonal: f64 = math.sqrt(self.width * self.width + self.height * self.height)
     if diagonal <= 0.0 then return 1.0 end
-    return 1.0 + reach * math.abs(1.0 - pose.follow) / diagonal
+    return 1.0 + reach * math.abs(1.0 - self.follow) / diagonal
 end
 
 -- Scales a card-space offset along an axis and across it independently.
@@ -238,12 +238,12 @@ end
 -- drifts back as it relaxes — the card leaves, returns to where it came from,
 -- and leaves again, which reads as backtracking rather than as a pull. Where
 -- the card is belongs to travel; the pull only ever changes its shape.
-function mean_pull_weight(pose: Pose, columns: i32, rows: i32): f64
+function Pose:mean_pull_weight(columns: i32, rows: i32): f64
     local total: f64 = 0.0
     for row = 0::i32, rows do
         local v: f64 = (row::f64) / (rows::f64)
         for column = 0::i32, columns do
-            total += pull_weight(pose, (column::f64) / (columns::f64), v)
+            total += self:pull_weight((column::f64) / (columns::f64), v)
         end
     end
     return total / (point_count(columns, rows)::f64)
@@ -263,7 +263,7 @@ function place_point(
     -- The pull, shared out across the sheet, and the narrowing it owes. The
     -- share is measured against the sheet's average, so the corner leading
     -- and the body trailing are both movement relative to the card itself.
-    local share: f64 = pull_weight(pose, u, v) - mean
+    local share: f64 = pose:pull_weight(u, v) - mean
     local scaled: f64 = 1.0
     local total: f64 = math.sqrt(
         pose.pull_x * pose.pull_x + pose.pull_y * pose.pull_y + pose.pull_z * pose.pull_z)
@@ -300,28 +300,28 @@ end
 
 -- A point in card space to a point on the screen. Nearer is larger, which is
 -- the whole of the perspective: one divide, no depth buffer, no camera.
-function project_x(pose: Pose, point: Space): f64
-    local depth: f64 = pose.focal - point.z
+function Pose:project_x(point: Space): f64
+    local depth: f64 = self.focal - point.z
     if depth < 1.0 then depth = 1.0 end
-    return pose.center_x + point.x * pose.focal / depth
+    return self.center_x + point.x * self.focal / depth
 end
 
-function project_y(pose: Pose, point: Space): f64
-    local depth: f64 = pose.focal - point.z
+function Pose:project_y(point: Space): f64
+    local depth: f64 = self.focal - point.z
     if depth < 1.0 then depth = 1.0 end
-    return pose.center_y + point.y * pose.focal / depth
+    return self.center_y + point.y * self.focal / depth
 end
 
 -- The brightness of one grid point, from the surface it is part of. Both
 -- faces of a card are opaque and both catch the light, so what matters is how
 -- square the surface is to it and not which way it happens to point.
-function shade_at(mesh: Mesh, left: i32, right: i32, above: i32, below: i32): f64
-    local ux: f64 = mesh.px[right] - mesh.px[left]
-    local uy: f64 = mesh.py[right] - mesh.py[left]
-    local uz: f64 = mesh.pz[right] - mesh.pz[left]
-    local vx: f64 = mesh.px[below] - mesh.px[above]
-    local vy: f64 = mesh.py[below] - mesh.py[above]
-    local vz: f64 = mesh.pz[below] - mesh.pz[above]
+function Mesh:shade_at(left: i32, right: i32, above: i32, below: i32): f64
+    local ux: f64 = self.px[right] - self.px[left]
+    local uy: f64 = self.py[right] - self.py[left]
+    local uz: f64 = self.pz[right] - self.pz[left]
+    local vx: f64 = self.px[below] - self.px[above]
+    local vy: f64 = self.py[below] - self.py[above]
+    local vz: f64 = self.pz[below] - self.pz[above]
     local nx: f64 = uy * vz - uz * vy
     local ny: f64 = uz * vx - ux * vz
     local nz: f64 = ux * vy - uy * vx
@@ -336,22 +336,22 @@ end
 -- Writes a pose into a mesh: every point placed in space, then lit from the
 -- surface its neighbours describe, then projected. Lighting reads the placed
 -- points, which is why it is a second pass rather than part of the first.
-function build(mesh: Mesh, pose: Pose): unit
-    local columns: i32 = mesh.columns
-    local rows: i32 = mesh.rows
+function Mesh:build(pose: Pose): unit
+    local columns: i32 = self.columns
+    local rows: i32 = self.rows
     local stride: i32 = columns + 1
-    local reach: f64 = limited_pull(pose)
-    local narrowing: f64 = stretch_ratio(pose, reach)
-    local mean: f64 = mean_pull_weight(pose, columns, rows)
+    local reach: f64 = pose:limited_pull()
+    local narrowing: f64 = pose:stretch_ratio(reach)
+    local mean: f64 = pose:mean_pull_weight(columns, rows)
     for row = 0::i32, rows do
         local v: f64 = (row::f64) / (rows::f64)
         for column = 0::i32, columns do
             local u: f64 = (column::f64) / (columns::f64)
             local point: Space = place_point(pose, u, v, reach, narrowing, mean)
             local index: i32 = row * stride + column
-            mesh.px[index] = point.x
-            mesh.py[index] = point.y
-            mesh.pz[index] = point.z
+            self.px[index] = point.x
+            self.py[index] = point.y
+            self.pz[index] = point.z
         end
     end
     for row = 0::i32, rows do
@@ -365,29 +365,21 @@ function build(mesh: Mesh, pose: Pose): unit
             local below: i32 = index + stride
             if row == 0 then above = index end
             if row == rows then below = index end
-            mesh.shades[index] = shade_at(mesh, left, right, above, below)
-            local point: Space = { x = mesh.px[index], y = mesh.py[index], z = mesh.pz[index] }
-            mesh.xs[index] = project_x(pose, point)
-            mesh.ys[index] = project_y(pose, point)
+            self.shades[index] = self:shade_at(left, right, above, below)
+            local point: Space = { x = self.px[index], y = self.py[index], z = self.pz[index] }
+            self.xs[index] = pose:project_x(point)
+            self.ys[index] = pose:project_y(point)
         end
     end
-    mesh.front = facing_front(pose)
+    self.front = pose:facing_front()
 end
 
 -- Which face the viewer is looking at. A quarter turn either way is where the
 -- card goes edge on and the other side comes into view.
-function facing_front(pose: Pose): bool
-    return math.cos(pose.flip) * math.cos(pose.tilt) >= 0.0
+function Pose:facing_front(): bool
+    return math.cos(self.flip) * math.cos(self.tilt) >= 0.0
 end
 
 return {
-    rest_pose = rest_pose,
-    new_mesh = new_mesh,
     point_count = point_count,
-    build = build,
-    facing_front = facing_front,
-    pull_weight = pull_weight,
-    grip_coordinate = grip_coordinate,
-    limited_pull = limited_pull,
-    stretch_ratio = stretch_ratio
 }

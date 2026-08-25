@@ -183,8 +183,8 @@ end
 -- The road still to come, from wherever the duel stands to as far ahead as the
 -- route has been walked out.
 function draw_route_ahead(state: city_map.State, graphics: Graphics, alpha: f64): unit
-    local last: i32 = city_map.stop_count(state) - 1
-    local standing: Point = city_map.position_at(state, state.travel)
+    local last: i32 = state:stop_count() - 1
+    local standing: Point = state:position_at(state.travel)
     local next_stop: i32 = math.floor(state.travel)::i32 + 1
     if next_stop > last then return end
     graphics:set_color(ink.fade(ROUTE_AHEAD, alpha * 0.85))
@@ -201,12 +201,12 @@ end
 -- The road already walked, ending exactly where the duel stands rather than at
 -- the last stop it passed, so the line and the marker are never apart.
 function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64): unit
-    local standing: Point = city_map.position_at(state, state.travel)
+    local standing: Point = state:position_at(state.travel)
     local passed: i32 = math.floor(state.travel)::i32
     -- Standing on the last stop the route has been walked out to leaves nothing
     -- past it to join up with.
-    if passed > city_map.stop_count(state) - 1 then
-        passed = city_map.stop_count(state) - 1
+    if passed > state:stop_count() - 1 then
+        passed = state:stop_count() - 1
     end
     if passed < 0 then return end
     graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.30))
@@ -319,7 +319,7 @@ function draw_stops(
     furniture: f64,
     landmark: i32
 ): unit
-    local last: i32 = city_map.stop_count(state) - 1
+    local last: i32 = state:stop_count() - 1
     local entered: i32 = entered_stop(state)
     for index = 0::i32, last do
         local stop: city_map.Stop = state.stops[index]
@@ -346,7 +346,7 @@ end
 -- Where the player is: a breathing mote on the route, between two stops while
 -- they are walking and on one while they are working.
 function draw_party(state: city_map.State, graphics: Graphics, alpha: f64): unit
-    local standing: Point = city_map.position_at(state, state.travel)
+    local standing: Point = state:position_at(state.travel)
     local pulse: f64 = 6.5 + math.sin(state.pan_clock * 3.1) * 1.6
     graphics:set_blend_mode("add")
     graphics:set_color(ink.fade("#fde68a", alpha * 0.24))

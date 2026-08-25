@@ -45,7 +45,7 @@ end
 -- table_card hold: it does not count toward the Opponent's two wins, so it must
 -- not wear the lost colour or the run looks like it should have ended early.
 function orb(state: game.View, round: i32): entity.Node
-    return entity.sized(
+    return entity.Node.sized(
         ORB_SIZE, ORB_SIZE,
         function(surface: entity.Surface, bounds: box.Rect): unit
             local x: f64 = bounds.x + bounds.width * 0.5
@@ -79,7 +79,7 @@ function node(state: game.View): entity.Node
     for round = 0::i32, game.max_rounds - 1 do
         table.insert(orbs, orb(state, round))
     end
-    return entity.flow(
+    return entity.Node.flow(
         orbs, entity.row(ORB_GAP, "center", "center"))
 end
 

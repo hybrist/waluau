@@ -134,7 +134,7 @@ function draw_slot(
 end
 
 function node(state: game.View): entity.Node
-    return entity.sized(
+    return entity.Node.sized(
         WIDTH, HEIGHT,
         function(surface: entity.Surface, bounds: box.Rect): unit
             draw_connector(surface, bounds)

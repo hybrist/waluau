@@ -60,7 +60,7 @@ const SNAPSHOT_SCHEMA: string = "duel-run-v4"
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
 -- the starting spell the run sets out with, and the whole of its opening
 -- loadout.
-function new(spell: spells.SpellKind, rush: bool): State
+function State.new(spell: spells.SpellKind, rush: bool): State
     return {
         duel = 1,
         gold = game.starting_gold,
@@ -196,18 +196,18 @@ export type View = {
     outcome: Outcome
 }
 
-function view(state: State, outcome: Outcome): View
+function State:view(outcome: Outcome): View
     return {
-        duel = state.duel,
-        cleared = state.cleared,
-        boss = state:boss(),
-        next_is_boss = state:next_is_boss(),
-        carried_gold = state.gold,
-        hearts = state.hearts,
+        duel = self.duel,
+        cleared = self.cleared,
+        boss = self:boss(),
+        next_is_boss = self:next_is_boss(),
+        carried_gold = self.gold,
+        hearts = self.hearts,
         max_hearts = MAX_HEARTS,
-        target = state:target(),
-        ante_ahead = target_at(state.duel + 1, state.rush),
-        run_length = run_length(state.rush),
+        target = self:target(),
+        ante_ahead = target_at(self.duel + 1, self.rush),
+        run_length = run_length(self.rush),
         outcome = outcome,
     }
 end
@@ -236,7 +236,7 @@ function State:settle(cleared: bool, carried_gold: i32): Outcome
 end
 
 function State:restart(spell: spells.SpellKind, rush: bool): unit
-    local fresh: State = new(spell, rush)
+    local fresh: State = State.new(spell, rush)
     self.duel = fresh.duel
     self.gold = fresh.gold
     self.hearts = fresh.hearts
@@ -327,12 +327,12 @@ end
 -- wrong.
 type Snapshot = { schema: string, state: State }
 
-function snapshot(state: State): string
-    local payload: Snapshot = { schema = SNAPSHOT_SCHEMA, state = state }
+function State:snapshot(): string
+    local payload: Snapshot = { schema = SNAPSHOT_SCHEMA, state = self }
     return json.pack(payload)
 end
 
-function restore(snapshot_value: string): State?
+function State.restore(snapshot_value: string): State?
     local decoded = json.unpack<Snapshot>(snapshot_value)
     if decoded == nil then return nil end
     if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
@@ -354,16 +354,12 @@ function restore(snapshot_value: string): State?
 end
 
 return {
-    new = new,
-    view = view,
     boss_at = boss_at,
     target_at = target_at,
     run_length = run_length,
     outcome_of = outcome_of,
     outcome_is_loss = outcome_is_loss,
     outcome_walks_on = outcome_walks_on,
-    snapshot = snapshot,
-    restore = restore,
     boss_every = BOSS_EVERY,
     max_spells = MAX_SPELLS,
     min_spell_cost = MIN_SPELL_COST,
