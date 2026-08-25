@@ -67,6 +67,21 @@ describe("enums", function(): unit
         expect(add(2, 2)):not:toBe(5)
         expect(greet("walu")):not:toContain("goodbye")
     end)
+
+    it("checks nullable values for nil-ness and by value", function(): unit
+        local trump: Suit? = Suit.hearts
+        expect(trump):not:toBeNil()
+        expect(trump):toBe(Suit.hearts)
+        expect(trump):not:toBe(Suit.spades)
+
+        local folded: Suit? = nil
+        expect(folded):toBeNil()
+
+        local wager: f64? = 12.5
+        expect(wager):toBe(12.5)
+        local name: string? = nil
+        expect(name):toBeNil()
+    end)
 end)
 
 describe("booleans", function(): unit

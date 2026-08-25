@@ -234,6 +234,27 @@ Enum values cross the host boundary as their i32 ordinals: matchers compare
 ordinals (failure messages show the numbers), and because declared host
 functions cannot be generic, `expect` accepts any enum — comparing values
 of two different enums type-checks and compares raw ordinals.
+
+Nullable values (`f64?`, `i32?` and the other numeric widths, `string?`,
+`bool?`, and nullable enums) get nullable expectations that add nil checks
+next to the value matchers: `toBeNil`, `notToBeNil`, and `toBe`/`notToBe`
+against the non-nullable inner value (a nil actual simply fails `toBe`).
+Nullable numerics do not implicitly widen (an `i32?` never reads as an
+`f64?` — the runtime boxes differ), so each width has its own overload;
+a non-nullable value always prefers its same-shape expectation:
+
+```lua
+enum Suit { clubs, diamonds, hearts, spades }
+
+it("checks nullable values", function(): unit
+    local trump: Suit? = Suit.hearts
+    expect(trump):not:toBeNil()
+    expect(trump):toBe(Suit.hearts)
+    local folded: Suit? = nil
+    expect(folded):toBeNil()
+end)
+```
+
 Failed Waluau `assert(cond, msg)` calls surface as readable vitest failures
 with correct file/line info.
 

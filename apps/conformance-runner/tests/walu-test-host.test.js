@@ -202,6 +202,87 @@ end)
     for (const test of recorder.tests) test.body();
   });
 
+  it('covers nullable matchers and nil checks', async () => {
+    const recorder = createRecordingApi();
+    await register(
+      `
+require("waluau:vitest")
+
+enum Direction { north, east }
+
+it("nullable enums", function(): unit
+    local maybe: Direction? = Direction.north
+    expect(maybe):not:toBeNil()
+    expect(maybe):notToBeNil()
+    expect(maybe):toBe(Direction.north)
+    expect(maybe):not:toBe(Direction.east)
+    expect(maybe):notToBe(Direction.east)
+
+    local absent: Direction? = nil
+    expect(absent):toBeNil()
+    expect(absent):not:notToBeNil()
+end)
+it("nullable numbers, strings, and bools", function(): unit
+    local maybe_number: f64? = 4.5
+    expect(maybe_number):toBe(4.5)
+    expect(maybe_number):not:toBeNil()
+    local maybe_int: i32? = 7
+    expect(maybe_int):toBe(7)
+    local absent_int: i32? = nil
+    expect(absent_int):toBeNil()
+    local maybe_big: i64? = 9
+    expect(maybe_big):toBe(9)
+
+    local maybe_text: string? = "walu"
+    expect(maybe_text):toBe("walu")
+    expect(maybe_text):notToBe("lua")
+    local absent_text: string? = nil
+    expect(absent_text):toBeNil()
+
+    local maybe_flag: bool? = true
+    expect(maybe_flag):toBe(true)
+    expect(maybe_flag):not:toBeNil()
+    local absent_flag: bool? = nil
+    expect(absent_flag):toBeNil()
+end)
+`,
+      recorder,
+    );
+
+    expect(recorder.tests).toHaveLength(2);
+    for (const test of recorder.tests) test.body();
+  });
+
+  it('propagates nullable matcher failures', async () => {
+    const recorder = createRecordingApi();
+    await register(
+      `
+require("waluau:vitest")
+
+enum Direction { north, east }
+
+it("fails on nil actual", function(): unit
+    local absent: Direction? = nil
+    expect(absent):toBe(Direction.north)
+end)
+it("fails on unexpected nil", function(): unit
+    local absent: string? = nil
+    expect(absent):notToBeNil()
+end)
+it("fails on unexpected value", function(): unit
+    local maybe: f64? = 4.5
+    expect(maybe):toBeNil()
+end)
+`,
+      recorder,
+    );
+
+    // A nil actual simply fails the value matcher, talking about null.
+    expect(() => recorder.tests[0].body()).toThrowError(/expected null to be \+?0/);
+    expect(() => recorder.tests[1].body()).toThrowError(/not to be null/);
+    expect(() => recorder.tests[2].body()).toThrowError(/expected 4\.5 to be null/);
+  });
+
   it('propagates enum and negated matcher failures', async () => {
     const recorder = createRecordingApi();
     await register(

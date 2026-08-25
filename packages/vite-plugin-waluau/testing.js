@@ -70,6 +70,14 @@ export function createWaluTestHost(api = vitest) {
   const number = (wrapper, flip) => withPolarity(api.expect(wrapper.raw), wrapper, flip);
   const bool = (wrapper, flip) => withPolarity(api.expect(wrapper.raw !== 0), wrapper, flip);
   const value = (wrapper, flip) => withPolarity(api.expect(wrapper.raw), wrapper, flip);
+  // Nullable values arrive as null or the plain payload (the runtime unboxes
+  // nullable-primitive box refs before the import runs). i64?/u64? payloads
+  // unbox to BigInt; map them to numbers so `toBe` compares against the f64
+  // expected value. Nullable bools already arrive as true/false.
+  const nilable = (wrapper, flip) => {
+    const raw = wrapper.raw === undefined ? null : wrapper.raw;
+    return withPolarity(api.expect(typeof raw === 'bigint' ? Number(raw) : raw), wrapper, flip);
+  };
 
   const hostImports = {
     describe: (name, body) => api.describe(String(name), asBody(body)),
@@ -84,6 +92,18 @@ export function createWaluTestHost(api = vitest) {
     after_all: (body) => api.afterAll(asBody(body)),
 
     expect: wrapValue,
+    // `expect` overloads whose parameter is a nullable primitive import
+    // under signature-derived host names (one wasm import name per
+    // signature); the runtime unboxes their nullable box-ref argument to a
+    // plain value or null before these run, keyed off that unique name.
+    'expect#f64?': wrapValue,
+    'expect#f32?': wrapValue,
+    'expect#i32?': wrapValue,
+    'expect#u32?': wrapValue,
+    'expect#i64?': wrapValue,
+    'expect#u64?': wrapValue,
+    'expect#bool?': wrapValue,
+    'expect#enum?': wrapValue,
 
     'NumberExpectation.get/not': negate,
     'NumberExpectation.toBe': (w, expected) => number(w).toBe(expected),
@@ -119,6 +139,30 @@ export function createWaluTestHost(api = vitest) {
     'EnumExpectation.get/not': negate,
     'EnumExpectation.toBe': (w, expected) => value(w).toBe(expected),
     'EnumExpectation.notToBe': (w, expected) => value(w, true).toBe(expected),
+
+    'NullableNumberExpectation.get/not': negate,
+    'NullableNumberExpectation.toBe': (w, expected) => nilable(w).toBe(expected),
+    'NullableNumberExpectation.notToBe': (w, expected) => nilable(w, true).toBe(expected),
+    'NullableNumberExpectation.toBeNil': (w) => nilable(w).toBeNull(),
+    'NullableNumberExpectation.notToBeNil': (w) => nilable(w, true).toBeNull(),
+
+    'NullableStringExpectation.get/not': negate,
+    'NullableStringExpectation.toBe': (w, expected) => nilable(w).toBe(expected),
+    'NullableStringExpectation.notToBe': (w, expected) => nilable(w, true).toBe(expected),
+    'NullableStringExpectation.toBeNil': (w) => nilable(w).toBeNull(),
+    'NullableStringExpectation.notToBeNil': (w) => nilable(w, true).toBeNull(),
+
+    'NullableBoolExpectation.get/not': negate,
+    'NullableBoolExpectation.toBe': (w, expected) => nilable(w).toBe(expected !== 0),
+    'NullableBoolExpectation.toBeNil': (w) => nilable(w).toBeNull(),
+    'NullableBoolExpectation.notToBeNil': (w) => nilable(w, true).toBeNull(),
+
+    // Nullable enum payloads are i32 ordinals, like EnumExpectation.
+    'NullableEnumExpectation.get/not': negate,
+    'NullableEnumExpectation.toBe': (w, expected) => nilable(w).toBe(expected),
+    'NullableEnumExpectation.notToBe': (w, expected) => nilable(w, true).toBe(expected),
+    'NullableEnumExpectation.toBeNil': (w) => nilable(w).toBeNull(),
+    'NullableEnumExpectation.notToBeNil': (w) => nilable(w, true).toBeNull(),
   };
 
   return {
