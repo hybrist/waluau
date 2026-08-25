@@ -57,10 +57,19 @@ export function createWaluTestHost(api = vitest) {
 
   // `expect` wraps the raw boundary value; matcher imports decide how to
   // interpret it (booleans arrive as 0/1 i32s, so only the BoolExpectation
-  // matchers know to map them back to true/false).
-  const wrapValue = (raw) => ({ raw });
-  const number = (wrapper) => api.expect(wrapper.raw);
-  const bool = (wrapper) => api.expect(wrapper.raw !== 0);
+  // matchers know to map them back to true/false; enum values arrive as
+  // their i32 ordinals). The `not` property getters toggle `negated`
+  // instead of chaining vitest's `.not` immediately, so each matcher
+  // resolves the final polarity in one step — `flip` folds in matchers
+  // that are themselves negated (notToBe), keeping `:not:notToBe` a
+  // double negation.
+  const wrapValue = (raw) => ({ raw, negated: false });
+  const negate = (wrapper) => ({ raw: wrapper.raw, negated: !wrapper.negated });
+  const withPolarity = (expectation, wrapper, flip) =>
+    Boolean(wrapper.negated) !== Boolean(flip) ? expectation.not : expectation;
+  const number = (wrapper, flip) => withPolarity(api.expect(wrapper.raw), wrapper, flip);
+  const bool = (wrapper, flip) => withPolarity(api.expect(wrapper.raw !== 0), wrapper, flip);
+  const value = (wrapper, flip) => withPolarity(api.expect(wrapper.raw), wrapper, flip);
 
   const hostImports = {
     describe: (name, body) => api.describe(String(name), asBody(body)),
@@ -76,8 +85,9 @@ export function createWaluTestHost(api = vitest) {
 
     expect: wrapValue,
 
+    'NumberExpectation.get/not': negate,
     'NumberExpectation.toBe': (w, expected) => number(w).toBe(expected),
-    'NumberExpectation.notToBe': (w, expected) => number(w).not.toBe(expected),
+    'NumberExpectation.notToBe': (w, expected) => number(w, true).toBe(expected),
     'NumberExpectation.toBeCloseTo': (w, expected, digits) =>
       digits === undefined
         ? number(w).toBeCloseTo(expected)
@@ -89,18 +99,26 @@ export function createWaluTestHost(api = vitest) {
     'NumberExpectation.toBeLessThanOrEqual': (w, expected) =>
       number(w).toBeLessThanOrEqual(expected),
 
-    'StringExpectation.toBe': (w, expected) => api.expect(w.raw).toBe(expected),
-    'StringExpectation.notToBe': (w, expected) => api.expect(w.raw).not.toBe(expected),
-    'StringExpectation.toContain': (w, expected) => api.expect(w.raw).toContain(expected),
-    'StringExpectation.notToContain': (w, expected) => api.expect(w.raw).not.toContain(expected),
-    'StringExpectation.toHaveLength': (w, expected) => api.expect(w.raw).toHaveLength(expected),
+    'StringExpectation.get/not': negate,
+    'StringExpectation.toBe': (w, expected) => value(w).toBe(expected),
+    'StringExpectation.notToBe': (w, expected) => value(w, true).toBe(expected),
+    'StringExpectation.toContain': (w, expected) => value(w).toContain(expected),
+    'StringExpectation.notToContain': (w, expected) => value(w, true).toContain(expected),
+    'StringExpectation.toHaveLength': (w, expected) => value(w).toHaveLength(expected),
 
+    'BoolExpectation.get/not': negate,
     'BoolExpectation.toBe': (w, expected) => bool(w).toBe(expected !== 0),
     'BoolExpectation.toBeTruthy': (w) => bool(w).toBeTruthy(),
     'BoolExpectation.toBeFalsy': (w) => bool(w).toBeFalsy(),
 
-    'ExternExpectation.toBe': (w, expected) => api.expect(w.raw).toBe(expected),
-    'ExternExpectation.notToBe': (w, expected) => api.expect(w.raw).not.toBe(expected),
+    'ExternExpectation.get/not': negate,
+    'ExternExpectation.toBe': (w, expected) => value(w).toBe(expected),
+    'ExternExpectation.notToBe': (w, expected) => value(w, true).toBe(expected),
+
+    // Enum values cross the boundary as their i32 ordinals.
+    'EnumExpectation.get/not': negate,
+    'EnumExpectation.toBe': (w, expected) => value(w).toBe(expected),
+    'EnumExpectation.notToBe': (w, expected) => value(w, true).toBe(expected),
   };
 
   return {

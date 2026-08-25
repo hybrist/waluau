@@ -58,6 +58,68 @@ fn nominal_enums_reject_cross_enum_assignment() {
 }
 
 #[test]
+fn any_enum_declared_param_accepts_every_nominal_enum() {
+    let source = r#"
+        enum Direction { north, south }
+        enum Facing { north, south }
+
+        declare function ordinal_of(value: enum): i32
+
+        local first: i32 = ordinal_of(Direction.south)
+        local facing: Facing = Facing.north
+        local second: i32 = ordinal_of(facing)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn any_enum_declared_param_rejects_plain_numbers() {
+    let source = r#"
+        declare function ordinal_of(value: enum): i32
+
+        local n: i32 = 1
+        local bad: i32 = ordinal_of(n)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "cannot implicitly convert i32 to enum");
+}
+
+#[test]
+fn any_enum_value_never_flows_back_into_a_specific_enum() {
+    let source = r#"
+        enum Direction { north, south }
+
+        declare function some_enum(): enum
+
+        local direction: Direction = some_enum()
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert enum to Direction"
+    );
+}
+
+#[test]
+fn not_property_chain_resolves_through_declared_extern_property() {
+    let source = r#"
+        type Expectation = extern
+
+        declare function expect_value(value: f64): Expectation
+        declare property Expectation:not: Expectation
+        declare function Expectation:toBe(expected: f64): unit
+
+        expect_value(4):not:toBe(5)
+        expect_value(4):not:not:toBe(4)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn enum_match_rejects_a_different_nominal_scrutinee() {
     let source = r#"
         enum Direction { north, south }

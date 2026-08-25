@@ -559,7 +559,7 @@ impl Parser {
         }
         let (receiver, receiver_span) = self.expect_identifier_spanned()?;
         self.expect_simple(TokenKind::Colon, "expected ':' after property receiver")?;
-        let (property, property_span) = self.expect_identifier_spanned()?;
+        let (property, property_span) = self.expect_property_name_spanned()?;
         self.expect_simple(TokenKind::Colon, "expected ':' before property type")?;
         let property_type = self.parse_type()?;
         let index = self.record_definition(

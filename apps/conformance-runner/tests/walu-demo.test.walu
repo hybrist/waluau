@@ -53,6 +53,22 @@ describe("strings", function(): unit
     end)
 end)
 
+enum Suit { clubs, diamonds, hearts, spades }
+
+describe("enums", function(): unit
+    it("compares enum values by ordinal", function(): unit
+        local trump = Suit.hearts
+        expect(trump):toBe(Suit.hearts)
+        expect(trump):notToBe(Suit.spades)
+    end)
+
+    it("negates matchers with :not", function(): unit
+        expect(Suit.clubs):not:toBe(Suit.diamonds)
+        expect(add(2, 2)):not:toBe(5)
+        expect(greet("walu")):not:toContain("goodbye")
+    end)
+end)
+
 describe("booleans", function(): unit
     it("checks truthiness", function(): unit
         expect(add(1, 1) == 2):toBeTruthy()

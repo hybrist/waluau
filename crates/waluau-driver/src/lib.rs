@@ -1544,6 +1544,52 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_supports_enum_expectations_and_not_modifier() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("enums.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                require("waluau:vitest")
+
+                enum Direction { north, east, south, west }
+
+                describe("enums", function(): unit
+                    it("compares enum values", function(): unit
+                        local actual = Direction.east
+                        expect(actual):toBe(Direction.east)
+                        expect(actual):notToBe(Direction.west)
+                        expect(actual):not:toBe(Direction.west)
+                        expect(add(1, 1)):not:toBe(3)
+                        expect("walu"):not:toContain("moon")
+                        expect(1 == 2):not:toBeTruthy()
+                    end)
+                end)
+
+                function add(a: i32, b: i32): i32
+                    return a + b
+                end
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm = super::compile_file(&input_path).expect("enum expectations should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "EnumExpectation.toBe""#),
+            "enum matcher should import under its extern type name:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "EnumExpectation.get/not""#),
+            "the :not modifier should import as the extern property getter:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "NumberExpectation.get/not""#),
+            "the :not modifier should resolve per expectation type:\n{wat}"
+        );
+    }
+
+    #[test]
     fn compile_file_resolves_vitest_namespace_binding() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("suite.test.walu");

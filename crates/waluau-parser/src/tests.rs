@@ -1221,6 +1221,50 @@ fn parses_method_call_syntax() {
 }
 
 #[test]
+fn parses_not_modifier_chain_as_field_access() {
+    let source = r#"
+        function main(obj: { value: i32 }): unit
+            obj:check():not:verify(1)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Expr(waluau_ast::Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        }) if name == "verify"
+            && args.len() == 1
+            && matches!(
+                receiver.as_ref(),
+                waluau_ast::Expr::Field { base, name, .. }
+                    if name == "not"
+                        && matches!(base.as_ref(), waluau_ast::Expr::MethodCall { name, .. } if name == "check")
+            )
+    ));
+}
+
+#[test]
+fn parses_declared_not_property() {
+    let source = r#"
+        type Expectation = extern
+        declare property Expectation:not: Expectation
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let names = program
+        .declared_imports
+        .iter()
+        .map(|declared| declared.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"Expectation.get/not"), "names: {names:?}");
+    assert!(names.contains(&"Expectation.set/not"), "names: {names:?}");
+}
+
+#[test]
 fn parses_generic_method_call_syntax() {
     let source = r#"
         function main(obj: { value: i32 }): i32
