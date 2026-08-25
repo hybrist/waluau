@@ -409,6 +409,62 @@ test('reuses one persistent compiler process across Vite rebuilds', async () => 
   }
 });
 
+test('reports persistent compiler failures at the authored Waluau location', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  let plugin;
+  try {
+    const entry = join(root, 'shop.test.walu');
+    const authored = join(root, 'shop.walu');
+    const serverScript = join(root, 'compiler-server.cjs');
+    await writeFile(serverScript, `
+      const readline = require('node:readline');
+      const lines = readline.createInterface({ input: process.stdin });
+      lines.on('line', (line) => {
+        const request = JSON.parse(line);
+        const diagnostic = {
+          message: "unknown record field 'kind' on type 'Upgrade'",
+          rendered: ${JSON.stringify('shop.walu:432:37: unknown record field')},
+          file: ${JSON.stringify(authored)},
+          line: 432,
+          column: 37,
+          span: { start: 16229, end: 16241 },
+          severity: 'error',
+        };
+        process.stdout.write(JSON.stringify({
+          id: request.id,
+          ok: false,
+          error: diagnostic.rendered,
+          diagnostics: [diagnostic],
+          parsesPerformed: 1,
+          cachedParseCount: 0,
+        }) + '\\n');
+      });
+    `);
+    plugin = waluau({
+      compiler: {
+        command: process.execPath,
+        args: [serverScript],
+        persistent: true,
+      },
+    });
+    plugin.configResolved({ root });
+
+    await assert.rejects(
+      plugin.transform.call({ addWatchFile() {} }, '', entry),
+      (error) => {
+        assert.equal(error.plugin, 'waluau-game');
+        assert.equal(error.id, authored);
+        assert.deepEqual(error.loc, { file: authored, line: 432, column: 36 });
+        assert.equal(error.message, "unknown record field 'kind' on type 'Upgrade'");
+        return true;
+      },
+    );
+  } finally {
+    await plugin?.closeBundle();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('loads shader sources in production and accepts dev updates without rebuilding Wasm', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {

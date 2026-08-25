@@ -8,10 +8,12 @@
 -- every duel is fought with — and nothing about the duel inside a duel.
 -- Whether the live duel was won or lost is the rules module's answer, so
 -- nothing here duplicates it. What the intermission between duels sells is the
--- shop's answer; this module only applies the purchase to the run.
+-- shop's answer; item effects use this module's mutable run state to apply the
+-- purchase.
 
 local game = require("./game")
 local snapshot_data = require("./snapshot")
+local spells = require("./spells/spell")
 
 -- `duel` is 1-based and counts every attempt in the sequence, cleared or
 -- live. `gold` is what the live duel was dealt, not what it has left: the
@@ -29,7 +31,7 @@ export type State = {
     hearts: i32,
     cleared: i32,
     spells: {game.Spell},
-    start_spell: i32,
+    start_spell: spells.SpellKind,
     rush: bool
 }
 
@@ -60,13 +62,13 @@ const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
 -- the starting spell the run sets out with, and the whole of its opening
 -- loadout.
-function new(spell: i32, rush: bool): State
+function new(spell: spells.SpellKind, rush: bool): State
     return {
         duel = 1,
         gold = game.starting_gold,
         hearts = MAX_HEARTS,
         cleared = 0,
-        spells = { game.new_spell(spell) },
+        spells = { spells.Spell.new(spell) },
         start_spell = spell,
         rush = rush,
     }
@@ -235,7 +237,7 @@ function State:settle(cleared: bool, carried_gold: i32): Outcome
     return outcome
 end
 
-function State:restart(spell: i32, rush: bool): unit
+function State:restart(spell: spells.SpellKind, rush: bool): unit
     local fresh: State = new(spell, rush)
     self.duel = fresh.duel
     self.gold = fresh.gold
@@ -256,7 +258,7 @@ end
 
 -- Whether the loadout already holds that kind of spell, and therefore whether
 -- an intermission has anything new to offer in it.
-function State:carries(kind: i32): bool
+function State:carries(kind: spells.SpellKind): bool
     for spell in self.spells do
         if spell.kind == kind then return true end
     end
@@ -270,7 +272,7 @@ end
 -- Which key that kind of spell answers to, or -1 when the loadout does not
 -- carry it. An offer made about a spell names the spell rather than the key, so
 -- that a trade moving spells between keys cannot silently redirect it.
-function State:slot_of(kind: i32): i32
+function State:slot_of(kind: spells.SpellKind): i32
     for slot, spell in self.spells do
         if spell.kind == kind then return slot end
     end
@@ -301,15 +303,15 @@ end
 -- has room, which is how the second spell gets its own key; naming an occupied
 -- slot trades that spell away for the new one, which is the only way to take a
 -- third.
-function State:learn(kind: i32, slot: i32): bool
-    if kind <= 0 or kind > game.spell_kind_count or self:carries(kind) then
+function State:learn(kind: spells.SpellKind, slot: i32): bool
+    if self:carries(kind) then
         return false
     end
     if slot < 0 or slot > #self.spells or slot >= MAX_SPELLS then return false end
     if slot == #self.spells then
-        table.insert(self.spells, game.new_spell(kind))
+        table.insert(self.spells, spells.Spell.new(kind))
     else
-        self.spells[slot] = game.new_spell(kind)
+        self.spells[slot] = spells.Spell.new(kind)
     end
     return true
 end
@@ -329,10 +331,10 @@ function snapshot(state: State): string
     snapshot_data.append_i32(parts, state.hearts)
     snapshot_data.append_i32(parts, #state.spells)
     for spell in state.spells do
-        snapshot_data.append_i32(parts, spell.kind)
+        snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
         snapshot_data.append_i32(parts, spell.cost)
     end
-    snapshot_data.append_i32(parts, state.start_spell)
+    snapshot_data.append_i32(parts, state.start_spell:tonumber()::i32)
     snapshot_data.append_bool(parts, state.rush)
     return table.concat(parts, ",")
 end
@@ -345,23 +347,24 @@ function restore(snapshot_value: string): State?
     local gold: i32 = reader:next_i32()
     local cleared: i32 = reader:next_i32()
     local hearts: i32 = reader:next_i32()
-    local spells: {game.Spell} = {}
+    local loadout: {game.Spell} = {}
     local spell_count: i32 = reader:next_length()
     for _ = 1, spell_count do
-        local kind: game.SpellKind? = game.spell_kind_from(reader:next_i32())
+        local kind: spells.SpellKind? = spells.SpellKind.from(reader:next_i32())
         if kind == nil then return nil end
-        table.insert(spells, {
-            kind = kind::game.SpellKind, cost = reader:next_i32(),
+        table.insert(loadout, {
+            kind = kind::spells.SpellKind, cost = reader:next_i32(),
         })
     end
-    local start_spell: i32 = reader:next_i32()
+    local start_spell = spells.SpellKind.from(reader:next_i32())
+    if start_spell == nil then return nil end
     local rush: bool = reader:next_bool()
     local restored: State = {
         duel = duel,
         gold = gold,
         hearts = hearts,
         cleared = cleared,
-        spells = spells,
+        spells = loadout,
         start_spell = start_spell,
         rush = rush,
     }
@@ -374,7 +377,7 @@ function restore(snapshot_value: string): State?
     if hearts < 0 or hearts > MAX_HEARTS then return nil end
     -- A run always carries at least the spell it set out with, and never more
     -- than the two the player can hold ready.
-    if #spells < 1 or #spells > MAX_SPELLS then return nil end
+    if #loadout < 1 or #loadout > MAX_SPELLS then return nil end
     return restored
 end
 

@@ -229,6 +229,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `run.walu` | DOM-free run state: the vault sequence, its boss cadence and ante table, the finish line and endless tail, the spell loadout, and the mana and hearts carried between vaults. |
 | `shop.walu` | DOM-free intermission between vaults: the two offers a visit stocks, what they charge, which are spent, and which the cursor holds. |
+| `shop_item.walu` | DOM-free bought-item seam: one `use` method receiving the mutable run and a selected destination, with concrete spell-learning and sharpening effects. |
 | `shop_render.walu` | Where the fence's offer list sits on the city map, at the map's own opacity, and the pointer's row lookup for it. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
@@ -255,6 +256,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence, ante table and endless tail, persistent hearts, mana carryover, the carried loadout, and run outcomes. |
 | `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how a run ends, played from a shuffled deck by a reference policy — the numbers the ante table is priced against. |
 | `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
+| `shop_item.test.walu` | Deterministic Vitest assertions that independent item effects can mutate gold, health, and the spell loadout through the bought-item seam. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
 | `entity.test.walu` | Headless assertions for the boundary: flow measurement, solved rectangles, bands, and the type-sized entities. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |

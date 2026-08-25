@@ -3,6 +3,7 @@
 require("waluau:vitest")
 
 local game = require("./game")
+local spells = require("./spells/spell")
 local entity = require("./entity")
 local ability_diamond = require("./entities/ability_diamond")
 
@@ -18,11 +19,11 @@ describe("ability diamond", function(): unit
 
     it("keeps all four sockets in the HUD with one carried spell", function(): unit
         local state: game.State = game.new(
-            false, { game.new_spell(game.spell_firebolt) }, game.starting_gold)
+            false, { spells.Spell.new(spells.SpellKind.Firebolt) }, game.starting_gold)
         local size = ability_diamond.node(game.view(state)).measure(entity.headless())
 
         expect(size.preferred_width):toBe(ability_diamond.width)
         expect(size.preferred_height):toBe(ability_diamond.height)
-        expect(ability_diamond.short_name(game.spell_firebolt)):toBe("FIRE")
+        expect(ability_diamond.short_name(spells.SpellKind.Firebolt)):toBe("FIRE")
     end)
 end)

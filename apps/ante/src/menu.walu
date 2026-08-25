@@ -22,6 +22,7 @@ local render = require("./render")
 local ink = require("./ink")
 local effect_shaders = require("./effect_shaders")
 local spell_launch = require("./spell_launch")
+local spells = require("./spells/spell")
 local city_map = require("./city_map")
 local layout = require("./layout")
 
@@ -96,8 +97,10 @@ function update(state: State, city: city_map.State, dt: f64): unit
 end
 
 -- The starting spell the current selection names, as the rules' spell kind.
-function selected_spell(state: State): i32
-    return state.spell_cursor + 1
+function selected_spell(state: State): spells.SpellKind
+    local kind: spells.SpellKind? = spells.SpellKind.from(state.spell_cursor + 1)
+    assert(kind ~= nil)
+    return kind::spells.SpellKind
 end
 
 function item_top(viewport: layout.State, index: i32): f64
@@ -175,12 +178,14 @@ function draw_spell_stage(state: State, viewport: layout.State, graphics: engine
         graphics, mode .. "   CARRIED ALL RUN, EVERY USE COSTS 5 GOLD",
         viewport.center_x, heading_y + 56.0, 11, "#a1a1aa")
     for spell = 0::i32, SPELL_COUNT - 1 do
-        local kind: i32 = spell + 1
+        local kind: spells.SpellKind? = spells.SpellKind.from(spell + 1)
+        assert(kind ~= nil)
+        local active: spells.SpellKind = kind::spells.SpellKind
         -- Each idle row wears its spell's colour, so the list doubles as the
         -- legend for the effect the pick will launch in the duel.
         draw_item(
             state, viewport, graphics, spell,
-            spell_launch.name(kind), spell_launch.color(kind))
+            spell_launch.name(active), spell_launch.color(active))
     end
     ink.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",

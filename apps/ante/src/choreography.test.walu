@@ -1,7 +1,7 @@
 require("waluau:vitest")
 
 local choreography = require("./choreography")
-local game = require("./game")
+local spells = require("./spells/spell")
 
 describe("Ante Magic presentation choreography", function()
     it("resets duel presentation through one initializer and retains scratch geometry", function()
@@ -10,7 +10,7 @@ describe("Ante Magic presentation choreography", function()
 
         state.fan_parts = { 0.2, 0.4 }
         state.sheet.xs[0] = 321.0
-        choreography.apply_power(state, game.spell_firebolt, 1)
+        choreography.apply_power(state, spells.SpellKind.Firebolt, 1)
         choreography.finish_reveal(state)
 
         expect(choreography.snapshot(state) == baseline):toBe(false)
@@ -48,7 +48,7 @@ describe("Ante Magic presentation choreography", function()
     it("clears a turn or river condition before drawing the next flop", function()
         local state: choreography.State = choreography.new()
         local baseline: string = choreography.snapshot(state)
-        choreography.apply_power(state, game.spell_raise_card, 4)
+        choreography.apply_power(state, spells.SpellKind.RaiseCard, 4)
 
         expect(choreography.snapshot(state) == baseline):toBe(false)
         expect(choreography.update_power(state, 3, 0.016)):toBe(-1)

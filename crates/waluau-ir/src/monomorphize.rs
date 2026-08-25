@@ -612,7 +612,11 @@ impl<'a> Monomorphizer<'a> {
                 .return_type
                 .as_ref()
                 .map(|ty| substitute_type(ty, subst)),
-            body: self.rewrite_stmts(&function.body, subst, active, &mut types)?,
+            body: self
+                .rewrite_stmts(&function.body, subst, active, &mut types)
+                .map_err(|error| {
+                    error.with_file_path_if_missing(function.file_path.clone())
+                })?,
             file_path: function.file_path.clone(),
             span: function.span,
         })
@@ -758,7 +762,12 @@ impl<'a> Monomorphizer<'a> {
                 let rewritten_value = self.rewrite_expr(value, subst, active, types)?;
                 let mut then_types = types.clone();
                 if let Some(symbol_id) = binding_symbol_id {
-                    then_types.insert(*symbol_id, substitute_type(target_ty, subst));
+                    let value_ty = self.infer_expr_type(value, subst, types)?;
+                    let binding_ty = value_ty
+                        .tagged_variant(target_name)
+                        .map(|variant| *variant.payload)
+                        .unwrap_or_else(|| substitute_type(target_ty, subst));
+                    then_types.insert(*symbol_id, binding_ty);
                 }
                 Stmt::IfCast {
                     target_name: target_name.clone(),
@@ -1439,7 +1448,11 @@ impl<'a> Monomorphizer<'a> {
                 .return_type
                 .as_ref()
                 .map(|ty| substitute_type(ty, subst)),
-            body: self.rewrite_stmts(&function.body, subst, active, &mut function_types)?,
+            body: self
+                .rewrite_stmts(&function.body, subst, active, &mut function_types)
+                .map_err(|error| {
+                    error.with_file_path_if_missing(function.file_path.clone())
+                })?,
             file_path: function.file_path.clone(),
             span: function.span,
         })
@@ -1500,7 +1513,11 @@ impl<'a> Monomorphizer<'a> {
                 .return_type
                 .as_ref()
                 .map(|ty| substitute_type(ty, &local_subst)),
-            body: self.rewrite_stmts(&function.body, &local_subst, active, &mut function_types)?,
+            body: self
+                .rewrite_stmts(&function.body, &local_subst, active, &mut function_types)
+                .map_err(|error| {
+                    error.with_file_path_if_missing(function.file_path.clone())
+                })?,
             file_path: function.file_path.clone(),
             span: function.span,
         })
@@ -1847,7 +1864,7 @@ impl<'a> Monomorphizer<'a> {
                 base,
                 name,
                 resolved_name,
-                ..
+                span,
             } => {
                 let base_ty = self.infer_expr_type(base, subst, types)?;
                 if let Some((params, return_type)) =
@@ -1863,15 +1880,24 @@ impl<'a> Monomorphizer<'a> {
                     }
                 }
                 base_ty.record_field(name).ok_or_else(|| {
-                    Diagnostic::new(format!(
+                    let diagnostic = Diagnostic::new(format!(
                         "unknown record field '{name}' on type '{base_ty}'"
-                    ))
+                    ));
+                    match span {
+                        Some(span) => diagnostic.with_span(*span),
+                        None => diagnostic,
+                    }
                 })
             }
-            Expr::Index { base, .. } => {
+            Expr::Index { base, span, .. } => {
                 let base_ty = self.infer_expr_type(base, subst, types)?;
                 base_ty.element_type().ok_or_else(|| {
-                    Diagnostic::new(format!("indexing non-array type '{base_ty}'"))
+                    let diagnostic =
+                        Diagnostic::new(format!("indexing non-array type '{base_ty}'"));
+                    match span {
+                        Some(span) => diagnostic.with_span(*span),
+                        None => diagnostic,
+                    }
                 })
             }
             Expr::Vararg(..) => Ok(Type::Variadic(Box::new(Type::Unknown))),

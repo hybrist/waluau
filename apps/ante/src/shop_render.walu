@@ -14,6 +14,7 @@ local ink = require("./ink")
 local spell_launch = require("./spell_launch")
 local run_module = require("./run")
 local shop = require("./shop")
+local spells = require("./spells/spell")
 local layout = require("./layout")
 
 -- The offers keep to a column down the left so the right of the screen stays
@@ -91,15 +92,21 @@ end
 -- What one line says on its left. A sale line asks the goods its slot holds
 -- rather than carrying a copy, so the copy and the sale cannot drift apart.
 function row_label(
-    state: shop.State, row: shop.Row, run: run_module.State, offered: i32
+    state: shop.State, row: shop.Row, run: run_module.State,
+    offered: spells.SpellKind?
 ): string
     if row.kind == "sale" then
         local slot: shop.Slot = state.slots[row.slot]
         return goods_label(slot.goods, row.sold, run)
     end
     if row.kind == "choice" then
-        return "TRADE " .. spell_launch.name(row.spell)
-            .. " FOR " .. spell_launch.name(offered)
+        local carried: spells.SpellKind? = row.spell
+        if carried == nil then return "" end
+        if offered == nil then return "" end
+        local old_kind: spells.SpellKind = carried::spells.SpellKind
+        local new_kind: spells.SpellKind = offered::spells.SpellKind
+        return "TRADE " .. spell_launch.name(old_kind)
+            .. " FOR " .. spell_launch.name(new_kind)
     end
     if row.kind == "cancel" then return "KEEP BOTH SPELLS" end
     local duel: string = "ENTER DUEL " .. tostring(run.duel)
@@ -112,7 +119,9 @@ end
 -- names a spell or not.
 function row_ink(row: shop.Row): string
     if not row.available then return "#52525b" end
-    if row.spell ~= 0 then return spell_launch.color(row.spell) end
+    if row.spell ~= nil then
+        return spell_launch.color(row.spell::spells.SpellKind)
+    end
     return "#d4d4d8"
 end
 
@@ -172,7 +181,7 @@ function draw(
         ink.fade("#09090b", alpha * 0.94), ink.fade("#a1a1aa", alpha))
     ink.text(graphics, "THE SHOP", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
     local subtitle: string = "GOLD SPENT HERE WILL NOT ENTER DUEL " .. tostring(run.duel)
-    local offered: i32 = shop.pending_spell(state)
+    local offered: spells.SpellKind? = shop.pending_spell(state)
     if choosing then
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end

@@ -1,6 +1,5 @@
 import { conformanceIncludePaths } from '../../../../tools/conformance/includes.js';
 import kanbanAppSource from '../../../../fixtures/kanban/app.walu?raw';
-import { POKER_TRICKS_EXAMPLE } from '../examples/poker-tricks.js';
 
 const fixtureModules = import.meta.glob('../../../../fixtures/*.walu', {
   eager: true,
@@ -38,11 +37,6 @@ const gameEngineModules = import.meta.glob('../../../../engine/*.walu', {
   import: 'default'
 });
 
-const pokerTricksFixtures = Object.fromEntries(
-  Object.entries(POKER_TRICKS_EXAMPLE.files)
-    .filter(([path]) => path.startsWith('/fixtures/poker-tricks/'))
-);
-
 const conformanceModules = import.meta.glob('../../../../conformance/*.walu', {
   eager: true,
   query: '?raw',
@@ -55,7 +49,7 @@ const conformanceIncludeModules = import.meta.glob('../../../../{builtins,extern
   import: 'default'
 });
 
-export { fixtureModules, moduleFixtures, snakeFixtures, gameEngineFixtures, pokerTricksFixtures, conformanceModules };
+export { fixtureModules, moduleFixtures, snakeFixtures, gameEngineFixtures, conformanceModules };
 
 export function filesForConformancePreset(filename, source) {
   const files = {
@@ -238,10 +232,7 @@ export const PARTICLES_PRESET = {
   entryFile: '/fixtures/particles/main.walu'
 };
 
-// Shared with the standalone /output/poker-tricks page.
-export const POKER_TRICKS_PRESET = POKER_TRICKS_EXAMPLE;
-
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, PARTICLES_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, PARTICLES_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 

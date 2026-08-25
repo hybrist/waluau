@@ -3,6 +3,7 @@
 -- fan motion, timing, and flip-sound cue placement needed to render them.
 
 local game = require("./game")
+local spells = require("./spells/spell")
 local render = require("./render")
 local card_burn = require("./card_burn")
 local entity = require("./entity")
@@ -12,11 +13,7 @@ local layout = require("./layout")
 local card_warp = require("./card_warp")
 
 type AnimKind = "none" | "deal" | "swap" | "firebolt-replace"
-type Power = { kind: game.SpellKind, clock: f64, target: i32 }
-
-function power_or_resting(power: Power?): Power
-    return power or { kind = 1, clock = 0.0, target = 0 }
-end
+type Power = { kind: spells.SpellKind, clock: f64, target: i32 }
 
 type Session = {
     anims: {render.Anim},
@@ -144,19 +141,16 @@ function reset(state: State): unit
     -- resets; the renderer overwrites every vertex before a thrown card draws.
 end
 
--- Spell treatments mirror the rules-owned gameplay state: kinds 1-4 replace
--- the prior visible condition and restart the launch toward it; kind zero
--- clears the condition entirely. update_power reports a timed rules transition
--- when Firebolt's visual burn lands.
-function apply_power(state: State, kind: i32, target: i32): unit
-    if kind < 0 or kind > 4 then return end
+-- Spell treatments mirror the rules-owned gameplay state: a kind replaces the
+-- prior visible condition and restarts the launch toward it; nil clears the
+-- condition entirely. update_power reports a timed rules transition when
+-- Firebolt's visual burn lands.
+function apply_power(state: State, kind: spells.SpellKind?, target: i32): unit
     if target < 0 or target > 4 then return end
-    if kind == 0 then state.session.power = nil
+    if kind == nil then state.session.power = nil
     else
-        local checked: game.SpellKind? = game.spell_kind_from(kind)
-        if checked == nil then return end
         state.session.power = {
-            kind = checked::game.SpellKind, clock = 0.0, target = target,
+            kind = kind::spells.SpellKind, clock = 0.0, target = target,
         }
     end
     -- A new condition starts its table_card's burn from nothing; whatever the last
@@ -188,14 +182,14 @@ end
 function update_power(state: State, middle_count: i32, dt: f64): i32
     local power: Power? = state.session.power
     if power ~= nil then
-        local active: Power = power_or_resting(power)
+        local active: Power = power::Power
         if active.target < 0 or active.target >= middle_count then
             -- The card this condition named left with the prior board. Clear
             -- it before the next live board tries to draw that old slot.
-            apply_power(state, 0, 0)
+            apply_power(state, nil, 0)
             tick_table_card_ash(state, NOT_BURNING, dt)
             render.step_spell_particles(
-                state.session.spells, layout.current(), 0, 0.0, 0,
+                state.session.spells, layout.current(), nil, 0.0, 0,
                 middle_count, dt)
             return -1
         end
@@ -203,21 +197,21 @@ function update_power(state: State, middle_count: i32, dt: f64): i32
     if power == nil then
         tick_table_card_ash(state, NOT_BURNING, dt)
         render.step_spell_particles(
-            state.session.spells, layout.current(), 0, 0.0, 0,
+            state.session.spells, layout.current(), nil, 0.0, 0,
             middle_count, dt)
         return -1
     end
-    local active: Power = power_or_resting(power)
+    local active: Power = power::Power
     active.clock += dt
     local burning: f64 = NOT_BURNING
-    if (active.kind::i32) == game.spell_firebolt then
+    if active.kind == spells.SpellKind.Firebolt then
         burning = render.fireball_formation(active.clock)
     end
     tick_table_card_ash(state, burning, dt)
     render.step_spell_particles(
         state.session.spells, layout.current(),
-        active.kind::i32, active.clock, active.target, middle_count, dt)
-    if (active.kind::i32) == game.spell_firebolt
+        active.kind, active.clock, active.target, middle_count, dt)
+    if active.kind == spells.SpellKind.Firebolt
         and render.firebolt_burn_finished(active.clock)
     then
         local target: i32 = active.target
@@ -232,17 +226,21 @@ end
 -- the ice on the board has to go with them.
 function clear_freeze(state: State): unit
     local power: Power? = state.session.power
-    local active: Power = power_or_resting(power)
-    if power ~= nil and (active.kind::i32) == game.spell_freeze_ray then
-        apply_power(state, 0, 0)
+    if power ~= nil then
+        local active: Power = power::Power
+        if active.kind == spells.SpellKind.FreezeRay then
+            apply_power(state, nil, 0)
+        end
     end
 end
 
 function firebolt_pending(state: State): bool
     local power: Power? = state.session.power
-    local active: Power = power_or_resting(power)
-    return (power ~= nil and (active.kind::i32) == game.spell_firebolt)
-        or state.session.anim_kind == "firebolt-replace"
+    if power ~= nil then
+        local active: Power = power::Power
+        if active.kind == spells.SpellKind.Firebolt then return true end
+    end
+    return state.session.anim_kind == "firebolt-replace"
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -359,8 +357,10 @@ end
 -- resolved before the snapshot left no active power and returns above.
 function finish_power(state: State): unit
     local power: Power? = state.session.power
-    local active: Power = power_or_resting(power)
-    if power ~= nil then active.clock = render.power_settled_clock() end
+    if power ~= nil then
+        local active: Power = power::Power
+        active.clock = render.power_settled_clock()
+    end
 end
 
 function reveal_finished(state: State): bool
@@ -850,9 +850,15 @@ end
 function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_i32(parts, #state.fan_parts)
     local power: Power? = state.session.power
-    local active: Power = power_or_resting(power)
-    snapshot_data.append_i32(parts, if power == nil then 0 else active.kind::i32)
-    snapshot_data.append_i32(parts, active.target)
+    local kind: i32 = 0
+    local target: i32 = 0
+    if power ~= nil then
+        local active: Power = power::Power
+        kind = active.kind:tonumber()::i32
+        target = active.target
+    end
+    snapshot_data.append_i32(parts, kind)
+    snapshot_data.append_i32(parts, target)
     append_cards(parts, state.session.discards)
 end
 
@@ -882,12 +888,11 @@ function restore_snapshot(reader: snapshot_data.Reader): State?
     if power_kind == 0 then
         if power_target ~= 0 then return nil end
     else
-        if power_kind < 1 or power_kind > game.spell_kind_count then return nil end
         if power_target < 0 or power_target > 4 then return nil end
-        local checked: game.SpellKind? = game.spell_kind_from(power_kind)
+        local checked: spells.SpellKind? = spells.SpellKind.from(power_kind)
         if checked == nil then return nil end
         state.session.power = {
-            kind = checked::game.SpellKind, clock = 0.0, target = power_target,
+            kind = checked::spells.SpellKind, clock = 0.0, target = power_target,
         }
     end
     state.session.discards = next_cards(reader)
@@ -925,7 +930,15 @@ function draw(
     interaction: render.Interaction
 ): unit
     local power: Power? = state.session.power
-    local active: Power = power_or_resting(power)
+    local kind: spells.SpellKind? = nil
+    local clock: f64 = 0.0
+    local target: i32 = 0
+    if power ~= nil then
+        local active: Power = power::Power
+        kind = active.kind
+        clock = active.clock
+        target = active.target
+    end
     render.draw(surface, {
         viewport = layout.current(),
         view = view,
@@ -941,9 +954,9 @@ function draw(
             discards = state.session.discards,
         },
         spell = {
-            kind = if power == nil then 0 else active.kind::i32,
-            clock = active.clock,
-            target = active.target,
+            kind = kind,
+            clock = clock,
+            target = target,
         },
         ash = state.session.ash,
         spells = state.session.spells,

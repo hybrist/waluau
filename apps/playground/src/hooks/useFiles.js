@@ -2,14 +2,12 @@ import { useState, useMemo, useCallback } from 'react';
 import {
   fixtureModules,
   moduleFixtures,
-  pokerTricksFixtures,
   snakeFixtures,
   gameEngineFixtures,
   conformanceModules,
   filesForConformancePreset,
   MULTI_PRESET,
   KANBAN_PRESET,
-  POKER_TRICKS_PRESET,
   SNAKE_PRESET,
   GAME_ENGINE_PRESET,
   DEFAULT_PRESET,
@@ -213,23 +211,7 @@ export default function useFiles() {
       });
     }
 
-    // 5. Ante Magic fixture files
-    for (const [path, source] of Object.entries(pokerTricksFixtures)) {
-      const filename = path.slice('/fixtures/poker-tricks/'.length);
-      items.push({
-        type: 'fixture',
-        path,
-        name: `poker-tricks/${filename}`,
-        source,
-        category: 'Fixture',
-        onSelect: () => {
-          selectPreset(POKER_TRICKS_PRESET);
-          setActiveFile(path);
-        }
-      });
-    }
-
-    // 6. 2D game engine fixture files
+    // 5. 2D game engine fixture files
     for (const [path, source] of Object.entries(gameEngineFixtures)) {
       const filename = path.split('/').pop();
       items.push({

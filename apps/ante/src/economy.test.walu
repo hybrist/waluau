@@ -22,6 +22,7 @@ require("waluau:vitest")
 
 local game = require("./game")
 local run = require("./run")
+local spells = require("./spells/spell")
 
 -- One duel fought to a verdict.
 type Trial = {
@@ -44,7 +45,7 @@ type Sample = {
 }
 
 local function starter_loadout(): {game.Spell}
-    return { game.new_spell(game.spell_firebolt) }
+    return { spells.Spell.new(spells.SpellKind.Firebolt) }
 end
 
 -- The strongest swap this hand can propose, or nothing when the purse will not
@@ -205,7 +206,7 @@ type RunTrial = {
 }
 
 local function play_run(seed: i32): RunTrial
-    local state: run.State = run.new(game.spell_firebolt, false)
+    local state: run.State = run.new(spells.SpellKind.Firebolt, false)
     -- Bounded well past anything the target curve allows so a mis-tuned table
     -- fails as an assertion rather than as a hung suite.
     for attempt = 1::i32, 40 do

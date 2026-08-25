@@ -8,6 +8,7 @@
 -- of a text hint whose width changes with the chosen spell.
 
 local game = require("../game")
+local spells = require("../spells/spell")
 local spell_launch = require("../spell_launch")
 local box = require("../box_layout")
 local entity = require("../entity")
@@ -53,11 +54,11 @@ function slot_y(slot: i32): f64
     return CENTER_Y
 end
 
-function short_name(kind: i32): string
-    if kind == game.spell_firebolt then return "FIRE" end
-    if kind == game.spell_freeze_ray then return "FROST" end
-    if kind == game.spell_raise_card then return "RAISE" end
-    if kind == game.spell_clone then return "CLONE" end
+function short_name(kind: spells.SpellKind): string
+    if kind == spells.SpellKind.Firebolt then return "FIRE" end
+    if kind == spells.SpellKind.FreezeRay then return "FROST" end
+    if kind == spells.SpellKind.RaiseCard then return "RAISE" end
+    if kind == spells.SpellKind.Clone then return "CLONE" end
     return ""
 end
 

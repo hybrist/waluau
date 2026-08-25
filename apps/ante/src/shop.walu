@@ -10,9 +10,8 @@
 --
 -- What is for sale is a `Goods` value, and each kind of goods carries the
 -- metadata that kind has rather than a shared row of fields most of them would
--- leave empty. Something new the shop can sell is a variant, the functions that
--- price it, judge it, apply it, and say where it goes, and a slot in the layout
--- — not a wider enum threaded through every branch here.
+-- leave empty. Its mutation is a separate `Item`: this module selects and
+-- commits an offer, while shop_item owns what using it does to the run.
 --
 -- This module owns what is on offer, what it costs, and which line the cursor is
 -- on. The loadout limits and the purse belong to the run module, which applies
@@ -21,12 +20,16 @@
 
 local game = require("./game")
 local run_module = require("./run")
+local shop_item = require("./shop_item")
 local snapshot_data = require("./snapshot")
+local spells = require("./spells/spell")
 
 -- What a slot has for sale. Both of these name the spell they are about rather
 -- than a cast key, because a trade can move a spell off the key it was rolled
 -- against and an offer must not follow it.
-export type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
+export type Goods =
+    Upgrade({ kind: spells.SpellKind })
+  | Spell({ kind: spells.SpellKind })
 
 -- What a slot draws from. A category can offer more than one kind of goods: the
 -- spell slots sell both sharpening a spell already carried and teaching a new
@@ -40,7 +43,13 @@ type Category = "spells"
 --
 -- A category with less stock than it has slots simply fills fewer of them, so an
 -- unfilled slot is a slot that is not here rather than one holding nothing.
-export type Slot = { category: Category, goods: Goods, price: i32, sold: bool }
+export type Slot = {
+    category: Category,
+    goods: Goods,
+    item: shop_item.Item,
+    price: i32,
+    sold: bool
+}
 
 -- The question a purchase asks when what it would give the run has nowhere to
 -- go: which of `choices` gets displaced. `slot` is the shop slot being bought,
@@ -67,7 +76,7 @@ export type Row = {
     kind: RowKind,
     slot: i32,
     key: i32,
-    spell: i32,
+    spell: spells.SpellKind?,
     price: i32,
     sold: bool,
     available: bool
@@ -104,7 +113,7 @@ function spell_stock(run: run_module.State): {Goods}
             table.insert(pool, Upgrade({ kind = run.spells[slot].kind }))
         end
     end
-    for kind = 1::i32, game.spell_kind_count do
+    for _, kind in pairs(spells.SpellKind) do
         if not run:carries(kind) then
             table.insert(pool, Spell({ kind = kind }))
         end
@@ -162,31 +171,41 @@ function choices_for(goods: Goods, run: run_module.State): {i32}
     return keys
 end
 
--- Apply the purchase. `key` is the loadout key a new spell takes, which is the
--- open one unless a full loadout has named what it trades away; goods that do
--- not go into the loadout ignore it. Gold leaves the purse only once the run
--- accepts the goods, so a refused purchase costs nothing.
-function buy(goods: Goods, run: run_module.State, key: i32, price: i32): bool
+-- Pair selection metadata with the independently implemented effect it buys.
+-- Restoring a visit uses the same mapping, so executable behavior is rebuilt
+-- rather than written into the snapshot.
+function item_for(goods: Goods): shop_item.Item
     if Upgrade(upgrade) = goods then
-        local slot: i32 = run:slot_of(upgrade.kind)
-        if not run:can_sharpen(slot) then return false end
-        if not run:spend(price) then return false end
-        return run:upgrade(slot)
+        return shop_item.sharpen(upgrade.kind)
     end
     if Spell(spell) = goods then
-        if run.gold < price then return false end
-        if not run:learn(spell.kind, key) then return false end
-        return run:spend(price)
+        return shop_item.learn(spell.kind)
     end
-    return false
+    assert(false)
+    return shop_item.new(function(state: shop_item.UseState): unit end)
 end
 
--- The spell a goods is about, or 0 for goods that are about no spell. Drawing
--- reads this for the ink a line wears.
-function spell_kind_of(goods: Goods): i32
-    if Upgrade(upgrade) = goods then return upgrade.kind end
-    if Spell(spell) = goods then return spell.kind end
-    return 0
+-- Commit payment, then hand the mutation to the item. `key` is the loadout key
+-- a new spell takes, which is the open one unless a full loadout has named what
+-- it trades away; items that do not need a destination ignore it. Availability
+-- is checked before any mutation, so a refused purchase costs nothing.
+function buy(
+    goods: Goods,
+    item: shop_item.Item,
+    run: run_module.State,
+    key: i32,
+    price: i32
+): bool
+    if not goods_available(goods, run) then return false end
+    if not run:spend(price) then return false end
+    item:use({ run = run, key = key })
+    return true
+end
+
+function Goods:spell_kind(): spells.SpellKind?
+    if Upgrade(upgrade) = self then return upgrade.kind end
+    if Spell(spell) = self then return spell.kind end
+    return nil
 end
 
 -- Fill the visit from each category's stock, drawing without replacement so a
@@ -203,6 +222,7 @@ function roll_slots(run: run_module.State): {Slot}
             table.insert(slots, {
                 category = category,
                 goods = goods,
+                item = item_for(goods),
                 price = price_of(goods, run),
                 sold = false,
             })
@@ -238,10 +258,10 @@ end
 
 -- The spell a pending question would hand over, or 0 when nothing is being
 -- asked. A screen naming the trade reads this.
-function pending_spell(state: State): i32
+function pending_spell(state: State): spells.SpellKind?
     local slot: i32 = pending_slot(state)
-    if slot < 0 or slot >= #state.slots then return 0 end
-    return spell_kind_of(state.slots[slot].goods)
+    if slot < 0 or slot >= #state.slots then return nil end
+    return state.slots[slot].goods:spell_kind()
 end
 
 -- One slot as a line. A sold line is never available, and neither is one the run
@@ -251,7 +271,7 @@ function slot_row(index: i32, slot: Slot, run: run_module.State): Row
         kind = "sale",
         slot = index,
         key = -1,
-        spell = spell_kind_of(slot.goods),
+        spell = slot.goods:spell_kind(),
         price = slot.price,
         sold = slot.sold,
         available = not slot.sold
@@ -282,7 +302,7 @@ function choice_rows(asking: Pending, state: State, run: run_module.State): {Row
         kind = "cancel",
         slot = -1,
         key = -1,
-        spell = 0,
+        spell = nil,
         price = 0,
         sold = false,
         available = true,
@@ -304,7 +324,7 @@ function rows(state: State, run: run_module.State): {Row}
         kind = "leave",
         slot = -1,
         key = -1,
-        spell = 0,
+        spell = nil,
         price = 0,
         sold = false,
         available = true,
@@ -337,7 +357,7 @@ function commit(state: State, run: run_module.State, slot: i32, key: i32): unit
     if slot < 0 or slot >= #state.slots then return end
     local sale: Slot = state.slots[slot]
     if sale.sold then return end
-    if not buy(sale.goods, run, key, sale.price) then return end
+    if not buy(sale.goods, sale.item, run, key, sale.price) then return end
     sale.sold = true
     state.pending = nil
     state.cursor = slot
@@ -409,12 +429,12 @@ end
 function append_goods(parts: {string}, goods: Goods): unit
     if Upgrade(upgrade) = goods then
         snapshot_data.append_enum(parts, "upgrade")
-        snapshot_data.append_i32(parts, upgrade.kind)
+        snapshot_data.append_i32(parts, upgrade.kind:tonumber()::i32)
         return
     end
     if Spell(spell) = goods then
         snapshot_data.append_enum(parts, "spell")
-        snapshot_data.append_i32(parts, spell.kind)
+        snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
     end
 end
 
@@ -457,8 +477,8 @@ function restore(snapshot_value: string): State?
         -- spells that exist, which is not a bound anything else would share.
         local tag: string = reader:next_string()
         if tag ~= "upgrade" and tag ~= "spell" then return nil end
-        local kind: i32 = reader:next_i32()
-        if kind < 1 or kind > game.spell_kind_count then return nil end
+        local kind = spells.SpellKind.from(reader:next_i32())
+        if kind == nil then return nil end
         local goods: Goods = Spell({ kind = kind })
         if tag == "upgrade" then goods = Upgrade({ kind = kind }) end
         local price: i32 = reader:next_i32()
@@ -466,6 +486,7 @@ function restore(snapshot_value: string): State?
         table.insert(slots, {
             category = category::Category,
             goods = goods,
+            item = item_for(goods),
             price = price,
             sold = reader:next_bool(),
         })
@@ -510,7 +531,7 @@ return {
     goods_available = goods_available,
     destination = destination,
     choices_for = choices_for,
-    spell_kind_of = spell_kind_of,
+    item_for = item_for,
     rows = rows,
     row_count = row_count,
     move = move,

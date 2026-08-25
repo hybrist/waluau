@@ -3,6 +3,7 @@
 local engine = require("waluau:engine")
 local effect_shaders = require("./effect_shaders")
 local spell_cast = require("./spell_cast")
+local spells = require("./spells/spell")
 local firebolt = require("./spell_launch_firebolt")
 local freeze_ray = require("./spell_launch_freeze_ray")
 local raise_card = require("./spell_launch_raise_card")
@@ -11,35 +12,30 @@ local clone = require("./spell_launch_clone")
 type Graphics = engine.Graphics
 type EffectShaders = effect_shaders.EffectShaders
 
-const FIREBOLT: i32 = 1
-const FREEZE_RAY: i32 = 2
-const RAISE_CARD: i32 = 3
-const CLONE: i32 = 4
-
-function name(kind: i32): string
-    if kind == FIREBOLT then
+function name(kind: spells.SpellKind): string
+    if kind == spells.SpellKind.Firebolt then
         return "FIREBOLT"
     end
-    if kind == FREEZE_RAY then
+    if kind == spells.SpellKind.FreezeRay then
         return "FREEZE RAY"
     end
-    if kind == RAISE_CARD then
+    if kind == spells.SpellKind.RaiseCard then
         return "RAISE CARD"
     end
-    if kind == CLONE then
+    if kind == spells.SpellKind.Clone then
         return "CLONE"
     end
     return "NO SPELL"
 end
 
-function color(kind: i32): string
-    if kind == FIREBOLT then
+function color(kind: spells.SpellKind): string
+    if kind == spells.SpellKind.Firebolt then
         return "#ef4444"
     end
-    if kind == FREEZE_RAY then
+    if kind == spells.SpellKind.FreezeRay then
         return "#38bdf8"
     end
-    if kind == RAISE_CARD then
+    if kind == spells.SpellKind.RaiseCard then
         return "#a3e635"
     end
     return "#4ade80"
@@ -58,7 +54,7 @@ end
 -- supplies the target the same way it does for draw.
 function step(
     sparks: spell_cast.Sparks,
-    kind: i32,
+    kind: spells.SpellKind?,
     clock: f64,
     dt: f64,
     target_x: f64,
@@ -69,14 +65,17 @@ function step(
     local head_x: f64 = 0.0
     local head_y: f64 = 0.0
     local arriving: bool = false
-    if kind ~= 0 then
+    local burst_color: string = "#4ade80"
+    if kind ~= nil then
+        local active: spells.SpellKind = kind::spells.SpellKind
         local cast: spell_cast.Cast = spell_cast.new(clock, target_x, target_y)
         -- The single frame the carrier crosses into its target. A restored
         -- condition comes back already settled past this, so a hot reload
         -- never replays a landing that has already happened.
         arriving = previous < spell_cast.travel_seconds
             and clock >= spell_cast.travel_seconds
-        if kind == FIREBOLT then
+        burst_color = color(active)
+        if active == spells.SpellKind.Firebolt then
             flight = cast.progress
             local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
             head_x = head.x
@@ -84,7 +83,7 @@ function step(
         end
     end
     spell_cast.step_burst(
-        sparks.burst, arriving, target_x, target_y, color(kind), dt)
+        sparks.burst, arriving, target_x, target_y, burst_color, dt)
     firebolt.step_trail(
         sparks.trail, flight, head_x, head_y, previous <= 0.0, dt)
 end
@@ -92,26 +91,27 @@ end
 function draw(
     graphics: Graphics,
     effects: EffectShaders,
-    kind: i32,
+    kind: spells.SpellKind?,
     clock: f64,
     target_x: f64,
     target_y: f64,
     sparks: spell_cast.Sparks
 ): unit
     local cast: spell_cast.Cast = spell_cast.new(clock, target_x, target_y)
-    if kind == FIREBOLT then
+    if kind == spells.SpellKind.Firebolt then
         firebolt.draw(graphics, effects, cast, sparks.trail)
-    elseif kind == FREEZE_RAY then
+    elseif kind == spells.SpellKind.FreezeRay then
         freeze_ray.draw(graphics, effects, cast)
-    elseif kind == RAISE_CARD then
+    elseif kind == spells.SpellKind.RaiseCard then
         raise_card.draw(graphics, effects, cast)
-    elseif kind == CLONE then
+    elseif kind == spells.SpellKind.Clone then
         clone.draw(graphics, effects, cast)
     end
     -- One burst for every spell, outside the dispatch because the sparks a
     -- landing threw are still in the air after the carrier that threw them is
     -- gone. Fire is the only one of the four that burns.
-    spell_cast.draw_burst(graphics, effects, sparks.burst, kind == FIREBOLT)
+    spell_cast.draw_burst(
+        graphics, effects, sparks.burst, kind == spells.SpellKind.Firebolt)
 end
 
 return {
