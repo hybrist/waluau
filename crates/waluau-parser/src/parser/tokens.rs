@@ -47,6 +47,24 @@ impl Parser {
         }
     }
 
+    /// A property name in a `declare property` declaration: a plain
+    /// identifier, or the keyword `not` — the negation-modifier property that
+    /// expectation externs chain through `expect(x):not:toBe(y)`.
+    pub(super) fn expect_property_name_spanned(
+        &mut self,
+    ) -> Result<(String, waluau_ast::Span), Diagnostic> {
+        if let Some(Token {
+            kind: TokenKind::Not,
+            span,
+        }) = self.peek()
+        {
+            let span = *span;
+            self.advance();
+            return Ok(("not".to_string(), span));
+        }
+        self.expect_identifier_spanned()
+    }
+
     pub(super) fn expect_simple(
         &mut self,
         expected: TokenKind,

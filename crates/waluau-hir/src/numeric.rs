@@ -486,6 +486,19 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             ty: expected_ty,
             generic_extern: expected_generic,
         }) => match actual {
+            // The reserved `enum` type accepts a value of any nominal enum
+            // (an opaque numeric alias); the value keeps its i32 ordinal
+            // representation. The conversion is one-way: an `enum` value
+            // never flows back into a specific enum type.
+            Type::Opaque {
+                ty: ref actual_ty, ..
+            } if expected_name == super::ANY_ENUM_TYPE_NAME && actual_ty.is_numeric() => {
+                Ok(Type::Opaque {
+                    name: expected_name,
+                    ty: expected_ty,
+                    generic_extern: expected_generic,
+                })
+            }
             Type::Record(_) if expected_ty.as_ref() == &Type::Unknown => {
                 Err(Diagnostic::new(format!(
                     "cannot construct opaque type '{}' outside its defining module",

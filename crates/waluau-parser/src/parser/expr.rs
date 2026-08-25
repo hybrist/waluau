@@ -419,6 +419,31 @@ impl Parser {
                 };
                 continue;
             }
+            // `:not` chains a negation modifier between method calls
+            // (`expect(x):not:toBe(y)`). `not` is a keyword, so the regular
+            // method-call path can never match it; the modifier parses as a
+            // field access, which HIR resolves against a declared `not`
+            // property on the receiver's extern type.
+            if matches!(
+                (
+                    self.peek().map(|token| &token.kind),
+                    self.peek_n(1).map(|token| &token.kind),
+                ),
+                (Some(TokenKind::Colon), Some(TokenKind::Not))
+            ) {
+                self.advance();
+                let not_span = self.advance().expect("peeked 'not' token").span;
+                expr = Expr::Field {
+                    base: Box::new(expr),
+                    name: "not".to_string(),
+                    resolved_name: None,
+                    span: Some(Span {
+                        start: start_pos,
+                        end: not_span.end,
+                    }),
+                };
+                continue;
+            }
             if self.check_method_call_start() {
                 self.advance();
                 let name = self.expect_identifier()?;

@@ -169,6 +169,67 @@ end)
     recorder.tests[0].body();
   });
 
+  it('covers enum matchers and the :not modifier', async () => {
+    const recorder = createRecordingApi();
+    await register(
+      `
+require("waluau:vitest")
+
+enum Direction { north, east, south, west }
+
+it("enum matchers", function(): unit
+    local actual = Direction.east
+    expect(actual):toBe(Direction.east)
+    expect(actual):notToBe(Direction.west)
+    expect(actual):not:toBe(Direction.west)
+    expect(actual):not:notToBe(Direction.east)
+    expect(actual):not:not:toBe(Direction.east)
+end)
+it(":not on other expectation types", function(): unit
+    expect(4):not:toBe(5)
+    expect(4):not:toBeGreaterThan(5)
+    expect("waluau"):not:toBe("lua")
+    expect("waluau"):not:toContain("moon")
+    expect("waluau"):not:toHaveLength(3)
+    expect(1 == 2):not:toBeTruthy()
+    expect(1 == 1):not:toBeFalsy()
+end)
+`,
+      recorder,
+    );
+
+    expect(recorder.tests).toHaveLength(2);
+    for (const test of recorder.tests) test.body();
+  });
+
+  it('propagates enum and negated matcher failures', async () => {
+    const recorder = createRecordingApi();
+    await register(
+      `
+require("waluau:vitest")
+
+enum Direction { north, east }
+
+it("fails on enums", function(): unit
+    expect(Direction.north):toBe(Direction.east)
+end)
+it("fails on negation", function(): unit
+    expect(4):not:toBe(4)
+end)
+it("fails on negated enums", function(): unit
+    expect(Direction.east):not:toBe(Direction.east)
+end)
+`,
+      recorder,
+    );
+
+    // Enums cross the wasm boundary as their i32 ordinals, so the failure
+    // message talks about ordinals.
+    expect(() => recorder.tests[0].body()).toThrowError(/expected \+?0 to be 1/);
+    expect(() => recorder.tests[1].body()).toThrowError(/expected 4 not to be 4/);
+    expect(() => recorder.tests[2].body()).toThrowError(/expected 1 not to be 1/);
+  });
+
   it('propagates vitest assertion failures out of test bodies', async () => {
     const recorder = createRecordingApi();
     await register(
