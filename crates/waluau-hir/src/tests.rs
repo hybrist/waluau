@@ -6059,6 +6059,35 @@ fn type_checks_typed_json_pack_and_unpack() {
 }
 
 #[test]
+fn type_checks_unannotated_local_from_json_unpack() {
+    let source = r#"
+        type Payload = { name: string, values: {i32} }
+        local payload: Payload = { name = "test", values = {1, 2} }
+        local decoded = json.unpack<Payload>(json.pack(payload))
+        if decoded ~= nil then
+            local name: string = decoded.name
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program)
+        .expect("an unannotated local should adjust json.unpack to its decoded value");
+}
+
+#[test]
+fn type_checks_unannotated_local_from_multi_value_call() {
+    let source = r#"
+        local function pair(): (i32, string)
+            return 1, "a"
+        end
+        local first = pair()
+        local incremented: i32 = first + 1
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program)
+        .expect("an unannotated local should adjust a multi-value call to its first value");
+}
+
+#[test]
 fn json_unpack_requires_a_type_hint() {
     let program = parse("local value, err = json.unpack(\"{}\")").expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");

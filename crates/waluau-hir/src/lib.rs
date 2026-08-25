@@ -838,8 +838,16 @@ fn annotate_inferred_stmt_locals(
                 {
                     Type::Record(BTreeMap::new())
                 } else {
-                    let inferred =
-                        infer_expr(value, vars, fn_signatures, active_type_params, None)?;
+                    // A single binding keeps only the first value of a
+                    // multi-value initializer (Lua's adjustment rules), so the
+                    // recorded annotation must collapse the same way.
+                    let inferred = expressions::first_of_multi(infer_expr(
+                        value,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    )?);
                     *ty = Some(inferred.clone());
                     inferred
                 };

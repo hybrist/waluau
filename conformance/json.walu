@@ -31,6 +31,16 @@ else
     error(decode_error)
 end
 
+-- An unannotated local adjusts the multi-value unpack to its first (decoded)
+-- value, exactly like an annotated `Profile?` binding would.
+local unannotated = json.unpack<Profile>(packed)
+if unannotated ~= nil then
+    assert(unannotated.name == original.name)
+    assert(#unannotated.scores == 3)
+else
+    error("expected the unannotated unpack to decode")
+end
+
 local malformed, malformed_error = json.unpack<Profile>("{")
 assert(malformed == nil)
 assert(malformed_error ~= "")
