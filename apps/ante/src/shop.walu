@@ -174,13 +174,13 @@ end
 -- rather than written into the snapshot.
 function item_for(goods: Goods): shop_item.Item
     if Upgrade(upgrade) = goods then
-        return shop_item.sharpen(upgrade.kind)
+        return shop_item.Item.sharpen(upgrade.kind)
     end
     if Spell(spell) = goods then
-        return shop_item.learn(spell.kind)
+        return shop_item.Item.learn(spell.kind)
     end
     assert(false)
-    return shop_item.new(function(state: shop_item.UseState): unit end)
+    return shop_item.Item.new(function(state: shop_item.UseState): unit end)
 end
 
 -- Commit payment, then hand the mutation to the item. `key` is the loadout key

@@ -39,7 +39,7 @@ end
 
 function install_ante_magic(): unit
     local screen: ActiveScreen = "menu"
-    local menu_state: menu.State = menu.new()
+    local menu_state: menu.State = menu.State.new()
     local duel: game_screen.State = game_screen.new()
     local city: city_map.State = city_map.State.new(math.random(2147483646))
     local assets: presentation_resources.State = presentation_resources.new()
@@ -65,7 +65,7 @@ function install_ante_magic(): unit
     end
 
     local function leave_run(): unit
-        menu.reset(menu_state, city)
+        menu_state:reset(city)
         screen = "menu"
     end
 
@@ -75,7 +75,7 @@ function install_ante_magic(): unit
         -- to aim, so its walk between two stops keeps time with the run rather
         -- than with the asset loader.
         if screen == "menu" then
-            menu.update(menu_state, city, dt)
+            menu_state:update(city, dt)
         else
             game_screen.steer_city(duel, city, dt)
             if presentation_resources.can_update(assets) then
@@ -117,7 +117,7 @@ function install_ante_magic(): unit
                     city.cover, landmark)
             end
             if screen == "menu" then
-                menu.draw(menu_state, canvas, graphics, assets.effects, assets.sound_finished)
+                menu_state:draw(canvas, graphics, assets.effects, assets.sound_finished)
             elseif game_screen.fence_open(duel) then
                 game_screen.draw_fence(duel, city, canvas, graphics)
             end
@@ -127,16 +127,16 @@ function install_ante_magic(): unit
 
     local function menu_action(action: menu.MenuAction): unit
         if action == "start" then
-            begin_run(false, menu.selected_spell(menu_state))
+            begin_run(false, menu_state:selected_spell())
         elseif action == "start-rush" then
-            begin_run(true, menu.selected_spell(menu_state))
+            begin_run(true, menu_state:selected_spell())
         end
     end
 
     local function keypressed(key: string): unit
         if #assets.fatal_audio_code > 0 then return end
         if screen == "menu" then
-            menu_action(menu.keypressed(menu_state, key))
+            menu_action(menu_state:keypressed(key))
             return
         end
         if game_screen.keypressed(duel, city, key) == "exit" then
@@ -150,7 +150,7 @@ function install_ante_magic(): unit
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
         if screen == "menu" then
-            menu.mousemoved(menu_state, canvas, x, y)
+            menu_state:mousemoved(canvas, x, y)
             return
         end
         game_screen.mousemoved(duel, x, y)
@@ -162,7 +162,7 @@ function install_ante_magic(): unit
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
         if screen == "menu" then
-            menu_action(menu.mousepressed(menu_state, canvas, x, y, button))
+            menu_action(menu_state:mousepressed(canvas, x, y, button))
             return
         end
         game_screen.mousepressed(duel, city, x, y, button)
@@ -215,7 +215,7 @@ function install_ante_magic(): unit
                 payloads[0], payloads[1], payloads[2], payloads[3], payloads[4])
             if restored == nil then return false end
             duel = restored::game_screen.State
-            menu.reset(menu_state, city)
+            menu_state:reset(city)
             screen = decoded.screen
             -- A restored run is set down where it stands rather than played
             -- back to it: the map takes the duel's stop with no walk and no

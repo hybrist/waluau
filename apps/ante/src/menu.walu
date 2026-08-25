@@ -60,7 +60,7 @@ function item_start_y(viewport: layout.State): f64
     return viewport.height * 0.51
 end
 
-function new(): State
+function State.new(): State
     return {
         clock = 0.0,
         cursor = ITEM_NEW_RUN,
@@ -73,23 +73,23 @@ end
 
 -- Coming back to the menu is coming back to a different job: a new city, and a
 -- new route through it for the next run to walk.
-function reset(state: State, city: city_map.State): unit
-    state.clock = 0.0
-    state.cursor = ITEM_NEW_RUN
-    state.help_open = false
-    state.stage = "main"
-    state.rush_choice = false
-    state.spell_cursor = 0
+function State:reset(city: city_map.State): unit
+    self.clock = 0.0
+    self.cursor = ITEM_NEW_RUN
+    self.help_open = false
+    self.stage = "main"
+    self.rush_choice = false
+    self.spell_cursor = 0
     city:regenerate()
 end
 
 -- Aim the map: the title sits over a city sweeping past, and the spell list
 -- sits over the vendor the run sets out from. Nothing else changes, so the
 -- change of stage is a pan rather than a cut.
-function update(state: State, city: city_map.State, dt: f64): unit
-    state.clock += dt
+function State:update(city: city_map.State, dt: f64): unit
+    self.clock += dt
     city:show()
-    if state.stage == "spell" then
+    if self.stage == "spell" then
         city:follow(city_map.shop_stop(1))
     else
         city:drift()
@@ -97,8 +97,8 @@ function update(state: State, city: city_map.State, dt: f64): unit
 end
 
 -- The starting spell the current selection names, as the rules' spell kind.
-function selected_spell(state: State): spells.SpellKind
-    local kind: spells.SpellKind? = spells.SpellKind.from(state.spell_cursor + 1)
+function State:selected_spell(): spells.SpellKind
+    local kind: spells.SpellKind? = spells.SpellKind.from(self.spell_cursor + 1)
     assert(kind ~= nil)
     return kind::spells.SpellKind
 end
@@ -199,17 +199,17 @@ end
 -- The city map is already on the screen by the time this runs: the entry module
 -- draws it under whichever screen is live, so what is drawn here is only the
 -- list standing over it.
-function draw(state: State, viewport: layout.State, graphics: engine.Graphics, effects: effect_shaders.EffectShaders, ready: bool): unit
+function State:draw(viewport: layout.State, graphics: engine.Graphics, effects: effect_shaders.EffectShaders, ready: bool): unit
     local heading_y: f64 = title_y(viewport)
-    if state.help_open then
+    if self.help_open then
         -- The same help card the duel shows, drawn on a surface with no card
         -- back: nothing on it is a card.
         render.draw_help(
             { graphics = graphics, effects = effects, card_back = nil }, viewport)
         return
     end
-    if state.stage == "spell" then
-        draw_spell_stage(state, viewport, graphics)
+    if self.stage == "spell" then
+        draw_spell_stage(self, viewport, graphics)
         return
     end
     ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
@@ -223,17 +223,17 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
         graphics:fill_circle(viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
     end
 
-    draw_item(state, viewport, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
+    draw_item(self, viewport, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
     -- A boss battle deals seven cards and never replaces a spent one. The
     -- standard run reaches one every third duel; the rush is nothing else.
     -- Both labels carry the stakes without needing their own help screen.
-    draw_item(state, viewport, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
-    draw_item(state, viewport, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
-    if state.cursor == ITEM_NEW_RUN then
+    draw_item(self, viewport, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
+    draw_item(self, viewport, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
+    if self.cursor == ITEM_NEW_RUN then
         ink.text_centered(
             graphics, "EVERY THIRD DUEL IS A CHALLENGE. GOLD CARRIES OVER",
             viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
-    elseif state.cursor == ITEM_BOSS_RUSH then
+    elseif self.cursor == ITEM_BOSS_RUSH then
         ink.text_centered(
             graphics, "EVERY DUEL IS A CHALLENGE. SEVEN CARDS, NO REPLACEMENTS",
             viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
@@ -250,86 +250,76 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
         viewport.center_x, viewport.height - 52.0, 10, "#8a8a92")
 end
 
-function keypressed(state: State, key: string): MenuAction
-    if state.help_open then
+function State:keypressed(key: string): MenuAction
+    if self.help_open then
         if key == "Enter" or key == " " or key == "Escape" or key == "?" or key == "/" then
-            state.help_open = false
+            self.help_open = false
         end
         return "none"
     end
-    if state.stage == "spell" then
+    if self.stage == "spell" then
         if key == "Escape" then
-            state.stage = "main"
-            state.cursor = ITEM_NEW_RUN
-            if state.rush_choice then state.cursor = ITEM_BOSS_RUSH end
+            self.stage = "main"
+            self.cursor = ITEM_NEW_RUN
+            if self.rush_choice then self.cursor = ITEM_BOSS_RUSH end
             return "none"
         end
         if key == "ArrowUp" or key == "w" or key == "W" then
-            state.spell_cursor -= 1
-            if state.spell_cursor < 0 then state.spell_cursor = SPELL_COUNT - 1 end
-            state.cursor = state.spell_cursor
+            self.spell_cursor -= 1
+            if self.spell_cursor < 0 then self.spell_cursor = SPELL_COUNT - 1 end
+            self.cursor = self.spell_cursor
             return "none"
         end
         if key == "ArrowDown" or key == "s" or key == "S" then
-            state.spell_cursor = (state.spell_cursor + 1) % SPELL_COUNT
-            state.cursor = state.spell_cursor
+            self.spell_cursor = (self.spell_cursor + 1) % SPELL_COUNT
+            self.cursor = self.spell_cursor
             return "none"
         end
         if key == "Enter" or key == " " then
-            return start_action(state)
+            return start_action(self)
         end
         return "none"
     end
     if key == "ArrowUp" or key == "w" or key == "W" then
-        state.cursor -= 1
-        if state.cursor < 0 then state.cursor = ITEM_COUNT - 1 end
+        self.cursor -= 1
+        if self.cursor < 0 then self.cursor = ITEM_COUNT - 1 end
         return "none"
     end
     if key == "ArrowDown" or key == "s" or key == "S" then
-        state.cursor = (state.cursor + 1) % ITEM_COUNT
+        self.cursor = (self.cursor + 1) % ITEM_COUNT
         return "none"
     end
     if key == "?" or key == "/" then
-        state.help_open = true
+        self.help_open = true
         return "none"
     end
     if key == "Enter" or key == " " then
-        return activate(state, state.cursor)
+        return activate(self, self.cursor)
     end
     return "none"
 end
 
-function mousemoved(state: State, viewport: layout.State, x: f64, y: f64): unit
-    if state.help_open then return end
-    local item: i32 = item_at(viewport, x, y, stage_item_count(state))
+function State:mousemoved(viewport: layout.State, x: f64, y: f64): unit
+    if self.help_open then return end
+    local item: i32 = item_at(viewport, x, y, stage_item_count(self))
     if item < 0 then return end
-    state.cursor = item
-    if state.stage == "spell" then state.spell_cursor = item end
+    self.cursor = item
+    if self.stage == "spell" then self.spell_cursor = item end
 end
 
-function mousepressed(state: State, viewport: layout.State, x: f64, y: f64, button: i32): MenuAction
+function State:mousepressed(viewport: layout.State, x: f64, y: f64, button: i32): MenuAction
     if button ~= 1 then return "none" end
-    if state.help_open then
-        state.help_open = false
+    if self.help_open then
+        self.help_open = false
         return "none"
     end
-    local item: i32 = item_at(viewport, x, y, stage_item_count(state))
+    local item: i32 = item_at(viewport, x, y, stage_item_count(self))
     if item < 0 then return "none" end
-    state.cursor = item
-    if state.stage == "spell" then
-        state.spell_cursor = item
-        return start_action(state)
+    self.cursor = item
+    if self.stage == "spell" then
+        self.spell_cursor = item
+        return start_action(self)
     end
-    return activate(state, item)
+    return activate(self, item)
 end
 
-return {
-    new = new,
-    reset = reset,
-    update = update,
-    draw = draw,
-    keypressed = keypressed,
-    mousemoved = mousemoved,
-    mousepressed = mousepressed,
-    selected_spell = selected_spell,
-}

@@ -527,7 +527,7 @@ describe("Ante Magic development snapshots", function()
     end)
 
     it("frames screen, run, rules, flow, and presentation payloads atomically", function()
-        local run_state: run.State = run.new(spells.SpellKind.Clone, false)
+        local run_state: run.State = run.State.new(spells.SpellKind.Clone, false)
         local rules: game.State = game.new(false, starter_loadout(), game.starting_gold)
         local ui: flow.State = flow.State.new()
         ui.modal = "help"
@@ -540,7 +540,7 @@ describe("Ante Magic development snapshots", function()
             schema = "target-test-frame",
             screen = "game",
             sections = {
-                run.snapshot(run_state),
+                run_state:snapshot(),
                 game.snapshot(rules),
                 ui:snapshot(),
                 "presentation",
@@ -553,7 +553,7 @@ describe("Ante Magic development snapshots", function()
             expect(decoded.schema):toBe("target-test-frame")
             expect(decoded.screen):toBe("game")
             expect(#decoded.sections):toBe(4)
-            local restored_run: run.State? = run.restore(decoded.sections[0])
+            local restored_run: run.State? = run.State.restore(decoded.sections[0])
             local restored_rules: game.State? = game.restore(decoded.sections[1])
             local restored_ui: flow.State? = flow.State.restore(decoded.sections[2])
             expect(restored_run == nil):toBe(false)
@@ -569,7 +569,7 @@ describe("Ante Magic development snapshots", function()
         -- Trailing garbage fails the frame as a whole; a section fed to the
         -- wrong module fails that section's own schema check.
         expect(json.unpack<HotFrame>(framed .. "|extra") == nil):toBe(true)
-        expect(run.restore(ui:snapshot()) == nil):toBe(true)
+        expect(run.State.restore(ui:snapshot()) == nil):toBe(true)
     end)
 
     it("rejects inconsistent spell-targeting payloads", function()

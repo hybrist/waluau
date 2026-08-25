@@ -10,41 +10,41 @@ function enter_code(state: divine.State): bool
         "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown",
         "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a",
     }
-    for key in keys do triggered = divine.keypressed(state, key) end
+    for key in keys do triggered = state:keypressed(key) end
     return triggered
 end
 
 describe("Konami divine intervention", function()
     it("recognizes the classic sequence case-insensitively", function()
-        local state: divine.State = divine.new()
+        local state: divine.State = divine.State.new()
         local keys: {string} = {
             "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown",
             "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "B", "A",
         }
         for index, key in keys do
-            expect(divine.keypressed(state, key)):toBe(index == 9)
+            expect(state:keypressed(key)):toBe(index == 9)
         end
         expect(state.active):toBe(true)
     end)
 
     it("recovers overlapping starts after a wrong key", function()
-        local state: divine.State = divine.new()
-        divine.keypressed(state, "ArrowUp")
-        divine.keypressed(state, "ArrowUp")
-        divine.keypressed(state, "ArrowUp")
+        local state: divine.State = divine.State.new()
+        state:keypressed("ArrowUp")
+        state:keypressed("ArrowUp")
+        state:keypressed("ArrowUp")
         local tail: {string} = {
             "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight",
             "ArrowLeft", "ArrowRight", "b", "a",
         }
         local triggered: bool = false
-        for key in tail do triggered = divine.keypressed(state, key) end
+        for key in tail do triggered = state:keypressed(key) end
         expect(triggered):toBe(true)
     end)
 
     it("reports all five contacts even across long frames", function()
-        local state: divine.State = divine.new()
+        local state: divine.State = divine.State.new()
         expect(enter_code(state)):toBe(true)
-        local touched: {i32} = divine.update(state, divine.total_seconds)
+        local touched: {i32} = state:update(divine.total_seconds)
         expect(#touched):toBe(5)
         for index, target in touched do expect(target):toBe(index) end
         expect(state.active):toBe(false)
@@ -75,10 +75,10 @@ describe("Konami divine intervention", function()
     end)
 
     it("ignores retriggers in flight and permits a later invocation", function()
-        local state: divine.State = divine.new()
+        local state: divine.State = divine.State.new()
         expect(enter_code(state)):toBe(true)
         expect(enter_code(state)):toBe(false)
-        divine.update(state, divine.total_seconds)
+        state:update(divine.total_seconds)
         expect(enter_code(state)):toBe(true)
     end)
 end)

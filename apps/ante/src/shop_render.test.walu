@@ -11,7 +11,7 @@ local shop_render = require("./shop_render")
 local spells = require("./spells/spell")
 
 local function shopping_run(spell: spells.SpellKind, gold: i32): run.State
-    local state: run.State = run.new(spell, false)
+    local state: run.State = run.State.new(spell, false)
     state:settle(true, gold)
     state.gold = gold
     return state

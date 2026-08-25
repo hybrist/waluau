@@ -12,7 +12,7 @@ local spells = require("./spells/spell")
 -- set rather than won: what a duel leaves behind is the run module's business,
 -- and every price here is about the pool, not how it was earned.
 local function shopping_run(spell: spells.SpellKind, gold: i32): run.State
-    local state: run.State = run.new(spell, false)
+    local state: run.State = run.State.new(spell, false)
     state:settle(true, gold)
     -- The purse is set rather than carried: settle charges the duel its target
     -- on the way out, and what the target costs is the run module's business.

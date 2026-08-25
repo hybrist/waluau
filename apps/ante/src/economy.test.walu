@@ -206,7 +206,7 @@ type RunTrial = {
 }
 
 local function play_run(seed: i32): RunTrial
-    local state: run.State = run.new(spells.SpellKind.Firebolt, false)
+    local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
     -- Bounded well past anything the target curve allows so a mis-tuned table
     -- fails as an assertion rather than as a hung suite.
     for attempt = 1::i32, 40 do
