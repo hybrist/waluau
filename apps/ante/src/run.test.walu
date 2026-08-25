@@ -17,7 +17,7 @@ local spells = require("./spells/spell")
 local function settle_vault(
     state: run.State, arch_mage_wins: i32, gold: i32
 ): game.State
-    local rules: game.State = game.new(state:boss(), state.spells, state.gold)
+    local rules: game.State = game.State.new(state:boss(), state.spells, state.gold)
     game_fixture.set_player_points(rules, gold)
     game_fixture.finish(rules, arch_mage_wins)
     state:settle(rules:is_victory(), rules:gold())
@@ -236,7 +236,7 @@ describe("Ante Magic run loadout", function()
         -- run, not to the duel that bought it.
         expect(state:spell_count()):toBe(2)
         expect(state.spells[1].cost):toBe(game.spell_cost - 1)
-        local dealt: game.State = game.new(state:boss(), state.spells, state.gold)
+        local dealt: game.State = game.State.new(state:boss(), state.spells, state.gold)
         expect(dealt:spell_count()):toBe(2)
         expect(dealt:spell_cost(1)):toBe(game.spell_cost - 1)
 
@@ -251,7 +251,7 @@ describe("Ante Magic run loadout", function()
 
     it("keeps the loadout out of reach of the duel it is dealt to", function()
         local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-        local dealt: game.State = game.new(state:boss(), state.spells, state.gold)
+        local dealt: game.State = game.State.new(state:boss(), state.spells, state.gold)
         -- The duel holds a reading of the loadout. Nothing a duel does to its
         -- own copy — and nothing done to the run's afterwards — crosses over.
         expect(state:upgrade(0)):toBe(true)
@@ -432,21 +432,21 @@ end)
 describe("Ante Magic duel verdicts", function()
     it("clears a duel the Opponent failed to hold twice", function()
         math.randomseed(71)
-        local state: game.State = game.new(
+        local state: game.State = game.State.new(
             false, { spells.Spell.new(spells.SpellKind.Firebolt) }, game.starting_gold)
         expect(state:is_victory()):toBe(false)
         game_fixture.finish(state, 1)
         expect(state:is_victory()):toBe(true)
-        expect(game.view_cleared(game.view(state))):toBe(true)
+        expect(game.view_cleared(state:view())):toBe(true)
     end)
 
     it("loses a duel the Opponent held three times", function()
         math.randomseed(73)
-        local state: game.State = game.new(
+        local state: game.State = game.State.new(
             false, { spells.Spell.new(spells.SpellKind.Firebolt) }, game.starting_gold)
         game_fixture.finish(state, 3)
         expect(state:is_victory()):toBe(false)
-        expect(game.view_cleared(game.view(state))):toBe(false)
+        expect(game.view_cleared(state:view())):toBe(false)
     end)
 
     it("asks the run for what follows a verdict", function()
@@ -493,7 +493,7 @@ describe("Ante Magic run progression", function()
         expect(state.duel):toBe(2)
         expect(state.cleared):toBe(1)
 
-        local second: game.State = game.new(state:boss(), state.spells, state.gold)
+        local second: game.State = game.State.new(state:boss(), state.spells, state.gold)
         expect(second:gold()):toBe(42 - run.target_at(1, false))
         expect(second:is_boss()):toBe(false)
         expect(second:is_finished()):toBe(false)
@@ -503,7 +503,7 @@ describe("Ante Magic run progression", function()
         expect(state.duel):toBe(3)
         expect(state.cleared):toBe(2)
         -- The third duel is the boss battle: seven cards, no replacements.
-        local third: game.State = game.new(state:boss(), state.spells, state.gold)
+        local third: game.State = game.State.new(state:boss(), state.spells, state.gold)
         expect(third:gold()):toBe(30 - run.target_at(2, false))
         expect(third:is_boss()):toBe(true)
         expect(third:hand_size()):toBe(7)
@@ -518,7 +518,7 @@ describe("Ante Magic run progression", function()
 
         expect(state.duel):toBe(1)
         expect(state.cleared):toBe(0)
-        local fresh: game.State = game.new(state:boss(), state.spells, state.gold)
+        local fresh: game.State = game.State.new(state:boss(), state.spells, state.gold)
         expect(fresh:gold()):toBe(game.starting_gold)
         expect(fresh:spell_kind(0)):toBe(spells.SpellKind.Clone)
     end)
@@ -533,7 +533,7 @@ describe("Ante Magic run progression", function()
         expect(state.duel):toBe(2)
         expect(state:boss()):toBe(true)
         expect(state:next_is_boss()):toBe(true)
-        local second: game.State = game.new(state:boss(), state.spells, state.gold)
+        local second: game.State = game.State.new(state:boss(), state.spells, state.gold)
         expect(second:gold()):toBe(25 - run.target_at(1, true))
         expect(second:hand_size()):toBe(7)
     end)

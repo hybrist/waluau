@@ -1055,8 +1055,8 @@ end
 -- still get wrong.
 type Snapshot = { schema: string, state: State }
 
-function snapshot(state: State): string
-    local payload: Snapshot = { schema = SNAPSHOT_SCHEMA, state = state }
+function State:snapshot(): string
+    local payload: Snapshot = { schema = SNAPSHOT_SCHEMA, state = self }
     return json.pack(payload)
 end
 
@@ -1144,7 +1144,7 @@ function valid_trick(trick: Trick): bool
     return true
 end
 
-function restore(snapshot_value: string): State?
+function State.restore(snapshot_value: string): State?
     local decoded = json.unpack<Snapshot>(snapshot_value)
     if decoded == nil then return nil end
     if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
@@ -1224,7 +1224,7 @@ function restore(snapshot_value: string): State?
     return restored
 end
 
-function new(boss: bool, spells: {Spell}, gold: i32): State
+function State.new(boss: bool, spells: {Spell}, gold: i32): State
     local deck: {Card} = make_deck()
     shuffle(deck)
     local state: State = {
@@ -1266,30 +1266,30 @@ function new(boss: bool, spells: {Spell}, gold: i32): State
     return state
 end
 
-function view(state: State): View
+function State:view(): View
     return {
-        deck_count = #state.deck,
-        player_hand = state.player_hand,
-        computer_hand = state.computer_hand,
-        middle = state.middle,
-        frozen_middle = state.frozen_middle,
-        history = state.history,
-        round = state.round,
-        player_points = state.player_points,
-        player_tricks = state.player_tricks,
-        computer_tricks = state.computer_tricks,
-        swap_open = state.swap_open,
-        pot = state.pot,
-        player_wager = state.player_wager,
-        computer_wager = state.computer_wager,
-        player_swap_max = state.player_swap_max,
-        computer_swap_max = state.computer_swap_max,
-        swap_winner = state.swap_winner,
-        swap_count = state.swap_count,
-        swap_hand_indices = state.swap_hand_indices,
-        swap_middle_indices = state.swap_middle_indices,
-        finished = state.finished,
-        spells = state.spells,
+        deck_count = #self.deck,
+        player_hand = self.player_hand,
+        computer_hand = self.computer_hand,
+        middle = self.middle,
+        frozen_middle = self.frozen_middle,
+        history = self.history,
+        round = self.round,
+        player_points = self.player_points,
+        player_tricks = self.player_tricks,
+        computer_tricks = self.computer_tricks,
+        swap_open = self.swap_open,
+        pot = self.pot,
+        player_wager = self.player_wager,
+        computer_wager = self.computer_wager,
+        player_swap_max = self.player_swap_max,
+        computer_swap_max = self.computer_swap_max,
+        swap_winner = self.swap_winner,
+        swap_count = self.swap_count,
+        swap_hand_indices = self.swap_hand_indices,
+        swap_middle_indices = self.swap_middle_indices,
+        finished = self.finished,
+        spells = self.spells,
     }
 end
 
@@ -1304,62 +1304,54 @@ function test_fresh_slots(cards: {Card}): {HandSlot}
     return slots
 end
 
-function test_arrange_round(
-    state: State,
-    middle: {Card},
+function State:test_arrange_round(middle: {Card},
     player_hand: {Card},
     computer_hand: {Card}
 ): unit
-    state.middle = clone_cards(middle)
-    state.frozen_middle = {}
-    for _ in middle do table.insert(state.frozen_middle, false) end
-    state.player_hand = test_fresh_slots(player_hand)
-    state.computer_hand = test_fresh_slots(computer_hand)
+    self.middle = clone_cards(middle)
+    self.frozen_middle = {}
+    for _ in middle do table.insert(self.frozen_middle, false) end
+    self.player_hand = test_fresh_slots(player_hand)
+    self.computer_hand = test_fresh_slots(computer_hand)
 end
 
-function test_arrange_opponent(
-    state: State,
-    middle: {Card},
+function State:test_arrange_opponent(middle: {Card},
     computer_hand: {Card}
 ): unit
-    state.middle = clone_cards(middle)
-    state.frozen_middle = {}
-    for _ in middle do table.insert(state.frozen_middle, false) end
-    state.computer_hand = test_fresh_slots(computer_hand)
+    self.middle = clone_cards(middle)
+    self.frozen_middle = {}
+    for _ in middle do table.insert(self.frozen_middle, false) end
+    self.computer_hand = test_fresh_slots(computer_hand)
 end
 
-function test_arrange_player(
-    state: State,
-    player_hand: {Card},
+function State:test_arrange_player(player_hand: {Card},
     player_known: {bool}
 ): unit
     local slots: {HandSlot} = test_fresh_slots(player_hand)
     for index, known in player_known do slots[index].known = known end
-    state.player_hand = slots
+    self.player_hand = slots
 end
 
-function test_set_player_points(state: State, points: i32): unit
-    state.player_points = points
+function State:test_set_player_points(points: i32): unit
+    self.player_points = points
 end
 
-function test_finish(state: State, computer_tricks: i32): unit
-    state.finished = true
-    state.computer_tricks = computer_tricks
+function State:test_finish(computer_tricks: i32): unit
+    self.finished = true
+    self.computer_tricks = computer_tricks
 end
 
-function test_set_swap_trace(
-    state: State,
-    hand_indices: {i32},
+function State:test_set_swap_trace(hand_indices: {i32},
     middle_indices: {i32}
 ): unit
     assert(#hand_indices == #middle_indices)
-    state.swap_count = #hand_indices
-    state.swap_hand_indices = hand_indices
-    state.swap_middle_indices = middle_indices
+    self.swap_count = #hand_indices
+    self.swap_hand_indices = hand_indices
+    self.swap_middle_indices = middle_indices
 end
 
-function test_next_draw(state: State): Card
-    return state.deck[#state.deck - 1]
+function State:test_next_draw(): Card
+    return self.deck[#self.deck - 1]
 end
 
 function State:is_finished(): bool
@@ -1517,7 +1509,7 @@ end
 -- or spell switch from the menu, or the next duel of a run fought with the
 -- gold the last one left and whatever it bought between duels.
 function State:reset(boss: bool, spells: {Spell}, gold: i32): unit
-    local fresh: State = new(boss, spells, gold)
+    local fresh: State = State.new(boss, spells, gold)
     self.boss = fresh.boss
     self.spells = fresh.spells
     self.cast_kind = fresh.cast_kind
@@ -1681,8 +1673,6 @@ function formation_marks(
 end
 
 return {
-    new = new,
-    view = view,
     view_cleared = view_cleared,
     view_side = view_side,
     trick_side = trick_side,
@@ -1707,17 +1697,8 @@ return {
     formation_cards = formation_cards,
     scoring_cards = scoring_cards,
     formation_marks = formation_marks,
-    snapshot = snapshot,
-    restore = restore,
     valid_card = valid_card,
     clone_spells = clone_spells,
-    test_arrange_round = test_arrange_round,
-    test_arrange_opponent = test_arrange_opponent,
-    test_arrange_player = test_arrange_player,
-    test_set_player_points = test_set_player_points,
-    test_finish = test_finish,
-    test_set_swap_trace = test_set_swap_trace,
-    test_next_draw = test_next_draw,
     spell_cost = SPELL_COST,
     starting_gold = STARTING_GOLD,
     max_rounds = MAX_ROUNDS,

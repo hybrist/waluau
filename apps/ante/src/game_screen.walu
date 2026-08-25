@@ -89,7 +89,7 @@ function new(): State
     local run: run_module.State = run_module.State.new(spells.SpellKind.Firebolt, false)
     return {
         run = run,
-        rules = game.new(run:boss(), run.spells, run.gold),
+        rules = game.State.new(run:boss(), run.spells, run.gold),
         ui = flow.State.new(),
         presentation = choreography.State.new(),
         shop = shop.new(),
@@ -116,7 +116,7 @@ function deal_vault(state: State): unit
     state.intervention:reset()
     -- The opening deal is already reflected in rules state; choreography
     -- reveals that settled result as the screen comes alive.
-    state.presentation:opening_deal(game.view(state.rules))
+    state.presentation:opening_deal(state.rules:view())
 end
 
 function close_fence(state: State): unit
@@ -308,7 +308,7 @@ function update(state: State, city: city_map.State, dt: f64): i32
     if burned_table_card >= 0 then
         local discarded: game.Card? = state.rules:resolve_firebolt(burned_table_card)
         if discarded ~= nil then
-            local rules_view: game.View = game.view(state.rules)
+            local rules_view: game.View = state.rules:view()
             presentation:firebolt_resolved(discarded::game.Card,
                 rules_view.middle[burned_table_card],
                 burned_table_card,
@@ -331,7 +331,7 @@ function draw_vault(state: State, surface: entity.Surface): unit
     local aimed_slot: i32? = ui.cast_slot
     state.presentation:draw(
         surface,
-        game.view(state.rules),
+        state.rules:view(),
         state.run:view(run_outcome(state)),
         {
             hand_focus = ui:fan_focus(
@@ -436,7 +436,7 @@ function consume_gate(state: State, city: city_map.State, command: flow.Command)
         local trick: game.Trick? = state.rules:last_trick()
         if trick ~= nil then
             state.presentation:resolved_breach_cleanup(
-                game.view(state.rules), trick::game.Trick)
+                state.rules:view(), trick::game.Trick)
         end
     elseif result == "skip" then
         state.presentation:skip()
@@ -718,7 +718,7 @@ end
 function snapshot(state: State): {string}
     return {
         state.run:snapshot(),
-        game.snapshot(state.rules),
+        state.rules:snapshot(),
         state.ui:snapshot(),
         state.presentation:snapshot(),
         shop.snapshot(state.shop),
@@ -733,7 +733,7 @@ function restore(
     shop_payload: string
 ): State?
     local run: run_module.State? = run_module.State.restore(run_payload)
-    local rules: game.State? = game.restore(rules_payload)
+    local rules: game.State? = game.State.restore(rules_payload)
     local ui: flow.State? = flow.State.restore(ui_payload)
     local presentation: choreography.State? = choreography.State.restore(presentation_payload)
     local intermission: shop.State? = shop.restore(shop_payload)
