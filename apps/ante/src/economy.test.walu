@@ -216,6 +216,8 @@ local function play_run(seed: i32): RunTrial
         -- The live game screen charges health as each breach resolves. This aggregate
         -- runner plays the whole vault in one call, then applies those same
         -- losses before asking the run for its outcome.
+        -- TODO(waluau-8hcy): Iterate duel:view().history directly once for-in
+        -- headers preserve field types from method-call results.
         local settled: game.View = duel:view()
         for trick in settled.history do
             if trick.winner < 0 then state:lose_hand() end

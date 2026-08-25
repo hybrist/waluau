@@ -195,6 +195,8 @@ function Tree:measure(): Intrinsic
     local max_descent: f64 = 0.0
 
     for child in self.children do
+        -- TODO(waluau-7mif): Call child:measure() directly once method dispatch
+        -- retains the element type of recursive record fields.
         local child_tree: Tree = child
         local value: Intrinsic = child_tree:measure()
         if horizontal then
@@ -491,6 +493,8 @@ function arrange_node(node: Tree, bounds: Rect, frames: {Frame}, extents: Extent
     local sizes: {f64} = {}
     local used: f64 = 0.0
     for child in node.children do
+        -- TODO(waluau-7mif): Call child:measure() directly once method dispatch
+        -- retains the element type of recursive record fields.
         local child_tree: Tree = child
         local value: Intrinsic = child_tree:measure()
         table.insert(measurements, value)

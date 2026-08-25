@@ -1471,6 +1471,8 @@ end
 -- side of a decisive trick. Consumers resolve "the winner's pair" or "the
 -- loser's slots" once instead of re-selecting player_/computer_ fields at
 -- every use. owner 0 names no side and is a caller error.
+-- TODO(waluau-uyoc): Make this a Trick method once readonly<Trick> receivers
+-- can dispatch methods declared on Trick.
 function trick_side(trick: readonly<Trick>, owner: Side): TrickSide
     if owner > 0 then
         return {
