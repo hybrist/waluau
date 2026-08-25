@@ -539,6 +539,30 @@ export function waluau(options = {}) {
     }
   }
 
+  /** Convert compiler metadata into the error shape consumed by Vite/Rollup. */
+  function compilerError(error, report, entryPath) {
+    const diagnostics = Array.isArray(error?.diagnostics) && error.diagnostics.length > 0
+      ? error.diagnostics
+      : (Array.isArray(report?.diagnostics) ? report.diagnostics : []);
+    const diagnostic = diagnostics.find(({ severity }) => severity === 'error') ?? diagnostics[0];
+    if (diagnostic == null) return error;
+
+    const failure = new Error(diagnostic.message ?? error?.message ?? 'Waluau compilation failed', {
+      cause: error,
+    });
+    failure.plugin = 'waluau-game';
+    failure.id = typeof diagnostic.file === 'string' ? diagnostic.file : entryPath;
+    if (Number.isInteger(diagnostic.line) && Number.isInteger(diagnostic.column)) {
+      failure.loc = {
+        file: failure.id,
+        line: diagnostic.line,
+        column: Math.max(0, diagnostic.column - 1),
+      };
+    }
+    failure.diagnostics = diagnostics;
+    return failure;
+  }
+
   function manifestFiles() {
     if (options.manifest == null) return [];
     const manifestPath = resolve(appRoot, options.manifest);
@@ -582,22 +606,29 @@ export function waluau(options = {}) {
         state.fresh = false;
         await mkdir(artifacts.outDir, { recursive: true });
         const buildArgs = compilerBuildArgs(entryPath, artifacts.wasm, artifacts.report);
+        let compileFailure;
+        let report;
         try {
           await executeCompiler(buildArgs);
           // Only production builds pay for wasm-opt (a few seconds per
           // module); the dev-server/HMR path always serves the compiler's
           // direct output.
           if (productionBuild && optimize) await optimizeWasm(artifacts.wasm);
+        } catch (error) {
+          compileFailure = error;
         } finally {
           // The report is written even for failed builds, so watch mode can
           // still track every file in the entry's require graph.
-          const report = readBuildReport(artifacts.report);
+          report = readBuildReport(artifacts.report);
           if (Array.isArray(report?.involvedFiles)) {
             state.involvedFiles = new Set(report.involvedFiles.map((file) => resolve(file)));
           }
           state.developmentSources = Array.isArray(report?.developmentSources)
             ? report.developmentSources
             : null;
+        }
+        if (compileFailure != null) {
+          throw compilerError(compileFailure, report, entryPath);
         }
         // DWARF paths are relative to the common authored source directory and
         // Chrome resolves them beside the Wasm URL. Snapshot the successful

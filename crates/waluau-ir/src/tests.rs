@@ -2916,6 +2916,29 @@ fn erases_aliases_and_literal_unions_inside_variant_payloads() {
 }
 
 #[test]
+fn infers_tagged_variant_binding_as_its_payload_record() {
+    let source = r#"enum Kind { One }
+
+function Kind:tonumber(): number
+    return 1
+end
+
+type Goods = Upgrade({ kind: Kind })
+
+function inspect(goods: Goods): number
+    if Upgrade(upgrade) = goods then
+        return upgrade.kind:tonumber()
+    end
+    return 0
+end
+"#;
+    let program = parse_with_path(source, "src/shop.walu").expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should preserve the narrowed payload type");
+    verify(&module).expect("IR should verify");
+}
+
+#[test]
 fn verifies_function_with_tagged_union_return_type() {
     let source = r#"
         function poll(co: thread): Finished(i32) | Yielded(i32) | Error(string)

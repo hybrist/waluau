@@ -67,8 +67,13 @@ export function createCompilerHost({ command, args = [], cwd }) {
         const request = pending.get(response.id);
         if (request == null) continue;
         pending.delete(response.id);
-        if (response.ok) request.resolve(response);
-        else request.reject(new Error(response.error ?? 'Waluau compilation failed'));
+        if (response.ok) {
+          request.resolve(response);
+        } else {
+          const error = new Error(response.error ?? 'Waluau compilation failed');
+          error.diagnostics = Array.isArray(response.diagnostics) ? response.diagnostics : [];
+          request.reject(error);
+        }
       }
     });
     return process;

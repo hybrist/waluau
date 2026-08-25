@@ -258,10 +258,11 @@ fn compile_program_with_cache(
     let ir = match ir_cache {
         Some(cache) => {
             waluau_ir::build_cached_with_changes(typed_program, cache, changed_functions)
-                .map_err(|error| vec![error])?
+                .map_err(|error| vec![resolve_diagnostic_source(error, &program)])?
         }
         None => {
-            owned_ir = waluau_ir::build(typed_program).map_err(|error| vec![error])?;
+            owned_ir = waluau_ir::build(typed_program)
+                .map_err(|error| vec![resolve_diagnostic_source(error, &program)])?;
             &owned_ir
         }
     };
@@ -441,6 +442,7 @@ struct CompilerServerResponse {
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    diagnostics: Vec<serde_json::Value>,
     parses_performed: usize,
     cached_parse_count: usize,
 }
@@ -473,16 +475,18 @@ pub fn run_server(
         })?;
         let result =
             run_with_session_args(&mut session, request.args.into_iter().map(OsString::from));
+        let diagnostics = result.err().unwrap_or_default();
         let response = CompilerServerResponse {
             id: request.id,
-            ok: result.is_ok(),
-            error: result.err().map(|diagnostics| {
+            ok: diagnostics.is_empty(),
+            error: (!diagnostics.is_empty()).then(|| {
                 diagnostics
                     .iter()
                     .map(Diagnostic::render)
                     .collect::<Vec<_>>()
                     .join("\n")
             }),
+            diagnostics: diagnostics.iter().map(serialize_diagnostic).collect(),
             parses_performed: session.parses_performed(),
             cached_parse_count: session.cached_parse_count(),
         };
@@ -501,23 +505,7 @@ fn write_build_report(path: &Path, outcome: &session::BuildOutcome) -> Result<()
     let diagnostics: Vec<serde_json::Value> = outcome
         .diagnostics
         .iter()
-        .map(|diagnostic| {
-            serde_json::json!({
-                "message": diagnostic.to_string(),
-                "rendered": diagnostic.render(),
-                "file": diagnostic.file_path(),
-                "line": diagnostic.source_location().map(|(line, _)| line),
-                "column": diagnostic.source_location().map(|(_, column)| column),
-                "span": diagnostic.span().map(|span| serde_json::json!({
-                    "start": span.start,
-                    "end": span.end,
-                })),
-                "severity": match diagnostic.severity() {
-                    waluau_diagnostics::Severity::Error => "error",
-                    waluau_diagnostics::Severity::Warning => "warning",
-                },
-            })
-        })
+        .map(serialize_diagnostic)
         .collect();
     let report = serde_json::json!({
         "success": outcome.artifacts.is_some(),
@@ -543,6 +531,24 @@ fn write_build_report(path: &Path, outcome: &session::BuildOutcome) -> Result<()
     let serialized = serde_json::to_string_pretty(&report)
         .map_err(|error| Diagnostic::new(format!("serialize build report: {error}")))?;
     fs::write(path, serialized).map_err(|error| io_error("write build report", path, error))
+}
+
+fn serialize_diagnostic(diagnostic: &Diagnostic) -> serde_json::Value {
+    serde_json::json!({
+        "message": diagnostic.to_string(),
+        "rendered": diagnostic.render(),
+        "file": diagnostic.file_path(),
+        "line": diagnostic.source_location().map(|(line, _)| line),
+        "column": diagnostic.source_location().map(|(_, column)| column),
+        "span": diagnostic.span().map(|span| serde_json::json!({
+            "start": span.start,
+            "end": span.end,
+        })),
+        "severity": match diagnostic.severity() {
+            waluau_diagnostics::Severity::Error => "error",
+            waluau_diagnostics::Severity::Warning => "warning",
+        },
+    })
 }
 
 fn empty_asset_manifest() -> &'static BTreeMap<String, waluau_codegen_wasm::GeneratedAsset> {
@@ -2093,6 +2099,35 @@ mod tests {
         assert_eq!(parsed[1]["cachedParseCount"], 1);
         assert!(output.exists());
         assert!(output.with_extension("js").exists());
+    }
+
+    #[test]
+    fn compiler_server_returns_structured_diagnostics() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input = tempdir.path().join("main.walu");
+        fs::write(&input, "local answer: bool = 42\n").expect("source should write");
+        let requests = format!(
+            "{}\n",
+            serde_json::json!({ "id": 1, "args": [input.display().to_string()] }),
+        );
+        let mut responses = Vec::new();
+
+        super::run_server(std::io::Cursor::new(requests), &mut responses)
+            .expect("compiler server should complete");
+
+        let response: serde_json::Value =
+            serde_json::from_slice(&responses).expect("response should be JSON");
+        assert_eq!(response["ok"], false);
+        let diagnostic = &response["diagnostics"][0];
+        assert!(
+            diagnostic["file"]
+                .as_str()
+                .is_some_and(|file| file.ends_with("main.walu"))
+        );
+        assert_eq!(diagnostic["line"], 1);
+        assert!(diagnostic["column"].as_u64().is_some());
+        assert_eq!(diagnostic["severity"], "error");
+        assert!(diagnostic["message"].as_str().is_some());
     }
 
     #[test]
