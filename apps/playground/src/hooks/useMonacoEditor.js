@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
-export default function useMonacoEditor({ files, entryFile, exportsList, outputWasmBytes, errorMsg, diagnostics = null, sendLspRequest = null }) {
+export default function useMonacoEditor({ files, setActiveFile, entryFile, exportsList, outputWasmBytes, errorMsg, diagnostics = null, sendLspRequest = null }) {
   const [editorInstance, setEditorInstance] = useState(null);
   const [monacoInstance, setMonacoInstance] = useState(null);
   const [activeRunners, setActiveRunners] = useState([]);
@@ -283,22 +283,30 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
   useEffect(() => {
     if (!monacoInstance || !sendLspRequest) return;
 
-    const lspPathForModel = (model) => {
-      const modelPath = model.uri.path;
-      const match = Object.keys(filesRef.current).find(
-        (path) => modelPath === path || modelPath === `/${path}` || model.uri.toString().endsWith(path)
+    const filePathForResource = (resource) => {
+      const resourcePath = resource.path;
+      return Object.keys(filesRef.current).find(
+        (path) => resourcePath === path || resourcePath === `/${path}` || resource.toString().endsWith(path)
       );
-      return match ?? modelPath;
     };
-    const modelForLspUri = (uri) => {
-      const path = uri.replace(/^file:\/\//, '');
-      return monacoInstance.editor
+    const lspPathForModel = (model) => filePathForResource(model.uri) ?? model.uri.path;
+    const modelForResource = (resource) => {
+      const filePath = filePathForResource(resource);
+      if (!filePath) return null;
+      const existing = monacoInstance.editor
         .getModels()
         .find(
           (model) =>
-            model.uri.path === path || model.uri.path === `/${path}` || model.uri.toString().endsWith(path)
+            model.uri.toString() === resource.toString() ||
+            filePathForResource(model.uri) === filePath
         );
+      return existing ?? monacoInstance.editor.createModel(
+        filesRef.current[filePath],
+        'waluau',
+        resource,
+      );
     };
+    const modelForLspUri = (uri) => modelForResource(monacoInstance.Uri.parse(uri));
     const positionParams = (model, position) => ({
       textDocument: { uri: `file://${lspPathForModel(model)}` },
       position: { line: position.lineNumber - 1, character: position.column - 1 },
@@ -331,6 +339,26 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
         const target = modelForLspUri(result.uri);
         if (!target) return null;
         return { uri: target.uri, range: toMonacoRange(result.range) };
+      },
+    });
+
+    const editorOpener = monacoInstance.editor.registerEditorOpener({
+      openCodeEditor(source, resource, selectionOrPosition) {
+        const filePath = filePathForResource(resource);
+        const target = modelForResource(resource);
+        if (!filePath || !target) return false;
+
+        setActiveFile(filePath);
+        source.setModel(target);
+        if (selectionOrPosition?.endLineNumber != null) {
+          source.setSelection(selectionOrPosition);
+          source.revealRangeInCenter(selectionOrPosition);
+        } else if (selectionOrPosition) {
+          source.setPosition(selectionOrPosition);
+          source.revealPositionInCenter(selectionOrPosition);
+        }
+        source.focus();
+        return true;
       },
     });
 
@@ -396,8 +424,9 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
       definitionProvider.dispose();
       referenceProvider.dispose();
       completionProvider.dispose();
+      editorOpener.dispose();
     };
-  }, [monacoInstance, sendLspRequest]);
+  }, [monacoInstance, sendLspRequest, setActiveFile]);
 
   // Clean up all active runners when compilation or WASM outputs change
   useEffect(() => {

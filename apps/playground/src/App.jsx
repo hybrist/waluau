@@ -88,6 +88,7 @@ export default function App() {
     removeRunnerZone
   } = useMonacoEditor({
     files,
+    setActiveFile,
     entryFile,
     exportsList,
     outputWasmBytes,

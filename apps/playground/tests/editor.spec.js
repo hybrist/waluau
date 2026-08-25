@@ -51,6 +51,52 @@ test.describe('editor', () => {
     expect(languageId).toBe('waluau');
   });
 
+  test('go to definition opens an imported enum in its file', async ({ page }) => {
+    await page.getByRole('button', { name: 'Require Flow Example' }).click();
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    await page.locator('.file-tab').filter({ hasText: 'ops.walu' }).click();
+    await page.locator('.code-textarea').fill('export enum E { A }');
+    await page.locator('.file-tab').filter({ hasText: 'namespace_main.walu' }).click();
+    await page.locator('.code-textarea').fill(
+      'local e_lib = require("./ops")\n\nlocal e = e_lib.E.A',
+    );
+    await expect(page.locator('.status-text')).toHaveText('Analyzing...', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const variant = await page
+      .locator('.monaco-editor .view-line')
+      .filter({ hasText: 'local e = e_lib.E.A' })
+      .evaluate((line) => {
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+          const index = text.textContent.lastIndexOf('A');
+          if (index < 0) continue;
+          const range = document.createRange();
+          range.setStart(text, index);
+          range.setEnd(text, index + 1);
+          const bounds = range.getBoundingClientRect();
+          return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+        }
+        throw new Error('enum variant A was not rendered');
+      });
+    await page.keyboard.down('Control');
+    await page.mouse.click(variant.x, variant.y);
+    await page.keyboard.up('Control');
+
+    await expect(page.locator('.file-tab.active .file-name-text')).toHaveText('ops.walu');
+    await expect(page.locator('.code-textarea')).toHaveValue('export enum E { A }');
+    await expect(page.locator('.monaco-editor .view-line').first()).toContainText(
+      'export enum E { A }',
+    );
+  });
+
   test('entry-point error message appears in the run tab when top-level code traps', async ({ page }) => {
     await page.locator('.code-textarea').fill('assert(false)');
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
