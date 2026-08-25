@@ -98,7 +98,7 @@ describe("Ante Magic shop stock", function()
 
         -- No slot is ever filled twice over, and every offer is about a spell
         -- the run can actually be sold something for.
-        local seen: {number} = {}
+        local seen: {spells.SpellKind} = {}
         for slot in intermission.slots do
             expect(slot.sold):toBe(false)
             expect(slot.price > 0):toBe(true)
@@ -110,14 +110,13 @@ describe("Ante Magic shop stock", function()
             end
             -- Drawn without replacement: the same spell cannot fill two slots.
             local good_kind = slot.goods:spell_kind()
-            local good_kind_num = 0
+            expect(good_kind):not:toBeNil()
             if good_kind ~= nil then
-                good_kind_num = good_kind:tonumber()
+                for kind in seen do
+                    expect(kind):not:toBe(good_kind)
+                end
+                table.insert(seen, good_kind)
             end
-            for kind in seen do
-                expect(kind == good_kind_num):toBe(false)
-            end
-            table.insert(seen, good_kind_num)
         end
 
         local rows: {shop.Row} = shop.rows(intermission, state)
@@ -206,7 +205,7 @@ describe("Ante Magic shop purchases", function()
         intermission.cursor = 1
         expect(tostring(shop.activate(intermission, state))):toBe("stay")
         expect(state:spell_count()):toBe(2)
-        expect(state.spells[1].kind::i32):toBe(spells.SpellKind.Clone::i32)
+        expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
         expect(state.gold):toBe(36 - shop.learn_price)
         local spent: {shop.Row} = shop.rows(intermission, state)
         expect(spent[0].sold):toBe(true)
@@ -264,7 +263,7 @@ describe("Ante Magic shop purchases", function()
         expect(tostring(shop.activate(intermission, state))):toBe("stay")
 
         expect(state:spell_count()):toBe(2)
-        expect(state.spells[1].kind:tonumber()):toBe(spells.SpellKind.RaiseCard:tonumber())
+        expect(state.spells[1].kind):toBe(spells.SpellKind.RaiseCard)
         expect(state.spells[1].cost):toBe(game.spell_cost)
         expect(state.gold):toBe(30 - shop.learn_price)
         expect(slot_sold(intermission, 0)):toBe(true)
@@ -295,16 +294,16 @@ describe("Ante Magic shop purchases", function()
         local choices: {shop.Row} = shop.rows(intermission, state)
         expect(#choices):toBe(3)
         expect(tostring(choices[0].kind)):toBe("choice")
-        expect((choices[0].spell or spells.SpellKind.Clone):tonumber()):toBe(spells.SpellKind.Firebolt:tonumber())
-        expect((choices[1].spell or spells.SpellKind.Firebolt):tonumber()):toBe(spells.SpellKind.Clone:tonumber())
+        expect(choices[0].spell):toBe(spells.SpellKind.Firebolt)
+        expect(choices[1].spell):toBe(spells.SpellKind.Clone)
         expect(tostring(choices[2].kind)):toBe("cancel")
 
         point_at_choice(intermission, state, 1)
         expect(tostring(shop.activate(intermission, state))):toBe("stay")
         expect(shop.choosing(intermission)):toBe(false)
         expect(state:spell_count()):toBe(2)
-        expect(state.spells[0].kind:tonumber()):toBe(spells.SpellKind.Firebolt:tonumber())
-        expect(state.spells[1].kind:tonumber()):toBe(spells.SpellKind.FreezeRay:tonumber())
+        expect(state.spells[0].kind):toBe(spells.SpellKind.Firebolt)
+        expect(state.spells[1].kind):toBe(spells.SpellKind.FreezeRay)
         expect(state:carries(spells.SpellKind.Clone)):toBe(false)
         expect(state.gold):toBe(40 - shop.learn_price)
         expect(slot_sold(intermission, 1)):toBe(true)
@@ -359,8 +358,8 @@ describe("Ante Magic shop purchases", function()
         expect(tostring(shop.activate(intermission, state))):toBe("stay")
         expect(shop.choosing(intermission)):toBe(false)
         expect(state.gold):toBe(40)
-        expect(state.spells[0].kind:tonumber()):toBe(spells.SpellKind.RaiseCard:tonumber())
-        expect(state.spells[1].kind:tonumber()):toBe(spells.SpellKind.FreezeRay:tonumber())
+        expect(state.spells[0].kind):toBe(spells.SpellKind.RaiseCard)
+        expect(state.spells[1].kind):toBe(spells.SpellKind.FreezeRay)
         -- Calling off a trade is not buying: the offer is still for sale, and
         -- the cursor is back on it.
         expect(slot_sold(intermission, 0)):toBe(false)
@@ -430,9 +429,9 @@ describe("Ante Magic shop controls", function()
             -- as much a part of it as what it still has.
             expect(slot_sold(visit, 0)):toBe(true)
             expect(visit.slots[0].goods is Upgrade):toBe(true)
-            expect((visit.slots[0].goods:spell_kind() or spells.SpellKind.Clone):tonumber()):toBe(spells.SpellKind.Firebolt:tonumber())
+            expect(visit.slots[0].goods:spell_kind()):toBe(spells.SpellKind.Firebolt)
             expect(visit.slots[1].goods is Spell):toBe(true)
-            expect((visit.slots[1].goods:spell_kind() or spells.SpellKind.Firebolt):tonumber()):toBe(spells.SpellKind.FreezeRay:tonumber())
+            expect(visit.slots[1].goods:spell_kind()):toBe(spells.SpellKind.FreezeRay)
             -- The price a visit quoted is part of the visit, not something
             -- re-derived on the way back in.
             expect(visit.slots[1].price):toBe(shop.learn_price)
