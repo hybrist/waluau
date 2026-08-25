@@ -12,7 +12,6 @@
 -- purchase.
 
 local game = require("./game")
-local snapshot_data = require("./snapshot")
 local spells = require("./spells/spell")
 
 -- `duel` is 1-based and counts every attempt in the sequence, cleared or
@@ -56,8 +55,7 @@ const MIN_SPELL_COST: i32 = 2
 -- Three lost hands across the whole run. A won duel repairs nothing: health is
 -- run state, just like the purse and loadout it carries through the shop.
 const MAX_HEARTS: i32 = 3
-const SNAPSHOT_SCHEMA: string = "duel-run-v3"
-const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
+const SNAPSHOT_SCHEMA: string = "duel-run-v4"
 
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
 -- the starting spell the run sets out with, and the whole of its opening
@@ -323,61 +321,35 @@ function State:open_slot(): i32
     return #self.spells
 end
 
+-- Development snapshots ride the built-in JSON codec. The wrapper record
+-- carries the schema marker; unpacking already validates the shape, so what
+-- restore checks is only the semantics a well-shaped payload can still get
+-- wrong.
+type Snapshot = { schema: string, state: State }
+
 function snapshot(state: State): string
-    local parts: {string} = { SNAPSHOT_SCHEMA }
-    snapshot_data.append_i32(parts, state.duel)
-    snapshot_data.append_i32(parts, state.gold)
-    snapshot_data.append_i32(parts, state.cleared)
-    snapshot_data.append_i32(parts, state.hearts)
-    snapshot_data.append_i32(parts, #state.spells)
-    for spell in state.spells do
-        snapshot_data.append_i32(parts, spell.kind:tonumber()::i32)
-        snapshot_data.append_i32(parts, spell.cost)
-    end
-    snapshot_data.append_i32(parts, state.start_spell:tonumber()::i32)
-    snapshot_data.append_bool(parts, state.rush)
-    return table.concat(parts, ",")
+    local payload: Snapshot = { schema = SNAPSHOT_SCHEMA, state = state }
+    return json.pack(payload)
 end
 
 function restore(snapshot_value: string): State?
-    local reader: snapshot_data.Reader = snapshot_data.reader(
-        snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
-    if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
-    local duel: i32 = reader:next_i32()
-    local gold: i32 = reader:next_i32()
-    local cleared: i32 = reader:next_i32()
-    local hearts: i32 = reader:next_i32()
-    local loadout: {game.Spell} = {}
-    local spell_count: i32 = reader:next_length()
-    for _ = 1, spell_count do
-        local kind: spells.SpellKind? = spells.SpellKind.from(reader:next_i32())
-        if kind == nil then return nil end
-        table.insert(loadout, {
-            kind = kind::spells.SpellKind, cost = reader:next_i32(),
-        })
-    end
-    local start_spell = spells.SpellKind.from(reader:next_i32())
-    if start_spell == nil then return nil end
-    local rush: bool = reader:next_bool()
-    local restored: State = {
-        duel = duel,
-        gold = gold,
-        hearts = hearts,
-        cleared = cleared,
-        spells = loadout,
-        start_spell = start_spell,
-        rush = rush,
-    }
-    if not reader:complete() then return nil end
+    local decoded = json.unpack<Snapshot>(snapshot_value)
+    if decoded == nil then return nil end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+    local restored: State = decoded.state
     -- No upper selected on the duel: a run past the end of its table is a run
     -- that won and kept walking, not a payload from another build.
-    if duel < 1 then return nil end
+    if restored.duel < 1 then return nil end
     -- Zero is the terminal reveal before settle restarts the run; no run can
     -- have more health than it opened with or take damage below zero.
-    if hearts < 0 or hearts > MAX_HEARTS then return nil end
+    if restored.hearts < 0 or restored.hearts > MAX_HEARTS then return nil end
     -- A run always carries at least the spell it set out with, and never more
     -- than the two the player can hold ready.
-    if #loadout < 1 or #loadout > MAX_SPELLS then return nil end
+    if #restored.spells < 1 or #restored.spells > MAX_SPELLS then return nil end
+    for spell in restored.spells do
+        if not spells.SpellKind.valid(spell.kind) then return nil end
+    end
+    if not spells.SpellKind.valid(restored.start_spell) then return nil end
     return restored
 end
 

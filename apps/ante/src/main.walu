@@ -19,21 +19,19 @@ local menu = require("./menu")
 local game_screen = require("./game_screen")
 local ink = require("./ink")
 local layout = require("./layout")
-local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
 local spells = require("./spells/spell")
 
-const HOT_SNAPSHOT_SCHEMA: string = "duel-hmr-v4"
--- The live screen marker plus the duel screen's five sections.
-const HOT_SNAPSHOT_SECTIONS: i32 = 6
+const HOT_SNAPSHOT_SCHEMA: string = "duel-hmr-v5"
+-- The duel screen's five independently versioned sections.
+const HOT_SNAPSHOT_SECTIONS: i32 = 5
 
 type ActiveScreen = "menu" | "game"
 
-function screen_from(token: string): ActiveScreen?
-    if token == "menu" then return "menu" end
-    if token == "game" then return "game" end
-    return nil
-end
+-- Hot replacement carries the live screen marker plus one section per duel
+-- state module. Packing them as one JSON record keeps restore atomic without
+-- making any section understand the others' schemas.
+type HotSnapshot = { schema: string, screen: ActiveScreen, sections: {string} }
 
 function play_flip_cues(assets: presentation_resources.State, count: i32): unit
     for _ = 1, count do presentation_resources.play_flip(assets) end
@@ -192,29 +190,37 @@ function install_ante_magic(): unit
 
     hot.register({
         snapshot = function(): string
-            local sections: {string} = { tostring(screen) }
-            for section in game_screen.snapshot(duel) do
-                table.insert(sections, section)
-            end
-            return snapshot_data.frame(HOT_SNAPSHOT_SCHEMA, sections)
+            local payload: HotSnapshot = {
+                schema = HOT_SNAPSHOT_SCHEMA,
+                screen = screen,
+                sections = game_screen.snapshot(duel),
+            }
+            return json.pack(payload)
         end,
         restore = function(snapshot_value: string): bool
-            local sections: {string}? = snapshot_data.unframe(
-                snapshot_value, HOT_SNAPSHOT_SCHEMA, HOT_SNAPSHOT_SECTIONS)
-            if sections == nil then return false end
-            local payloads: {string} = sections::{string}
-            local restored_screen: ActiveScreen? = screen_from(payloads[0])
-            if restored_screen == nil then return false end
+            local decoded = json.unpack<HotSnapshot>(snapshot_value)
+            if decoded == nil then return false end
+            if decoded.schema ~= HOT_SNAPSHOT_SCHEMA then return false end
+            -- The screen marker is a literal union, which decodes as a plain
+            -- string; an unknown marker is another build's payload.
+            if decoded.screen ~= "menu" and decoded.screen ~= "game" then
+                return false
+            end
+            -- A payload framed by a differently shaped build is a normal
+            -- refusal: the sections it holds are not the ones this build
+            -- would restore.
+            if #decoded.sections ~= HOT_SNAPSHOT_SECTIONS then return false end
+            local payloads: {string} = decoded.sections
             local restored: game_screen.State? = game_screen.restore(
-                payloads[1], payloads[2], payloads[3], payloads[4], payloads[5])
+                payloads[0], payloads[1], payloads[2], payloads[3], payloads[4])
             if restored == nil then return false end
             duel = restored::game_screen.State
             menu.reset(menu_state, city)
-            screen = restored_screen::ActiveScreen
+            screen = decoded.screen
             -- A restored run is set down where it stands rather than played
             -- back to it: the map takes the duel's stop with no walk and no
             -- dissolve left to run.
-            if restored_screen == "game" then
+            if decoded.screen == "game" then
                 game_screen.place_city(duel, city)
             end
             return true

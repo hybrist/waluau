@@ -6,11 +6,14 @@ local game = require("./game")
 local game_fixture = require("../test/game_fixture")
 local run = require("./run")
 local flow = require("./flow")
-local snapshot_data = require("./snapshot")
 local spells = require("./spells/spell")
 
 const FIRST_ROUND: i32 = 1
 const LAST_ROUND: i32 = 3
+
+-- The framing shape the entry module packs for hot replacement, mirrored here
+-- so the atomic-restore test can exercise it without a browser session.
+type HotFrame = { schema: string, screen: string, sections: {string} }
 
 local function card(rank: i32, suit: game.Suit): game.Card
     return { rank = rank, suit = suit }
@@ -509,10 +512,18 @@ describe("Ante Magic development snapshots", function()
 
         expect(game.restore("duel-state-v0,0") == nil):toBe(true)
         expect(game.restore(encoded .. ",unexpected") == nil):toBe(true)
-        -- The final field is the nullable last-cast kind on the existing wire
-        -- format. A decoder must reject kinds outside the closed spell domain.
-        local invalid_cast: string = string.sub(encoded, 1, #encoded - 1) .. "9"
+        -- The nullable last-cast kind: a decoder must reject kinds outside
+        -- the closed spell domain, which the JSON shape alone does not know.
+        local invalid_cast: string =
+            string.gsub(encoded, '"cast_kind":null', '"cast_kind":99')
+        expect(invalid_cast == encoded):toBe(false)
         expect(game.restore(invalid_cast) == nil):toBe(true)
+        -- Winner columns are literal unions that decode as plain integers, so
+        -- their domain is restore's to check.
+        local invalid_winner: string =
+            string.gsub(encoded, '"last_winner":%-?%d+', '"last_winner":9')
+        expect(invalid_winner == encoded):toBe(false)
+        expect(game.restore(invalid_winner) == nil):toBe(true)
     end)
 
     it("frames screen, run, rules, flow, and presentation payloads atomically", function()
@@ -521,42 +532,65 @@ describe("Ante Magic development snapshots", function()
         local ui: flow.State = flow.new()
         ui.modal = "help"
 
-        local encoded_flow: string = flow.snapshot(ui)
-        local framed: string = snapshot_data.frame("target-test-frame", {
-            "1",
-            run.snapshot(run_state),
-            game.snapshot(rules),
-            encoded_flow,
-            "presentation",
-        })
-        local sections: {string}? = snapshot_data.unframe(framed, "target-test-frame", 5)
-        expect(sections == nil):toBe(false)
-        if sections ~= nil then
-            local payloads: {string} = sections
-            expect(payloads[0]):toBe("1")
-            local restored_run: run.State? = run.restore(payloads[1])
-            local restored_rules: game.State? = game.restore(payloads[2])
-            local restored_ui: flow.State? = flow.restore(payloads[3])
+        -- The shape the entry module packs for hot replacement: sections stay
+        -- opaque strings, so no section needs to understand the others'
+        -- schemas, and each module's JSON payload embeds cleanly as a JSON
+        -- string section.
+        local framed_payload: HotFrame = {
+            schema = "target-test-frame",
+            screen = "game",
+            sections = {
+                run.snapshot(run_state),
+                game.snapshot(rules),
+                flow.snapshot(ui),
+                "presentation",
+            },
+        }
+        local framed: string = json.pack(framed_payload)
+        local decoded = json.unpack<HotFrame>(framed)
+        expect(decoded == nil):toBe(false)
+        if decoded ~= nil then
+            expect(decoded.schema):toBe("target-test-frame")
+            expect(decoded.screen):toBe("game")
+            expect(#decoded.sections):toBe(4)
+            local restored_run: run.State? = run.restore(decoded.sections[0])
+            local restored_rules: game.State? = game.restore(decoded.sections[1])
+            local restored_ui: flow.State? = flow.restore(decoded.sections[2])
             expect(restored_run == nil):toBe(false)
             expect(restored_rules == nil):toBe(false)
             expect(restored_ui == nil):toBe(false)
-            expect(payloads[4]):toBe("presentation")
+            expect(decoded.sections[3]):toBe("presentation")
             if restored_run ~= nil then
                 expect(restored_run.spells[0].kind):toBe(spells.SpellKind.Clone)
             end
             if restored_ui ~= nil then expect(tostring(restored_ui.modal)):toBe("help") end
         end
 
-        expect(snapshot_data.unframe(framed, "wrong-schema", 5) == nil):toBe(true)
-        expect(snapshot_data.unframe(framed, "target-test-frame", 4) == nil):toBe(true)
-        expect(snapshot_data.unframe(framed .. "|extra", "target-test-frame", 5) == nil):toBe(true)
+        -- Trailing garbage fails the frame as a whole; a section fed to the
+        -- wrong module fails that section's own schema check.
+        expect(json.unpack<HotFrame>(framed .. "|extra") == nil):toBe(true)
+        expect(run.restore(flow.snapshot(ui)) == nil):toBe(true)
     end)
 
     it("rejects inconsistent spell-targeting payloads", function()
-        expect(flow.restore(
-            "duel-flow-v5,0,0,hand,0,0,0,none,0,0,1") == nil):toBe(true)
-        expect(flow.restore(
-            "duel-flow-v5,0,0,hand,0,0,0,none,0,1,-1") == nil):toBe(true)
+        -- A cast slot names a loadout key, which is never negative. The old
+        -- casting-flag inconsistency cannot be written any more: the slot is
+        -- one nullable field.
+        local ui: flow.State = flow.new()
+        local negative_slot: i32 = -1
+        ui.cast_slot = negative_slot
+        expect(flow.restore(flow.snapshot(ui)) == nil):toBe(true)
+    end)
+
+    it("rejects a modal another build wrote", function()
+        -- The modal is a literal union that decodes as a plain string, so its
+        -- domain is restore's to check.
+        local ui: flow.State = flow.new()
+        ui.modal = "help"
+        local unknown_modal: string =
+            string.gsub(flow.snapshot(ui), '"modal":"help"', '"modal":"attic"')
+        expect(flow.restore(flow.snapshot(ui)) == nil):toBe(false)
+        expect(flow.restore(unknown_modal) == nil):toBe(true)
     end)
 end)
 

@@ -8,7 +8,6 @@ local render = require("./render")
 local card_burn = require("./card_burn")
 local entity = require("./entity")
 local run_module = require("./run")
-local snapshot_data = require("./snapshot")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
 
@@ -90,8 +89,7 @@ const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
 -- A burn reading below zero means nothing is burning: an ash emitter goes
 -- quiet on it, while the flakes already in the air keep falling.
 const NOT_BURNING: f64 = -1.0
-const SNAPSHOT_SCHEMA: string = "target-presentation-v5"
-const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
+const SNAPSHOT_SCHEMA: string = "target-presentation-v6"
 
 function new_session(): Session
     return {
@@ -828,12 +826,11 @@ function swap(outcome: game.SwapOutcome, state: State): unit
     begin_anims(state, anims, total, "swap")
 end
 
-function append_cards(parts: {string}, cards: {game.Card}): unit
-    snapshot_data.append_i32(parts, #cards)
+function valid_cards(cards: {game.Card}): bool
     for card in cards do
-        snapshot_data.append_i32(parts, card.rank)
-        snapshot_data.append_i32(parts, card.suit)
+        if not game.valid_card(card) then return false end
     end
+    return true
 end
 
 -- A development snapshot carries where the board *is*, never what it is in the
@@ -846,57 +843,50 @@ end
 -- What is written is state a reload cannot re-derive: the fan's row size (one
 -- resting offset per card, so every fan loop and hit scan stays the right
 -- width for a boss battle's longer hand), the spell condition standing on a
--- table_card, and the spent pile's ledger.
-function append_snapshot(parts: {string}, state: State): unit
-    snapshot_data.append_i32(parts, #state.fan_parts)
-    local power: Power? = state.session.power
-    local kind: i32 = 0
-    local target: i32 = 0
-    if power ~= nil then
-        local active: Power = power::Power
-        kind = active.kind:tonumber()::i32
-        target = active.target
+-- table_card, and the spent pile's ledger. The condition's clock is left to
+-- restore to settle, so a snapshot writes only which spell and where.
+type SnapshotPower = { kind: spells.SpellKind, target: i32 }
+type Snapshot = {
+    schema: string,
+    fan_count: i32,
+    power: SnapshotPower?,
+    discards: {game.Card}
+}
+
+function snapshot(state: State): string
+    local power: SnapshotPower? = nil
+    local active: Power? = state.session.power
+    if active ~= nil then
+        power = { kind = active.kind, target = active.target }
     end
-    snapshot_data.append_i32(parts, kind)
-    snapshot_data.append_i32(parts, target)
-    append_cards(parts, state.session.discards)
+    local payload: Snapshot = {
+        schema = SNAPSHOT_SCHEMA,
+        fan_count = #state.fan_parts,
+        power = power,
+        discards = state.session.discards,
+    }
+    return json.pack(payload)
 end
 
-function next_cards(reader: snapshot_data.Reader): {game.Card}
-    local cards: {game.Card} = {}
-    local length: i32 = reader:next_length()
-    for _ = 1, length do
-        table.insert(cards, {
-            rank = reader:next_i32(), suit = reader:next_i32()::game.Suit,
-        })
-    end
-    return cards
-end
-
-function valid_cards(cards: {game.Card}): bool
-    for card in cards do
-        if not game.valid_card(card) then return false end
-    end
-    return true
-end
-
-function restore_snapshot(reader: snapshot_data.Reader): State?
+function restore(snapshot_value: string): State?
+    local decoded = json.unpack<Snapshot>(snapshot_value)
+    if decoded == nil then return nil end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+    if decoded.fan_count < 0 then return nil end
     local state: State = new()
-    state.fan_parts = closed_fan_parts(reader:next_length())
-    local power_kind: i32 = reader:next_i32()
-    local power_target: i32 = reader:next_i32()
-    if power_kind == 0 then
-        if power_target ~= 0 then return nil end
-    else
-        if power_target < 0 or power_target > 4 then return nil end
-        local checked: spells.SpellKind? = spells.SpellKind.from(power_kind)
-        if checked == nil then return nil end
+    state.fan_parts = closed_fan_parts(decoded.fan_count)
+    local power: SnapshotPower? = decoded.power
+    if power ~= nil then
+        -- A spell kind is bounded by the spells that exist, and its target
+        -- names a community slot; neither bound is one the JSON shape carries.
+        if not spells.SpellKind.valid(power.kind) then return nil end
+        if power.target < 0 or power.target > 4 then return nil end
         state.session.power = {
-            kind = checked::spells.SpellKind, clock = 0.0, target = power_target,
+            kind = power.kind, clock = 0.0, target = power.target,
         }
     end
-    state.session.discards = next_cards(reader)
-    if not valid_cards(state.session.discards) then return nil end
+    if not valid_cards(decoded.discards) then return nil end
+    state.session.discards = decoded.discards
     -- The reveal comes back finished rather than mid-burn. The trick it shows
     -- was already resolved by the rules before the reveal began, and the flow
     -- gate still waits for the player to advance out of it, so this settles a
@@ -904,22 +894,6 @@ function restore_snapshot(reader: snapshot_data.Reader): State?
     finish_reveal(state)
     finish_power(state)
     return state
-end
-
-function snapshot(state: State): string
-    local parts: {string} = { SNAPSHOT_SCHEMA }
-    append_snapshot(parts, state)
-    return table.concat(parts, ",")
-end
-
-function restore(snapshot_value: string): State?
-    local reader: snapshot_data.Reader = snapshot_data.reader(
-        snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
-    if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
-    local restored: State? = restore_snapshot(reader)
-    if restored == nil then return nil end
-    if not reader:complete() then return nil end
-    return restored::State
 end
 
 function draw(
@@ -990,8 +964,6 @@ return {
     swap = swap,
     record_burned_losers = record_burned_losers,
     resolved_breach_cleanup = resolved_breach_cleanup,
-    append_snapshot = append_snapshot,
-    restore_snapshot = restore_snapshot,
     snapshot = snapshot,
     restore = restore,
     draw = draw,

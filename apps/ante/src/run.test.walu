@@ -135,10 +135,21 @@ describe("Ante Magic run cadence", function()
             expect(run.snapshot(restored)):toBe(encoded)
         end
 
-        expect(run.restore("duel-run-v1,1,10,0,1,0") == nil):toBe(true)
-        expect(run.restore("duel-run-v2,1,10,0,1,3,5,3,1") == nil):toBe(true)
-        expect(run.restore("duel-run-v3,1,10,0,4,1,1,5,1,0") == nil):toBe(true)
+        -- A payload from another build — the old token wire format, a JSON
+        -- payload carrying a stale schema marker, or one with trailing
+        -- garbage — is a normal refusal rather than a crash.
+        expect(run.restore("duel-run-v3,1,10,0,1,0") == nil):toBe(true)
+        local stale_schema: string =
+            string.gsub(encoded, "duel%-run%-v4", "duel-run-v3")
+        expect(run.restore(stale_schema) == nil):toBe(true)
         expect(run.restore(encoded .. ",unexpected") == nil):toBe(true)
+        -- A spell kind is bounded by the spells that exist, and health by what
+        -- a run opens with; the JSON shape checks neither.
+        local unknown_spell: string =
+            string.gsub(encoded, '"start_spell":%d+', '"start_spell":99')
+        expect(run.restore(unknown_spell) == nil):toBe(true)
+        state.hearts = run.max_hearts + 1
+        expect(run.restore(run.snapshot(state)) == nil):toBe(true)
     end)
 
     it("round-trips a bought loadout and refuses an impossible one", function()
@@ -159,8 +170,13 @@ describe("Ante Magic run cadence", function()
 
         -- A loadout of three spells, or of none, is not a run this build could
         -- have produced, so restoring it is a normal refusal.
-        expect(run.restore("duel-run-v2,1,10,0,0,1,0") == nil):toBe(true)
-        expect(run.restore("duel-run-v2,1,10,0,3,1,5,2,5,3,5,1,0") == nil):toBe(true)
+        local empty: run.State = run.new(spells.SpellKind.Firebolt, false)
+        empty.spells = {}
+        expect(run.restore(run.snapshot(empty)) == nil):toBe(true)
+        local crowded: run.State = run.new(spells.SpellKind.Firebolt, false)
+        table.insert(crowded.spells, { kind = spells.SpellKind.Clone, cost = game.spell_cost })
+        table.insert(crowded.spells, { kind = spells.SpellKind.FreezeRay, cost = game.spell_cost })
+        expect(run.restore(run.snapshot(crowded)) == nil):toBe(true)
     end)
 end)
 
