@@ -31,6 +31,10 @@ assert(type(nothing()) == "nil")
 -- An adjusted `unknown` still classifies at runtime.
 assert(type(unknown_first()) == "number")
 
+-- An unannotated local also adjusts a multi-value call to its first result.
+local first = pair()
+assert(first == 1)
+
 -- A nominal record alias is transparent: it is a table, not its alias name.
 local point: Point = { x = 1, y = 2 }
 assert(type(point) == "table")
