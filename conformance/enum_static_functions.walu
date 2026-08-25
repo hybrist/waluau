@@ -1,0 +1,54 @@
+-- Dot-named functions (`function SpellKind.from(...)`) share an enum's
+-- namespace with its variants: a member access that names no variant is a
+-- static function reference, not a variant typo. Statics can be referenced
+-- before their declaration parses.
+
+enum SpellKind {
+    Firebolt,
+    FreezeRay,
+    RaiseCard,
+    Clone,
+}
+
+function describe(kind: SpellKind): i32
+    -- A static call before the declaration below has parsed.
+    local round_trip = SpellKind.from(SpellKind.ordinal(kind))
+    assert(round_trip == kind)
+    return SpellKind.ordinal(kind)
+end
+
+function SpellKind.from(value: i32): SpellKind?
+    if value == 1 then return SpellKind.Firebolt end
+    if value == 2 then return SpellKind.FreezeRay end
+    if value == 3 then return SpellKind.RaiseCard end
+    if value == 4 then return SpellKind.Clone end
+    return nil
+end
+
+function SpellKind.ordinal(kind: SpellKind): i32
+    local value: i32 = 0
+    match kind do
+    case SpellKind.Firebolt then
+        value = 1
+    case SpellKind.FreezeRay then
+        value = 2
+    case SpellKind.RaiseCard then
+        value = 3
+    case SpellKind.Clone then
+        value = 4
+    end
+    return value
+end
+
+local frost = SpellKind.from(2)
+assert(frost == SpellKind.FreezeRay)
+
+local unknown_kind = SpellKind.from(99)
+assert(unknown_kind == nil)
+
+assert(describe(SpellKind.RaiseCard) == 3)
+
+-- A static reference is a plain function value.
+local parse = SpellKind.from
+local cloned = parse(4)
+assert(cloned == SpellKind.Clone)

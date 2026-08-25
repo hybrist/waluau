@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use waluau_ast::{
     DeclaredConstant, DeclaredImport, Function, FunctionExpr, FunctionName, Param, Program, Span,
     Stmt, Type, TypeDeclaration,
@@ -24,6 +24,11 @@ pub(super) struct Parser {
     file_path: String,
     /// Locally declared nominal enums and their declaration-order variants.
     enums: HashMap<String, Vec<String>>,
+    /// Dotted names of every `function A.b` / `function A:b` declaration in
+    /// the file, collected up front so an enum member access can distinguish
+    /// a static function from a misspelled variant before the declaration
+    /// has been parsed.
+    dotted_functions: HashSet<String>,
     /// One-shot permission for a `self` receiver in the next function type
     /// atom. Set while parsing a record field's type and consumed by the
     /// first parenthesized type list, so `self` is legal exactly at the top
@@ -42,6 +47,7 @@ pub(super) struct Parser {
 
 impl Parser {
     pub(super) fn new(tokens: Vec<Token>, file_path: String) -> Self {
+        let dotted_functions = collect_dotted_function_names(&tokens);
         Self {
             tokens,
             index: 0,
@@ -50,6 +56,7 @@ impl Parser {
             definitions: Vec::new(),
             file_path,
             enums: HashMap::new(),
+            dotted_functions,
             self_allowed: false,
             conformance_allowed: false,
             pending_conformance: None,
@@ -1028,4 +1035,31 @@ impl Parser {
             }),
         })
     }
+}
+
+/// Every `function A.b` / `function A:b` declaration in the token stream,
+/// keyed as the dotted name `A.b`. Statics can be referenced before their
+/// declaration parses, so member accesses on enums need the full set up
+/// front to tell a static apart from a misspelled variant.
+fn collect_dotted_function_names(tokens: &[Token]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for window in tokens.windows(4) {
+        let [first, second, third, fourth] = window else {
+            continue;
+        };
+        if !matches!(first.kind, TokenKind::Function) {
+            continue;
+        }
+        let TokenKind::Identifier(table) = &second.kind else {
+            continue;
+        };
+        if !matches!(third.kind, TokenKind::Dot | TokenKind::Colon) {
+            continue;
+        }
+        let TokenKind::Identifier(member) = &fourth.kind else {
+            continue;
+        };
+        names.insert(format!("{table}.{member}"));
+    }
+    names
 }

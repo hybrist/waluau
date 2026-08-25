@@ -2873,6 +2873,96 @@ end
     }
 
     #[test]
+    fn compile_file_resolves_type_statics_through_require_bindings() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("t.walu"),
+            r#"
+                export type S = {
+                    v: number,
+                }
+
+                function S.new(v: number): S
+                    return { v = v }
+                end
+
+                function S:double(): number
+                    return self.v * 2.0
+                end
+
+                export enum SpellKind { Firebolt, FreezeRay }
+
+                function SpellKind.from(value: i32): SpellKind?
+                    if value == 1 then return SpellKind.Firebolt end
+                    if value == 2 then return SpellKind.FreezeRay end
+                    return nil
+                end
+            "#,
+        )
+        .expect("t module should write");
+        let input_path = tempdir.path().join("call.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local t = require("./t")
+
+                local s = t.S.new(10)
+                assert(s.v == 10)
+                assert(s:double() == 20)
+
+                -- A colon method's static form is reachable the same way.
+                assert(t.S.double(s) == 20)
+
+                local frost = t.SpellKind.from(2)
+                assert(frost == t.SpellKind.FreezeRay)
+                assert(t.SpellKind.from(9) == nil)
+
+                -- A static reference is a plain function value.
+                local make = t.S.new
+                assert(make(3).v == 3)
+            "#,
+        )
+        .expect("call module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_rejects_statics_on_private_types() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("t.walu"),
+            r#"
+                export type Public = { v: number }
+
+                type Hidden = { v: number }
+
+                function Hidden.new(v: number): Hidden
+                    return { v = v }
+                end
+            "#,
+        )
+        .expect("t module should write");
+        let input_path = tempdir.path().join("call.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local t = require("./t")
+
+                local h = t.Hidden.new(1)
+            "#,
+        )
+        .expect("call module should write");
+
+        let error = super::compile_file(&input_path).expect_err("compile should fail");
+        assert!(
+            error.to_string().contains("Hidden"),
+            "a private type's statics must stay unreachable: {error}"
+        );
+    }
+
+    #[test]
     fn compile_file_reports_unknown_imported_type_alias() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
