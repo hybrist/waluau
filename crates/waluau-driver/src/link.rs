@@ -774,11 +774,14 @@ struct ModuleNamespace {
 /// One erased declaration exposed through a required module. Ordinary aliases
 /// carry only their canonical linked name; enums additionally retain their
 /// declaration-order variants so qualified values and matches can be resolved
-/// without manufacturing a runtime table.
+/// without manufacturing a runtime table. Statics map the type's dot-named
+/// functions and colon methods (member name -> mangled function name) so
+/// `t.S.new` resolves to a direct function reference.
 #[derive(Clone, Debug)]
 struct ExportedType {
     canonical_name: String,
     enum_variants: Option<Vec<String>>,
+    statics: BTreeMap<String, String>,
 }
 
 type TypeNamespace = HashMap<String, ExportedType>;
@@ -1024,6 +1027,40 @@ fn imported_enum_variant_expr(
         },
         span,
     })
+}
+
+/// `t.S.new`: a static function reached through a required module's exported
+/// type. Types are erased declarations, not runtime tables, so the access
+/// resolves to a direct reference to the defining module's mangled function —
+/// the same shape a local `S.new` expression lowers to.
+fn imported_type_static_expr(
+    expr: &Expr,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+    shadowed: &HashSet<String>,
+) -> Option<Expr> {
+    let Expr::Field {
+        base, name: member, ..
+    } = expr
+    else {
+        return None;
+    };
+    let Expr::Field {
+        base: namespace_base,
+        name: type_name,
+        ..
+    } = &**base
+    else {
+        return None;
+    };
+    let Expr::Name(namespace, _, _) = &**namespace_base else {
+        return None;
+    };
+    if shadowed.contains(namespace) {
+        return None;
+    }
+    let exported = type_namespaces.get(namespace)?.get(type_name)?;
+    let function = exported.statics.get(member)?;
+    Some(Expr::Name(function.clone(), None, expr.span()))
 }
 
 fn rewrite_imported_enum_constant_expr(
@@ -1391,10 +1428,27 @@ fn exported_type_names(
                 ExportedType {
                     canonical_name: format!("{prefix}{}", decl.name),
                     enum_variants: decl.enum_variants.clone(),
+                    statics: BTreeMap::new(),
                 },
             )
         })
         .collect::<HashMap<_, _>>();
+    for function in &module.program.functions {
+        let (type_name, member) = match &function.name {
+            FunctionName::Simple(name) => match name.split_once('.') {
+                Some(parts) => parts,
+                None => continue,
+            },
+            // A colon method desugars to the same `Type.member` function
+            // name, so its static form is reachable the same way.
+            FunctionName::Method { table, method } => (table.as_str(), method.as_str()),
+        };
+        if let Some(exported) = types.get_mut(type_name) {
+            exported
+                .statics
+                .insert(member.to_string(), format!("{prefix}{type_name}.{member}"));
+        }
+    }
     cache.insert(module_id, types.clone());
 
     let require_bindings = module
@@ -2333,6 +2387,11 @@ impl Rewriter<'_> {
         // not runtime tables. Resolve the variant directly to the same typed
         // ordinal cast produced for a local `Color.red` expression.
         if let Some(resolved) = imported_enum_variant_expr(expr, self.type_namespaces, bound) {
+            *expr = resolved;
+            return;
+        }
+        // `t.S.new`: a static function on an imported exported type.
+        if let Some(resolved) = imported_type_static_expr(expr, self.type_namespaces, bound) {
             *expr = resolved;
             return;
         }

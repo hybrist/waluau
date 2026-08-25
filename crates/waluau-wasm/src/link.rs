@@ -724,10 +724,14 @@ struct ModuleNamespace {
     constants: BTreeMap<String, Expr>,
 }
 
+/// One erased declaration exposed through a required module. Statics map the
+/// type's dot-named functions and colon methods (member name -> mangled
+/// function name) so `t.S.new` resolves to a direct function reference.
 #[derive(Clone, Debug)]
 struct ExportedType {
     canonical_name: String,
     enum_variants: Option<Vec<String>>,
+    statics: BTreeMap<String, String>,
 }
 
 type TypeNamespace = HashMap<String, ExportedType>;
@@ -1045,10 +1049,27 @@ fn exported_type_names(
                 ExportedType {
                     canonical_name: format!("{prefix}{}", decl.name),
                     enum_variants: decl.enum_variants.clone(),
+                    statics: BTreeMap::new(),
                 },
             )
         })
         .collect::<HashMap<_, _>>();
+    for function in &module.program.functions {
+        let (type_name, member) = match &function.name {
+            FunctionName::Simple(name) => match name.split_once('.') {
+                Some(parts) => parts,
+                None => continue,
+            },
+            // A colon method desugars to the same `Type.member` function
+            // name, so its static form is reachable the same way.
+            FunctionName::Method { table, method } => (table.as_str(), method.as_str()),
+        };
+        if let Some(exported) = types.get_mut(type_name) {
+            exported
+                .statics
+                .insert(member.to_string(), format!("{prefix}{type_name}.{member}"));
+        }
+    }
     cache.insert(module_id, types.clone());
 
     let require_bindings = module
@@ -1393,6 +1414,40 @@ fn imported_enum_variant_expr(
         },
         span,
     })
+}
+
+/// `t.S.new`: a static function reached through a required module's exported
+/// type. Types are erased declarations, not runtime tables, so the access
+/// resolves to a direct reference to the defining module's mangled function —
+/// the same shape a local `S.new` expression lowers to.
+fn imported_type_static_expr(
+    expr: &Expr,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+    shadowed: &HashSet<String>,
+) -> Option<Expr> {
+    let Expr::Field {
+        base, name: member, ..
+    } = expr
+    else {
+        return None;
+    };
+    let Expr::Field {
+        base: namespace_base,
+        name: type_name,
+        ..
+    } = &**base
+    else {
+        return None;
+    };
+    let Expr::Name(namespace, _, _) = &**namespace_base else {
+        return None;
+    };
+    if shadowed.contains(namespace) {
+        return None;
+    }
+    let exported = type_namespaces.get(namespace)?.get(type_name)?;
+    let function = exported.statics.get(member)?;
+    Some(Expr::Name(function.clone(), None, expr.span()))
 }
 
 fn rewrite_imported_enum_constant_expr(
@@ -2085,6 +2140,11 @@ impl Rewriter<'_> {
 
     fn rewrite_expr(&mut self, expr: &mut Expr, bound: &HashSet<String>) {
         if let Some(resolved) = imported_enum_variant_expr(expr, self.type_namespaces, bound) {
+            *expr = resolved;
+            return;
+        }
+        // `t.S.new`: a static function on an imported exported type.
+        if let Some(resolved) = imported_type_static_expr(expr, self.type_namespaces, bound) {
             *expr = resolved;
             return;
         }
@@ -3023,6 +3083,79 @@ mod tests {
         let program = link_programs(&files, "main.test.walu").expect("link should succeed");
         waluau_hir::type_check_and_infer(&program)
             .expect("namespace member calls should type-check");
+    }
+
+    #[test]
+    fn imported_type_statics_resolve_to_direct_function_references() {
+        let files = std::collections::HashMap::from([
+            (
+                "main.walu".to_string(),
+                r#"
+                    local t = require("./t")
+
+                    local s = t.S.new(10)
+                    assert(s.v == 10)
+
+                    local frost = t.SpellKind.from(2)
+                    assert(frost == t.SpellKind.FreezeRay)
+                "#
+                .to_string(),
+            ),
+            (
+                "t.walu".to_string(),
+                r#"
+                    export type S = {
+                        v: number,
+                    }
+
+                    function S.new(v: number): S
+                        return { v = v }
+                    end
+
+                    export enum SpellKind { Firebolt, FreezeRay }
+
+                    function SpellKind.from(value: i32): SpellKind?
+                        if value == 1 then return SpellKind.Firebolt end
+                        if value == 2 then return SpellKind.FreezeRay end
+                        return nil
+                    end
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let program = link_programs(&files, "main.walu").expect("link should succeed");
+        waluau_hir::type_check_and_infer(&program).expect("imported statics should type-check");
+        let static_call_target = program
+            .top_level
+            .iter()
+            .find_map(|stmt| {
+                let Stmt::Let { name, value, .. } = stmt else {
+                    return None;
+                };
+                if name != "s" {
+                    return None;
+                }
+                let Expr::Call { callee, .. } = value else {
+                    return None;
+                };
+                let Expr::Name(function, _, _) = &**callee else {
+                    return None;
+                };
+                Some(function.clone())
+            })
+            .expect("the static call should link to a direct function reference");
+        assert!(
+            static_call_target.ends_with("_S.new"),
+            "the callee should be the defining module's mangled static: {static_call_target}"
+        );
+        assert!(
+            !program
+                .top_level
+                .iter()
+                .any(|stmt| matches!(stmt, Stmt::Let { name, .. } if name == "t")),
+            "the type-only require binding should be erased once statics resolve"
+        );
     }
 
     #[test]
