@@ -502,6 +502,44 @@ fn definition_crosses_into_required_modules() {
 }
 
 #[test]
+fn exported_type_definitions_cross_module_namespace() {
+    let cases: Vec<(&str, Vec<(&'static str, &str)>)> = vec![
+        (
+            "exported enum in a type annotation",
+            vec![
+                (
+                    "spells/spell.walu",
+                    "export enum <def>SpellKind</def> { Firebolt, FreezeRay }\n",
+                ),
+                (
+                    "spell_launch.walu",
+                    "local spells = require(\"./spells/spell\")\nfunction name(kind: spells.<|>SpellKind): string\n    return \"spell\"\nend\n",
+                ),
+            ],
+        ),
+        (
+            "exported type alias in a type annotation",
+            vec![
+                (
+                    "model.walu",
+                    "export type <def>Point</def> = { x: i32, y: i32 }\n",
+                ),
+                (
+                    "main.walu",
+                    "local model = require(\"./model\")\nlocal point: model.<|>Point = { x = 1, y = 2 }\n",
+                ),
+            ],
+        ),
+    ];
+
+    let failures: Vec<String> = cases
+        .iter()
+        .filter_map(|(name, files)| definition_case(name, files))
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn completion_lists_visible_scope_and_keywords() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
