@@ -2066,6 +2066,145 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   // Pieces of the most recent string_split call, read back one at a time via
   // string_split_get by the compiler-emitted fill loop.
   let pendingSplit = [];
+  // `json.pack` builds a small host-side JSON tree from compiler-emitted,
+  // type-specific visits. `json.unpack<T>` validates once, then the guest
+  // reconstructs native Wasm GC arrays/records through integer node handles.
+  // Both operations are synchronous, matching string_split's pending-result
+  // convention and keeping GC references on the guest side of the seam.
+  let jsonPackNodes = [];
+  let jsonUnpackNodes = [];
+  const addJsonPackNode = (node) => {
+    jsonPackNodes.push(node);
+    return jsonPackNodes.length - 1;
+  };
+  const jsonPackNode = (handle) => {
+    const node = jsonPackNodes[Number(handle) | 0];
+    if (!node) throw new Error(`Invalid json.pack node handle ${handle}`);
+    return node;
+  };
+  const renderJsonPackNode = (handle) => {
+    const node = jsonPackNode(handle);
+    switch (node.kind) {
+      case 'null': return 'null';
+      case 'bool': return node.value ? 'true' : 'false';
+      case 'number': return node.value;
+      case 'string': return JSON.stringify(node.value);
+      case 'bytes': return `[${Array.from(node.value, value => String(value)).join(',')}]`;
+      case 'array': return `[${node.values.map(renderJsonPackNode).join(',')}]`;
+      case 'object': return `{${node.values.map(([key, value]) => (
+        `${JSON.stringify(key)}:${renderJsonPackNode(value)}`
+      )).join(',')}}`;
+      default: throw new Error(`Unknown json.pack node kind ${node.kind}`);
+    }
+  };
+  const jsonValueKind = (value) => {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) return 'array';
+    return typeof value;
+  };
+  const validateJsonNumber = (value, numeric, path) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return `${path}: expected ${numeric}, got ${jsonValueKind(value)}`;
+    }
+    switch (numeric) {
+      case 'i32':
+        return Number.isInteger(value) && value >= -2147483648 && value <= 2147483647
+          ? '' : `${path}: expected i32, got ${value}`;
+      case 'u32':
+        return Number.isInteger(value) && value >= 0 && value <= 4294967295
+          ? '' : `${path}: expected u32, got ${value}`;
+      case 'i64':
+        return Number.isSafeInteger(value)
+          ? '' : `${path}: expected an exactly representable i64 JSON integer, got ${value}`;
+      case 'u64':
+        return Number.isSafeInteger(value) && value >= 0
+          ? '' : `${path}: expected an exactly representable u64 JSON integer, got ${value}`;
+      case 'f32':
+        return Number.isFinite(Math.fround(value))
+          ? '' : `${path}: number is outside the f32 range`;
+      case 'f64': return '';
+      default: return `${path}: unknown numeric schema ${numeric}`;
+    }
+  };
+  const validateJsonValue = (value, schema, path = '$') => {
+    switch (schema.t) {
+      case 'i32':
+      case 'u32':
+      case 'i64':
+      case 'u64':
+      case 'f32':
+      case 'f64':
+        return validateJsonNumber(value, schema.t, path);
+      case 'number-union': {
+        const error = validateJsonNumber(value, schema.n, path);
+        if (error) return error;
+        return schema.m.some(member => Object.is(value, Number(member)))
+          ? '' : `${path}: ${value} is not a member of ${schema.m.join(' | ')}`;
+      }
+      case 'bool':
+        return typeof value === 'boolean' ? '' : `${path}: expected bool, got ${jsonValueKind(value)}`;
+      case 'string':
+        return typeof value === 'string' ? '' : `${path}: expected string, got ${jsonValueKind(value)}`;
+      case 'string-union':
+        if (typeof value !== 'string') return `${path}: expected string, got ${jsonValueKind(value)}`;
+        return schema.m.includes(value)
+          ? '' : `${path}: ${JSON.stringify(value)} is not a member of ${schema.m.map(JSON.stringify).join(' | ')}`;
+      case 'bytes':
+        if (!Array.isArray(value)) return `${path}: expected a byte array, got ${jsonValueKind(value)}`;
+        for (let index = 0; index < value.length; index++) {
+          const byte = value[index];
+          if (!Number.isInteger(byte) || byte < 0 || byte > 255) {
+            return `${path}[${index}]: expected a byte (0..255), got ${String(byte)}`;
+          }
+        }
+        return '';
+      case 'unit': return value === null ? '' : `${path}: expected null, got ${jsonValueKind(value)}`;
+      case 'nullable': return value === null ? '' : validateJsonValue(value, schema.v, path);
+      case 'array':
+        if (!Array.isArray(value)) return `${path}: expected array, got ${jsonValueKind(value)}`;
+        for (let index = 0; index < value.length; index++) {
+          const error = validateJsonValue(value[index], schema.v, `${path}[${index}]`);
+          if (error) return error;
+        }
+        return '';
+      case 'record':
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+          return `${path}: expected object, got ${jsonValueKind(value)}`;
+        }
+        for (const [name, fieldSchema] of schema.f) {
+          if (!Object.prototype.hasOwnProperty.call(value, name)) {
+            return `${path}: missing required field ${JSON.stringify(name)}`;
+          }
+          const error = validateJsonValue(value[name], fieldSchema, `${path}.${name}`);
+          if (error) return error;
+        }
+        return '';
+      case 'tagged': {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+          return `${path}: expected tagged object, got ${jsonValueKind(value)}`;
+        }
+        if (typeof value.tag !== 'string') return `${path}.tag: expected string`;
+        const variant = schema.v.find(([tag]) => tag === value.tag);
+        if (!variant) return `${path}.tag: unknown variant ${JSON.stringify(value.tag)}`;
+        if (!Object.prototype.hasOwnProperty.call(value, 'value')) {
+          return `${path}: missing required field "value"`;
+        }
+        return validateJsonValue(value.value, variant[1], `${path}.value`);
+      }
+      default: return `${path}: unknown JSON schema ${String(schema.t)}`;
+    }
+  };
+  const jsonUnpackNode = (handle) => {
+    const index = Number(handle) | 0;
+    if (index < 0 || index >= jsonUnpackNodes.length) {
+      throw new Error(`Invalid json.unpack node handle ${handle}`);
+    }
+    return jsonUnpackNodes[index];
+  };
+  const addJsonUnpackNode = (value) => {
+    jsonUnpackNodes.push(value);
+    return jsonUnpackNodes.length - 1;
+  };
   const externIs = (value, typeName) => {
     const name = String(typeName);
     // Nodes carry their realm via ownerDocument; events (which have no
@@ -2089,6 +2228,79 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     ...hotReplacementHost,
     ...shaderSourceHost,
     ...hostImports,
+    __json_pack_reset: () => { jsonPackNodes = []; },
+    __json_pack_null: () => addJsonPackNode({ kind: 'null' }),
+    __json_pack_bool: value => addJsonPackNode({ kind: 'bool', value: Boolean(value) }),
+    __json_pack_i32: value => addJsonPackNode({ kind: 'number', value: String(Number(value) | 0) }),
+    __json_pack_u32: value => addJsonPackNode({ kind: 'number', value: String(Number(value) >>> 0) }),
+    __json_pack_i64: value => addJsonPackNode({
+      kind: 'number', value: BigInt.asIntN(64, BigInt(value)).toString(),
+    }),
+    __json_pack_u64: value => addJsonPackNode({
+      kind: 'number', value: BigInt.asUintN(64, BigInt(value)).toString(),
+    }),
+    __json_pack_f32: value => addJsonPackNode({
+      kind: 'number', value: JSON.stringify(Math.fround(Number(value))) ?? 'null',
+    }),
+    __json_pack_f64: value => addJsonPackNode({
+      kind: 'number', value: JSON.stringify(Number(value)) ?? 'null',
+    }),
+    __json_pack_string: value => addJsonPackNode({ kind: 'string', value: String(value) }),
+    __json_pack_bytes: value => addJsonPackNode({ kind: 'bytes', value: asBytes(value) }),
+    __json_pack_array: () => addJsonPackNode({ kind: 'array', values: [] }),
+    __json_pack_array_push: (array, value) => {
+      const node = jsonPackNode(array);
+      if (node.kind !== 'array') throw new Error('json.pack array_push target is not an array');
+      node.values.push(Number(value) | 0);
+    },
+    __json_pack_object: () => addJsonPackNode({ kind: 'object', values: [] }),
+    __json_pack_object_set: (object, key, value) => {
+      const node = jsonPackNode(object);
+      if (node.kind !== 'object') throw new Error('json.pack object_set target is not an object');
+      node.values.push([String(key), Number(value) | 0]);
+    },
+    __json_pack_finish: (root) => {
+      const packed = renderJsonPackNode(root);
+      jsonPackNodes = [];
+      return packed;
+    },
+    __json_unpack_start: (text, schemaText) => {
+      jsonUnpackNodes = [];
+      let value;
+      try {
+        value = JSON.parse(String(text));
+      } catch (error) {
+        return `invalid JSON: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      let schema;
+      try {
+        schema = JSON.parse(String(schemaText));
+      } catch (error) {
+        return `invalid compiler JSON schema: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      const validationError = validateJsonValue(value, schema);
+      if (validationError) return validationError;
+      jsonUnpackNodes = [value];
+      return '';
+    },
+    __json_unpack_is_null: node => (jsonUnpackNode(node) === null ? 1 : 0),
+    __json_unpack_bool: node => (jsonUnpackNode(node) ? 1 : 0),
+    __json_unpack_i32: node => Number(jsonUnpackNode(node)) | 0,
+    __json_unpack_u32: node => Number(jsonUnpackNode(node)) >>> 0,
+    __json_unpack_i64: node => BigInt.asIntN(64, BigInt(jsonUnpackNode(node))),
+    __json_unpack_u64: node => BigInt.asUintN(64, BigInt(jsonUnpackNode(node))),
+    __json_unpack_f32: node => Math.fround(Number(jsonUnpackNode(node))),
+    __json_unpack_f64: node => Number(jsonUnpackNode(node)),
+    __json_unpack_string: node => String(jsonUnpackNode(node)),
+    __json_unpack_bytes: node => new Uint8Array(jsonUnpackNode(node)),
+    __json_unpack_array_len: node => jsonUnpackNode(node).length,
+    __json_unpack_array_get: (node, index) => addJsonUnpackNode(
+      jsonUnpackNode(node)[Number(index) | 0]
+    ),
+    __json_unpack_object_get: (node, key) => addJsonUnpackNode(jsonUnpackNode(node)[String(key)]),
+    __json_unpack_variant_is: (node, tag) => (
+      jsonUnpackNode(node).tag === String(tag) ? 1 : 0
+    ),
     __waluau_attach_promise: (threadHandle, promise) => {
       if (promise == null || typeof promise.then !== 'function') {
         throw new TypeError('coroutine.await_promise expects a Promise-like extern value');

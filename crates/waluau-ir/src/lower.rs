@@ -2069,6 +2069,195 @@ fn builtin_name(callee: &Expr) -> Option<String> {
     }
 }
 
+fn json_tag_payload_supported(ty: &Type) -> bool {
+    match ty {
+        Type::Opaque { ty, .. } | Type::Readonly(ty) | Type::Nullable(ty) => {
+            json_tag_payload_supported(ty)
+        }
+        // Tagged payloads are stored in `unknown` (anyref). Strings and bytes
+        // are externref-shaped and cannot be boxed into that slot.
+        Type::String | Type::Bytes | Type::StringLiteralUnion(_) => false,
+        _ => json_supported_type(ty),
+    }
+}
+
+fn json_supported_type(ty: &Type) -> bool {
+    match ty {
+        Type::Numeric(_)
+        | Type::Bool
+        | Type::String
+        | Type::Bytes
+        | Type::Unit
+        | Type::StringLiteralUnion(_)
+        | Type::NumberLiteralUnion(_)
+        | Type::TypeParam(_) => true,
+        Type::Opaque { ty, .. }
+        | Type::Readonly(ty)
+        | Type::Nullable(ty)
+        | Type::Array(ty) => json_supported_type(ty),
+        Type::TypedArray(_) => true,
+        Type::Record(fields) => fields.values().all(json_supported_type),
+        Type::TaggedVariant(variant) => json_tag_payload_supported(&variant.payload),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .all(|variant| json_tag_payload_supported(&variant.payload)),
+        Type::Nil
+        | Type::Extern
+        | Type::ExternSubtype(_)
+        | Type::Named { .. }
+        | Type::Variadic(_)
+        | Type::Multi(_)
+        | Type::Function { .. }
+        | Type::Thread
+        | Type::Unknown => false,
+    }
+}
+
+fn json_unpack_value_type(target: &Type) -> Type {
+    if target.accepts_nil() {
+        target.clone()
+    } else {
+        Type::Nullable(Box::new(target.clone()))
+    }
+}
+
+fn json_pack_numeric_host(ty: NumericType) -> &'static str {
+    match ty {
+        NumericType::I32 => JSON_PACK_I32_HOST,
+        NumericType::U32 => JSON_PACK_U32_HOST,
+        NumericType::I64 => JSON_PACK_I64_HOST,
+        NumericType::U64 => JSON_PACK_U64_HOST,
+        NumericType::F32 => JSON_PACK_F32_HOST,
+        NumericType::F64 => JSON_PACK_F64_HOST,
+    }
+}
+
+fn json_unpack_numeric_host(ty: NumericType) -> &'static str {
+    match ty {
+        NumericType::I32 => JSON_UNPACK_I32_HOST,
+        NumericType::U32 => JSON_UNPACK_U32_HOST,
+        NumericType::I64 => JSON_UNPACK_I64_HOST,
+        NumericType::U64 => JSON_UNPACK_U64_HOST,
+        NumericType::F32 => JSON_UNPACK_F32_HOST,
+        NumericType::F64 => JSON_UNPACK_F64_HOST,
+    }
+}
+
+fn json_quote_schema_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch <= '\u{1f}' => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn json_numeric_schema_name(ty: NumericType) -> &'static str {
+    match ty {
+        NumericType::I32 => "i32",
+        NumericType::U32 => "u32",
+        NumericType::I64 => "i64",
+        NumericType::U64 => "u64",
+        NumericType::F32 => "f32",
+        NumericType::F64 => "f64",
+    }
+}
+
+fn json_schema(ty: &Type) -> Result<String, Diagnostic> {
+    let schema = match ty {
+        Type::Opaque { ty, .. } | Type::Readonly(ty) => return json_schema(ty),
+        Type::Numeric(numeric) => format!("{{\"t\":\"{}\"}}", json_numeric_schema_name(*numeric)),
+        Type::NumberLiteralUnion(union) => {
+            let members = union
+                .members
+                .iter()
+                .map(|member| json_quote_schema_string(&member.to_string()))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"t\":\"number-union\",\"n\":\"{}\",\"m\":[{}]}}",
+                json_numeric_schema_name(union.numeric),
+                members
+            )
+        }
+        Type::Bool => "{\"t\":\"bool\"}".to_string(),
+        Type::String => "{\"t\":\"string\"}".to_string(),
+        Type::StringLiteralUnion(members) => {
+            let members = members
+                .iter()
+                .map(|member| json_quote_schema_string(member))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{\"t\":\"string-union\",\"m\":[{members}]}}")
+        }
+        Type::Bytes => "{\"t\":\"bytes\"}".to_string(),
+        Type::Unit => "{\"t\":\"unit\"}".to_string(),
+        Type::Nullable(inner) => {
+            format!("{{\"t\":\"nullable\",\"v\":{}}}", json_schema(inner)?)
+        }
+        Type::Array(element) => {
+            format!("{{\"t\":\"array\",\"v\":{}}}", json_schema(element)?)
+        }
+        Type::TypedArray(kind) => format!(
+            "{{\"t\":\"array\",\"v\":{{\"t\":\"{}\"}}}}",
+            json_numeric_schema_name(kind.element_numeric_type())
+        ),
+        Type::Record(fields) => {
+            let fields = fields
+                .iter()
+                .map(|(name, ty)| {
+                    Ok(format!(
+                        "[{},{}]",
+                        json_quote_schema_string(name),
+                        json_schema(ty)?
+                    ))
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?
+                .join(",");
+            format!("{{\"t\":\"record\",\"f\":[{fields}]}}")
+        }
+        Type::TaggedVariant(variant) => {
+            let payload = json_schema(&variant.payload)?;
+            format!(
+                "{{\"t\":\"tagged\",\"v\":[[{},{}]]}}",
+                json_quote_schema_string(&variant.tag),
+                payload
+            )
+        }
+        Type::TaggedUnion(variants) => {
+            let variants = variants
+                .iter()
+                .map(|variant| {
+                    Ok(format!(
+                        "[{},{}]",
+                        json_quote_schema_string(&variant.tag),
+                        json_schema(&variant.payload)?
+                    ))
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?
+                .join(",");
+            format!("{{\"t\":\"tagged\",\"v\":[{variants}]}}")
+        }
+        other => {
+            return Err(Diagnostic::new(format!(
+                "json.unpack does not support values of type {other}"
+            )));
+        }
+    };
+    Ok(schema)
+}
+
 fn string_byte_static_count(args: &[Expr], expected: Option<&Type>) -> Result<usize, Diagnostic> {
     if let Some(Type::Multi(types)) = expected {
         return Ok(types.len());
@@ -6304,6 +6493,7 @@ impl Builder<'_> {
             },
             Expr::Call {
                 callee,
+                type_args,
                 args,
                 method_call_origin,
                 ..
@@ -6360,6 +6550,16 @@ impl Builder<'_> {
                     }
                 }
                 if let Some(name) = builtin_name(callee.as_ref()) {
+                    if let Some(result) = self.lower_json_builtin_call(
+                        &name,
+                        type_args,
+                        args,
+                        env,
+                        types,
+                        expected.clone(),
+                    ) {
+                        return result;
+                    }
                     if let Some(result) =
                         self.lower_promise_builtin_call(&name, args, env, types, expected.clone())
                     {
@@ -6873,6 +7073,7 @@ impl Builder<'_> {
                         || name == STRING_MATCH
                         || name == STRING_GSUB
                         || name == STRING_BYTE
+                        || name == JSON_UNPACK
                         || name == TABLE_UNPACK
                 });
                 let is_potential_constructor =
@@ -7566,7 +7767,12 @@ impl Builder<'_> {
                     ))
                 }
             }
-            Expr::Call { callee, args, .. } => {
+            Expr::Call {
+                callee,
+                type_args,
+                args,
+                ..
+            } => {
                 // Tagged-union constructor type inference mirrors lower_expr detection.
                 if let (Expr::Name(tag, symbol_id, _), [_arg]) = (callee.as_ref(), args.as_slice())
                 {
@@ -7584,6 +7790,15 @@ impl Builder<'_> {
                     }
                 }
                 if let Some(name) = builtin_name(callee.as_ref()) {
+                    if let Some(result) = self.infer_json_builtin_call_type(
+                        &name,
+                        type_args,
+                        args,
+                        types,
+                        expected.clone(),
+                    ) {
+                        return result;
+                    }
                     if let Some(result) =
                         self.infer_promise_builtin_call_type(&name, args, types, expected.clone())
                     {
@@ -10838,6 +11053,747 @@ impl Builder<'_> {
         }
     }
 
+    fn infer_json_builtin_call_type(
+        &self,
+        name: &str,
+        type_args: &[Type],
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        match name {
+            JSON_PACK => {
+                if !type_args.is_empty() {
+                    return Some(Err(Diagnostic::new(
+                        "json.pack infers its value type and does not accept type arguments",
+                    )));
+                }
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "json.pack expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let value_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                if !json_supported_type(&value_ty) {
+                    return Some(Err(Diagnostic::new(format!(
+                        "json.pack does not support values of type {value_ty}"
+                    ))));
+                }
+                Some(coerce_type(Type::String, expected))
+            }
+            JSON_UNPACK => {
+                if type_args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "json.unpack expects exactly 1 type argument, got {}",
+                        type_args.len()
+                    ))));
+                }
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "json.unpack expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                match self.infer_expr_type(&args[0], types, Some(Type::String)) {
+                    Ok(Type::String) => {}
+                    Ok(actual) => {
+                        return Some(Err(Diagnostic::new(format!(
+                            "json.unpack expects a string argument, got {actual}"
+                        ))));
+                    }
+                    Err(error) => return Some(Err(error)),
+                }
+                let target = &type_args[0];
+                if !json_supported_type(target) {
+                    return Some(Err(Diagnostic::new(format!(
+                        "json.unpack does not support values of type {target}"
+                    ))));
+                }
+                Some(coerce_type(
+                    Type::Multi(vec![json_unpack_value_type(target), Type::String]),
+                    expected,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn lower_json_builtin_call(
+        &mut self,
+        name: &str,
+        type_args: &[Type],
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        match name {
+            JSON_PACK => Some((|| {
+                if !type_args.is_empty() {
+                    return Err(Diagnostic::new(
+                        "json.pack infers its value type and does not accept type arguments",
+                    ));
+                }
+                if args.len() != 1 {
+                    return Err(Diagnostic::new(format!(
+                        "json.pack expects 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                let value_ty = self.infer_expr_type(&args[0], types, None)?;
+                if !json_supported_type(&value_ty) {
+                    return Err(Diagnostic::new(format!(
+                        "json.pack does not support values of type {value_ty}"
+                    )));
+                }
+                let value = self.lower_expr(&args[0], env, types, Some(value_ty.clone()))?;
+                self.emit_json_host_call(JSON_PACK_RESET_HOST, Vec::new(), Type::Unit)?;
+                let root = self.lower_json_pack_value(value, &value_ty)?;
+                let packed = self.emit_json_host_call(
+                    JSON_PACK_FINISH_HOST,
+                    vec![root],
+                    Type::String,
+                )?;
+                self.coerce_value(packed, Type::String, expected)
+            })()),
+            JSON_UNPACK => Some((|| {
+                if type_args.len() != 1 {
+                    return Err(Diagnostic::new(format!(
+                        "json.unpack expects exactly 1 type argument, got {}",
+                        type_args.len()
+                    )));
+                }
+                if args.len() != 1 {
+                    return Err(Diagnostic::new(format!(
+                        "json.unpack expects 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                let target = type_args[0].clone();
+                if !json_supported_type(&target) {
+                    return Err(Diagnostic::new(format!(
+                        "json.unpack does not support values of type {target}"
+                    )));
+                }
+                let text = self.lower_expr(&args[0], env, types, Some(Type::String))?;
+                let schema = self.emit(Instruction::String(json_schema(&target)?));
+                let error = self.emit_json_host_call(
+                    JSON_UNPACK_START_HOST,
+                    vec![text, schema],
+                    Type::String,
+                )?;
+                let empty = self.emit(Instruction::String(String::new()));
+                let succeeded = self.emit(Instruction::Binary {
+                    op: BinaryOp::Eq,
+                    left: error,
+                    right: empty,
+                    operand_ty: Type::String,
+                    result_ty: Type::Bool,
+                });
+                let success_block = self.new_block();
+                let failure_block = self.new_block();
+                let merge_block = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::Branch {
+                        condition: succeeded,
+                        then_block: success_block,
+                        else_block: failure_block,
+                    },
+                );
+
+                let unpacked_ty = json_unpack_value_type(&target);
+                let unpacked_runtime_ty = to_runtime_type(&unpacked_ty);
+                let multi_ty = Type::Multi(vec![unpacked_runtime_ty.clone(), Type::String]);
+
+                self.current_block = success_block;
+                let root = self.emit_i32_const(0);
+                let decoded = self.lower_json_unpack_value(root, &target)?;
+                let decoded = if unpacked_ty == target {
+                    decoded
+                } else {
+                    self.emit(Instruction::Cast {
+                        value: decoded,
+                        from: to_runtime_type(&target),
+                        to: unpacked_runtime_ty.clone(),
+                    })
+                };
+                let success_error = self.emit(Instruction::String(String::new()));
+                let success_exit = self.current_block;
+                self.set_terminator(success_exit, Terminator::Jump(merge_block));
+
+                self.current_block = failure_block;
+                let nil = self.emit(Instruction::Null {
+                    ty: unpacked_runtime_ty.clone(),
+                });
+                self.set_terminator(failure_block, Terminator::Jump(merge_block));
+
+                self.current_block = merge_block;
+                let value = self.emit(Instruction::Phi(vec![
+                    (success_exit, decoded),
+                    (failure_block, nil),
+                ]));
+                let error = self.emit(Instruction::Phi(vec![
+                    (success_exit, success_error),
+                    (failure_block, error),
+                ]));
+                let result = self.emit(Instruction::PackMulti {
+                    values: vec![value, error],
+                    types: vec![unpacked_runtime_ty, Type::String],
+                });
+                self.coerce_value(
+                    result,
+                    multi_ty,
+                    expected.map(|ty| to_runtime_type(&ty)),
+                )
+            })()),
+            _ => None,
+        }
+    }
+
+    fn emit_json_host_call(
+        &mut self,
+        host_name: &str,
+        args: Vec<ValueId>,
+        return_type: Type,
+    ) -> Result<ValueId, Diagnostic> {
+        self.emit_string_host_call(host_name, args, return_type)
+    }
+
+    fn lower_json_pack_value(
+        &mut self,
+        value: ValueId,
+        ty: &Type,
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        match ty {
+            Type::Opaque { ty, .. } | Type::Readonly(ty) => {
+                self.lower_json_pack_value(value, ty)
+            }
+            Type::Numeric(numeric) => self.emit_json_host_call(
+                json_pack_numeric_host(*numeric),
+                vec![value],
+                i32_ty,
+            ),
+            Type::NumberLiteralUnion(union) => self.emit_json_host_call(
+                json_pack_numeric_host(union.numeric),
+                vec![value],
+                i32_ty,
+            ),
+            Type::Bool => {
+                self.emit_json_host_call(JSON_PACK_BOOL_HOST, vec![value], i32_ty)
+            }
+            Type::String | Type::StringLiteralUnion(_) => {
+                self.emit_json_host_call(JSON_PACK_STRING_HOST, vec![value], i32_ty)
+            }
+            Type::Bytes => {
+                self.emit_json_host_call(JSON_PACK_BYTES_HOST, vec![value], i32_ty)
+            }
+            Type::Unit => self.emit_json_host_call(JSON_PACK_NULL_HOST, Vec::new(), i32_ty),
+            Type::Nullable(inner) => {
+                let is_null = self.emit(Instruction::IsNull {
+                    value,
+                    ty: (**inner).clone(),
+                });
+                let null_block = self.new_block();
+                let value_block = self.new_block();
+                let merge_block = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::Branch {
+                        condition: is_null,
+                        then_block: null_block,
+                        else_block: value_block,
+                    },
+                );
+                self.current_block = null_block;
+                let null_node =
+                    self.emit_json_host_call(JSON_PACK_NULL_HOST, Vec::new(), i32_ty.clone())?;
+                self.set_terminator(null_block, Terminator::Jump(merge_block));
+                self.current_block = value_block;
+                let inner_value = self.emit(Instruction::Cast {
+                    value,
+                    from: ty.clone(),
+                    to: (**inner).clone(),
+                });
+                let value_node = self.lower_json_pack_value(inner_value, inner)?;
+                let value_exit = self.current_block;
+                self.set_terminator(value_exit, Terminator::Jump(merge_block));
+                self.current_block = merge_block;
+                Ok(self.emit(Instruction::Phi(vec![
+                    (null_block, null_node),
+                    (value_exit, value_node),
+                ])))
+            }
+            Type::Array(element) => {
+                let array_node = self.emit_json_host_call(
+                    JSON_PACK_ARRAY_HOST,
+                    Vec::new(),
+                    i32_ty.clone(),
+                )?;
+                let len = self.emit(Instruction::ArrayLen { array: value });
+                self.lower_json_pack_sequence_loop(
+                    array_node,
+                    len,
+                    element,
+                    |builder, index| {
+                        Ok(builder.emit(Instruction::ArrayGet {
+                            array: value,
+                            index,
+                            element_ty: to_runtime_type(element),
+                        }))
+                    },
+                )?;
+                Ok(array_node)
+            }
+            Type::TypedArray(kind) => {
+                let array_node = self.emit_json_host_call(
+                    JSON_PACK_ARRAY_HOST,
+                    Vec::new(),
+                    i32_ty.clone(),
+                )?;
+                let len = self.emit(Instruction::BufferLen { buffer: value });
+                let element_ty = Type::Numeric(kind.element_numeric_type());
+                self.lower_json_pack_sequence_loop(
+                    array_node,
+                    len,
+                    &element_ty,
+                    |builder, index| {
+                        Ok(builder.emit(Instruction::BufferGet {
+                            buffer: value,
+                            index,
+                            kind: *kind,
+                        }))
+                    },
+                )?;
+                Ok(array_node)
+            }
+            Type::Record(fields) => {
+                let object = self.emit_json_host_call(
+                    JSON_PACK_OBJECT_HOST,
+                    Vec::new(),
+                    i32_ty.clone(),
+                )?;
+                for (name, field_ty) in fields {
+                    let field = self.emit(Instruction::StructGet {
+                        base: value,
+                        field: name.clone(),
+                        field_ty: to_runtime_type(field_ty),
+                    });
+                    let node = self.lower_json_pack_value(field, field_ty)?;
+                    let key = self.emit(Instruction::String(name.clone()));
+                    self.emit_json_host_call(
+                        JSON_PACK_OBJECT_SET_HOST,
+                        vec![object, key, node],
+                        Type::Unit,
+                    )?;
+                }
+                Ok(object)
+            }
+            Type::TaggedVariant(variant) => {
+                self.lower_json_pack_tagged(value, std::slice::from_ref(variant))
+            }
+            Type::TaggedUnion(variants) => self.lower_json_pack_tagged(value, variants),
+            other => Err(Diagnostic::new(format!(
+                "json.pack does not support values of type {other}"
+            ))),
+        }
+    }
+
+    fn lower_json_pack_sequence_loop(
+        &mut self,
+        array_node: ValueId,
+        len: ValueId,
+        element_ty: &Type,
+        mut get_element: impl FnMut(&mut Self, ValueId) -> Result<ValueId, Diagnostic>,
+    ) -> Result<(), Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+        let entry = self.current_block;
+        let header = self.new_block();
+        let body = self.new_block();
+        let done = self.new_block();
+        self.set_terminator(entry, Terminator::Jump(header));
+        self.current_block = header;
+        let index = self.emit(Instruction::Phi(vec![(entry, zero)]));
+        let in_bounds = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index,
+            right: len,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: in_bounds,
+                then_block: body,
+                else_block: done,
+            },
+        );
+        self.current_block = body;
+        let element = get_element(self, index)?;
+        let node = self.lower_json_pack_value(element, element_ty)?;
+        self.emit_json_host_call(
+            JSON_PACK_ARRAY_PUSH_HOST,
+            vec![array_node, node],
+            Type::Unit,
+        )?;
+        let next = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: index,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        let body_exit = self.current_block;
+        self.set_terminator(body_exit, Terminator::Jump(header));
+        add_phi_incoming(&mut self.function, header, index, (body_exit, next));
+        self.current_block = done;
+        Ok(())
+    }
+
+    fn lower_json_pack_tagged(
+        &mut self,
+        value: ValueId,
+        variants: &[TaggedVariant],
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let object = self.emit_json_host_call(
+            JSON_PACK_OBJECT_HOST,
+            Vec::new(),
+            i32_ty.clone(),
+        )?;
+        let tag = self.emit(Instruction::StructGet {
+            base: value,
+            field: "tag".to_string(),
+            field_ty: i32_ty.clone(),
+        });
+        let payload = self.emit(Instruction::StructGet {
+            base: value,
+            field: "value".to_string(),
+            field_ty: Type::Unknown,
+        });
+        let merge = self.new_block();
+        for (index, variant) in variants.iter().enumerate() {
+            let variant_block = self.new_block();
+            let next_dispatch = if index + 1 == variants.len() {
+                self.set_terminator(self.current_block, Terminator::Jump(variant_block));
+                None
+            } else {
+                let tag_id = self.emit_i32_const(self.variant_tag_id(&variant.tag)?);
+                let matches = self.emit(Instruction::Binary {
+                    op: BinaryOp::Eq,
+                    left: tag,
+                    right: tag_id,
+                    operand_ty: i32_ty.clone(),
+                    result_ty: Type::Bool,
+                });
+                let next = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::Branch {
+                        condition: matches,
+                        then_block: variant_block,
+                        else_block: next,
+                    },
+                );
+                Some(next)
+            };
+            self.current_block = variant_block;
+            let tag_text = self.emit(Instruction::String(variant.tag.clone()));
+            let tag_node = self.emit_json_host_call(
+                JSON_PACK_STRING_HOST,
+                vec![tag_text],
+                i32_ty.clone(),
+            )?;
+            let tag_key = self.emit(Instruction::String("tag".to_string()));
+            self.emit_json_host_call(
+                JSON_PACK_OBJECT_SET_HOST,
+                vec![object, tag_key, tag_node],
+                Type::Unit,
+            )?;
+            let payload_ty = variant.payload.as_ref();
+            let unboxed = self.emit(Instruction::Cast {
+                value: payload,
+                from: Type::Unknown,
+                to: to_runtime_type(payload_ty),
+            });
+            let payload_node = self.lower_json_pack_value(unboxed, payload_ty)?;
+            let value_key = self.emit(Instruction::String("value".to_string()));
+            self.emit_json_host_call(
+                JSON_PACK_OBJECT_SET_HOST,
+                vec![object, value_key, payload_node],
+                Type::Unit,
+            )?;
+            let exit = self.current_block;
+            self.set_terminator(exit, Terminator::Jump(merge));
+            if let Some(next) = next_dispatch {
+                self.current_block = next;
+            }
+        }
+        self.current_block = merge;
+        Ok(object)
+    }
+
+    fn lower_json_unpack_value(
+        &mut self,
+        node: ValueId,
+        ty: &Type,
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        match ty {
+            Type::Opaque { ty, .. } | Type::Readonly(ty) => {
+                self.lower_json_unpack_value(node, ty)
+            }
+            Type::Numeric(numeric) => self.emit_json_host_call(
+                json_unpack_numeric_host(*numeric),
+                vec![node],
+                Type::Numeric(*numeric),
+            ),
+            Type::NumberLiteralUnion(union) => self.emit_json_host_call(
+                json_unpack_numeric_host(union.numeric),
+                vec![node],
+                Type::Numeric(union.numeric),
+            ),
+            Type::Bool => {
+                self.emit_json_host_call(JSON_UNPACK_BOOL_HOST, vec![node], Type::Bool)
+            }
+            Type::String | Type::StringLiteralUnion(_) => {
+                self.emit_json_host_call(JSON_UNPACK_STRING_HOST, vec![node], Type::String)
+            }
+            Type::Bytes => {
+                self.emit_json_host_call(JSON_UNPACK_BYTES_HOST, vec![node], Type::Bytes)
+            }
+            Type::Unit => Ok(self.emit(Instruction::Unit)),
+            Type::Nullable(inner) => {
+                let nullable_runtime_ty = to_runtime_type(ty);
+                let is_null = self.emit_json_host_call(
+                    JSON_UNPACK_IS_NULL_HOST,
+                    vec![node],
+                    Type::Bool,
+                )?;
+                let null_block = self.new_block();
+                let value_block = self.new_block();
+                let merge_block = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::Branch {
+                        condition: is_null,
+                        then_block: null_block,
+                        else_block: value_block,
+                    },
+                );
+                self.current_block = null_block;
+                let null = self.emit(Instruction::Null {
+                    ty: nullable_runtime_ty.clone(),
+                });
+                self.set_terminator(null_block, Terminator::Jump(merge_block));
+                self.current_block = value_block;
+                let decoded = self.lower_json_unpack_value(node, inner)?;
+                let widened = self.emit(Instruction::Cast {
+                    value: decoded,
+                    from: to_runtime_type(inner),
+                    to: nullable_runtime_ty,
+                });
+                let value_exit = self.current_block;
+                self.set_terminator(value_exit, Terminator::Jump(merge_block));
+                self.current_block = merge_block;
+                Ok(self.emit(Instruction::Phi(vec![
+                    (null_block, null),
+                    (value_exit, widened),
+                ])))
+            }
+            Type::Array(element) => {
+                let len = self.emit_json_host_call(
+                    JSON_UNPACK_ARRAY_LEN_HOST,
+                    vec![node],
+                    i32_ty.clone(),
+                )?;
+                let array = self.emit(Instruction::ArrayNew {
+                    element_ty: to_runtime_type(element),
+                    elements: Vec::new(),
+                });
+                self.lower_json_unpack_sequence_loop(node, len, |builder, child| {
+                    builder.lower_json_unpack_value(child, element)
+                }, |builder, index, value| {
+                    builder.emit(Instruction::ArraySet {
+                        array,
+                        index,
+                        value,
+                        element_ty: to_runtime_type(element),
+                    });
+                    Ok(())
+                })?;
+                Ok(array)
+            }
+            Type::TypedArray(kind) => {
+                let len = self.emit_json_host_call(
+                    JSON_UNPACK_ARRAY_LEN_HOST,
+                    vec![node],
+                    i32_ty.clone(),
+                )?;
+                let buffer = self.emit(Instruction::BufferNewSized { kind: *kind, len });
+                let element_ty = Type::Numeric(kind.element_numeric_type());
+                self.lower_json_unpack_sequence_loop(node, len, |builder, child| {
+                    builder.lower_json_unpack_value(child, &element_ty)
+                }, |builder, index, value| {
+                    builder.emit(Instruction::BufferSet {
+                        buffer,
+                        index,
+                        value,
+                        kind: *kind,
+                    });
+                    Ok(())
+                })?;
+                Ok(buffer)
+            }
+            Type::Record(fields) => {
+                let mut values = Vec::with_capacity(fields.len());
+                for (name, field_ty) in fields {
+                    let key = self.emit(Instruction::String(name.clone()));
+                    let child = self.emit_json_host_call(
+                        JSON_UNPACK_OBJECT_GET_HOST,
+                        vec![node, key],
+                        i32_ty.clone(),
+                    )?;
+                    values.push(self.lower_json_unpack_value(child, field_ty)?);
+                }
+                Ok(self.emit(Instruction::StructNew {
+                    struct_ty: to_runtime_type(ty),
+                    fields: values,
+                }))
+            }
+            Type::TaggedVariant(variant) => {
+                self.lower_json_unpack_tagged(node, std::slice::from_ref(variant))
+            }
+            Type::TaggedUnion(variants) => self.lower_json_unpack_tagged(node, variants),
+            other => Err(Diagnostic::new(format!(
+                "json.unpack does not support values of type {other}"
+            ))),
+        }
+    }
+
+    fn lower_json_unpack_sequence_loop(
+        &mut self,
+        node: ValueId,
+        len: ValueId,
+        mut decode: impl FnMut(&mut Self, ValueId) -> Result<ValueId, Diagnostic>,
+        mut store: impl FnMut(&mut Self, ValueId, ValueId) -> Result<(), Diagnostic>,
+    ) -> Result<(), Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+        let entry = self.current_block;
+        let header = self.new_block();
+        let body = self.new_block();
+        let done = self.new_block();
+        self.set_terminator(entry, Terminator::Jump(header));
+        self.current_block = header;
+        let index = self.emit(Instruction::Phi(vec![(entry, zero)]));
+        let in_bounds = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index,
+            right: len,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: in_bounds,
+                then_block: body,
+                else_block: done,
+            },
+        );
+        self.current_block = body;
+        let child = self.emit_json_host_call(
+            JSON_UNPACK_ARRAY_GET_HOST,
+            vec![node, index],
+            i32_ty.clone(),
+        )?;
+        let value = decode(self, child)?;
+        store(self, index, value)?;
+        let next = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: index,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        let body_exit = self.current_block;
+        self.set_terminator(body_exit, Terminator::Jump(header));
+        add_phi_incoming(&mut self.function, header, index, (body_exit, next));
+        self.current_block = done;
+        Ok(())
+    }
+
+    fn lower_json_unpack_tagged(
+        &mut self,
+        node: ValueId,
+        variants: &[TaggedVariant],
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let merge = self.new_block();
+        let mut incoming = Vec::with_capacity(variants.len());
+        for (index, variant) in variants.iter().enumerate() {
+            let variant_block = self.new_block();
+            let next_dispatch = if index + 1 == variants.len() {
+                self.set_terminator(self.current_block, Terminator::Jump(variant_block));
+                None
+            } else {
+                let tag = self.emit(Instruction::String(variant.tag.clone()));
+                let matches = self.emit_json_host_call(
+                    JSON_UNPACK_VARIANT_IS_HOST,
+                    vec![node, tag],
+                    Type::Bool,
+                )?;
+                let next = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::Branch {
+                        condition: matches,
+                        then_block: variant_block,
+                        else_block: next,
+                    },
+                );
+                Some(next)
+            };
+            self.current_block = variant_block;
+            let value_key = self.emit(Instruction::String("value".to_string()));
+            let payload_node = self.emit_json_host_call(
+                JSON_UNPACK_OBJECT_GET_HOST,
+                vec![node, value_key],
+                i32_ty.clone(),
+            )?;
+            let payload_ty = variant.payload.as_ref();
+            let payload = self.lower_json_unpack_value(payload_node, payload_ty)?;
+            let boxed = self.emit(Instruction::Cast {
+                value: payload,
+                from: to_runtime_type(payload_ty),
+                to: Type::Unknown,
+            });
+            let tag = self.emit_i32_const(self.variant_tag_id(&variant.tag)?);
+            let tagged = self.emit(Instruction::StructNew {
+                struct_ty: Type::canonical_tagged_union_record(),
+                fields: vec![tag, boxed],
+            });
+            let exit = self.current_block;
+            self.set_terminator(exit, Terminator::Jump(merge));
+            incoming.push((exit, tagged));
+            if let Some(next) = next_dispatch {
+                self.current_block = next;
+            }
+        }
+        self.current_block = merge;
+        Ok(self.emit(Instruction::Phi(incoming)))
+    }
+
     fn lower_string_builtin_call(
         &mut self,
         name: &str,
@@ -13064,9 +14020,15 @@ fn sort_phi_incoming(instruction: &mut Instruction) {
 /// there, means no lowering path can emit the two halves in different spellings
 /// and leave the verifier to read a conversion into what converts nothing.
 fn canonicalize_cast_types(instruction: &mut Instruction) {
-    if let Instruction::Cast { from, to, .. } = instruction {
-        *from = to_runtime_type(from);
-        *to = to_runtime_type(to);
+    match instruction {
+        Instruction::Cast { from, to, .. } => {
+            *from = to_runtime_type(from);
+            *to = to_runtime_type(to);
+        }
+        Instruction::MultiGet { ty, .. } => {
+            *ty = to_runtime_type(ty);
+        }
+        _ => {}
     }
 }
 

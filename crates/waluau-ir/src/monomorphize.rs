@@ -1682,7 +1682,9 @@ impl<'a> Monomorphizer<'a> {
                 ..
             } => {
                 if let Some(name) = builtin_name(callee) {
-                    if let Some(ty) = self.infer_builtin_call_type(&name, args, subst, types)? {
+                    if let Some(ty) =
+                        self.infer_builtin_call_type(&name, type_args, args, subst, types)?
+                    {
                         return Ok(ty);
                     }
                 }
@@ -2016,11 +2018,22 @@ impl<'a> Monomorphizer<'a> {
     fn infer_builtin_call_type(
         &self,
         name: &str,
+        type_args: &[Type],
         args: &[Expr],
         subst: &HashMap<String, Type>,
         types: &HashMap<SymbolId, Type>,
     ) -> Result<Option<Type>, Diagnostic> {
         match name {
+            crate::JSON_PACK => return Ok(Some(Type::String)),
+            crate::JSON_UNPACK if type_args.len() == 1 => {
+                let target = substitute_type(&type_args[0], subst);
+                let value = if target.accepts_nil() {
+                    target
+                } else {
+                    Type::Nullable(Box::new(target))
+                };
+                return Ok(Some(Type::Multi(vec![value, Type::String])));
+            }
             crate::TABLE_CONCAT => return Ok(Some(Type::String)),
             crate::TABLE_INSERT | crate::TABLE_SORT => return Ok(Some(Type::Unit)),
             crate::TABLE_REMOVE => {

@@ -29,7 +29,9 @@ impl NullableBoxKind {
     /// The box kind for a nullable type's *inner* (payload) type.
     pub(crate) fn for_inner(inner: &Type) -> Option<Self> {
         match inner {
-            Type::Numeric(NumericType::I32 | NumericType::U32) | Type::Bool => Some(Self::I32),
+            Type::Numeric(NumericType::I32 | NumericType::U32)
+            | Type::Bool
+            | Type::TypedArray(_) => Some(Self::I32),
             Type::Numeric(NumericType::I64 | NumericType::U64) => Some(Self::I64),
             Type::Numeric(NumericType::F32) => Some(Self::F32),
             Type::Numeric(NumericType::F64) => Some(Self::F64),

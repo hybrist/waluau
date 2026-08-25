@@ -1884,6 +1884,41 @@ mod tests {
     }
 
     #[test]
+    fn compiles_typed_json_builtins_to_specialized_host_visits() {
+        let source = r#"
+            type Payload = { name: string, count: i32 }
+            local payload: Payload = { name = "Ada", count = 42 }
+            local packed = json.pack(payload)
+            local decoded, err = json.unpack<Payload>(packed)
+            assert(err == "")
+            if decoded ~= nil then
+                assert(decoded.count == 42)
+            end
+
+            local samples = {1.5, -2.25}::Float32Array
+            local samples_copy, samples_err = json.unpack<Float32Array>(json.pack(samples))
+            assert(samples_err == "")
+            if samples_copy ~= nil then
+                assert(samples_copy[1] == -2.25)
+            end
+
+            type Result = Count(i32) | Ratio(f64)
+            local result: Result = Count(9)
+            local result_copy, result_err = json.unpack<Result>(json.pack(result))
+            assert(result_err == "")
+            if result_copy ~= nil then
+                assert(result_copy is Count)
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("typed JSON should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(wat.contains("__json_pack_object"), "{wat}");
+        assert!(wat.contains("__json_unpack_start"), "{wat}");
+        assert!(wat.contains("__json_unpack_object_get"), "{wat}");
+        assert!(wat.contains("__json_unpack_variant_is"), "{wat}");
+    }
+
+    #[test]
     fn compiles_math_random_and_randomseed() {
         let source = r#"
             function roll(): f64

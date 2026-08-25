@@ -1,0 +1,92 @@
+-- The built-in json module specializes packing and unpacking to the native
+-- Waluau type at each call site. Decoding is recoverable and never returns a
+-- nullable error string: success is always the empty string.
+
+type Profile = {
+    enabled: bool,
+    name: string,
+    note: string?,
+    scores: {i32},
+}
+
+local original: Profile = {
+    enabled = true,
+    name = "Ada \"Lovelace\"",
+    note = nil,
+    scores = {7, 11, 42},
+}
+
+local packed = json.pack(original)
+assert(packed == '{"enabled":true,"name":"Ada \\"Lovelace\\"","note":null,"scores":[7,11,42]}')
+
+local decoded, decode_error = json.unpack<Profile>(packed)
+assert(decode_error == "")
+if decoded ~= nil then
+    assert(decoded.enabled)
+    assert(decoded.name == original.name)
+    assert(decoded.note == nil)
+    assert(#decoded.scores == 3)
+    assert(decoded.scores[2] == 42)
+else
+    error(decode_error)
+end
+
+local malformed, malformed_error = json.unpack<Profile>("{")
+assert(malformed == nil)
+assert(malformed_error ~= "")
+
+local mismatched, mismatch_error = json.unpack<Profile>('{"enabled":true,"name":9,"note":null,"scores":[]}')
+assert(mismatched == nil)
+assert(mismatch_error ~= "")
+
+local integer, integer_error = json.unpack<i32>("42")
+assert(integer_error == "")
+if integer ~= nil then
+    assert(integer == 42)
+else
+    error(integer_error)
+end
+
+local typed = {1.5, -2.25, 3.0}::Float32Array
+local typed_copy, typed_error = json.unpack<Float32Array>(json.pack(typed))
+assert(typed_error == "")
+if typed_copy ~= nil then
+    assert(#typed_copy == 3)
+    assert(typed_copy[1] == -2.25)
+else
+    error(typed_error)
+end
+
+local binary: bytes = b"A\x00\xFF"
+local binary_copy, binary_error = json.unpack<bytes>(json.pack(binary))
+assert(binary_error == "")
+if binary_copy ~= nil then
+    assert(binary_copy == binary)
+else
+    error(binary_error)
+end
+
+enum Direction { north, east, south, west }
+local direction: Direction = Direction.south
+local direction_copy, direction_error = json.unpack<Direction>(json.pack(direction))
+assert(direction_error == "")
+if direction_copy ~= nil then
+    assert(direction_copy == Direction.south)
+else
+    error(direction_error)
+end
+
+type Result = Count(i32) | Ratio(f64)
+local result: Result = Count(9)
+local result_packed = json.pack(result)
+assert(result_packed == '{"tag":"Count","value":9}')
+local result_copy, result_error = json.unpack<Result>(result_packed)
+assert(result_error == "")
+if result_copy ~= nil then
+    assert(result_copy is Count)
+    if Count(count) = result_copy then
+        assert(count == 9)
+    end
+else
+    error(result_error)
+end

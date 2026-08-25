@@ -6041,3 +6041,45 @@ fn shadowed_next_iterates_as_an_ordinary_protocol_function() {
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("a shadowed next should check as a protocol iterator");
 }
+
+#[test]
+fn type_checks_typed_json_pack_and_unpack() {
+    let source = r#"
+        type Payload = { name: string, values: {i32} }
+        local payload: Payload = { name = "test", values = {1, 2} }
+        local packed: string = json.pack(payload)
+        local decoded, err = json.unpack<Payload>(packed)
+        local message: string = err
+        if decoded ~= nil then
+            local name: string = decoded.name
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("typed JSON calls should type check");
+}
+
+#[test]
+fn json_unpack_requires_a_type_hint() {
+    let program = parse("local value, err = json.unpack(\"{}\")").expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "json.unpack expects exactly 1 type argument, got 0"
+    );
+}
+
+#[test]
+fn json_rejects_function_values() {
+    let program = parse(
+        r#"
+        local packed = json.pack(function(): unit end)
+    "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("json.pack does not support values of type")
+    );
+}

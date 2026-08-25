@@ -62,7 +62,140 @@ pub(super) const STRING_LOWER: &str = "string.lower";
 pub(super) const STRING_FORMAT: &str = "string.format";
 pub(super) const STRING_REVERSE: &str = "string.reverse";
 pub(super) const STRING_SPLIT: &str = "string.split";
+pub(super) const JSON_PACK: &str = "json.pack";
+pub(super) const JSON_UNPACK: &str = "json.unpack";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
+
+fn json_supported_type(ty: &Type) -> bool {
+    match ty {
+        Type::Numeric(_)
+        | Type::Bool
+        | Type::String
+        | Type::Bytes
+        | Type::Unit
+        | Type::StringLiteralUnion(_)
+        | Type::NumberLiteralUnion(_)
+        | Type::TypeParam(_) => true,
+        Type::Opaque { ty, .. } | Type::Readonly(ty) | Type::Nullable(ty) | Type::Array(ty) => {
+            json_supported_type(ty)
+        }
+        Type::TypedArray(_) => true,
+        Type::Record(fields) => fields.values().all(json_supported_type),
+        Type::TaggedVariant(variant) => json_tag_payload_supported(&variant.payload),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .all(|variant| json_tag_payload_supported(&variant.payload)),
+        Type::Nil
+        | Type::Extern
+        | Type::ExternSubtype(_)
+        | Type::Named { .. }
+        | Type::Variadic(_)
+        | Type::Multi(_)
+        | Type::Function { .. }
+        | Type::Thread
+        | Type::Unknown => false,
+    }
+}
+
+fn json_tag_payload_supported(ty: &Type) -> bool {
+    match ty {
+        Type::Opaque { ty, .. } | Type::Readonly(ty) | Type::Nullable(ty) => {
+            json_tag_payload_supported(ty)
+        }
+        Type::String | Type::Bytes | Type::StringLiteralUnion(_) => false,
+        _ => json_supported_type(ty),
+    }
+}
+
+fn json_unpack_value_type(target: &Type) -> Type {
+    if target.accepts_nil() {
+        target.clone()
+    } else {
+        Type::Nullable(Box::new(target.clone()))
+    }
+}
+
+pub(super) fn infer_json_builtin_call(
+    name: &str,
+    type_args: &[Type],
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    match name {
+        JSON_PACK => {
+            if !type_args.is_empty() {
+                return Some(Err(Diagnostic::new(
+                    "json.pack infers its value type and does not accept type arguments",
+                )));
+            }
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "json.pack expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let value_ty = match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if !json_supported_type(&value_ty) {
+                return Some(Err(Diagnostic::new(format!(
+                    "json.pack does not support values of type {value_ty}"
+                ))));
+            }
+            Some(coerce_type(Type::String, expected))
+        }
+        JSON_UNPACK => {
+            if type_args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "json.unpack expects exactly 1 type argument, got {}",
+                    type_args.len()
+                ))));
+            }
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "json.unpack expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let text_ty = match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(Type::String),
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if text_ty != Type::String {
+                return Some(Err(Diagnostic::new(format!(
+                    "json.unpack expects a string argument, got {text_ty}"
+                ))));
+            }
+            let target = &type_args[0];
+            if !json_supported_type(target) {
+                return Some(Err(Diagnostic::new(format!(
+                    "json.unpack does not support values of type {target}"
+                ))));
+            }
+            Some(coerce_type(
+                Type::Multi(vec![json_unpack_value_type(target), Type::String]),
+                expected,
+            ))
+        }
+        _ => None,
+    }
+}
 
 fn promise_resolved_type(ty: &Type) -> Option<Type> {
     let generic = ty.generic_extern()?;

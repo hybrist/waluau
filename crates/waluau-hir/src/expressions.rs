@@ -5,12 +5,13 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::Binding;
 use super::builtins::{
-    STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_GMATCH, STRING_GSUB, STRING_LEN, STRING_LOWER,
-    STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SPLIT, STRING_SUB, STRING_UPPER, TABLE_UNPACK,
-    infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_error_builtin_call,
-    infer_pcall_builtin_call, infer_promise_await_method_call, infer_promise_builtin_call,
-    infer_select_builtin_call, infer_string_builtin_call, infer_table_builtin_call,
-    infer_tonumber_builtin_call, infer_tostring_builtin_call, infer_type_builtin_call,
+    JSON_UNPACK, STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_GMATCH, STRING_GSUB, STRING_LEN,
+    STRING_LOWER, STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SPLIT, STRING_SUB, STRING_UPPER,
+    TABLE_UNPACK, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_error_builtin_call,
+    infer_json_builtin_call, infer_pcall_builtin_call, infer_promise_await_method_call,
+    infer_promise_builtin_call, infer_select_builtin_call, infer_string_builtin_call,
+    infer_table_builtin_call, infer_tonumber_builtin_call, infer_tostring_builtin_call,
+    infer_type_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -867,6 +868,19 @@ fn infer_expr_inner(
                 }
                 if let Some(result) = infer_bit32_builtin_call(
                     &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
+            if let Some(name) = builtin_name(callee.as_ref()) {
+                if let Some(result) = infer_json_builtin_call(
+                    &name,
+                    type_args,
                     args,
                     vars,
                     fn_signatures,
@@ -2113,6 +2127,7 @@ pub(super) fn infer_expr_list(
                     || name == STRING_MATCH
                     || name == STRING_GSUB
                     || name == STRING_BYTE
+                    || name == JSON_UNPACK
                     || name == TABLE_UNPACK
             });
             // A Name not found in fn_signatures or vars may be a tagged-union constructor

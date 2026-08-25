@@ -1025,8 +1025,9 @@ fn verify_function(
                     let expected_preds = predecessors.get(&block.id).cloned().unwrap_or_default();
                     if incoming.len() != expected_preds.len() {
                         return Err(Diagnostic::new(format!(
-                            "phi in block {:?} must have exactly {} incoming values",
+                            "phi in block {:?} has {} incoming values but must have exactly {}",
                             block.id,
+                            incoming.len(),
                             expected_preds.len()
                         )));
                     }

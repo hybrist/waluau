@@ -67,19 +67,12 @@ pub(crate) fn wasm_type(
         // Typed arrays are i32 pointers into linear memory (the element count
         // lives in the allocation header, not the value).
         Type::TypedArray(_) => Ok(ValType::I32),
-        // An i32 pointer has no null representation; nullable typed arrays
-        // would need boxing that is not implemented yet.
-        Type::Nullable(inner) if matches!(**inner, Type::TypedArray(_)) => Err(Diagnostic::new(
-            format!("nullable {} values are not supported yet", inner),
-        )),
-        // Nullable numerics/bools have no null representation in their raw
+        // Nullable numerics, bools, and typed-array pointers have no null representation in their raw
         // value type, so they are typed nullable box refs
         // (`ref null $nullable_box_K`): null stands for nil and a one-field
         // struct holds the payload. Nullable reference types reuse the inner
         // (already nullable) reference representation.
-        Type::Nullable(inner) if matches!(**inner, Type::Numeric(_) | Type::Bool) => {
-            array_registry.nullable_box_val_type(ty)
-        }
+        Type::Nullable(_) if ty.is_boxed_nullable() => array_registry.nullable_box_val_type(ty),
         Type::Nullable(inner) => wasm_type(inner, array_registry),
         Type::Nil => Ok(externref_val_type()),
         Type::Unknown => Ok(anyref_val_type()),

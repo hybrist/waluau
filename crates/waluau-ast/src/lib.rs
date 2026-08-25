@@ -662,12 +662,12 @@ impl Type {
     }
 
     /// Nullable types whose inner value type has no null representation in
-    /// wasm (numerics and bools). These lower to typed nullable box refs
+    /// wasm (numerics, bools, and typed-array pointers). These lower to typed nullable box refs
     /// (`ref null $nullable_box_K`): null stands for nil and a one-field GC
     /// struct holds the payload, so conversions to/from the inner type must
     /// wrap/unwrap the box.
     pub fn is_boxed_nullable(&self) -> bool {
-        matches!(self, Self::Nullable(inner) if matches!(**inner, Self::Numeric(_) | Self::Bool))
+        matches!(self, Self::Nullable(inner) if matches!(**inner, Self::Numeric(_) | Self::Bool | Self::TypedArray(_)))
     }
 
     /// The string literal union this type represents, seen through nominal
@@ -747,6 +747,9 @@ impl Type {
             Self::Array(element_ty) => Self::Array(Box::new(element_ty.runtime_representation())),
             Self::Variadic(element_ty) => {
                 Self::Variadic(Box::new(element_ty.runtime_representation()))
+            }
+            Self::Multi(types) => {
+                Self::Multi(types.iter().map(Self::runtime_representation).collect())
             }
             Self::Nullable(inner) => Self::Nullable(Box::new(inner.runtime_representation())),
             Self::Readonly(inner) => inner.runtime_representation(),
@@ -1304,6 +1307,7 @@ impl Resolver {
             "math",
             "coroutine",
             "promise",
+            "json",
             "table",
             "string",
             "bit32",
