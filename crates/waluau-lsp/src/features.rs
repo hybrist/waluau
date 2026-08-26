@@ -568,11 +568,8 @@ fn resolve_type_to_record(
             fields: fields.clone(),
             declared_by: None,
         }),
-        Type::Opaque { ty: inner, .. } | Type::Nullable(inner) | Type::Readonly(inner) => {
+        Type::Opaque { ty: inner, .. } | Type::Nullable(inner) => {
             resolve_type_to_record(inner, scope, load, depth - 1)
-        }
-        Type::Named { name, type_args } if name == "readonly" && type_args.len() == 1 => {
-            resolve_type_to_record(&type_args[0], scope, load, depth - 1)
         }
         Type::Named { name, .. } => {
             let (type_name, type_scope) = type_name_scope(name, scope, load)?;
@@ -602,15 +599,6 @@ fn named_type_member(
     scope: &TypeScope,
     load: Loader,
 ) -> Option<(DefinitionSite, TypeScope)> {
-    if let Type::Readonly(inner) = ty {
-        return named_type_member(inner, member, scope, load);
-    }
-    if let Type::Named { name, type_args } = ty
-        && name == "readonly"
-        && type_args.len() == 1
-    {
-        return named_type_member(&type_args[0], member, scope, load);
-    }
     let Type::Named { name, .. } = ty else {
         return None;
     };

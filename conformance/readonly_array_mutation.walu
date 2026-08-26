@@ -1,5 +1,0 @@
--- conformance: error=cannot mutate a read-only array view
-
-function mutate(values: readonly<{i32}>): unit
-    values[0] += 1
-end

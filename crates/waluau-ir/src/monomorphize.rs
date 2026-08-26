@@ -9,7 +9,6 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
-        Type::Readonly(inner) => Type::Readonly(Box::new(substitute_type(inner, subst))),
         Type::ExternSubtype(parent) => Type::ExternSubtype(Box::new(substitute_type(parent, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
         Type::Variadic(inner) => Type::Variadic(Box::new(substitute_type(inner, subst))),
@@ -46,7 +45,6 @@ fn contains_type_param(ty: &Type) -> bool {
         Type::Opaque { ty, .. } => contains_type_param(ty.as_ref()),
         Type::ExternSubtype(parent) => contains_type_param(parent.as_ref()),
         Type::Nullable(inner) => contains_type_param(inner.as_ref()),
-        Type::Readonly(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
         Type::Variadic(inner) => contains_type_param(inner.as_ref()),
         Type::Record(fields) => fields.values().any(contains_type_param),

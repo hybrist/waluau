@@ -275,7 +275,6 @@ fn nominal_types_match(left: &Type, right: &Type) -> bool {
         (Type::Nullable(left), Type::Nullable(right))
         | (Type::Array(left), Type::Array(right))
         | (Type::Variadic(left), Type::Variadic(right))
-        | (Type::Readonly(left), Type::Readonly(right))
         | (Type::ExternSubtype(left), Type::ExternSubtype(right)) => {
             nominal_types_match(left, right)
         }
@@ -955,8 +954,7 @@ struct CoercionRewriter<'a> {
 impl CoercionRewriter<'_> {
     /// The wrapper to call when a value of type `actual` flows into
     /// `expected`, or `None` when no conformance coercion applies. A
-    /// read-only or nullable *value* never coerces (bound methods may mutate
-    /// the receiver, and a nil check would be required); a nullable
+    /// nullable *value* never coerces (a nil check would be required); a nullable
     /// *expectation* accepts the coerced record like any other value.
     fn conforming_wrapper(&self, actual: &Type, expected: &Type) -> Option<String> {
         let expected = match expected {
@@ -1615,20 +1613,20 @@ fn interface_if_cast_statements(
     [check_let, check_if]
 }
 
-/// Record fields behind nominal, nullable, or read-only wrappers.
+/// Record fields behind nominal or nullable wrappers.
 fn record_field_types(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
-        Type::Opaque { ty, .. } | Type::Nullable(ty) | Type::Readonly(ty) => record_field_types(ty),
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => record_field_types(ty),
         _ => None,
     }
 }
 
-/// Array element type behind nominal, nullable, or read-only wrappers.
+/// Array element type behind nominal or nullable wrappers.
 fn array_element_type(ty: &Type) -> Option<&Type> {
     match ty {
         Type::Array(element) => Some(element),
-        Type::Opaque { ty, .. } | Type::Nullable(ty) | Type::Readonly(ty) => array_element_type(ty),
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => array_element_type(ty),
         _ => None,
     }
 }

@@ -76,9 +76,7 @@ fn json_supported_type(ty: &Type) -> bool {
         | Type::StringLiteralUnion(_)
         | Type::NumberLiteralUnion(_)
         | Type::TypeParam(_) => true,
-        Type::Opaque { ty, .. } | Type::Readonly(ty) | Type::Nullable(ty) | Type::Array(ty) => {
-            json_supported_type(ty)
-        }
+        Type::Opaque { ty, .. } | Type::Nullable(ty) | Type::Array(ty) => json_supported_type(ty),
         Type::TypedArray(_) => true,
         Type::Record(fields) => fields.values().all(json_supported_type),
         Type::TaggedVariant(variant) => json_tag_payload_supported(&variant.payload),
@@ -99,9 +97,7 @@ fn json_supported_type(ty: &Type) -> bool {
 
 fn json_tag_payload_supported(ty: &Type) -> bool {
     match ty {
-        Type::Opaque { ty, .. } | Type::Readonly(ty) | Type::Nullable(ty) => {
-            json_tag_payload_supported(ty)
-        }
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => json_tag_payload_supported(ty),
         Type::String | Type::Bytes | Type::StringLiteralUnion(_) => false,
         _ => json_supported_type(ty),
     }
@@ -422,11 +418,6 @@ pub(super) fn infer_coroutine_builtin_call(
                 Err(error) => return Some(Err(error)),
             };
             if is_promise_like_extern(&promise_ty) {
-                if promise_resolved_type(&promise_ty).is_some_and(|ty| ty.contains_readonly()) {
-                    return Some(Err(Diagnostic::new(
-                        "coroutine.await_promise cannot erase a read-only result into unknown",
-                    )));
-                }
                 Some(coerce_type(Type::Unknown, expected))
             } else {
                 Some(Err(Diagnostic::new(
@@ -464,7 +455,7 @@ pub(super) fn infer_pcall_builtin_call(
     };
     let Type::Function {
         params,
-        return_type,
+        return_type: _,
         has_self: false,
     } = callee_ty
     else {
@@ -472,11 +463,6 @@ pub(super) fn infer_pcall_builtin_call(
             "{PCALL} expects a function, got {callee_ty}"
         ))));
     };
-    if return_type.contains_readonly() {
-        return Some(Err(Diagnostic::new(
-            "pcall cannot erase a read-only return value into unknown",
-        )));
-    }
     if !call_arity_matches(&params, args.len() - 1) {
         return Some(Err(Diagnostic::new(format!(
             "{PCALL} protected function expects {} arguments, got {}",
@@ -837,18 +823,12 @@ fn infer_table_array_element(
     vars: &HashMap<String, Binding>,
     fn_signatures: &HashMap<String, FnSignature>,
     active_type_params: &HashSet<String>,
-    requires_mutable: bool,
 ) -> Result<Type, Diagnostic> {
     let list_ty =
         super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)?;
     if !list_ty.is_array() {
         return Err(Diagnostic::new(format!(
             "{name} expects an array as its first argument, got {list_ty}"
-        )));
-    }
-    if requires_mutable && list_ty.is_readonly() {
-        return Err(Diagnostic::new(format!(
-            "{name} cannot mutate a read-only array view"
         )));
     }
     Ok(list_ty
@@ -1008,7 +988,6 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
-                false,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -1044,14 +1023,9 @@ pub(super) fn infer_table_builtin_call(
                     args.len()
                 ))));
             }
-            if let Err(error) = infer_table_array_element(
-                name,
-                &args[0],
-                vars,
-                fn_signatures,
-                active_type_params,
-                false,
-            ) {
+            if let Err(error) =
+                infer_table_array_element(name, &args[0], vars, fn_signatures, active_type_params)
+            {
                 return Some(Err(error));
             }
             return Some(coerce_type(i32_ty, expected));
@@ -1069,7 +1043,6 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
-                true,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -1122,7 +1095,6 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
-                true,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -1159,7 +1131,6 @@ pub(super) fn infer_table_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
-                true,
             ) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),

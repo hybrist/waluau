@@ -63,7 +63,7 @@ pub(super) fn nominal_type_names(mut ty: &Type) -> Vec<&str> {
 pub(super) fn is_record_like(ty: &Type) -> bool {
     match ty {
         Type::Record(_) => true,
-        Type::Opaque { ty, .. } | Type::Nullable(ty) | Type::Readonly(ty) => is_record_like(ty),
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => is_record_like(ty),
         _ => false,
     }
 }
@@ -71,7 +71,7 @@ pub(super) fn is_record_like(ty: &Type) -> bool {
 fn record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
-        Type::Opaque { ty, .. } | Type::Nullable(ty) | Type::Readonly(ty) => record_fields(ty),
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => record_fields(ty),
         _ => None,
     }
 }
@@ -82,9 +82,6 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     }
     if is_extern_subtype_of(actual, expected) {
         return true;
-    }
-    if actual.is_readonly() && !expected.is_readonly() {
-        return false;
     }
     // Structural record match, unwrapping opaque aliases on either side so
     // methods dispatch across differently-named aliases of the same record —
@@ -707,9 +704,6 @@ fn infer_expr_inner(
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
                     Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
-                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
-                    }
-                    Type::Readonly(_) => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
@@ -2370,11 +2364,6 @@ fn infer_array_literal(
                 Err(error) => {
                     if expected_element.is_some() {
                         return Err(error);
-                    }
-                    if element_ty.contains_readonly() {
-                        return Err(Diagnostic::new(
-                            "cannot erase a read-only view into unknown",
-                        ));
                     }
                     element_ty = Type::Unknown;
                 }

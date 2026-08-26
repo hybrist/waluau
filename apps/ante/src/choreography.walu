@@ -562,9 +562,9 @@ end
 -- slot in the settled one. In the base game both layouts hold five cards; in
 -- a boss battle the new layout is two cards narrower, so every survivor moves
 -- as the row recentres, not just the ones past a spent slot.
-function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: readonly<game.Trick>, owner: game.Side, start: f64): f64
-    local side: game.TrickSide = game.trick_side(trick, owner)
-    local live: readonly<{game.HandSlot}> = view:side(owner)
+function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: game.Trick, owner: game.Side, start: f64): f64
+    local side: game.TrickSide = trick:side(owner)
+    local live: {game.HandSlot} = view:side(owner)
     local kind: render.Slot = hand_slot_kind(owner)
     local old_count: i32 = #side.hand
     local new_count: i32 = #live
@@ -606,10 +606,10 @@ function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: ga
     return finish
 end
 
-function State:record_burned_losers(trick: readonly<game.Trick>): unit
+function State:record_burned_losers(trick: game.Trick): unit
     if trick.winner == 0 then return end
-    local loser: game.TrickSide = game.trick_side(
-        trick, game.opposite_side(trick.winner::game.Side))
+    local loser: game.TrickSide = trick:side(
+        game.opposite_side(trick.winner::game.Side))
     table.insert(self.session.discards, loser.cards[0])
     table.insert(self.session.discards, loser.cards[1])
 end
@@ -617,7 +617,7 @@ end
 -- Freeze Ray can preserve any of the five community cards. The rules pack a
 -- preserved turn or river card into the next round's three-card opening, so
 -- identify it by value rather than assuming it kept its old slot.
-function retained_community(trick: readonly<game.Trick>, candidate: game.Card): bool
+function retained_community(trick: game.Trick, candidate: game.Card): bool
     for index, frozen in trick.frozen_middle do
         local card: game.Card = trick.middle[index]
         if frozen and card.rank == candidate.rank and card.suit == candidate.suit then
@@ -627,7 +627,7 @@ function retained_community(trick: readonly<game.Trick>, candidate: game.Card): 
     return false
 end
 
-function State:resolved_breach_cleanup(view: game.View, trick: readonly<game.Trick>): unit
+function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
     self:clear_freeze()
     -- The trick records the pre-round hands; the live view holds the settled
     -- ones. In a boss battle those layouts differ (the rows narrow by two
@@ -641,9 +641,9 @@ function State:resolved_breach_cleanup(view: game.View, trick: readonly<game.Tri
     local row_center: render.Point = render.midpoint(
         render.row_left(layout.current()), render.row_right(layout.current()))
     if trick.winner ~= 0 then
-        local winner: game.TrickSide = game.trick_side(trick, trick.winner::game.Side)
-        local loser: game.TrickSide = game.trick_side(
-            trick, game.opposite_side(trick.winner::game.Side))
+        local winner: game.TrickSide = trick:side(trick.winner::game.Side)
+        local loser: game.TrickSide = trick:side(
+            game.opposite_side(trick.winner::game.Side))
         -- The taken hand goes the same way the burned pair already did: onto
         -- the one spent pile. Winning a round is worth points, not a keepsake.
         local spent: {game.Card} = self.session.discards

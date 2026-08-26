@@ -1,6 +1,0 @@
--- conformance: error=cannot preserve deep read-only access
-
-type Model = { item: unknown }
-
-function reject(view: readonly<Model>): unit
-end
