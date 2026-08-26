@@ -338,6 +338,38 @@ describe('browser conformance', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('passes modules imported through single-quoted require paths', async () => {
+    const ops = `
+      function add(a: i32, b: i32): i32
+          return a + b
+      end
+
+      return { add = add }
+    `;
+    const scale = `
+      const FACTOR: i32 = 3
+
+      function scale(value: i32): i32
+          return value * FACTOR
+      end
+
+      return { scale = scale }
+    `;
+    const main = `
+      local ops = require('./ops')
+      local scaling = require './scale'
+
+      assert(ops.add(2, 3) == 5)
+      assert(scaling.scale(ops.add(2, 5)) == 21)
+    `;
+    await expect(
+      compileAndInstantiate(
+        { '/ops.walu': ops, '/scale.walu': scale, '/main.walu': main },
+        '/main.walu',
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it('assigns a collection of tagged unions into a record field across modules', async () => {
     const shop = `
       type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
