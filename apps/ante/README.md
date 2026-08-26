@@ -1,25 +1,25 @@
 # Ante Magic fixture
 
-A three-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
-game engine. It preserves Poker Tricks' deck, exchange, wager, hand-ranking,
-and computer search while replacing the casino-table presentation with a
-magical robbery inside an arcane vault. A won breach pays its round and pot,
-plus a bonus that climbs with the rarity of its five-card poker hand.
+A player-versus-Arch-Mage trick-taking game built on the Waluau 2D game engine.
+It preserves Poker Tricks' deck, exchange, wager, hand-ranking, and computer
+search while replacing the casino-table presentation with a magical robbery
+inside an arcane vault. A won breach pays its round and pot, plus a bonus that
+climbs with the rarity of its five-card poker hand.
 
 The four suits are now the Red, Blue, Black, and Green schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
-The Arch Mage can commit any valid feint without a mana balance. Either side's
-second breach win ends the vault: the Arch Mage's ends the heist, the player's
-settles the vault as won.
+The Arch Mage can commit any valid feint without a mana balance. One breach
+settles an ordinary vault. Boss battles retain the multi-breach duel: either
+side's second breach win ends the vault.
 Each breach has exactly three feint opportunities. The first follows a
 three-card community deal, then a fourth card and a fifth card are dealt before
 the second and third opportunities. Both sides propose once per opportunity;
 the stronger proposal executes, and every non-pass proposal must use strictly
 more cards than either side's previous maximum. The ceiling is the current
 community size, so a three-card flop swap can still be followed by swaps of four
-and five. Proposal history resets for the next breach.
+and five. In a boss battle, proposal history resets for the next breach.
 
 After the river feint, each side commits two private cards and the strongest
 five-card poker hand among those two and the five community cards wins. As in
@@ -73,9 +73,9 @@ is charged on the way out and there is a whole heist in between to earn it.
 Every third vault of a run is a boss battle: both sides are dealt seven relics
 up front and spent pairs are never replaced from the draw pile, so the hands
 shrink by two every breach and the third breach is fought from a three-card
-fan. Everything else — feints, wagers, scoring, and the three breaches — matches
-a standard vault. The menu's BOSS RUSH starts a run made of nothing else: five
-vaults rather than nine, on its own steeper ante. Both
+fan. Everything else — feints, wagers, and scoring — matches a standard vault;
+the three-breach duel belongs to the boss variant. The menu's BOSS RUSH starts
+a run made of nothing else: five vaults rather than nine, on its own steeper ante. Both
 hand rows lay themselves out for however many cards they hold, tightening their
 pitch (and the fan its tilt and arc) so a seven-relic row still clears the
 deck and the three right-edge piles.
@@ -140,8 +140,8 @@ drawn off the pile are secret again, and a ward on the board is public anyway,
 so neither is ever marked.
 
 Freeze Ray locks its targeted ward out of feints for both the player and the
-Arch Mage. A ward frozen after the feint stays in its board slot when the
-breach resolves while the other wards rotate, then thaws for the next round.
+Arch Mage. In a boss battle, a ward frozen after the feint stays in its board
+slot when the breach resolves while the other wards rotate, then thaws for the next round.
 The freeze also thaws as soon as a feint resolves, so each cast affects only
 the current transition.
 

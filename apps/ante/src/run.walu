@@ -161,8 +161,8 @@ end
 function outcome_of(
     duel: i32, rush: bool, hearts: i32, cleared: bool, carried_gold: i32
 ): Outcome
-    -- Health can end the run during a duel, before its ordinary best-of-three
-    -- verdict exists. It therefore outranks both that verdict and the purse.
+    -- Health can end the run during a duel before the rules report a verdict.
+    -- It therefore outranks both that verdict and the purse.
     if hearts <= 0 then return "lost-health" end
     if not cleared then return "lost-vault" end
     if carried_gold < target_at(duel, rush) then return "lost-target" end

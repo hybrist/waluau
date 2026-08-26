@@ -61,8 +61,7 @@ function body(): entity.Node
         modal.heading("2. PLAY"),
         modal.body_line("SELECT 2 CARDS. THE BEST 5 OF ALL 7 CARDS WINS."),
         modal.body_line(
-            "LATER ROUNDS AND RARER HANDS ARE WORTH MORE GOLD."
-                .. " TWO OPPONENT WINS END THE DUEL."),
+            "ONE HAND SETTLES A DUEL. BOSS DUELS ARE FIRST TO TWO WINS."),
         entity.Node.gap(0.0, BLOCK_GAP - LINE_GAP),
         modal.heading("3. THE TARGET"),
         modal.body_line(
@@ -77,15 +76,12 @@ function body(): entity.Node
     }, LINE_GAP)
 end
 
--- "Two table cards hold" would read as though a tie counted; only rounds
--- the opponent actually wins end the run, which is why the subtitle says
--- survive rather than win. Three rounds make a duel; the
--- target is what leaving it costs, which is a third thing to learn and so a
--- third numbered block — the card is a column, so it simply gets longer.
+-- The target is separate from winning the hand: it is what leaving the duel
+-- costs, so it remains its own numbered block.
 function node(): entity.Node
     return modal.node(
         "THE JOB",
-        "SURVIVE THREE ROUNDS, THEN REACH THE GOLD TARGET TO CONTINUE",
+        "SURVIVE ONE HAND, THEN REACH THE GOLD TARGET TO CONTINUE",
         body())
 end
 
