@@ -302,6 +302,9 @@ pub(crate) struct Monomorphizer<'a> {
     generic_functions: HashMap<SymbolId, &'a AstFunction>,
     generic_methods: HashMap<(SymbolId, String), &'a waluau_ast::FunctionExpr>,
     function_signatures: HashMap<SymbolId, Type>,
+    // HIR resolves declared colon calls by name. Keep that route available
+    // when monomorphization infers the type of a compound iterator expression.
+    named_function_signatures: HashMap<String, Type>,
     method_signatures: HashMap<(SymbolId, String), Type>,
     property_signatures: HashMap<String, (Vec<Type>, Type)>,
     specialized_names: HashMap<SpecializationKey, String>,
@@ -343,6 +346,7 @@ impl<'a> Monomorphizer<'a> {
             .unwrap_or_default();
 
         let mut function_signatures = HashMap::new();
+        let mut named_function_signatures = HashMap::new();
         for function in &program.functions {
             let param_types = function.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
             let return_type = function.return_type.clone().unwrap_or(Type::Unit);
@@ -352,8 +356,9 @@ impl<'a> Monomorphizer<'a> {
                 has_self: false,
             };
             if let Some(symbol_id) = function.symbol_id {
-                function_signatures.insert(symbol_id, fn_ty);
+                function_signatures.insert(symbol_id, fn_ty.clone());
             }
+            named_function_signatures.insert(function.name.to_string(), fn_ty);
         }
         let mut property_signatures = HashMap::new();
         for declared in &program.declared_imports {
@@ -404,6 +409,7 @@ impl<'a> Monomorphizer<'a> {
             generic_functions,
             generic_methods,
             function_signatures,
+            named_function_signatures,
             method_signatures,
             property_signatures,
             specialized_names: HashMap::new(),
@@ -1913,6 +1919,9 @@ impl<'a> Monomorphizer<'a> {
         name: &str,
     ) -> Option<Type> {
         if let Some(direct_name) = resolved_name {
+            if let Some(function_ty) = self.named_function_signatures.get(direct_name) {
+                return Some(function_ty.clone());
+            }
             if let Some((params, return_type)) = self.property_signatures.get(direct_name) {
                 return Some(Type::Function {
                     params: params.clone(),

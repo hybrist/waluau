@@ -2870,6 +2870,51 @@ end
     }
 
     #[test]
+    fn compile_file_preserves_imported_method_result_fields_in_for_in() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("model.walu"),
+            r#"
+                export type Item = { value: i32 }
+                export type View = readonly<{ items: {Item} }>
+                export opaque type State = { items: {Item} }
+
+                function State.new(): State
+                    return { items = { { value = 20 }, { value = 22 } } }
+                end
+
+                function State:view(): View
+                    return { items = self.items }
+                end
+            "#,
+        )
+        .expect("model module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local model = require("./model")
+
+                function total(): i32
+                    local state: model.State = model.State.new()
+                    local sum: i32 = 0
+                    for item in state:view().items do
+                        sum += item.value
+                    end
+                    return sum
+                end
+
+                assert(total() == 42)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path)
+            .expect("for-in should preserve an imported method's declared result field type");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_treats_imported_module_type_aliases_as_transparent() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
