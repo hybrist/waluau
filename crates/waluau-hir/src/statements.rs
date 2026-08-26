@@ -82,6 +82,16 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
     }
+    if let Type::Readonly(expected_inner) = expected {
+        let actual_inner = match actual {
+            Type::Readonly(inner) => inner.as_ref(),
+            other => other,
+        };
+        return method_receiver_matches(expected_inner, actual_inner);
+    }
+    if actual.is_readonly() {
+        return false;
+    }
     if is_extern_subtype_of(actual, expected) {
         return true;
     }

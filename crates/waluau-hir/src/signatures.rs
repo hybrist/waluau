@@ -44,6 +44,9 @@ pub(super) enum FnSignature {
         params: Vec<Type>,
         vararg: bool,
         return_type: Type,
+        /// The body has been proven safe when `self` is viewed as read-only.
+        /// Only set for compiler-authored signatures of declared methods.
+        readonly_receiver: bool,
     },
     Generic(GenericScheme),
     /// A set of declared host function overloads sharing one source-level
@@ -693,6 +696,7 @@ pub(super) fn infer_top_level_function_return_type(
                         .collect(),
                     vararg: function.vararg,
                     return_type: Type::String,
+                    readonly_receiver: false,
                 },
             );
         }

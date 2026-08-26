@@ -188,6 +188,7 @@ fn check_conformance(
                     params,
                     vararg: false,
                     return_type,
+                    ..
                 } => {
                     let actual = Type::Function {
                         params: params.clone(),

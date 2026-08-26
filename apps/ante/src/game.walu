@@ -70,7 +70,7 @@ export type View = readonly<{
     spells: {Spell}
 }>
 -- The pair one side committed to a resolved trick, the hand slots it left,
--- and that side's full revealed hand — see trick_side.
+-- and that side's full revealed hand — see Trick:side.
 export type TrickSide = readonly<{
     cards: readonly<{Card}>,
     formation: readonly<{Card}>,
@@ -1471,26 +1471,24 @@ end
 -- side of a decisive trick. Consumers resolve "the winner's pair" or "the
 -- loser's slots" once instead of re-selecting player_/computer_ fields at
 -- every use. owner 0 names no side and is a caller error.
--- TODO(waluau-uyoc): Make this a Trick method once readonly<Trick> receivers
--- can dispatch methods declared on Trick.
-function trick_side(trick: readonly<Trick>, owner: Side): TrickSide
+function Trick:side(owner: Side): TrickSide
     if owner > 0 then
         return {
-            cards = trick.player_cards,
-            formation = trick.player_formation,
-            first = trick.player_first,
-            second = trick.player_second,
-            value = trick.player_value,
-            hand = trick.player_hand,
+            cards = self.player_cards,
+            formation = self.player_formation,
+            first = self.player_first,
+            second = self.player_second,
+            value = self.player_value,
+            hand = self.player_hand,
         }
     end
     return {
-        cards = trick.computer_cards,
-        formation = trick.computer_formation,
-        first = trick.computer_first,
-        second = trick.computer_second,
-        value = trick.computer_value,
-        hand = trick.computer_hand,
+        cards = self.computer_cards,
+        formation = self.computer_formation,
+        first = self.computer_first,
+        second = self.computer_second,
+        value = self.computer_value,
+        hand = self.computer_hand,
     }
 end
 
@@ -1675,7 +1673,6 @@ function formation_marks(
 end
 
 return {
-    trick_side = trick_side,
     opposite_side = opposite_side,
     hand_cards = hand_cards,
     make_deck = make_deck,

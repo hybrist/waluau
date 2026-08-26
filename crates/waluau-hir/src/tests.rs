@@ -2659,6 +2659,42 @@ fn readonly_views_project_mutable_state_and_support_deep_reads() {
 }
 
 #[test]
+fn readonly_views_dispatch_methods_that_preserve_the_receiver() {
+    let source = include_str!("../../../conformance/readonly_method_dispatch.walu");
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("read-only method dispatch should type check");
+}
+
+#[test]
+fn readonly_views_reject_direct_and_transitive_mutating_methods() {
+    for call in ["view:increment()", "view:increment_indirectly()"] {
+        let source = format!(
+            r#"
+                type Model = {{ count: i32 }}
+
+                function Model:increment(): unit
+                    self.count += 1
+                end
+
+                function Model:increment_indirectly(): unit
+                    self:increment()
+                end
+
+                function mutate(view: readonly<Model>): unit
+                    {call}
+                end
+            "#
+        );
+        let program = parse(&source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("mutating method call should fail");
+        assert_eq!(
+            error.to_string(),
+            "call expected Model, got readonly<Model>"
+        );
+    }
+}
+
+#[test]
 fn readonly_views_reject_record_field_mutation() {
     let source = r#"
         type Model = { count: i32 }

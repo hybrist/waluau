@@ -5978,6 +5978,13 @@ impl Builder<'_> {
                 // method's structural parameter type below.
                 let resolved_recursive_receiver =
                     resolved_name.is_some() && type_method.is_some() && receiver_ty == Type::Unknown;
+                // A resolved target on a read-only receiver carries HIR's
+                // proof that this method body preserves receiver-owned
+                // storage. Readonly has the same runtime representation, so
+                // lowering can pass the value to the authored `self: T`
+                // implementation without a capability-erasing cast.
+                let resolved_readonly_receiver =
+                    resolved_name.is_some() && type_method.is_some() && receiver_ty.is_readonly();
                 let (param_types, return_type) = if let Some((_, params, return_type)) =
                     type_method.clone()
                 {
@@ -6009,6 +6016,7 @@ impl Builder<'_> {
                 }
                 if !method_receiver_matches(&param_types[0], &receiver_ty)
                     && !resolved_recursive_receiver
+                    && !resolved_readonly_receiver
                 {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",
@@ -6019,11 +6027,11 @@ impl Builder<'_> {
                     self.lower_expr(receiver, env, types, Some(receiver_ty.clone()))?;
                 let direct_name = self.direct_record_field_closure_name(receiver_value, name);
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
-                let lowered_receiver = self.coerce_method_receiver(
-                    receiver_value,
-                    &receiver_ty,
-                    &param_types[0],
-                )?;
+                let lowered_receiver = if resolved_readonly_receiver {
+                    receiver_value
+                } else {
+                    self.coerce_method_receiver(receiver_value, &receiver_ty, &param_types[0])?
+                };
                 lowered_args.push(lowered_receiver);
                 for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
                     lowered_args.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
@@ -6076,12 +6084,14 @@ impl Builder<'_> {
                         return_type: *return_type,
                     })
                 };
-                self.write_back_method_receiver_mutations(
-                    receiver_value,
-                    lowered_receiver,
-                    &receiver_ty,
-                    &param_types[0],
-                )?;
+                if !resolved_readonly_receiver {
+                    self.write_back_method_receiver_mutations(
+                        receiver_value,
+                        lowered_receiver,
+                        &receiver_ty,
+                        &param_types[0],
+                    )?;
+                }
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
@@ -7614,6 +7624,8 @@ impl Builder<'_> {
                 // source-level proof for an `unknown` recursive runtime edge.
                 let resolved_recursive_receiver =
                     resolved_name.is_some() && type_method.is_some() && receiver_ty == Type::Unknown;
+                let resolved_readonly_receiver =
+                    resolved_name.is_some() && type_method.is_some() && receiver_ty.is_readonly();
                 let (params, return_type) = if let Some((_, params, return_type)) = type_method {
                     (params, Box::new(return_type))
                 } else if let Some(signature) =
@@ -7643,6 +7655,7 @@ impl Builder<'_> {
                 }
                 if !method_receiver_matches(&params[0], &receiver_ty)
                     && !resolved_recursive_receiver
+                    && !resolved_readonly_receiver
                 {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",

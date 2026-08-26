@@ -1,0 +1,10 @@
+-- Methods that preserve their receiver may be called through a read-only view.
+type Model = { count: i32 }
+
+function Model:read(): i32
+    return self.count
+end
+
+local model: Model = { count = 42::i32 }
+local view: readonly<Model> = model
+assert(view:read() == 42)

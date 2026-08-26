@@ -606,6 +606,7 @@ fn signatures_visible_from_file(
                     params,
                     vararg,
                     return_type,
+                    readonly_receiver,
                 } => FnSignature::Mono {
                     params: params
                         .iter()
@@ -613,6 +614,7 @@ fn signatures_visible_from_file(
                         .collect(),
                     vararg: *vararg,
                     return_type: type_visible_from_file(return_type, file_path, opaque),
+                    readonly_receiver: *readonly_receiver,
                 },
                 FnSignature::Generic(scheme) => FnSignature::Generic(GenericScheme {
                     type_params: scheme.type_params.clone(),
@@ -2980,6 +2982,443 @@ fn method_signature_name(table: &str, method: &str) -> String {
     format!("{table}.{method}")
 }
 
+#[derive(Default)]
+struct ReferencedMethods {
+    /// Every name that might refer to a method, used to conservatively track
+    /// dependencies between candidate bodies.
+    any: HashSet<String>,
+    /// Actual colon-call names, used to avoid proving methods which cannot be
+    /// dispatched by this linked program.
+    calls: HashSet<String>,
+}
+
+fn collect_called_method_names_expr(expr: &Expr, names: &mut ReferencedMethods) {
+    match expr {
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            collect_called_method_names_expr(expr, names);
+        }
+        Expr::Binary { left, right, .. } => {
+            collect_called_method_names_expr(left, names);
+            collect_called_method_names_expr(right, names);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            collect_called_method_names_expr(condition, names);
+            collect_called_method_names_expr(then_expr, names);
+            collect_called_method_names_expr(else_expr, names);
+        }
+        Expr::Call { callee, args, .. } => {
+            match callee.as_ref() {
+                Expr::Name(name, ..) => {
+                    names
+                        .any
+                        .insert(name.rsplit('.').next().unwrap_or(name).to_string());
+                }
+                Expr::Field { name, .. } => {
+                    names.any.insert(name.clone());
+                }
+                _ => {}
+            }
+            collect_called_method_names_expr(callee, names);
+            for arg in args {
+                collect_called_method_names_expr(arg, names);
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } => {
+            names.any.insert(name.clone());
+            names.calls.insert(name.clone());
+            collect_called_method_names_expr(receiver, names);
+            for arg in args {
+                collect_called_method_names_expr(arg, names);
+            }
+        }
+        Expr::Function(function) => collect_called_method_names_stmts(&function.body, names),
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                collect_called_method_names_expr(element, names);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                collect_called_method_names_expr(&field.value, names);
+            }
+        }
+        Expr::Field { base, name, .. } => {
+            // A method may be captured before it is called (`local f = T.m`).
+            // Recording every field name is a safe over-approximation: it can
+            // cause an extra recheck, never an unsafe promotion.
+            names.any.insert(name.clone());
+            collect_called_method_names_expr(base, names);
+        }
+        Expr::Index { base, index, .. } => {
+            collect_called_method_names_expr(base, names);
+            collect_called_method_names_expr(index, names);
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Vararg(..)
+        | Expr::Require(..) => {}
+    }
+}
+
+fn collect_called_method_names_stmts(stmts: &[Stmt], names: &mut ReferencedMethods) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { value, .. }
+            | Stmt::Assign { value, .. }
+            | Stmt::Return(value)
+            | Stmt::Expr(value) => collect_called_method_names_expr(value, names),
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                collect_called_method_names_expr(base, names);
+                collect_called_method_names_expr(index, names);
+                collect_called_method_names_expr(value, names);
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                collect_called_method_names_expr(base, names);
+                collect_called_method_names_expr(value, names);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                collect_called_method_names_expr(condition, names);
+                collect_called_method_names_stmts(then_body, names);
+                collect_called_method_names_stmts(else_body, names);
+            }
+            Stmt::IfCast {
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_called_method_names_expr(value, names);
+                collect_called_method_names_stmts(then_body, names);
+                collect_called_method_names_stmts(else_body, names);
+            }
+            Stmt::Match { value, arms, .. } => {
+                collect_called_method_names_expr(value, names);
+                for arm in arms {
+                    collect_called_method_names_stmts(&arm.body, names);
+                }
+            }
+            Stmt::While { condition, body } => {
+                collect_called_method_names_expr(condition, names);
+                collect_called_method_names_stmts(body, names);
+            }
+            Stmt::Repeat { body, condition } => {
+                collect_called_method_names_stmts(body, names);
+                collect_called_method_names_expr(condition, names);
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                collect_called_method_names_expr(start, names);
+                collect_called_method_names_expr(stop, names);
+                if let Some(step) = step {
+                    collect_called_method_names_expr(step, names);
+                }
+                collect_called_method_names_stmts(body, names);
+            }
+            Stmt::ForIn {
+                iterators, body, ..
+            } => {
+                for iterator in iterators {
+                    collect_called_method_names_expr(iterator, names);
+                }
+                collect_called_method_names_stmts(body, names);
+            }
+            Stmt::ReturnMulti(values)
+            | Stmt::LetMulti { values, .. }
+            | Stmt::AssignMulti { values, .. } => {
+                for value in values {
+                    collect_called_method_names_expr(value, names);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+}
+
+fn is_receiver_storage_path(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(name, ..) => name == "self",
+        Expr::Field { base, .. } | Expr::Cast { expr: base, .. } => is_receiver_storage_path(base),
+        Expr::Index { base, .. } => is_receiver_storage_path(base),
+        _ => false,
+    }
+}
+
+/// Cheaply eliminate the common mutating-method case before the more
+/// expensive proof pass. This is deliberately incomplete: aliases, calls,
+/// and closures fall through to the full read-only body check.
+fn directly_mutates_receiver(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::FieldAssign { base, .. } | Stmt::IndexAssign { base, .. } => {
+            is_receiver_storage_path(base)
+        }
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        }
+        | Stmt::IfCast {
+            then_body,
+            else_body,
+            ..
+        } => directly_mutates_receiver(then_body) || directly_mutates_receiver(else_body),
+        Stmt::Match { arms, .. } => arms.iter().any(|arm| directly_mutates_receiver(&arm.body)),
+        Stmt::While { body, .. }
+        | Stmt::Repeat { body, .. }
+        | Stmt::NumericFor { body, .. }
+        | Stmt::ForIn { body, .. } => directly_mutates_receiver(body),
+        _ => false,
+    })
+}
+
+/// Promote methods whose bodies preserve the receiver capability to accept a
+/// read-only receiver. Methods are authored with `self: T`; checking a clone
+/// with `self: readonly<T>` reuses the ordinary capability rules to prove that
+/// the body cannot mutate, leak, or pass receiver-owned storage to mutable
+/// code. Starting with every candidate promoted and removing failures to a
+/// fixed point also handles methods that delegate to other methods.
+fn promote_readonly_safe_method_receivers(
+    program: &mut Program,
+    fn_signatures: &mut HashMap<String, FnSignature>,
+    module_bindings: &HashMap<String, Binding>,
+    module_opaque: &ModuleOpaqueTypes,
+) {
+    let receiver_bases = program
+        .functions
+        .iter()
+        .filter_map(|function| {
+            let name = function.name.to_string();
+            let receiver = function.params.first()?;
+            if receiver.name != "self" || !name.contains('.') || !function.type_params.is_empty() {
+                return None;
+            }
+            // Incremental checking may reuse a previously promoted typed
+            // function. Recover its authored mutable receiver before proving
+            // safety again against the current call graph.
+            let base = match &receiver.ty {
+                Type::Readonly(inner) => inner.as_ref().clone(),
+                ty => ty.clone(),
+            };
+            (base.is_mutable_structural() && base.supports_readonly_view()).then_some((name, base))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut candidates = program
+        .functions
+        .iter()
+        .filter_map(|function| {
+            let name = function.name.to_string();
+            (receiver_bases.contains_key(&name) && !directly_mutates_receiver(&function.body))
+                .then_some(name)
+        })
+        .collect::<HashSet<_>>();
+    // Whole-program compilation only needs a capability proof for methods
+    // that can be referenced by this program. Method names are deliberately
+    // over-approximated (including captured fields and ordinary callees), so
+    // pruning here cannot promote an unsafe method; it only avoids proving
+    // declarations that have no possible call site in the linked program.
+    let mut referenced_methods = ReferencedMethods::default();
+    for function in &program.functions {
+        collect_called_method_names_stmts(&function.body, &mut referenced_methods);
+    }
+    candidates.retain(|name| {
+        name.rsplit('.')
+            .next()
+            .is_some_and(|method| referenced_methods.calls.contains(method))
+    });
+    let called_names = program
+        .functions
+        .iter()
+        .filter_map(|function| {
+            let name = function.name.to_string();
+            candidates.contains(&name).then(|| {
+                let mut called = ReferencedMethods::default();
+                collect_called_method_names_stmts(&function.body, &mut called);
+                (name, called.any)
+            })
+        })
+        .collect::<HashMap<_, _>>();
+    let mut to_check = candidates.clone();
+    let mut rounds = 0;
+    let candidate_file_paths = program
+        .functions
+        .iter()
+        .filter(|function| candidates.contains(&function.name.to_string()))
+        .map(|function| function.file_path.clone())
+        .collect::<HashSet<_>>();
+    let visible_bindings_by_file = if module_opaque.is_empty() {
+        HashMap::new()
+    } else {
+        candidate_file_paths
+            .iter()
+            .map(|file_path| {
+                (
+                    file_path.clone(),
+                    bindings_visible_from_file(module_bindings, file_path, module_opaque),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    };
+    let mut trial_signatures = fn_signatures.clone();
+    for name in &candidates {
+        if let Some(FnSignature::Mono { params, .. }) = trial_signatures.get_mut(name)
+            && let Some(receiver) = params.first_mut()
+        {
+            *receiver = receiver_bases[name].readonly_projection();
+        }
+    }
+    let mut visible_signatures_by_file = if module_opaque.is_empty() {
+        HashMap::new()
+    } else {
+        candidate_file_paths
+            .iter()
+            .map(|file_path| {
+                (
+                    file_path.clone(),
+                    signatures_visible_from_file(&trial_signatures, file_path, module_opaque),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    };
+
+    loop {
+        rounds += 1;
+        let candidate_functions = program
+            .functions
+            .iter()
+            .filter(|function| to_check.contains(&function.name.to_string()))
+            .collect::<Vec<_>>();
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(candidate_functions.len().max(1));
+        let chunk_size = candidate_functions.len().max(1).div_ceil(workers);
+        let rejected = std::thread::scope(|scope| {
+            candidate_functions
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    let trial_signatures = &trial_signatures;
+                    let visible_signatures_by_file = &visible_signatures_by_file;
+                    let visible_bindings_by_file = &visible_bindings_by_file;
+                    let receiver_bases = &receiver_bases;
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .filter_map(|function| {
+                                let name = function.name.to_string();
+                                let mut readonly_function = (*function).clone();
+                                readonly_function.params[0].ty =
+                                    receiver_bases[&name].readonly_projection();
+                                let visible_function =
+                                    function_visible_from_file(&readonly_function, module_opaque);
+                                let visible_signatures = visible_signatures_by_file
+                                    .get(&function.file_path)
+                                    .unwrap_or(trial_signatures);
+                                let visible_bindings = visible_bindings_by_file
+                                    .get(&function.file_path)
+                                    .unwrap_or_else(|| {
+                                        function_module_bindings(function, module_bindings)
+                                    });
+                                (!statements::check_function_collect(
+                                    &visible_function,
+                                    visible_signatures,
+                                    &HashSet::new(),
+                                    visible_bindings,
+                                )
+                                .is_empty())
+                                .then_some(name)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .flat_map(|handle| handle.join().expect("readonly method checker panicked"))
+                .collect::<Vec<_>>()
+        });
+        if rejected.is_empty() {
+            break;
+        }
+        let rejected_method_names = rejected
+            .iter()
+            .filter_map(|name| name.rsplit('.').next())
+            .map(str::to_string)
+            .collect::<HashSet<_>>();
+        for name in &rejected {
+            candidates.remove(name);
+            if let Some(FnSignature::Mono { params, .. }) = trial_signatures.get_mut(name)
+                && let Some(receiver) = params.first_mut()
+            {
+                *receiver = receiver_bases[name].clone();
+            }
+            for (file_path, signatures) in &mut visible_signatures_by_file {
+                if let Some(FnSignature::Mono { params, .. }) = signatures.get_mut(name)
+                    && let Some(receiver) = params.first_mut()
+                {
+                    *receiver =
+                        type_visible_from_file(&receiver_bases[name], file_path, module_opaque);
+                }
+            }
+        }
+        to_check = candidates
+            .iter()
+            .filter(|name| {
+                called_names[*name]
+                    .iter()
+                    .any(|called| rejected_method_names.contains(called))
+            })
+            .cloned()
+            .collect();
+        if to_check.is_empty() {
+            break;
+        }
+    }
+    if CompilerTimer::enabled() {
+        eprintln!(
+            "waluau readonly method inference: {}/{} safe candidates, {rounds} rounds",
+            candidates.len(),
+            receiver_bases.len(),
+        );
+    }
+
+    for (name, base) in receiver_bases {
+        let readonly_receiver = candidates.contains(&name);
+        if let Some(FnSignature::Mono {
+            params,
+            readonly_receiver: safe,
+            ..
+        }) = fn_signatures.get_mut(&name)
+        {
+            if let Some(param) = params.first_mut() {
+                *param = base;
+            }
+            *safe = readonly_receiver;
+        }
+    }
+}
+
 fn signature_from_function_expr(function: &FunctionExpr) -> Option<FnSignature> {
     let return_type = function.return_type.clone()?;
     let params = function
@@ -2992,6 +3431,7 @@ fn signature_from_function_expr(function: &FunctionExpr) -> Option<FnSignature> 
             params,
             vararg: function.vararg,
             return_type,
+            readonly_receiver: false,
         }
     } else {
         FnSignature::Generic(GenericScheme {
@@ -4455,6 +4895,7 @@ fn type_check_and_infer_collect_inner(
                     .collect(),
                 vararg: false,
                 return_type: declared.return_type.clone(),
+                readonly_receiver: false,
             },
         );
     }
@@ -4491,6 +4932,7 @@ fn type_check_and_infer_collect_inner(
                             .collect(),
                         vararg: function.vararg,
                         return_type: ret.clone(),
+                        readonly_receiver: false,
                     },
                 );
             }
@@ -4578,6 +5020,7 @@ fn type_check_and_infer_collect_inner(
                             params: function_params,
                             vararg: function_vararg,
                             return_type: ret,
+                            readonly_receiver: false,
                         },
                     );
                     progressed = true;
@@ -4593,6 +5036,7 @@ fn type_check_and_infer_collect_inner(
                             params: function_params,
                             vararg: function_vararg,
                             return_type: Type::Unknown,
+                            readonly_receiver: false,
                         },
                     );
                     progressed = true;
@@ -4623,6 +5067,13 @@ fn type_check_and_infer_collect_inner(
         &fn_signatures,
         &module_bindings,
         &reusable,
+    );
+
+    promote_readonly_safe_method_receivers(
+        &mut typed,
+        &mut fn_signatures,
+        &module_bindings,
+        &module_opaque,
     );
 
     if let Some(top_level_init) = typed

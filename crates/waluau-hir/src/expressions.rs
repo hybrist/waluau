@@ -47,6 +47,9 @@ fn property_getter_name(base: &str, property: &str) -> String {
 /// signature for each field or method expression.
 pub(super) fn nominal_type_names(mut ty: &Type) -> Vec<&str> {
     let mut names = Vec::new();
+    if let Type::Readonly(inner) = ty {
+        ty = inner;
+    }
     while let Type::Opaque {
         name, ty: inner, ..
     } = ty
@@ -79,6 +82,13 @@ fn record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
 fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
+    }
+    if let Type::Readonly(expected_inner) = expected {
+        let actual_inner = match actual {
+            Type::Readonly(inner) => inner.as_ref(),
+            other => other,
+        };
+        return method_receiver_matches(expected_inner, actual_inner);
     }
     if is_extern_subtype_of(actual, expected) {
         return true;
@@ -618,6 +628,7 @@ fn infer_expr_inner(
                 params,
                 vararg,
                 return_type,
+                ..
             }) = fn_signatures.get(name)
             {
                 Type::Function {
@@ -1041,6 +1052,7 @@ fn infer_expr_inner(
                     params,
                     vararg: true,
                     return_type,
+                    ..
                 }) = fn_signatures.get(name)
                 {
                     if args.len() > 1 {
@@ -1192,6 +1204,7 @@ fn infer_expr_inner(
                                 params,
                                 vararg: false,
                                 return_type,
+                                ..
                             }) => {
                                 if !call_arity_matches(params, args.len()) {
                                     return Err(Diagnostic::new(format!(
@@ -1312,7 +1325,7 @@ fn infer_expr_inner(
             ) {
                 return result;
             }
-            let (params, ret) = if let Some((signature, signature_name)) =
+            let (params, ret, readonly_receiver) = if let Some((signature, signature_name)) =
                 method_signature(receiver, name, fn_signatures)
                     .or_else(|| type_method_signature(&receiver_ty, name, fn_signatures))
             {
@@ -1320,6 +1333,7 @@ fn infer_expr_inner(
                     FnSignature::Mono {
                         params,
                         return_type,
+                        readonly_receiver,
                         ..
                     } => {
                         if !type_args.is_empty() {
@@ -1329,7 +1343,7 @@ fn infer_expr_inner(
                                 "remove the type argument list or call a generic method",
                             ));
                         }
-                        (params.clone(), return_type.clone())
+                        (params.clone(), return_type.clone(), *readonly_receiver)
                     }
                     FnSignature::Generic(scheme) => {
                         // Create a modified args list with the receiver as the first argument
@@ -1363,7 +1377,7 @@ fn infer_expr_inner(
                             fn_signatures,
                             active_type_params,
                         )?;
-                        (chosen.params.clone(), chosen.return_type.clone())
+                        (chosen.params.clone(), chosen.return_type.clone(), false)
                     }
                     FnSignature::Const { .. } => {
                         return Err(Diagnostic::new(format!(
@@ -1420,7 +1434,7 @@ fn infer_expr_inner(
                         params,
                         return_type,
                         has_self: false,
-                    } => (params, *return_type),
+                    } => (params, *return_type, false),
                     other => {
                         return Err(Diagnostic::new(format!(
                             "attempt to call non-function value of type {other}",
@@ -1434,7 +1448,12 @@ fn infer_expr_inner(
                     args.len() + 1
                 )));
             }
-            if !method_receiver_matches(&params[0], &receiver_ty) {
+            if !method_receiver_matches(&params[0], &receiver_ty)
+                && !(readonly_receiver
+                    && receiver_ty
+                        .readonly_base()
+                        .is_some_and(|inner| method_receiver_matches(&params[0], inner)))
+            {
                 return Err(Diagnostic::new(format!(
                     "call expected {}, got {}",
                     params[0], receiver_ty
