@@ -3311,53 +3311,63 @@ fn promote_readonly_safe_method_receivers(
             .iter()
             .filter(|function| to_check.contains(&function.name.to_string()))
             .collect::<Vec<_>>();
-        let workers = std::thread::available_parallelism()
-            .map_or(1, std::num::NonZeroUsize::get)
-            .min(candidate_functions.len().max(1));
+        let workers = if cfg!(target_family = "wasm") {
+            1
+        } else {
+            std::thread::available_parallelism()
+                .map_or(1, std::num::NonZeroUsize::get)
+                .min(candidate_functions.len().max(1))
+        };
         let chunk_size = candidate_functions.len().max(1).div_ceil(workers);
-        let rejected = std::thread::scope(|scope| {
+        let check_candidate = |function: &Function| {
+            let name = function.name.to_string();
+            let mut readonly_function = function.clone();
+            readonly_function.params[0].ty = receiver_bases[&name].readonly_projection();
+            let visible_function = function_visible_from_file(&readonly_function, module_opaque);
+            let visible_signatures = visible_signatures_by_file
+                .get(&function.file_path)
+                .unwrap_or(&trial_signatures);
+            let visible_bindings = visible_bindings_by_file
+                .get(&function.file_path)
+                .unwrap_or_else(|| function_module_bindings(function, module_bindings));
+            (!statements::check_function_collect(
+                &visible_function,
+                visible_signatures,
+                &HashSet::new(),
+                visible_bindings,
+            )
+            .is_empty())
+            .then_some(name)
+        };
+        // Browser-hosted compilation targets wasm32 without threads. Avoid
+        // even spawning a single scoped worker there: std's thread shim traps
+        // before the candidate check can run.
+        let rejected = if workers == 1 {
             candidate_functions
-                .chunks(chunk_size)
-                .map(|chunk| {
-                    let trial_signatures = &trial_signatures;
-                    let visible_signatures_by_file = &visible_signatures_by_file;
-                    let visible_bindings_by_file = &visible_bindings_by_file;
-                    let receiver_bases = &receiver_bases;
-                    scope.spawn(move || {
-                        chunk
-                            .iter()
-                            .filter_map(|function| {
-                                let name = function.name.to_string();
-                                let mut readonly_function = (*function).clone();
-                                readonly_function.params[0].ty =
-                                    receiver_bases[&name].readonly_projection();
-                                let visible_function =
-                                    function_visible_from_file(&readonly_function, module_opaque);
-                                let visible_signatures = visible_signatures_by_file
-                                    .get(&function.file_path)
-                                    .unwrap_or(trial_signatures);
-                                let visible_bindings = visible_bindings_by_file
-                                    .get(&function.file_path)
-                                    .unwrap_or_else(|| {
-                                        function_module_bindings(function, module_bindings)
-                                    });
-                                (!statements::check_function_collect(
-                                    &visible_function,
-                                    visible_signatures,
-                                    &HashSet::new(),
-                                    visible_bindings,
-                                )
-                                .is_empty())
-                                .then_some(name)
-                            })
-                            .collect::<Vec<_>>()
+                .iter()
+                .copied()
+                .filter_map(&check_candidate)
+                .collect::<Vec<_>>()
+        } else {
+            std::thread::scope(|scope| {
+                candidate_functions
+                    .chunks(chunk_size)
+                    .map(|chunk| {
+                        let check_candidate = &check_candidate;
+                        scope.spawn(move || {
+                            chunk
+                                .iter()
+                                .copied()
+                                .filter_map(check_candidate)
+                                .collect::<Vec<_>>()
+                        })
                     })
-                })
-                .collect::<Vec<_>>()
-                .into_iter()
-                .flat_map(|handle| handle.join().expect("readonly method checker panicked"))
-                .collect::<Vec<_>>()
-        });
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .flat_map(|handle| handle.join().expect("readonly method checker panicked"))
+                    .collect::<Vec<_>>()
+            })
+        };
         if rejected.is_empty() {
             break;
         }
