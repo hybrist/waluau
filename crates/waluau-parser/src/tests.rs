@@ -2219,6 +2219,30 @@ fn parses_require_with_string_sugar() {
 }
 
 #[test]
+fn parses_require_with_single_quoted_path() {
+    let source = r#"
+        local add: (i32, i32) -> i32 = require('./add')
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
+        panic!("expected a let binding");
+    };
+    assert!(matches!(value, waluau_ast::Expr::Require(path, _) if path == "./add"));
+}
+
+#[test]
+fn parses_require_string_sugar_with_single_quoted_path() {
+    let source = r#"
+        local add: (i32, i32) -> i32 = require './add'
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
+        panic!("expected a let binding");
+    };
+    assert!(matches!(value, waluau_ast::Expr::Require(path, _) if path == "./add"));
+}
+
+#[test]
 fn rejects_non_string_require_argument_with_stable_source_diagnostic() {
     let source = "local add = require(module_name)";
     let start = source.find("module_name").expect("argument should exist");
