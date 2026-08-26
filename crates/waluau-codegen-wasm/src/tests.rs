@@ -317,22 +317,8 @@ fn development_dwarf_rejects_malformed_function_layouts() {
 }
 
 #[test]
-fn recursive_record_arrays_emit_finite_valid_wasm_types() {
-    let source = r#"
-        type Tree = {value: i32, children: {Tree}}
-
-        function leaf(value: i32): Tree
-            return {value = value, children = {}}
-        end
-
-        function sum(tree: Tree): i32
-            local total: i32 = tree.value
-            for child in tree.children do total += sum(child) end
-            return total
-        end
-
-        assert(sum({value = 1, children = {leaf(2), leaf(3)}}) == 6)
-    "#;
+fn recursive_record_fields_dispatch_resolved_methods() {
+    let source = include_str!("../../../conformance/recursive_record_field_method_dispatch.walu");
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
     let ir = waluau_ir::build(&typed).expect("ir should succeed");

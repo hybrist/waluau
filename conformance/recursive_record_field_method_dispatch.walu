@@ -1,0 +1,24 @@
+-- A guarded recursive field uses a finite `unknown` runtime edge, but values
+-- read through that edge retain their HIR-resolved nominal method target.
+
+type Tree = { value: i32, children: {Tree} }
+
+function leaf(value: i32): Tree
+    return { value = value, children = {} }
+end
+
+function branch(value: i32, children: {Tree}): Tree
+    return { value = value, children = children }
+end
+
+function Tree:sum(): i32
+    local total: i32 = self.value
+    for child in self.children do
+        total += child:sum()
+    end
+    return total
+end
+
+local root: Tree = branch(1, { leaf(2), branch(3, { leaf(4) }) })
+
+assert(root:sum() == 10)
