@@ -1,0 +1,17 @@
+-- A field read chained from a method-call result keeps the method's declared
+-- return type when the expression is used as a for-in iterator.
+
+type Item = { value: i32 }
+type View = readonly<{ items: {Item} }>
+type State = { items: {Item} }
+
+function State:view(): View
+    return { items = self.items }
+end
+
+local state: State = { items = { { value = 20 }, { value = 22 } } }
+local sum: i32 = 0
+for item in state:view().items do
+    sum += item.value
+end
+assert(sum == 42)
