@@ -214,7 +214,7 @@ function State:draw(viewport: layout.State, graphics: engine.Graphics, effects: 
     end
     ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
     ink.text_centered(
-        graphics, "DUEL AFTER DUEL ON ONE POOL OF GOLD. THREE ROUNDS EACH",
+        graphics, "DUEL AFTER DUEL ON ONE POOL OF GOLD. ONE HAND EACH",
         viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")
     -- The four colors of magic as small gold motes under the title, in the
     -- same colours the footer legend uses in the duel.
@@ -322,4 +322,3 @@ function State:mousepressed(viewport: layout.State, x: f64, y: f64, button: i32)
     end
     return activate(self, item)
 end
-

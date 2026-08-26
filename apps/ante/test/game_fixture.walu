@@ -34,7 +34,7 @@ function set_player_points(state: game.State, points: i32): unit
 end
 
 -- Force a finished duel holding the given number of table cards for the Opponent,
--- so run-level tests reach a verdict without playing three rounds out.
+-- so run-level tests reach a verdict without playing the duel out.
 function finish(state: game.State, computer_tricks: i32): unit
     state:test_finish(computer_tricks)
 end

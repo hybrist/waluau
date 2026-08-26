@@ -1,4 +1,4 @@
--- The band across the top of the duel: how the three rounds have gone.
+-- The band across the top of the duel: the ordinary hand or boss rounds.
 --
 -- The breach orbs sit centred in the header band across the top of the board.
 
@@ -20,4 +20,3 @@ end
 return {
     node = node,
 }
-

@@ -24,6 +24,10 @@ describe("Ante Magic run health wiring", function()
         math.randomseed(101)
         local screen: game_screen.State = game_screen.State.new()
         local city: city_map.State = city_map.State.new(101)
+        -- Use a boss duel so one lost hand drains the last heart before the
+        -- duel's own multi-hand verdict has been reached.
+        screen.run.rush = true
+        screen:deal_vault()
         screen.run.hearts = 1
 
         finish_swap_phase(screen.rules)

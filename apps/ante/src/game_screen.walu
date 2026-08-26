@@ -250,7 +250,7 @@ function State:run_outcome(): run_module.Outcome
 end
 
 -- Losing the last heart finishes the screen's live duel immediately even when
--- the duel rules have not reached their own best-of-three verdict yet.
+-- the duel rules have not reached their own verdict yet.
 function State:vault_finished(): bool
     return self.run.hearts <= 0 or self.rules:is_finished()
 end
@@ -767,4 +767,3 @@ function State.restore(
         fence_fade = 0.0,
     }
 end
-

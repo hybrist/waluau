@@ -8,7 +8,6 @@ local run = require("./run")
 local flow = require("./flow")
 local spells = require("./spells/spell")
 
-const FIRST_ROUND: i32 = 1
 const LAST_ROUND: i32 = 3
 
 -- The framing shape the entry module packs for hot replacement, mirrored here
@@ -427,7 +426,9 @@ describe("Ante Magic swaps", function()
     end)
 
     it("carries a maxed flop into four- and five-card swap opportunities", function()
-        local state = game.State.new(false, starter_loadout(), game.starting_gold)
+        -- This reaches the next hand, so exercise it in the multi-hand boss
+        -- variant now that ordinary duels end after their first hand.
+        local state = game.State.new(true, starter_loadout(), game.starting_gold)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -627,48 +628,42 @@ describe("Ante Magic duel flow", function()
 end)
 
 describe("Ante Magic game flow", function()
-    it("ends after two player wins in best of three", function()
+    it("ends a normal duel after one player win", function()
         math.randomseed(42)
         local state = game.State.new(false, starter_loadout(), game.starting_gold)
-        
-        -- Round 1: Player wins
-        finish_swap_phase(state)
-        force_player_win(state)
-        state:play(0, 1)
-        expect(state:view().player_tricks):toBe(1)
-        expect(state:view().finished):toBe(false)
-        
-        -- Round 2: Player wins and game ends (best of 3 means first to 2 wins)
+
         finish_swap_phase(state)
         force_player_win(state)
         state:play(0, 1)
 
         expect(state:view().finished):toBe(true)
-        expect(state:view().player_tricks):toBe(2)
+        expect(state:view().player_tricks):toBe(1)
         expect(state:view().computer_tricks):toBe(0)
+        expect(state:is_victory()):toBe(true)
+        expect(state:view():cleared()):toBe(true)
+        expect(#state:view().history):toBe(1)
     end)
 
-    it("ends immediately on the Opponent's second win", function()
+    it("ends a normal duel after one Opponent win", function()
         math.randomseed(43)
         local state = game.State.new(false, starter_loadout(), game.starting_gold)
-        for expected_round = FIRST_ROUND, 2 do
-            finish_swap_phase(state)
-            force_computer_win(state)
-            state:play(0, 1)
-            local trick = state:view().history[expected_round - 1]
-            expect(trick.winner):toBe(-1)
-            expect(trick.points):toBe(0)
-            if expected_round < 2 then expect(state:view().finished):toBe(false) end
-        end
+        finish_swap_phase(state)
+        force_computer_win(state)
+        state:play(0, 1)
+        local trick = state:view().history[0]
 
+        expect(trick.winner):toBe(-1)
+        expect(trick.points):toBe(0)
         expect(state:view().finished):toBe(true)
-        expect(state:view().computer_tricks):toBe(2)
+        expect(state:view().computer_tricks):toBe(1)
         expect(state:view().player_tricks):toBe(0)
-        expect(#state:view().history):toBe(2)
+        expect(state:is_victory()):toBe(false)
+        expect(state:view():cleared()):toBe(false)
+        expect(#state:view().history):toBe(1)
         expect(#state:view().middle):toBe(0)
     end)
 
-    it("keeps a stalemate open and refunds its wager", function()
+    it("settles a normal duel after a stalemate and refunds its wager", function()
         math.randomseed(44)
         local state = game.State.new(false, starter_loadout(), game.starting_gold)
         finish_swap_phase(state)
@@ -681,29 +676,8 @@ describe("Ante Magic game flow", function()
         expect(state:view().player_tricks):toBe(0)
         expect(state:view().computer_tricks):toBe(0)
         expect(state:view().player_points):toBe(points)
-        expect(state:view().finished):toBe(false)
-        expect(state:view().round):toBe(2)
-    end)
-
-    it("does not count a stalemate as a second Opponent hold", function()
-        math.randomseed(45)
-        local state = game.State.new(false, starter_loadout(), game.starting_gold)
-        -- First opponent win
-        finish_swap_phase(state)
-        force_computer_win(state)
-        state:play(0, 1)
-        
-        -- Stalemate - should not count as opponent win
-        finish_swap_phase(state)
-        force_stalemate(state)
-        state:play(0, 1)
-
-        expect(#state:view().history):toBe(2)
-        expect(state:view().history[1].winner):toBe(0)
-        expect(state:view().computer_tricks):toBe(1)
-        expect(state:view().player_tricks):toBe(0)
-        expect(state:view().finished):toBe(false)
-        expect(state:view().round):toBe(3)
+        expect(state:view().finished):toBe(true)
+        expect(state:view().round):toBe(1)
     end)
 end)
 
@@ -745,7 +719,7 @@ describe("Ante Magic boss battle", function()
         expect(state:view().player_tricks):toBe(1)
         expect(state:view().finished):toBe(false)
         
-        -- Round 2: Player wins and game ends (best of 3 means first to 2 wins)
+        -- Round 2: a second player win ends the boss duel.
         expect(state:view().round):toBe(2)
         expect(#state:view().player_hand):toBe(5)
         expect(#state:view().computer_hand):toBe(5)
@@ -931,7 +905,7 @@ describe("Ante Magic spell casting", function()
 
     it("retains a table_card frozen after the swap for exactly one more round", function()
         math.randomseed(61)
-        local state = game.State.new(false, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
+        local state = game.State.new(true, loadout_of(spells.SpellKind.FreezeRay), game.starting_gold)
         finish_swap_phase(state)
         local retained = state:view().middle[1]
         local replaced_left = state:view().middle[0]
@@ -952,7 +926,7 @@ describe("Ante Magic spell casting", function()
         expect(state:view().middle[1].suit):toBe(retained.suit)
         expect(state:view().middle[0].rank == replaced_left.rank and state:view().middle[0].suit == replaced_left.suit):toBe(false)
         expect(state:view().middle[2].rank == replaced_right.rank and state:view().middle[2].suit == replaced_right.suit):toBe(false)
-        expect(state:view().deck_count):toBe(deck_size - 6)
+        expect(state:view().deck_count):toBe(deck_size - 2)
         expect(state:is_frozen(1)):toBe(false)
     end)
 
