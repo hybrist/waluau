@@ -2666,11 +2666,24 @@ fn readonly_views_dispatch_methods_that_preserve_the_receiver() {
 }
 
 #[test]
-fn readonly_views_reject_direct_and_transitive_mutating_methods() {
-    for call in ["view:increment()", "view:increment_indirectly()"] {
+fn readonly_views_reject_mutating_and_receiver_leaking_methods() {
+    for call in [
+        "view:increment()",
+        "view:increment_indirectly()",
+        "view:increment_alias()",
+        "view:increment_in_closure()",
+        "view:pass_to_mutator()",
+        "view:increment_with_dot_call()",
+        "view:mutable_self()",
+        "view:mutable_items()",
+    ] {
         let source = format!(
             r#"
-                type Model = {{ count: i32 }}
+                type Model = {{ count: i32, items: {{i32}} }}
+
+                function mutate_model(model: Model): unit
+                    model.count += 1
+                end
 
                 function Model:increment(): unit
                     self.count += 1
@@ -2678,6 +2691,34 @@ fn readonly_views_reject_direct_and_transitive_mutating_methods() {
 
                 function Model:increment_indirectly(): unit
                     self:increment()
+                end
+
+                function Model:increment_alias(): unit
+                    local alias = self
+                    alias.count += 1
+                end
+
+                function Model:increment_in_closure(): unit
+                    local deferred = function(): unit
+                        self.count += 1
+                    end
+                    deferred()
+                end
+
+                function Model:pass_to_mutator(): unit
+                    mutate_model(self)
+                end
+
+                function Model:increment_with_dot_call(): unit
+                    Model.increment(self)
+                end
+
+                function Model:mutable_self(): Model
+                    return self
+                end
+
+                function Model:mutable_items(): {{i32}}
+                    return self.items
                 end
 
                 function mutate(view: readonly<Model>): unit
