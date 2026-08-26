@@ -24,6 +24,9 @@ pub(super) struct Parser {
     file_path: String,
     /// Locally declared nominal enums and their declaration-order variants.
     enums: HashMap<String, Vec<String>>,
+    /// Non-generic local type aliases, used to expose the target type's
+    /// value-level enum variants and declared static functions.
+    type_aliases: HashMap<String, String>,
     /// Dotted names of every `function A.b` / `function A:b` declaration in
     /// the file, collected up front so an enum member access can distinguish
     /// a static function from a misspelled variant before the declaration
@@ -56,6 +59,7 @@ impl Parser {
             definitions: Vec::new(),
             file_path,
             enums: HashMap::new(),
+            type_aliases: HashMap::new(),
             dotted_functions,
             self_allowed: false,
             conformance_allowed: false,
@@ -826,8 +830,29 @@ impl Parser {
                 declaration.ty
             ));
             self.definitions[index].exported = declaration.exported;
+            if !declaration.module_opaque
+                && declaration.type_params.is_empty()
+                && let Type::Named { name, type_args } = &declaration.ty
+                && type_args.is_empty()
+                && !name.contains('.')
+            {
+                self.type_aliases
+                    .insert(declaration.name.clone(), name.clone());
+            }
         }
         parsed
+    }
+
+    pub(super) fn resolve_local_type_alias(&self, name: &str) -> String {
+        let mut resolved = name.to_string();
+        let mut seen = HashSet::new();
+        while seen.insert(resolved.clone()) {
+            let Some(target) = self.type_aliases.get(&resolved) else {
+                break;
+            };
+            resolved = target.clone();
+        }
+        resolved
     }
 
     pub(super) fn parse_function_expr_tail(

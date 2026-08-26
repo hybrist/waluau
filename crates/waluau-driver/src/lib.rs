@@ -3183,6 +3183,106 @@ end
     }
 
     #[test]
+    fn compile_file_resolves_static_members_through_local_type_aliases() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                type X = { v: i32 }
+
+                function X.new(): X
+                    return { v = 42 }
+                end
+
+                type X2 = X
+                type X3 = X2
+
+                enum E { A }
+                type E2 = E
+                type E3 = E2
+
+                local x = X3.new()
+                local e = E3.A
+                assert(x.v == 42)
+                assert(e == E.A)
+            "#,
+        )
+        .expect("main should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_source_resolves_static_members_through_local_type_aliases() {
+        let source = r#"
+            type X = { v: i32 }
+
+            function X.new(): X
+                return { v = 42 }
+            end
+
+            type X2 = X
+            local x = X2.new()
+
+            enum E { A }
+            type E2 = E
+            local e = E2.A
+
+            assert(x.v == 42)
+            assert(e == E.A)
+        "#;
+
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_resolves_exported_and_imported_type_alias_members() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("types.walu"),
+            r#"
+                export type X = { v: i32 }
+
+                function X.new(): X
+                    return { v = 42 }
+                end
+
+                export type X2 = X
+
+                export enum E { A }
+                export type E2 = E
+            "#,
+        )
+        .expect("types module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local types = require("./types")
+
+                local exported = types.X2.new()
+                local exported_enum = types.E2.A
+
+                type X3 = types.X2
+                type E3 = types.E2
+                local imported = X3.new()
+                local imported_enum: E3 = E3.A
+
+                assert(exported.v == 42)
+                assert(imported.v == 42)
+                assert(exported_enum == imported_enum)
+            "#,
+        )
+        .expect("main should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_rejects_statics_on_private_types() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

@@ -611,6 +611,7 @@ fn merge_with_builtins(
             .collect::<HashSet<_>>();
         value_aliases.extend(module_constants);
         let transparent_type_aliases = transparent_module_type_aliases(module, &type_namespaces);
+        let type_members = local_type_members(&module.program, &prefix, &type_namespaces);
         for function in &mut module_functions {
             resolve_imported_enum_matches(&mut function.body, &type_namespaces)?;
         }
@@ -620,6 +621,7 @@ fn merge_with_builtins(
             func_names: &func_names,
             type_names: &type_names,
             type_namespaces: &type_namespaces,
+            type_members: &type_members,
             transparent_type_aliases: &transparent_type_aliases,
             global_names: &global_names,
             imports: &imports,
@@ -1063,6 +1065,57 @@ fn imported_type_static_expr(
     Some(Expr::Name(function.clone(), None, expr.span()))
 }
 
+/// `Alias.member`: a value-level member reached through a type declared in
+/// the current source module. This includes aliases of local declarations and
+/// aliases of types reached through a require binding.
+fn local_type_member_expr(
+    expr: &Expr,
+    type_members: &TypeNamespace,
+    bound: &HashSet<String>,
+) -> Option<Expr> {
+    let Expr::Field {
+        base, name: member, ..
+    } = expr
+    else {
+        return None;
+    };
+    let Expr::Name(type_name, _, _) = &**base else {
+        return None;
+    };
+    if bound.contains(type_name) {
+        return None;
+    }
+    let declared = type_members.get(type_name)?;
+    if let Some(ordinal) = declared
+        .enum_variants
+        .as_ref()
+        .and_then(|variants| variants.iter().position(|variant| variant == member))
+    {
+        let span = expr.span();
+        return Some(Expr::Cast {
+            expr: Box::new(Expr::Cast {
+                expr: Box::new(Expr::Number(
+                    waluau_ast::NumberLiteral {
+                        raw: ordinal.to_string(),
+                    },
+                    span,
+                )),
+                ty: Type::Numeric(waluau_ast::NumericType::I32),
+                span,
+            }),
+            ty: Type::Named {
+                name: declared.canonical_name.clone(),
+                type_args: Vec::new(),
+            },
+            span,
+        });
+    }
+    declared
+        .statics
+        .get(member)
+        .map(|function| Expr::Name(function.clone(), None, expr.span()))
+}
+
 fn rewrite_imported_enum_constant_expr(
     expr: &mut Expr,
     type_namespaces: &HashMap<String, TypeNamespace>,
@@ -1285,12 +1338,14 @@ fn compute_module_export(
         .map(|decl| decl.name.clone())
         .collect::<HashSet<_>>();
     let transparent_type_aliases = transparent_module_type_aliases(module, &type_namespaces);
+    let type_members = local_type_members(&module.program, &prefix, &type_namespaces);
     let empty_names = HashSet::new();
     let rewriter = Rewriter {
         prefix: &prefix,
         func_names: &empty_names,
         type_names: &type_names,
         type_namespaces: &type_namespaces,
+        type_members: &type_members,
         transparent_type_aliases: &transparent_type_aliases,
         global_names: &empty_names,
         imports: &imports,
@@ -1405,6 +1460,114 @@ fn transparent_module_type_aliases(
         .collect()
 }
 
+/// Value-level members available through each type name in one source module.
+/// A type alias is an additional spelling for the target type's erased static
+/// namespace, so it inherits enum variants and dot/colon-named functions.
+fn local_type_members(
+    program: &Program,
+    prefix: &str,
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) -> TypeNamespace {
+    let mut types = direct_type_members(program, prefix);
+    inherit_alias_members(&mut types, &program.type_declarations, type_namespaces);
+    types
+}
+
+fn direct_type_members(program: &Program, prefix: &str) -> TypeNamespace {
+    let mut types = program
+        .type_declarations
+        .iter()
+        .map(|declaration| {
+            (
+                declaration.name.clone(),
+                ExportedType {
+                    canonical_name: format!("{prefix}{}", declaration.name),
+                    enum_variants: declaration.enum_variants.clone(),
+                    statics: BTreeMap::new(),
+                },
+            )
+        })
+        .collect::<TypeNamespace>();
+    for function in &program.functions {
+        let (type_name, member) = match &function.name {
+            FunctionName::Simple(name) => match name.split_once('.') {
+                Some(parts) => parts,
+                None => continue,
+            },
+            FunctionName::Method { table, method } => (table.as_str(), method.as_str()),
+        };
+        if let Some(declared) = types.get_mut(type_name) {
+            declared
+                .statics
+                .insert(member.to_string(), format!("{prefix}{type_name}.{member}"));
+        }
+    }
+    types
+}
+
+fn inherit_alias_members(
+    types: &mut TypeNamespace,
+    declarations: &[TypeDeclaration],
+    type_namespaces: &HashMap<String, TypeNamespace>,
+) {
+    let aliases = declarations
+        .iter()
+        .filter_map(|declaration| {
+            if declaration.module_opaque || !declaration.type_params.is_empty() {
+                return None;
+            }
+            let Type::Named { name, type_args } = &declaration.ty else {
+                return None;
+            };
+            type_args
+                .is_empty()
+                .then(|| (declaration.name.clone(), name.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    // Each pass can resolve one more link in an alias chain. Cyclic aliases
+    // simply make no progress and remain for the type checker to diagnose.
+    for _ in 0..aliases.len() {
+        let mut changed = false;
+        for (alias, target_name) in &aliases {
+            let target = if let Some((namespace, member)) = target_name.split_once('.') {
+                type_namespaces
+                    .get(namespace)
+                    .and_then(|namespace| namespace.get(member))
+                    .cloned()
+            } else {
+                types.get(target_name).cloned()
+            };
+            let Some(target) = target else {
+                continue;
+            };
+            let Some(alias_type) = types.get_mut(alias) else {
+                continue;
+            };
+
+            if alias_type.canonical_name != target.canonical_name {
+                alias_type.canonical_name = target.canonical_name;
+                changed = true;
+            }
+            if alias_type.enum_variants.is_none() && target.enum_variants.is_some() {
+                alias_type.enum_variants = target.enum_variants;
+                changed = true;
+            }
+            for (member, function) in target.statics {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    alias_type.statics.entry(member)
+                {
+                    entry.insert(function);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 fn exported_type_names(
     modules: &[LoadedModule],
     module_id: usize,
@@ -1417,39 +1580,20 @@ fn exported_type_names(
 
     let module = &modules[module_id];
     let prefix = module_prefix(module_id, entry_id);
-    let mut types = module
+    let mut all_types = direct_type_members(&module.program, &prefix);
+    let exported_names = module
         .program
         .type_declarations
         .iter()
-        .filter(|decl| decl.exported)
-        .map(|decl| {
-            (
-                decl.name.clone(),
-                ExportedType {
-                    canonical_name: format!("{prefix}{}", decl.name),
-                    enum_variants: decl.enum_variants.clone(),
-                    statics: BTreeMap::new(),
-                },
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    for function in &module.program.functions {
-        let (type_name, member) = match &function.name {
-            FunctionName::Simple(name) => match name.split_once('.') {
-                Some(parts) => parts,
-                None => continue,
-            },
-            // A colon method desugars to the same `Type.member` function
-            // name, so its static form is reachable the same way.
-            FunctionName::Method { table, method } => (table.as_str(), method.as_str()),
-        };
-        if let Some(exported) = types.get_mut(type_name) {
-            exported
-                .statics
-                .insert(member.to_string(), format!("{prefix}{type_name}.{member}"));
-        }
-    }
-    cache.insert(module_id, types.clone());
+        .filter(|declaration| declaration.exported)
+        .map(|declaration| declaration.name.clone())
+        .collect::<HashSet<_>>();
+    let initial_exports = all_types
+        .iter()
+        .filter(|(name, _)| exported_names.contains(*name))
+        .map(|(name, ty)| (name.clone(), ty.clone()))
+        .collect::<TypeNamespace>();
+    cache.insert(module_id, initial_exports);
 
     let require_bindings = module
         .program
@@ -1471,26 +1615,23 @@ fn exported_type_names(
         })
         .collect::<HashMap<_, _>>();
 
-    for declaration in &module.program.type_declarations {
-        let Type::Named { name, type_args } = &declaration.ty else {
-            continue;
-        };
-        if !type_args.is_empty() {
-            continue;
-        }
-        let Some((namespace, member)) = name.split_once('.') else {
-            continue;
-        };
-        let Some(&target_id) = require_bindings.get(namespace) else {
-            continue;
-        };
-        let target_types = exported_type_names(modules, target_id, entry_id, cache);
-        if declaration.exported
-            && let Some(exported) = target_types.get(member)
-        {
-            types.insert(declaration.name.clone(), exported.clone());
-        }
+    let mut type_namespaces = HashMap::new();
+    for (namespace, target_id) in require_bindings {
+        type_namespaces.insert(
+            namespace.to_string(),
+            exported_type_names(modules, target_id, entry_id, cache),
+        );
     }
+
+    inherit_alias_members(
+        &mut all_types,
+        &module.program.type_declarations,
+        &type_namespaces,
+    );
+    let types = all_types
+        .into_iter()
+        .filter(|(name, _)| exported_names.contains(name))
+        .collect::<TypeNamespace>();
 
     cache.insert(module_id, types.clone());
     types
@@ -1766,12 +1907,14 @@ fn process_reexport_bindings(
 ) -> RequireAliases {
     let empty = HashSet::new();
     let empty_type_namespaces = HashMap::new();
+    let empty_type_members = HashMap::new();
     let empty_type_aliases = HashMap::new();
     let mut rewriter = Rewriter {
         prefix: "",
         func_names: &empty,
         type_names: &empty,
         type_namespaces: &empty_type_namespaces,
+        type_members: &empty_type_members,
         transparent_type_aliases: &empty_type_aliases,
         global_names: &empty,
         imports,
@@ -1934,6 +2077,8 @@ struct Rewriter<'a> {
     type_names: &'a HashSet<String>,
     /// Require-binding name -> exported type name -> canonical linked name.
     type_namespaces: &'a HashMap<String, TypeNamespace>,
+    /// Source-local type spelling -> inherited enum variants and statics.
+    type_members: &'a TypeNamespace,
     /// Local alias name -> canonical declaration in the imported module.
     transparent_type_aliases: &'a HashMap<String, String>,
     global_names: &'a HashSet<String>,
@@ -2452,6 +2597,12 @@ impl Rewriter<'_> {
         }
         // `t.S.new`: a static function on an imported exported type.
         if let Some(resolved) = imported_type_static_expr(expr, self.type_namespaces, bound) {
+            *expr = resolved;
+            return;
+        }
+        // `S2.new` / `E2.A`: aliases inherit the target type's erased value
+        // namespace, whether the target was declared locally or imported.
+        if let Some(resolved) = local_type_member_expr(expr, self.type_members, bound) {
             *expr = resolved;
             return;
         }
