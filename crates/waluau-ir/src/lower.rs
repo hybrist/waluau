@@ -5971,6 +5971,13 @@ impl Builder<'_> {
                         name,
                         self.field_call_signatures,
                     );
+                // HIR resolves the nominal target before opaque aliases are
+                // erased. A guarded recursive field is `unknown` at the
+                // finite runtime edge, but that must not discard the proven
+                // method target; lowering will cast the receiver back to the
+                // method's structural parameter type below.
+                let resolved_recursive_receiver =
+                    resolved_name.is_some() && type_method.is_some() && receiver_ty == Type::Unknown;
                 let (param_types, return_type) = if let Some((_, params, return_type)) =
                     type_method.clone()
                 {
@@ -6000,7 +6007,9 @@ impl Builder<'_> {
                         args.len() + 1
                     )));
                 }
-                if !method_receiver_matches(&param_types[0], &receiver_ty) {
+                if !method_receiver_matches(&param_types[0], &receiver_ty)
+                    && !resolved_recursive_receiver
+                {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",
                         param_types[0], receiver_ty
@@ -7595,14 +7604,17 @@ impl Builder<'_> {
                 {
                     return result;
                 }
-                let (params, return_type) = if let Some((_, params, return_type)) =
-                    type_method_signature(
-                        &receiver_ty,
-                        resolved_name.as_deref(),
-                        name,
-                        self.field_call_signatures,
-                    )
-                {
+                let type_method = type_method_signature(
+                    &receiver_ty,
+                    resolved_name.as_deref(),
+                    name,
+                    self.field_call_signatures,
+                );
+                // See the lowering path above: HIR's resolved target is the
+                // source-level proof for an `unknown` recursive runtime edge.
+                let resolved_recursive_receiver =
+                    resolved_name.is_some() && type_method.is_some() && receiver_ty == Type::Unknown;
+                let (params, return_type) = if let Some((_, params, return_type)) = type_method {
                     (params, Box::new(return_type))
                 } else if let Some(signature) =
                     method_signature(receiver, name, self.field_call_signatures)
@@ -7629,7 +7641,9 @@ impl Builder<'_> {
                         args.len() + 1
                     )));
                 }
-                if !method_receiver_matches(&params[0], &receiver_ty) {
+                if !method_receiver_matches(&params[0], &receiver_ty)
+                    && !resolved_recursive_receiver
+                {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",
                         params[0], receiver_ty
