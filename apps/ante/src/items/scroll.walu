@@ -1,13 +1,10 @@
 local run_module = require("../run")
 local spells = require("../spells/spell")
+local item_ = require("./item")
 
-type Item = {
-  can_use: (self, run: run_module.State) -> bool,
-  use: (self, run: run_module.State) -> unit,
-  describe: (self, run: run_module.State) -> string,
-}
+type Item = item_.Item
 
-type SpellScroll = Item & {
+export type SpellScroll = Item & {
   kind: spells.SpellKind,
 }
 
@@ -26,6 +23,12 @@ function SpellScroll:describe(run: run_module.State): string
   -- if the player already knows the spell, we increase the level.
   -- otherwise, we learn a new spell at the first open slot.
   return self.kind:__tostring() .. " (level 1)"
+end
+
+function SpellScroll:base_price(run: run_module.State): number
+  -- if the player already knows the spell, we increase the level.
+  -- otherwise, we learn a new spell at the first open slot.
+  return 5
 end
 
 function SpellScroll.new(kind: spells.SpellKind): SpellScroll

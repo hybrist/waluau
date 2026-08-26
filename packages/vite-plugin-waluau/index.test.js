@@ -84,6 +84,84 @@ storybook.publish({
   }
 });
 
+test('turns a .test.walu import into a versioned test runner module', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'shop.test.walu');
+    const plugin = waluau({ compiler: { command: 'true' } });
+    plugin.configResolved({ root });
+    const transformed = await plugin.transform.call(
+      { addWatchFile: () => {} },
+      'require("waluau:vitest")',
+      entry,
+    );
+
+    assert.match(transformed.code, /registerWaluGlueTests\(\{ run, wasmUrl: versionedWasmUrl\(\) \}\)/);
+    assert.match(transformed.code, /waluau-hmr=1/);
+    assert.doesNotMatch(transformed.code, /replaceWaluauGame/);
+    assert.doesNotMatch(transformed.code, /createWaluauBook/);
+
+    const entryModule = { id: entry };
+    const viteServer = {
+      moduleGraph: {
+        getModulesByFile: () => new Set([entryModule]),
+        invalidateModule() {},
+      },
+      ws: { send() {} },
+    };
+    await plugin.handleHotUpdate({ file: entry, modules: [entryModule], server: viteServer });
+    const retransformed = await plugin.transform.call({ addWatchFile: () => {} }, '', entry);
+    assert.match(retransformed.code, /waluau-hmr=2/);
+
+    // Direct re-transform without handleHotUpdate (e.g. test runner rerun)
+    const directRetransformed = await plugin.transform.call({ addWatchFile: () => {} }, '', entry);
+    assert.match(directRetransformed.code, /waluau-hmr=3/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('transforms query-annotated .walu imports while skipping ?raw and ?url', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+    const plugin = waluau({ compiler: { command: 'true' } });
+    plugin.configResolved({ root });
+
+    const transformedWithTimestamp = await plugin.transform.call(
+      { addWatchFile: () => {} },
+      '',
+      `${entry}?t=1724683000000`,
+    );
+    assert.ok(transformedWithTimestamp);
+    assert.match(transformedWithTimestamp.code, /replaceWaluauGame/);
+
+    const transformedWithBrowserV = await plugin.transform.call(
+      { addWatchFile: () => {} },
+      '',
+      `${entry}?browserv=123`,
+    );
+    assert.ok(transformedWithBrowserV);
+    assert.match(transformedWithBrowserV.code, /replaceWaluauGame/);
+
+    const rawResult = await plugin.transform.call(
+      { addWatchFile: () => {} },
+      '',
+      `${entry}?raw`,
+    );
+    assert.equal(rawResult, null);
+
+    const urlResult = await plugin.transform.call(
+      { addWatchFile: () => {} },
+      '',
+      `${entry}?url`,
+    );
+    assert.equal(urlResult, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('passes a resolved asset manifest to the compiler', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {
