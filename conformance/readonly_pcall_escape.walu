@@ -1,8 +1,0 @@
--- conformance: error=pcall cannot erase a read-only return value into unknown
-
-type Model = { count: i32 }
-
-function escape(view: readonly<Model>): Model
-    local ok, payload = pcall(function(): readonly<Model> return view end)
-    return payload
-end

@@ -274,33 +274,10 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
         // Nullable values are truthy exactly when non-nil, so they coerce to
         // bool in condition positions.
         Some(Type::Bool) if matches!(actual, Type::Nullable(_)) => Ok(Type::Bool),
-        // Mutable structural values safely project to read-only aliases without
-        // a copy. A read-only value never flows back to a mutable expectation:
-        // that one-way relation is what prevents the view from escaping.
-        Some(Type::Readonly(expected_inner)) => {
-            let actual_inner = if let Some(inner) = actual.readonly_base() {
-                inner.clone()
-            } else if actual.is_mutable_structural() {
-                actual
-            } else {
-                return Err(Diagnostic::new(format!(
-                    "cannot implicitly convert {actual} to readonly<{expected_inner}>"
-                )));
-            };
-            coerce_type(actual_inner, Some((*expected_inner).clone())).map_err(|_| {
-                Diagnostic::new(format!(
-                    "cannot implicitly convert to readonly<{expected_inner}>"
-                ))
-            })?;
-            Ok(Type::Readonly(expected_inner))
-        }
         // Any value implicitly boxes into `unknown` (anyref). Symmetrically, an
         // `unknown` value (e.g. an unannotated Lua parameter) implicitly
         // unboxes to any concrete type with a runtime-checked cast, mirroring
         // Lua's dynamic typing.
-        Some(Type::Unknown) if actual.contains_readonly() => Err(Diagnostic::new(
-            "cannot erase a read-only view into unknown",
-        )),
         Some(Type::Unknown) => Ok(Type::Unknown),
         // An interface method slot (`(self, ...) -> R` record field) holds a
         // *bound* method: a closure whose callable signature is the field's
@@ -611,14 +588,6 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     generic_extern: expected_generic,
                 })
             }
-            other if matches!(expected_ty.as_ref(), Type::Readonly(_)) => {
-                let _ = coerce_type(other, Some((*expected_ty).clone()))?;
-                Ok(Type::Opaque {
-                    name: expected_name,
-                    ty: expected_ty,
-                    generic_extern: expected_generic,
-                })
-            }
             // An inline literal union value (from an un-aliased annotation
             // like `c: "red" | "black"`) flows into a nominal alias whose
             // underlying union accepts its members.
@@ -770,9 +739,6 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {actual} to {expected_numeric}",
             ))),
-            Type::Readonly(_) => Err(Diagnostic::new(format!(
-                "cannot implicitly convert {actual} to {expected_numeric}",
-            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -898,11 +864,6 @@ pub(super) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Dia
     // computed values an explicit route back into the constrained alias
     // (`(volume + 1) :: Volume`). String literal unions deliberately do not
     // appear here: no cast connects them to `string`.
-    if actual.contains_readonly() && target == Type::Unknown {
-        return Err(Diagnostic::new(
-            "cannot erase a read-only view into unknown",
-        ));
-    }
     let (actual, target) = (numeric_view(actual), numeric_view(target));
     match (&actual, &target) {
         (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
@@ -981,9 +942,6 @@ pub(super) fn resolve_number_literal(
         Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {name}",
         ))),
-        Some(Type::Readonly(_)) => Err(Diagnostic::new(
-            "numeric literal is not assignable to a read-only structural type",
-        )),
         Some(Type::Array(_) | Type::Variadic(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",
         )),

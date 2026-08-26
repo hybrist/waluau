@@ -2,7 +2,7 @@
 -- return type when the expression is used as a for-in iterator.
 
 type Item = { value: i32 }
-type View = readonly<{ items: {Item} }>
+type View = { items: {Item} }
 type State = { items: {Item} }
 
 function State:view(): View

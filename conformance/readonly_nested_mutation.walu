@@ -1,8 +1,0 @@
--- conformance: error=cannot mutate a read-only record view
-
-type Item = { value: i32 }
-type Model = { items: {Item} }
-
-function mutate(view: readonly<Model>): unit
-    view.items[0].value = 2
-end

@@ -222,9 +222,6 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
         Type::Nullable(inner) => {
             Type::Nullable(Box::new(type_visible_from_file(inner, file_path, opaque)))
         }
-        Type::Readonly(inner) => {
-            Type::Readonly(Box::new(type_visible_from_file(inner, file_path, opaque)))
-        }
         Type::Array(inner) => {
             Type::Array(Box::new(type_visible_from_file(inner, file_path, opaque)))
         }
@@ -302,9 +299,6 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
         }
         Type::Nullable(inner) => {
             Type::Nullable(Box::new(restore_module_opaque_type(inner, opaque)))
-        }
-        Type::Readonly(inner) => {
-            Type::Readonly(Box::new(restore_module_opaque_type(inner, opaque)))
         }
         Type::Array(inner) => Type::Array(Box::new(restore_module_opaque_type(inner, opaque))),
         Type::Variadic(inner) => {
@@ -1142,7 +1136,6 @@ fn is_nullable_inner_type(ty: &Type) -> bool {
                 || ty.as_ref() == &Type::Unknown
                 || is_nullable_inner_type(ty)
         }
-        Type::Readonly(inner) => is_nullable_inner_type(inner),
         _ => false,
     }
 }
@@ -1182,20 +1175,6 @@ fn resolve_any_enum_type(name: &str, type_args: &[Type]) -> Option<Result<Type, 
         )));
     }
     Some(Ok(any_enum_type()))
-}
-
-fn readonly_type(inner: Type) -> Result<Type, Diagnostic> {
-    if !inner.is_mutable_structural() {
-        return Err(Diagnostic::new(format!(
-            "readonly<T> requires a record or array type, got {inner}"
-        )));
-    }
-    if !inner.supports_readonly_view() {
-        return Err(Diagnostic::new(format!(
-            "readonly<{inner}> cannot preserve deep read-only access through unknown, generic, function, or tagged-union storage"
-        )));
-    }
-    Ok(Type::Readonly(Box::new(inner)))
 }
 
 #[derive(Clone)]
@@ -1242,7 +1221,6 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             Type::ExternSubtype(Box::new(substitute_type_params(parent, subst)))
         }
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type_params(inner, subst))),
-        Type::Readonly(inner) => Type::Readonly(Box::new(substitute_type_params(inner, subst))),
         Type::TypeParam(name) => subst
             .get(name)
             .cloned()
@@ -1387,20 +1365,6 @@ fn resolve_type_refs_allowing_forward_refs(
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            if name == "readonly" {
-                if resolved_args.len() != 1 {
-                    return Err(Diagnostic::new(format!(
-                        "readonly<T> expects 1 type argument, got {}",
-                        resolved_args.len()
-                    )));
-                }
-                return readonly_type(
-                    resolved_args
-                        .into_iter()
-                        .next()
-                        .expect("readonly arity checked"),
-                );
-            }
             if let Some(resolved) = resolve_any_enum_type(name, &resolved_args) {
                 return resolved;
             }
@@ -1556,15 +1520,6 @@ fn resolve_type_refs_allowing_forward_refs(
             require_nullable_inner_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
-        Type::Readonly(inner) => readonly_type(resolve_type_refs_allowing_forward_refs(
-            inner,
-            active_type_params,
-            raw_opaque,
-            generic,
-            opaque_cache,
-            stack,
-            guarded,
-        )?),
         Type::Array(inner) => Ok(Type::Array(Box::new(
             resolve_type_refs_allowing_forward_refs(
                 inner,
@@ -1888,20 +1843,6 @@ fn resolve_type_refs_fixpoint(
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            if name == "readonly" {
-                if resolved_args.len() != 1 {
-                    return Err(Diagnostic::new(format!(
-                        "readonly<T> expects 1 type argument, got {}",
-                        resolved_args.len()
-                    )));
-                }
-                return readonly_type(
-                    resolved_args
-                        .into_iter()
-                        .next()
-                        .expect("readonly arity checked"),
-                );
-            }
             if let Some(resolved) = resolve_any_enum_type(name, &resolved_args) {
                 return resolved;
             }
@@ -2045,15 +1986,6 @@ fn resolve_type_refs_fixpoint(
             require_nullable_inner_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
-        Type::Readonly(inner) => readonly_type(resolve_type_refs_fixpoint(
-            inner,
-            active_type_params,
-            raw_opaque,
-            generic,
-            opaque_cache,
-            stack,
-            fixpoint_mode,
-        )?),
         Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(
             inner,
             active_type_params,

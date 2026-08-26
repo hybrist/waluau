@@ -23,7 +23,7 @@ const ROUND_INK: string = "#fbbf24"
 const VERDICT_INK: string = "#f8fafc"
 const FORMATION_INK: string = "#b5b5bd"
 
-function verdict_text(trick: readonly<game.Trick>): string
+function verdict_text(trick: game.Trick): string
     if trick.winner > 0 then return "YOU +" .. tostring(trick.points) end
     if trick.winner < 0 then return "OPPONENT" end
     return "TIE"
@@ -37,7 +37,7 @@ function cell(text: string, size: f64, color: string, width: f64): entity.Node
     return label.left(text, size, color):min_width(width)
 end
 
-function row(trick: readonly<game.Trick>): entity.Node
+function row(trick: game.Trick): entity.Node
     return entity.Node.across({ align = "baseline" }, {
         cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
         cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),

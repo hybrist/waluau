@@ -2876,7 +2876,7 @@ end
             tempdir.path().join("model.walu"),
             r#"
                 export type Item = { value: i32 }
-                export type View = readonly<{ items: {Item} }>
+                export type View = { items: {Item} }
                 export opaque type State = { items: {Item} }
 
                 function State.new(): State
@@ -3795,15 +3795,6 @@ end
     #[test]
     fn compiles_array_ops() {
         super::compile_file(&fixture_path("array_ops.walu")).expect("compile should succeed");
-    }
-
-    #[test]
-    fn compiles_readonly_structural_views_to_wasm() {
-        let wasm = super::compile_source(include_str!(
-            "../../../conformance/readonly_structural_views.walu"
-        ))
-        .expect("read-only structural views should compile without a runtime wrapper");
-        assert!(wasm.starts_with(b"\0asm"));
     }
 
     #[test]

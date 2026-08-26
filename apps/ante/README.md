@@ -231,7 +231,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `shop.walu` | DOM-free intermission between vaults: the two offers a visit stocks, what they charge, which are spent, and which the cursor holds. |
 | `shop_item.walu` | DOM-free bought-item seam: one `use` method receiving the mutable run and a selected destination, with concrete spell-learning and sharpening effects. |
 | `shop_render.walu` | Where the fence's offer list sits on the city map, at the map's own opacity, and the pointer's row lookup for it. |
-| `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
+| `game.walu` | DOM-free rules, AI, commands, outcomes, and presentation snapshots. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
 | `box_layout.walu` | DOM-free intrinsic box layout: rows, columns, gaps, padding, alignment, flex, and paint-order hit testing. |

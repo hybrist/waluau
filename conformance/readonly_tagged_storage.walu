@@ -1,7 +1,0 @@
--- conformance: error=cannot preserve deep read-only access
-
-type Choice = Some({ value: i32 }) | None(unit)
-type Model = { choice: Choice }
-
-function reject(view: readonly<Model>): unit
-end

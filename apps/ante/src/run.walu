@@ -176,8 +176,8 @@ end
 -- the player have already taken, whether this one and the next are boss
 -- battles, the gold and hearts the run carried in, what leaving this duel and
 -- the next one costs, how far the authored curve runs, and the verdict on the
--- live duel. Read-only, the way game.View is — a screen showing the run must not be
--- able to move it.
+-- live duel. Screens treat this snapshot as presentation data and do not
+-- mutate it.
 --
 -- `outcome` is the rules module's answer about a duel this module has not
 -- settled yet, so it arrives rather than being re-derived here; a live duel

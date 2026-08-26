@@ -90,7 +90,7 @@ function draw_slot(
     local edge: string = EMPTY_EDGE
     local caption: string = EMPTY_INK
     if occupied then
-        local spell: readonly<game.Spell> = state.spells[slot]
+        local spell: game.Spell = state.spells[slot]
         edge = spell_launch.color(spell.kind)
         caption = edge
         if state.player_points < spell.cost then
@@ -107,7 +107,7 @@ function draw_slot(
     graphics:fill_circle(x, y, SLOT_RADIUS - SLOT_INSET)
 
     if occupied then
-        local spell: readonly<game.Spell> = state.spells[slot]
+        local spell: game.Spell = state.spells[slot]
         ink.text_centered(
             graphics, short_name(spell.kind), x,
             y + NAME_SIZE * 0.5 - 3.0, NAME_SIZE, caption)

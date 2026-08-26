@@ -269,11 +269,6 @@ pub(super) fn pairs_loop_value_types(
         Ok(ty) => ty,
         Err(diagnostic) => return Some(Err(diagnostic)),
     };
-    if arg_ty.is_readonly() {
-        return Some(Err(Diagnostic::new(
-            "pairs over a read-only record view is not supported",
-        )));
-    }
     if arg_ty.is_array() {
         return Some(Err(Diagnostic::new(
             "pairs(...) requires an enum type or a record value; arrays iterate directly: `for i, v in arr`",
@@ -334,11 +329,6 @@ fn next_loop_value_types(
     active_type_params: &HashSet<String>,
 ) -> Result<Vec<Type>, Diagnostic> {
     let arg_ty = infer_expr(target, vars, fn_signatures, active_type_params, None)?;
-    if arg_ty.is_readonly() {
-        return Err(Diagnostic::new(
-            "next over a read-only record view is not supported",
-        ));
-    }
     if arg_ty.is_array() {
         let element_ty = arg_ty
             .element_type()
@@ -804,9 +794,6 @@ fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
             ty: Box::new(narrow_nullable_record_field(ty, field)?),
             generic_extern: generic_extern.clone(),
         }),
-        Type::Readonly(inner) => Some(Type::Readonly(Box::new(narrow_nullable_record_field(
-            inner, field,
-        )?))),
         _ => None,
     }
 }
@@ -1111,9 +1098,6 @@ fn collect_return_types_with_scope(
                 base, index, value, ..
             } => {
                 let base_ty = infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
-                if base_ty.is_readonly() {
-                    return Err(Diagnostic::new("cannot mutate a read-only array view"));
-                }
                 let element_ty = base_ty.element_type().ok_or_else(|| {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
@@ -1173,10 +1157,6 @@ fn collect_return_types_with_scope(
             Stmt::FieldAssign {
                 base, name, value, ..
             } => {
-                let base_ty = infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
-                if base_ty.is_readonly() {
-                    return Err(Diagnostic::new("cannot mutate a read-only record view"));
-                }
                 if let Expr::Name(base_name, _, _) = base.as_ref() {
                     let binding = scope
                         .get(base_name)
@@ -1802,9 +1782,6 @@ fn check_stmt_inner(
             value,
         } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
-            if base_ty.is_readonly() {
-                return Err(Diagnostic::new("cannot mutate a read-only array view"));
-            }
             let element_ty = base_ty.element_type().ok_or_else(|| {
                 Diagnostic::new("array element assignment requires an array operand")
             })?;
@@ -1883,9 +1860,6 @@ fn check_stmt_inner(
             value,
         } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
-            if base_ty.is_readonly() {
-                return Err(Diagnostic::new("cannot mutate a read-only record view"));
-            }
             if let Some((signature, _)) =
                 type_property_setter_signature(&base_ty, name, fn_signatures)
             {
