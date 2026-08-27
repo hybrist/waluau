@@ -12,16 +12,11 @@ type RunState = run_.State
 type ShopState = shop_.State
 type SpellKind = spell_.SpellKind
 
--- A run standing in front of its next duel with a purse to spend. The gold is
--- set rather than won: what a duel leaves behind is the run module's business,
--- and every price here is about the pool, not how it was earned.
 local function shopping_run(spell: SpellKind, gold: i32)
-    -- TODO: Undo once type alias supports static methods.
-    local run = run_.State.new(spell, false)
+    local run = RunState.new(spell, false)
     run:settle(true, gold + run:target())
 
-    -- TODO: Undo once type alias supports static methods.
-    local shop = shop_.State.new(run)
+    local shop = ShopState.new(run)
 
     return run, shop
 end

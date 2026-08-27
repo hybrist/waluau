@@ -1,0 +1,261 @@
+-- The shop's screen: the intermission between two duels, drawn as one
+-- cursor-driven list of offers in the duel's own panel chrome. The shop module
+-- owns what the lines are and what they cost; this entity owns their visual
+-- composition and hit testing using intrinsic box layout.
+--
+-- The panel stands on the city map beside the vendor the route has reached,
+-- structured as a titled header with live gold stats, a list of offer rows,
+-- stock status notices, and navigation hints.
+local box = require("../box_layout")
+local entity_ = require("../entity")
+local game = require("../game")
+local ink = require("../ink")
+local label = require("./label")
+local run_module = require("../run")
+local old_shop_ = require("../shop")
+local shop_ = require("../shop_new")
+local spells = require("../spells/spell")
+local spell_launch = require("../spell_launch")
+local scroll_ = require("../items/scroll")
+
+type Node = entity_.Node
+type Metrics = entity_.Metrics
+type Surface = entity_.Surface
+type ShopState = shop_.State
+type Slot = shop_.Slot
+type RunState = run_module.State
+type SpellScroll = scroll_.SpellScroll
+
+const PANEL_WIDTH: f64 = 540.0
+const PAD_X: f64 = 32.0
+const PAD_TOP: f64 = 24.0
+const PAD_BOTTOM: f64 = 24.0
+
+const PANEL_FILL: string = "#09090b"
+const PANEL_EDGE: string = "#a1a1aa"
+
+const TITLE_SIZE: f64 = 24.0
+const TITLE_INK: string = "#fbbf24"
+const SUBTITLE_SIZE: f64 = 11.0
+const SUBTITLE_INK: string = "#a1a1aa"
+const TITLE_GAP: f64 = 4.0
+
+const GOLD_SIZE: f64 = 24.0
+const GOLD_INK: string = "#67e8f9"
+const ON_HAND_INK: string = "#155e75"
+const TARGET_INK: string = "#b45309"
+const TARGET_SIZE: f64 = 9.0
+const GOLD_GAP: f64 = 2.0
+const HEADER_GAP: f64 = 24.0
+
+const ROW_WIDTH: f64 = 476.0
+const ROW_HEIGHT: f64 = 54.0
+const ROW_GAP: f64 = 10.0
+const ROW_PAD_X: f64 = 22.0
+const ROW_TEXT_SIZE: f64 = 13.0
+
+const ROW_FILL: string = "#17171c"
+const ROW_EDGE: string = "#3f3f46"
+const FOCUS_EDGE: string = "#fbbf24"
+const FOCUS_INK: string = "#fbbf24"
+const DISABLED_INK: string = "#52525b"
+const DEFAULT_INK: string = "#d4d4d8"
+const PRICE_INK: string = "#fbbf24"
+const SOLD_INK: string = "#52525b"
+
+const NOTICE_SIZE: f64 = 11.0
+const NOTICE_INK: string = "#8a8a92"
+const NOTICE_GAP: f64 = 16.0
+
+const CONTROLS_SIZE: f64 = 11.0
+const CONTROLS_INK: string = "#a1a1aa"
+const CONTROLS_GAP: f64 = 24.0
+
+function button_background(focused: bool): Node
+    return Node.measured(
+        function(metrics: Metrics): box.Intrinsic
+            return box.Intrinsic.fixed(ROW_WIDTH, ROW_HEIGHT)
+        end,
+        function(surface: Surface, bounds: box.Rect): unit
+            local edge: string = ROW_EDGE
+            if focused then
+                edge = FOCUS_EDGE
+            end
+            ink.panel(
+                surface.graphics,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                ROW_FILL,
+                edge
+            )
+        end
+    )
+end
+
+function shop_slot_color(slot: shop_.Slot): string
+    if slot.sold then
+        return DISABLED_INK
+    end
+    if SpellScroll(scroll) = slot.item then
+        return spell_launch.color(scroll.kind)
+    end
+    -- if slot.spell ~= nil then
+    --     return spell_launch.color(row.spell::spells.SpellKind)
+    -- end
+    return DEFAULT_INK
+end
+
+function price_label(slot: Slot): Node
+    return
+        if slot.sold then
+            label.right("SOLD", ROW_TEXT_SIZE, SOLD_INK)
+        else
+            label.right(tostring(slot.price) .. " GOLD", ROW_TEXT_SIZE, PRICE_INK)
+end
+
+function shop_slot_button(slot: shop_.Slot, focused: bool): Node
+    local tone = shop_slot_color(slot)
+    local label_text = slot.item:describe()
+    local content: Node = Node.across(
+        {
+            justify = "space-between",
+            align = "center",
+            padding = entity_.even_padding(ROW_PAD_X, 0.0)
+        },
+        {
+            label.left(label_text, ROW_TEXT_SIZE, tone),
+            price_label(slot),
+        }
+    )
+    return Node.layer({button_background(focused), content}):wide()
+end
+
+function header_node(state: ShopState, run: RunState): Node
+    local title_label: Node = label.left("THE SHOP", TITLE_SIZE, TITLE_INK)
+
+    local gold_label: Node = label.right(tostring(run.gold), GOLD_SIZE, GOLD_INK)
+    local on_hand_label: Node = label.right("GOLD ON HAND", TARGET_SIZE, ON_HAND_INK)
+
+    local right_col: Node = Node.down(
+        { gap = GOLD_GAP, align = "end" },
+        { gold_label, on_hand_label }
+    )
+
+    return Node.across(
+        { justify = "space-between", align = "start" },
+        {title_label, right_col}
+    ):wide()
+end
+
+function rows_style(): box.Style
+    return entity_.column(ROW_GAP, "start", "stretch")
+end
+
+function leave_button(focused: bool): Node
+    local tone = DEFAULT_INK
+    local label_text = "Leave Shop"
+    local content: Node = Node.across(
+        {
+            justify = "space-between",
+            align = "center",
+            padding = entity_.even_padding(ROW_PAD_X, 0.0)
+        },
+        {label.left(label_text, ROW_TEXT_SIZE, tone)}
+    )
+    return Node.layer({button_background(focused), content}):wide()
+end
+
+function row_nodes(state: ShopState, run: RunState): {Node}
+    local nodes: {Node} = {}
+
+    for index, slot in state.slots do
+        local focused: bool = (index == state.cursor)
+        table.insert(nodes, shop_slot_button(slot, focused))
+    end
+
+    local leave_focused = state.cursor == #state.slots
+    table.insert(nodes, leave_button(leave_focused))
+    return nodes
+end
+
+function rows_node(state: ShopState, run: RunState): Node
+    return Node.flow(row_nodes(state, run), rows_style())
+end
+
+function shell(): Node
+    return Node.measured(
+        function(metrics: Metrics): box.Intrinsic
+            return box.Intrinsic.fixed(PANEL_WIDTH, 0.0)
+        end,
+        function(surface: Surface, bounds: box.Rect): unit
+            ink.panel(
+                surface.graphics,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                PANEL_FILL,
+                PANEL_EDGE
+            )
+        end
+    )
+end
+
+function body_items(state: ShopState, run: RunState): {Node}
+    return {
+        header_node(state, run),
+        Node.gap(0.0, HEADER_GAP),
+        rows_node(state, run),
+    }
+end
+
+function body_style(): box.Style
+    return entity_.style(
+        "column",
+        0.0,
+        "start",
+        "stretch",
+        entity_.edges(PAD_X, PAD_TOP, PAD_X, PAD_BOTTOM)
+    )
+end
+
+function body_node(state: ShopState, run: RunState): Node
+    return Node.flow(body_items(state, run), body_style())
+end
+
+function node(state: ShopState, run: RunState): Node
+    return Node.layer({shell(), body_node(state, run)}):min_width(PANEL_WIDTH)
+end
+
+function row_rects(metrics: Metrics, state: ShopState, run: RunState, bounds: box.Rect): {box.Rect}
+    local items: {Node} = body_items(state, run)
+    local body_rects: {box.Rect} = entity_.place(metrics, items, body_style(), bounds)
+    local rows_bounds: box.Rect = body_rects[2]
+    return entity_.place(metrics, row_nodes(state, run), rows_style(), rows_bounds)
+end
+
+-- Which offer row a pointer is inside, or -1. Solved through the box solver
+-- from the same entities that painted it.
+function hit(
+    metrics: Metrics,
+    state: ShopState,
+    run: RunState,
+    bounds: box.Rect,
+    x: f64,
+    y: f64
+): i32
+    local rects: {box.Rect} = row_rects(metrics, state, run, bounds)
+    for index = 0::i32, #rects - 1 do
+        if entity_.contains(rects[index], x, y) then
+            return index
+        end
+    end
+    return -1
+end
+
+return {
+    node = node,
+    hit = hit
+}

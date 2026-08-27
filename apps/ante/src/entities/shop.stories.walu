@@ -1,0 +1,251 @@
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+local box = require("../box_layout")
+local entity = require("../entity")
+local entity_story = require("../entity_story")
+local game = require("../game")
+local run_ = require("../run")
+local shop_ = require("../shop_new")
+local shop_entity = require("./shop")
+local spells = require("../spells/spell")
+local scroll_ = require("../items/scroll")
+local item_ = require("../items/item")
+
+type ShopState = shop_.State
+type Slot = shop_.Slot
+type RunState = run_.State
+type SpellScroll = scroll_.SpellScroll
+type SpellKind = spells.SpellKind
+type Item = item_.Item
+
+const WIDTH: u32 = 740
+const HEIGHT: u32 = 560
+const BACKGROUND: string = "#0b0b12"
+
+local book = entity_story.Book.new()
+
+type SoldChoice = "none" | "first" | "second" | "both"
+
+local stock_gold = storybook.range("gold", 30, 0, 100, 5)
+local stock_cursor = storybook.range("cursor", 0, 0, 2, 1)
+local stock_duel = storybook.range("duel", 2, 1, 9, 1)
+local stock_sold = storybook.select(
+    "sold",
+    "none"::SoldChoice,
+    {
+        storybook.choice("None", "none"::SoldChoice),
+        storybook.choice("First offer", "first"::SoldChoice),
+        storybook.choice("Second offer", "second"::SoldChoice),
+        storybook.choice("Both offers", "both"::SoldChoice)
+    }
+)
+
+local function make_run(spell: spells.SpellKind, gold: i32, duel: i32): RunState
+    local state: RunState = RunState.new(spell, false)
+    state.duel = duel
+    state.cleared = duel - 1
+    state.gold = gold
+    return state
+end
+
+function new_state(gold: number, duel: number)
+    local run = make_run(spells.SpellKind.Firebolt, gold::i32, duel::i32)
+    local shop = ShopState.new(run)
+    return run, shop
+end
+
+local function apply_sold(shop: ShopState, choice: SoldChoice): unit
+    if choice == "first" or choice == "both" then
+        if #shop.slots > 0 then
+            shop.slots[0].sold = true
+        end
+    end
+    if choice == "second" or choice == "both" then
+        if #shop.slots > 1 then
+            shop.slots[1].sold = true
+        end
+    end
+end
+
+local function stock_scene_node(): entity.Node
+    local run_state: RunState = make_run(
+        spells.SpellKind.Firebolt,
+        stock_gold.value(),
+        stock_duel.value()
+    )
+
+    local shop: ShopState = ShopState.new(run_state)
+    local slots: {Slot} = {}
+    -- local upgrade_goods: shop.Goods = Upgrade({ kind = spells.SpellKind.Firebolt })
+    -- table.insert(slots, {
+    --     category = "spells",
+    --     goods = upgrade_goods,
+    --     item = upgrade_goods:item_for(),
+    --     price = upgrade_goods:price_of(run_state),
+    --     sold = false,
+    -- })
+    -- local learn_goods: shop.Goods = Spell({ kind = spells.SpellKind.Clone })
+    -- table.insert(slots, {
+    --     category = "spells",
+    --     goods = learn_goods,
+    --     item = learn_goods:item_for(),
+    --     price = learn_goods:price_of(run_state),
+    --     sold = false,
+    -- })
+    shop.slots = slots
+    shop.cursor = stock_cursor.value()
+    apply_sold(shop, storybook.selected<SoldChoice>(stock_sold))
+
+    return shop_entity.node(shop, run_state)
+end
+
+local function empty_boss_scene_node(): entity.Node
+    local run_state: RunState = make_run(spells.SpellKind.Firebolt, 15, 3)
+
+    local shop: ShopState = ShopState.new(run_state)
+    shop.slots = {
+        {
+            item = SpellScroll.new(SpellKind.Firebolt, 1),
+            price = 5,
+            sold = true,
+        },
+        {
+            item = SpellScroll.new(SpellKind.Clone, 2),
+            price = 8,
+            sold = true,
+        },
+    }
+    shop.cursor = 2
+    return shop_entity.node(shop, run_state)
+end
+
+-- Interactive session state
+type InteractiveSession = { run: RunState, shop: ShopState }
+
+function InteractiveSession.new(): InteractiveSession
+    local run, shop = new_state(45, 2)
+    shop.slots = {
+        {
+            item = SpellScroll.new(SpellKind.Firebolt, 1)::Item,
+            price = 5,
+            sold = false,
+        },
+        {
+            item = SpellScroll.new(SpellKind.Clone, 2)::Item,
+            price = 8,
+            sold = false,
+        },
+    }
+    return { run = run, shop = shop }
+end
+
+local interactive = InteractiveSession.new()
+
+local function reset_interactive(): unit
+    interactive = InteractiveSession.new()
+end
+
+local function interactive_node(): entity.Node
+    return shop_entity.node(interactive.shop, interactive.run)
+end
+
+local function interactive_bounds(): box.Rect
+    local metrics: entity.Metrics = entity.Metrics.headless()
+    local stage_bounds: box.Rect = entity.rect(0.0, 0.0, WIDTH::f64, HEIGHT::f64)
+    local placed: {box.Rect} = entity.place(
+        metrics,
+        {interactive_node()},
+        entity.row(0.0, "center", "center"),
+        stage_bounds
+    )
+    return placed[0]
+end
+
+local function interactive_keypressed(key: string): unit
+    if key == "r" or key == "R" then
+        reset_interactive()
+        return
+    end
+    local done = interactive.shop:keypressed(interactive.run, key)
+    if done then
+        interactive.run.duel += 1
+        reset_interactive()
+    end
+end
+
+local function interactive_mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+    local metrics: entity.Metrics = entity.Metrics.headless()
+    local bounds: box.Rect = interactive_bounds()
+    local row: i32 = shop_entity.hit(metrics, interactive.shop, interactive.run, bounds, x, y)
+    if row >= 0 then
+        interactive.shop.cursor = row
+    end
+end
+
+local function interactive_mousepressed(x: f64, y: f64, button: i32): unit
+    if button ~= 1 then
+        return
+    end
+    local metrics: entity.Metrics = entity.Metrics.headless()
+    local bounds: box.Rect = interactive_bounds()
+    local row: i32 = shop_entity.hit(metrics, interactive.shop, interactive.run, bounds, x, y)
+    if row >= 0 then
+        interactive.shop.cursor = row
+        local done = interactive.shop:confirm_choice(interactive.run)
+        if done then
+            interactive.run.duel += 1
+            reset_interactive()
+        end
+    end
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Open visit",
+            book:scene(
+                {
+                    node = stock_scene_node,
+                    width = WIDTH::f64,
+                    height = HEIGHT::f64,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            ),
+            {
+                stock_gold.declaration,
+                stock_cursor.declaration,
+                stock_duel.declaration,
+                stock_sold.declaration
+            }
+        ),
+        storybook.story(
+            "Spent stock",
+            book:scene(
+                {
+                    node = empty_boss_scene_node,
+                    width = WIDTH::f64,
+                    height = HEIGHT::f64,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            )
+        ),
+        storybook.story(
+            "Interactive session",
+            book:scene(
+                {
+                    node = interactive_node,
+                    load = reset_interactive,
+                    keypressed = interactive_keypressed,
+                    mousemoved = interactive_mousemoved,
+                    mousepressed = interactive_mousepressed,
+                    width = WIDTH::f64,
+                    height = HEIGHT::f64,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            )
+        )
+    }
+)
