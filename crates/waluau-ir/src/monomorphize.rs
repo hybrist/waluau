@@ -611,7 +611,7 @@ impl<'a> Monomorphizer<'a> {
                     ty: substitute_type(&param.ty, subst),
                 })
                 .collect(),
-            vararg: function.vararg,
+            vararg: function.vararg.clone(),
             return_type: function
                 .return_type
                 .as_ref()
@@ -1447,7 +1447,7 @@ impl<'a> Monomorphizer<'a> {
                     ty: substitute_type(&param.ty, subst),
                 })
                 .collect(),
-            vararg: function.vararg,
+            vararg: function.vararg.clone(),
             return_type: function
                 .return_type
                 .as_ref()
@@ -1512,7 +1512,7 @@ impl<'a> Monomorphizer<'a> {
                     ty: substitute_type(&param.ty, &local_subst),
                 })
                 .collect(),
-            vararg: function.vararg,
+            vararg: function.vararg.clone(),
             return_type: function
                 .return_type
                 .as_ref()

@@ -129,11 +129,14 @@ impl Parser {
                 let _ = write!(out, ": {}", param.ty);
             }
         }
-        if function.vararg {
+        if let Some(vararg) = &function.vararg {
             if !function.params.is_empty() {
                 out.push_str(", ");
             }
             out.push_str("...");
+            if *vararg != Type::Unknown {
+                let _ = write!(out, ": {vararg}");
+            }
         }
         out.push(')');
         if let Some(return_type) = &function.return_type {
@@ -905,12 +908,12 @@ impl Parser {
     ) -> Result<FunctionExpr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
-        let mut vararg = false;
+        let mut vararg = None;
         if !self.check_simple(&TokenKind::RParen) {
             loop {
                 if self.check_simple(&TokenKind::TripleDot) {
                     self.advance();
-                    vararg = true;
+                    vararg = Some(self.parse_vararg_annotation());
                     break;
                 }
                 let param_name = self.expect_identifier()?;
@@ -973,6 +976,24 @@ impl Parser {
         })
     }
 
+    /// The optional `: T` after `...` in a parameter list. The annotation is
+    /// the element type of the pack (`...: number` accepts numbers), matching
+    /// Luau; an unannotated `...` is `Type::Unknown` like an unannotated
+    /// parameter.
+    fn parse_vararg_annotation(&mut self) -> Type {
+        if !self.check_simple(&TokenKind::Colon) {
+            return Type::Unknown;
+        }
+        self.advance();
+        match self.parse_type() {
+            Ok(ty) => ty,
+            Err(error) => {
+                self.record_error(error);
+                Type::number()
+            }
+        }
+    }
+
     fn parse_function_expr_after_type_params(
         &mut self,
         name: Option<String>,
@@ -983,12 +1004,12 @@ impl Parser {
         let scope_mark = self.definition_scope_mark();
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
-        let mut vararg = false;
+        let mut vararg = None;
         if !self.check_simple(&TokenKind::RParen) {
             loop {
                 if self.check_simple(&TokenKind::TripleDot) {
                     self.advance();
-                    vararg = true;
+                    vararg = Some(self.parse_vararg_annotation());
                     break;
                 }
                 let (param_name, param_span) = self.expect_identifier_spanned()?;

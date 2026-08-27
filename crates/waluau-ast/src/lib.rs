@@ -188,7 +188,11 @@ pub struct Function {
     pub symbol_id: Option<SymbolId>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
-    pub vararg: bool,
+    /// `Some(element)` when the parameter list ends in `...`. The type is the
+    /// element type of the pack (`...: number` accepts numbers), never a list
+    /// type; an unannotated `...` carries `Type::Unknown` like an unannotated
+    /// parameter.
+    pub vararg: Option<Type>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub file_path: String,
@@ -209,7 +213,9 @@ pub struct FunctionExpr {
     pub implicit_self: Option<String>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
-    pub vararg: bool,
+    /// `Some(element)` when the parameter list ends in `...`; see
+    /// [`Function::vararg`].
+    pub vararg: Option<Type>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub file_path: String,

@@ -890,7 +890,7 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
         symbol_id: function.symbol_id,
         type_params: function.type_params.clone(),
         params: function.params.clone(),
-        vararg: function.vararg,
+        vararg: function.vararg.clone(),
         return_type: function.return_type.clone(),
         body: function.body.clone(),
         file_path: function.file_path.clone(),
@@ -1590,7 +1590,7 @@ fn resolve_module_export(
                             .insert(field.name.clone(), function_name);
                     }
                     ExportedField::Constant(value) => {
-                        namespace.constants.insert(field.name.clone(), value);
+                        namespace.constants.insert(field.name.clone(), *value);
                     }
                 }
             }
@@ -1626,7 +1626,7 @@ fn export_function_name(
 
 enum ExportedField {
     Function(String),
-    Constant(Expr),
+    Constant(Box<Expr>),
 }
 
 fn export_field_value(
@@ -1640,7 +1640,7 @@ fn export_field_value(
     match &field.value {
         Expr::Name(name, _, _) => {
             if let Some(value) = constants.get(name) {
-                return Ok(ExportedField::Constant(value.clone()));
+                return Ok(ExportedField::Constant(Box::new(value.clone())));
             }
             export_function_name(
                 name,
@@ -1672,7 +1672,7 @@ fn export_field_value(
                 return Ok(ExportedField::Function(function.clone()));
             }
             if let Some(value) = fields.constants.get(member) {
-                return Ok(ExportedField::Constant(value.clone()));
+                return Ok(ExportedField::Constant(Box::new(value.clone())));
             }
             Err(format!(
                 "module export field '{}' references unknown member '{member}' on '{namespace}'",

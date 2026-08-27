@@ -3225,3 +3225,32 @@ fn rejects_more_than_three_iterator_expressions() {
         "{error}"
     );
 }
+
+#[test]
+fn parses_vararg_type_annotations() {
+    let program = parse("function sum(base: f64, ...: number): f64\n    return base\nend\n")
+        .expect("parse should succeed");
+    assert_eq!(program.functions[0].vararg, Some(Type::number()));
+
+    let program =
+        parse("function tally(...): i32\n    return 0\nend\n").expect("parse should succeed");
+    assert_eq!(program.functions[0].vararg, Some(Type::Unknown));
+
+    let program =
+        parse("function fixed(): i32\n    return 0\nend\n").expect("parse should succeed");
+    assert_eq!(program.functions[0].vararg, None);
+}
+
+#[test]
+fn parses_vararg_type_annotation_on_function_expression() {
+    let program = parse("local join = function(...: string): string\n    return \"\"\nend\n")
+        .expect("parse should succeed");
+    let Stmt::Let {
+        value: Expr::Function(function),
+        ..
+    } = &program.top_level[0]
+    else {
+        panic!("expected a function expression let");
+    };
+    assert_eq!(function.vararg, Some(Type::String));
+}
