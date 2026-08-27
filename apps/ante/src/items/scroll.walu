@@ -6,6 +6,7 @@ type Item = item_.Item
 
 export type SpellScroll = Item & {
   kind: spells.SpellKind,
+  level: number,
 }
 
 function SpellScroll:can_use(run: run_module.State)
@@ -31,6 +32,6 @@ function SpellScroll:base_price(run: run_module.State): number
   return 5
 end
 
-function SpellScroll.new(kind: spells.SpellKind): SpellScroll
-  return { kind = kind }
+function SpellScroll.new(kind: spells.SpellKind, level: number): SpellScroll
+  return { kind = kind, level = level }
 end

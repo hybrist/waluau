@@ -165,10 +165,12 @@ end
 --     return nil
 -- end
 
-function all_scroll_items(): {Item}
+function all_scroll_items(run: RunState): {Item}
     local scrolls: {Item} = {}
     for name, kind in pairs(spell_.SpellKind) do
-        table.insert(scrolls, scroll_.SpellScroll.new(kind)::Item)
+        -- TODO: current level + 1 where "not known" is level 0
+        local level = 1
+        table.insert(scrolls, scroll_.SpellScroll.new(kind, 1)::Item)
     end
     return scrolls
 end

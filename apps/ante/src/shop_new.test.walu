@@ -91,7 +91,7 @@ end
 --     assert(false)
 -- end
 
-describe("Ante Magic shop stock", function()
+describe("Shop", function()
     it("opens on a full row of slots and a way into the duel", function()
         math.randomseed(101)
         -- TODO: Undo once type alias supports static methods.
@@ -99,94 +99,12 @@ describe("Ante Magic shop stock", function()
         expect(shop.open):toBe(true)
         expect(shop:choosing()):toBe(false)
         expect(shop.cursor):toBe(0)
-        expect(#shop.slots):toBe(2)
-
---         -- No slot is ever filled twice over, and every offer is about a spell
---         -- the run can actually be sold something for.
---         local seen: {spells.SpellKind} = {}
---         for slot in intermission.slots do
---             expect(slot.sold):toBe(false)
---             expect(slot.price > 0):toBe(true)
---             if Upgrade(upgrade) = slot.goods then
---                 expect(state:carries(upgrade.kind)):toBe(true)
---             end
---             if Spell(spell) = slot.goods then
---                 expect(state:carries(spell.kind)):toBe(false)
---             end
---             -- Drawn without replacement: the same spell cannot fill two slots.
---             local good_kind = slot.goods:spell_kind()
---             expect(good_kind):not:toBeNil()
---             if good_kind ~= nil then
---                 for kind in seen do
---                     expect(kind):not:toBe(good_kind)
---                 end
---                 table.insert(seen, good_kind)
---             end
---         end
-
---         local rows: {shop.Row} = intermission:rows(state)
---         expect(#rows):toBe(#shop.slot_layout() + 1)
---         expect(tostring(rows[2].kind)):toBe("leave")
+        expect(#shop.slots):toBe(shop_.DEFAULT_SHOP_ITEM_COUNT)
     end)
 
---     it("stocks only what the run could be sold", function()
---         math.randomseed(103)
---         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 30)
---         expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
---         -- Two spells carried leaves two to teach and two to upgrade.
---         expect(#shop.spell_stock(state)):toBe(4)
-
---         -- A spell at its price floor is not something the shop can sell any
---         -- more, so it leaves the stock entirely.
---         local steps: i32 = game.spell_cost - run.min_spell_cost
---         for _ = 1, steps do expect(state:upgrade(0)):toBe(true) end
---         local pool: {shop.Goods} = shop.spell_stock(state)
---         expect(#pool):toBe(3)
---         for goods in pool do
---             local closed: bool = false
---             if Upgrade(upgrade) = goods then
---                 closed = upgrade.kind == spells.SpellKind.Firebolt
---             end
---             expect(closed):toBe(false)
---         end
---     end)
-
---     it("greys out what the purse cannot cover", function()
---         math.randomseed(107)
---         local state: run.State = shopping_run(spells.SpellKind.Clone, 5)
---         local intermission: shop.State = open_shop(state)
---         stock_slots(intermission, state, {
---             upgrade_goods(spells.SpellKind.Clone),
---             learn_goods(spells.SpellKind.Firebolt),
---         })
---         local rows: {shop.Row} = intermission:rows(state)
---         expect(rows[0].price):toBe(upgrade_goods(spells.SpellKind.Clone):price_of(state))
---         expect(rows[0].available):toBe(true)
---         expect(rows[1].price):toBe(shop.learn_price)
---         expect(rows[1].available):toBe(false)
---         -- The way out is never for sale, so it is never out of reach.
---         expect(rows[2].available):toBe(true)
-
---         -- Pressing an offer the run cannot pay for buys nothing rather than
---         -- falling through to the next line.
---         intermission.cursor = 1
---         expect(tostring(intermission:activate(state))):toBe("stay")
---         expect(state.gold):toBe(5)
---         expect(state:spell_count()):toBe(1)
---         expect(intermission:choosing()):toBe(false)
---         expect(slot_sold(intermission, 1)):toBe(false)
---     end)
-end)
-
-describe("Ante Magic shop purchases", function()
     it("marks a bought offer sold instead of restocking it", function()
---         math.randomseed(109)
---         local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
---         local intermission: shop.State = open_shop(state)
---         stock_slots(intermission, state, {
---             upgrade_goods(spells.SpellKind.Firebolt),
---             learn_goods(spells.SpellKind.Clone),
---         })
+        math.randomseed(109)
+        local run, shop = shopping_run(spell_.SpellKind.Firebolt, 40)
 
 --         expect(tostring(intermission:activate(state))):toBe("stay")
 --         expect(state.spells[0].cost):toBe(spells.DEFAULT_SPELL_COST - 1)
