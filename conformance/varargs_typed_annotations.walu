@@ -1,0 +1,60 @@
+-- Typed varargs: `...: T` annotates the element type of the pack, matching
+-- Luau's syntax. The annotation checks arguments at call sites and gives `...`
+-- uses the element type inside the body; the pack itself keeps the same boxed
+-- runtime representation as an unannotated `...`.
+
+function sum(...: number): number
+    local total = 0
+    for index = 1, select('#', ...) do
+        total = total + select(index, ...)
+    end
+    return total
+end
+
+assert(sum() == 0)
+assert(sum(1, 2, 3) == 6)
+assert(sum(1.5, 2.5) == 4)
+
+-- `select(n, ...)` on a typed pack produces the element type directly, so the
+-- result participates in arithmetic without a cast.
+function first_double(...: number): number
+    return select(1, ...) * 2
+end
+
+assert(first_double(21) == 42)
+
+-- Typed packs forward like untyped ones: a trailing `...` at a call site
+-- passes the caller's varargs through.
+function sum_forwarded(...: number): number
+    return sum(...)
+end
+
+assert(sum_forwarded(1, 2, 3, 4) == 10)
+
+-- Fixed parameters still fill before the pack begins.
+function scaled_sum(factor: number, ...: number): number
+    return factor * sum(...)
+end
+
+assert(scaled_sum(2, 1, 2, 3) == 12)
+
+-- Strings work as element types too.
+function join(...: string): string
+    local out = ""
+    for index = 1, select('#', ...) do
+        out = out .. select(index, ...)
+    end
+    return out
+end
+
+assert(join() == "")
+assert(join("a", "b", "c") == "abc")
+
+-- An untyped pack still accepts anything and forwards into a typed callee;
+-- the values are checked against the element type at runtime representation
+-- boundaries exactly as before.
+function forward_untyped(...): number
+    return sum(...)
+end
+
+assert(forward_untyped(1, 2) == 3)

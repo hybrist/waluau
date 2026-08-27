@@ -2501,6 +2501,7 @@ fn emits_valid_wasm_for_varargs_and_table_pack_conformance_fixtures() {
         include_str!("../../../conformance/table_pack.walu"),
         include_str!("../../../conformance/select_n.walu"),
         include_str!("../../../conformance/varargs_checkresults.walu"),
+        include_str!("../../../conformance/varargs_typed_annotations.walu"),
     ] {
         let program = waluau_parser::parse(source).expect("parse should succeed");
         let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");

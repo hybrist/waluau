@@ -167,3 +167,12 @@ fn formats_if_cast_targets_including_module_qualified_names() {
         "if ops.Add(a) = op then\n    use(a)\nelse\n    other()\nend\n"
     );
 }
+
+#[test]
+fn preserves_vararg_type_annotations() {
+    let src = "function sum(base:f64,...:number):f64\nreturn base\nend\n";
+    assert_eq!(
+        fmt(src),
+        "function sum(base: f64, ...: number): f64\n    return base\nend\n"
+    );
+}
