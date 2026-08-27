@@ -469,6 +469,115 @@ function Node.across(spec: FlowSpec, children: {Node}): Node
     return Node.flow(children, spec_style("row", spec))
 end
 
+-- UI state. The board is rebuilt from game state every frame, and that state
+-- answers only what the board shows. It says nothing about how a control is
+-- being handled at this moment — a panel someone unfolded, a scroll mid-drag,
+-- an animation an entity runs for its own reasons. That is UI state: it
+-- belongs to the entity rather than to the game, and it has to survive the
+-- rebuild that throws the entity's node away sixty times a second.
+--
+-- A Store is where it survives. It lives with whoever outlives the frames — a
+-- screen, or the entity's own module — and hands out one value per key. The
+-- key names the instance: a modal has one scroll however many times its node
+-- is rebuilt, and two panels that fold independently use two keys. What
+-- arrives from outside stays in a constructor's parameters exactly as it does
+-- today; what the entity keeps for itself lives in the store. The two cannot
+-- mix, because they never share a record.
+--
+-- Waluau infers a generic call's type arguments from its values, so the
+-- store is built around the one function that mentions T with no store in
+-- hand: the initializer. It runs once per key, the first time the key is
+-- asked for.
+
+type Slot<T> = { key: string, seal: string, value: T, stamp: i32 }
+
+export type Store<T> = {
+    init: () -> T,
+    slots: {Slot<T>},
+    stamp: i32
+}
+
+function store<T>(init: () -> T): Store<T>
+    local slots: {Slot<T>} = {}
+    return { init = init, slots = slots, stamp = 0::i32 }
+end
+
+function find<T>(from: Store<T>, key: string): Slot<T>?
+    for slot in from.slots do
+        if slot.key == key then return slot end
+    end
+    return nil
+end
+
+-- The state under a key: initialized the first time the key is asked for, the
+-- same record every time after. Mutating that record is how an entity
+-- remembers — there is no write-back step to forget.
+function state<T>(from: Store<T>, key: string): T
+    local found: Slot<T>? = find(from, key)
+    if found ~= nil then
+        local slot: Slot<T> = found::Slot<T>
+        slot.stamp = from.stamp
+        return slot.value
+    end
+    local made: T = from.init()
+    table.insert(from.slots, {
+        key = key, seal = "", value = made, stamp = from.stamp })
+    return made
+end
+
+-- A value rebuilt only when its fingerprint changes. `seal` is the caller's
+-- spelling of everything the built value was made from; while it reads the
+-- same, the stored value stands, and the frame skips the construction. This
+-- is what lets a node survive the rebuild: keep it under the seal of the
+-- game state it draws, and it is reconstructed exactly when that state
+-- changes rather than sixty times a second.
+--
+-- The honesty of the seal is the caller's burden. A dependency the seal does
+-- not spell is a change the value will sit stale through.
+function keep<T>(from: Store<T>, key: string, seal: string, build: () -> T): T
+    local found: Slot<T>? = find(from, key)
+    if found ~= nil then
+        local slot: Slot<T> = found::Slot<T>
+        slot.stamp = from.stamp
+        if slot.seal == seal then return slot.value end
+        slot.seal = seal
+        slot.value = build()
+        return slot.value
+    end
+    local made: T = build()
+    table.insert(from.slots, {
+        key = key, seal = seal, value = made, stamp = from.stamp })
+    return made
+end
+
+-- Ends a frame for a store that wants retention: everything the frame just
+-- drawn did not ask for is dropped, so a modal that closed forgets its scroll
+-- and reopens fresh. Retention is opt-in — a store nobody retires keeps every
+-- key it has ever been asked for, which is the right lifetime for a fixed
+-- board whose controls come and go with game state it can spell in a seal.
+function retire<T>(from: Store<T>): unit
+    local kept: {Slot<T>} = {}
+    for slot in from.slots do
+        if slot.stamp == from.stamp then table.insert(kept, slot) end
+    end
+    from.slots = kept
+    from.stamp += 1
+end
+
+-- A stateful entity: this frame's node, built from the state its key keeps.
+-- External state rides in on `build`'s closure the way it rides into every
+-- other constructor; what the entity remembered arrives as the argument.
+function stateful<T>(from: Store<T>, key: string, build: (T) -> Node): Node
+    return build(state(from, key))
+end
+
+-- A store of built nodes, for `keep`. Its initializer is a placeholder that
+-- never draws: a kept node is always built by the `keep` call that misses,
+-- never by the store.
+function node_cache(): Store<Node>
+    return store(function(): Node return Node.gap(0.0, 0.0) end)
+end
+
 return {
     rect = rect,
     edges = edges,
@@ -480,4 +589,10 @@ return {
     band = band,
     band_above = band_above,
     contains = contains,
+    store = store,
+    state = state,
+    keep = keep,
+    retire = retire,
+    stateful = stateful,
+    node_cache = node_cache,
 }

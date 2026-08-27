@@ -235,7 +235,10 @@ type Frame = {
     -- Scratch geometry for thrown cards, owned by choreography like the ash:
     -- one deformable sheet, rebuilt each frame a throw is in the air. A card
     -- deformed sixty times a second should not be sixty allocations.
-    sheet: card_warp.Mesh
+    sheet: card_warp.Mesh,
+    -- Kept nodes, owned by choreography the same way: entities whose making
+    -- does not change frame to frame survive the rebuild here.
+    nodes: entity.Store<entity.Node>
 }
 
 function ease_progress(t: f64, kind: Ease): f64
@@ -453,6 +456,17 @@ end
 local targets: Targets = {
     commit = nowhere(), pass = nowhere(),
 }
+
+-- Nodes whose making does not depend on the frame are kept rather than
+-- rebuilt: the table_card panel never changes, and the deck's node changes only
+-- with the count it shows. Everything else on the board bakes live game state
+-- into its node and is rebuilt each frame, which is the ordinary contract.
+-- The store rides on the Frame with the other cross-frame presentation state
+-- (the sheet, the ash) rather than in a module local, which functions here
+-- cannot see.
+function panel_node(nodes: entity.Store<entity.Node>): entity.Node
+    return entity.keep(nodes, "table-card-panel", "", table_card_panel.node)
+end
 
 function clear_targets(): unit
     targets = { commit = nowhere(), pass = nowhere() }
@@ -899,8 +913,13 @@ function draw_footer(
     strip.paint(surface, bounds)
 end
 
-function draw_deck(surface: entity.Surface, viewport: layout.State, count: i32): unit
-    deck.node(count).paint(surface, deck_band(viewport))
+function draw_deck(
+    surface: entity.Surface, viewport: layout.State,
+    nodes: entity.Store<entity.Node>, count: i32
+): unit
+    entity.keep(nodes, "deck", tostring(count), function(): entity.Node
+        return deck.node(count)
+    end).paint(surface, deck_band(viewport))
 end
 
 -- How many of a pile's cards have actually arrived: the ledger's total minus
@@ -953,9 +972,12 @@ end
 -- The live community cards on their field: a panel, and the row of slots standing on
 -- it. Both take the same band, so the field is always exactly as wide as the
 -- row it backs.
-function draw_table_card_band(surface: entity.Surface, viewport: layout.State, slots: {entity.Node}): unit
+function draw_table_card_band(
+    surface: entity.Surface, viewport: layout.State,
+    nodes: entity.Store<entity.Node>, slots: {entity.Node}
+): unit
     local band: box.Rect = table_card_band(viewport, #slots)
-    table_card_panel.node().paint(surface, band)
+    panel_node(nodes).paint(surface, band)
     card_row.node(slots, card_row.flat_pitch).paint(surface, band)
 end
 
@@ -972,7 +994,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
     -- shrunk underneath it.
     local hand_count: i32 = #trick.player_hand
     draw_hud(surface, viewport, state, frame.run)
-    draw_deck(surface, viewport, state.deck_count)
+    draw_deck(surface, viewport, frame.nodes, state.deck_count)
     local scoring: {bool} = trick_scoring(trick)
     -- Flight progress for the winner's two cards; a stalemate has no winner,
     -- so nothing takes off and both played pairs stay where they revealed.
@@ -1067,7 +1089,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
     -- layer; once the hand is complete, they move into the foreground
     -- layer with the winning pair.
     local hand: box.Rect = table_card_band(viewport, FORMATION_SLOTS)
-    table_card_panel.node().paint(surface, hand)
+    panel_node(frame.nodes).paint(surface, hand)
     if glow <= 0.0 then
         for i = 0::i32, 4::i32 do
             table_card_node(
@@ -1313,7 +1335,7 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
         return
     end
     draw_hud(surface, viewport, state, frame.run)
-    draw_deck(surface, viewport, state.deck_count)
+    draw_deck(surface, viewport, frame.nodes, state.deck_count)
     draw_pile(
         surface, viewport,
         frame.piles.discards,
@@ -1341,7 +1363,7 @@ function draw_playfield(surface: entity.Surface, frame: Frame): unit
                 slots, table_card_node(frame, state.middle[i], i, selected, focused, false))
         end
     end
-    draw_table_card_band(surface, viewport, slots)
+    draw_table_card_band(surface, viewport, frame.nodes, slots)
 
     draw_action_band(surface, frame)
     draw_player_fan(surface, frame)

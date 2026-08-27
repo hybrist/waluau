@@ -244,6 +244,108 @@ describe("modifiers", function(): unit
     end)
 end)
 
+-- UI state. Everything here is headless too: what a store remembers and when
+-- a kept node is rebuilt are questions about identity and fingerprints, not
+-- about a canvas.
+
+type Fold = { open: bool }
+
+function closed(): Fold
+    return { open = false }
+end
+
+describe("stateful entities", function(): unit
+    it("hands the same state back across rebuilds", function(): unit
+        local folds: entity.Store<Fold> = entity.store(closed)
+        local function build(ui: Fold): entity.Node
+            if ui.open then return blank(40.0, 60.0) end
+            return blank(40.0, 20.0)
+        end
+
+        -- Frame one builds the panel folded; someone opens it; the next
+        -- frame's rebuild finds it open, with nothing passed in from outside.
+        local first: entity.Node = entity.stateful(folds, "panel", build)
+        expect(first.measure(metrics()).preferred_height):toBe(20.0)
+
+        local ui: Fold = entity.state(folds, "panel")
+        ui.open = true
+
+        local second: entity.Node = entity.stateful(folds, "panel", build)
+        expect(second.measure(metrics()).preferred_height):toBe(60.0)
+    end)
+
+    it("keeps every key's state apart", function(): unit
+        local folds: entity.Store<Fold> = entity.store(closed)
+        local left: Fold = entity.state(folds, "left")
+        left.open = true
+
+        expect(entity.state(folds, "left").open):toBe(true)
+        expect(entity.state(folds, "right").open):toBe(false)
+    end)
+
+    it("drops state a retired frame did not touch", function(): unit
+        local folds: entity.Store<Fold> = entity.store(closed)
+        local modal: Fold = entity.state(folds, "modal")
+        modal.open = true
+        entity.retire(folds)
+
+        -- The modal is still on the board this frame, so its state survives;
+        -- the frame after never asks, and retiring that frame forgets it.
+        expect(entity.state(folds, "modal").open):toBe(true)
+        entity.retire(folds)
+        entity.retire(folds)
+        expect(entity.state(folds, "modal").open):toBe(false)
+    end)
+end)
+
+describe("kept nodes", function(): unit
+    it("rebuilds only when the seal changes", function(): unit
+        local nodes: entity.Store<entity.Node> = entity.node_cache()
+        local tally = { builds = 0::i32 }
+        local function build(): entity.Node
+            tally.builds += 1
+            return blank(40.0, 20.0)
+        end
+
+        entity.keep(nodes, "deck", "5", build)
+        entity.keep(nodes, "deck", "5", build)
+        expect(tally.builds):toBe(1)
+
+        entity.keep(nodes, "deck", "4", build)
+        expect(tally.builds):toBe(2)
+    end)
+
+    it("keeps each key under its own seal", function(): unit
+        local nodes: entity.Store<entity.Node> = entity.node_cache()
+        local tally = { builds = 0::i32 }
+        local function build(): entity.Node
+            tally.builds += 1
+            return blank(40.0, 20.0)
+        end
+
+        entity.keep(nodes, "deck", "5", build)
+        entity.keep(nodes, "pile", "5", build)
+        entity.keep(nodes, "deck", "5", build)
+        entity.keep(nodes, "pile", "5", build)
+        expect(tally.builds):toBe(2)
+    end)
+
+    it("answers with the node the seal kept", function(): unit
+        local nodes: entity.Store<entity.Node> = entity.node_cache()
+        local kept: entity.Node = entity.keep(
+            nodes, "band", "tall", function(): entity.Node
+                return blank(40.0, 60.0)
+            end)
+        expect(kept.measure(metrics()).preferred_height):toBe(60.0)
+
+        local same: entity.Node = entity.keep(
+            nodes, "band", "tall", function(): entity.Node
+                return blank(40.0, 20.0)
+            end)
+        expect(same.measure(metrics()).preferred_height):toBe(60.0)
+    end)
+end)
+
 describe("named flow options", function(): unit
     it("stacks children down a column", function(): unit
         local size: box.Intrinsic = entity.Node.down(
