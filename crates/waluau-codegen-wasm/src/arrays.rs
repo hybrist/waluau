@@ -310,58 +310,48 @@ struct SeenTypes {
     record_ptr_keys: HashMap<usize, (Type, String)>,
 }
 
-pub(crate) fn collect_array_types(module: &Module) -> Vec<Type> {
-    let mut seen = SeenTypes::default();
-    let mut types = Vec::new();
-    for global in &module.globals {
-        insert_array_type(&global.ty, &mut seen, &mut types);
-    }
-    for function in &module.functions {
-        for (_, ty) in &function.params {
-            insert_array_type(ty, &mut seen, &mut types);
-        }
-        insert_array_type(&function.return_type, &mut seen, &mut types);
-        for block in function.blocks.values() {
-            for (_, instruction) in &block.instructions {
-                collect_array_types_from_instruction(instruction, &mut seen, &mut types);
-            }
-        }
-    }
-    types.sort_by_key(array_type_depth);
-    types
+/// One-pass variant of the three collectors below: arrays, records (plus the
+/// shared-payload key map), and nullable-box kinds from a single walk over
+/// the module's globals, signatures, and instructions. Produces exactly what
+/// the separate collectors produce; emit calls this so the instruction walk
+/// happens once instead of three times.
+pub(crate) struct GcTypeCollection {
+    pub(crate) array_types: Vec<Type>,
+    pub(crate) record_types: Vec<Type>,
+    pub(crate) record_key_by_ptr: HashMap<usize, (Type, String)>,
+    pub(crate) nullable_box_kinds: Vec<NullableBoxKind>,
 }
 
-pub(crate) fn collect_record_types(module: &Module) -> (Vec<Type>, HashMap<usize, (Type, String)>) {
-    let mut seen = SeenTypes::default();
-    let mut types = Vec::new();
-    for global in &module.globals {
-        insert_record_type(&global.ty, &mut seen, &mut types);
-    }
-    for function in &module.functions {
-        for (_, ty) in &function.params {
-            insert_record_type(ty, &mut seen, &mut types);
-        }
-        insert_record_type(&function.return_type, &mut seen, &mut types);
-        for block in function.blocks.values() {
-            for (_, instruction) in &block.instructions {
-                collect_record_types_from_instruction(instruction, &mut seen, &mut types);
-            }
-        }
-    }
-    (types, seen.record_ptr_keys)
-}
-
-/// Collect the nullable-box kinds (`i32?` etc.) a module needs, scanning every
-/// type that reaches codegen: function/import signatures and each
-/// type-carrying IR instruction. Missing a use site fails compilation with a
-/// "missing nullable box type" diagnostic rather than miscompiling.
-pub(crate) fn collect_nullable_box_kinds(
+pub(crate) fn collect_gc_types(
     module: &Module,
     declared_imports: &[&waluau_ir::DeclaredImport],
-) -> Vec<NullableBoxKind> {
+) -> GcTypeCollection {
+    let mut array_seen = SeenTypes::default();
+    let mut array_types = Vec::new();
+    let mut record_seen = SeenTypes::default();
+    let mut record_types = Vec::new();
     let mut kinds = BTreeSet::new();
+    fn every(
+        ty: &Type,
+        array_seen: &mut SeenTypes,
+        array_types: &mut Vec<Type>,
+        record_seen: &mut SeenTypes,
+        record_types: &mut Vec<Type>,
+        kinds: &mut BTreeSet<NullableBoxKind>,
+    ) {
+        insert_array_type(ty, array_seen, array_types);
+        insert_record_type(ty, record_seen, record_types);
+        insert_nullable_box_kinds(ty, kinds);
+    }
     for global in &module.globals {
-        insert_nullable_box_kinds(&global.ty, &mut kinds);
+        every(
+            &global.ty,
+            &mut array_seen,
+            &mut array_types,
+            &mut record_seen,
+            &mut record_types,
+            &mut kinds,
+        );
     }
     for import in declared_imports {
         for param in &import.params {
@@ -371,18 +361,52 @@ pub(crate) fn collect_nullable_box_kinds(
     }
     for function in &module.functions {
         for (_, ty) in &function.params {
-            insert_nullable_box_kinds(ty, &mut kinds);
+            every(
+                ty,
+                &mut array_seen,
+                &mut array_types,
+                &mut record_seen,
+                &mut record_types,
+                &mut kinds,
+            );
         }
-        insert_nullable_box_kinds(&function.return_type, &mut kinds);
+        every(
+            &function.return_type,
+            &mut array_seen,
+            &mut array_types,
+            &mut record_seen,
+            &mut record_types,
+            &mut kinds,
+        );
         for block in function.blocks.values() {
             for (_, instruction) in &block.instructions {
+                collect_array_types_from_instruction(
+                    instruction,
+                    &mut array_seen,
+                    &mut array_types,
+                );
+                collect_record_types_from_instruction(
+                    instruction,
+                    &mut record_seen,
+                    &mut record_types,
+                );
                 collect_nullable_box_kinds_from_instruction(instruction, &mut kinds);
             }
         }
     }
-    kinds.into_iter().collect()
+    array_types.sort_by_key(array_type_depth);
+    GcTypeCollection {
+        array_types,
+        record_types,
+        record_key_by_ptr: record_seen.record_ptr_keys,
+        nullable_box_kinds: kinds.into_iter().collect(),
+    }
 }
 
+/// Insert the nullable-box kinds (`i32?` etc.) `ty` needs. Every type that
+/// reaches codegen is scanned (signatures and each type-carrying IR
+/// instruction); missing a use site fails compilation with a "missing
+/// nullable box type" diagnostic rather than miscompiling.
 fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
     match ty {
         Type::Nullable(inner) => {

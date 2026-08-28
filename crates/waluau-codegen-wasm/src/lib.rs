@@ -54,8 +54,7 @@ mod signatures;
 mod wasm_types;
 
 use arrays::{
-    ArrayTypeRegistry, NullableBoxKind, RuntimeGcTypes, array_storage_type, collect_array_types,
-    collect_nullable_box_kinds, collect_record_types, record_storage_type,
+    ArrayTypeRegistry, NullableBoxKind, RuntimeGcTypes, array_storage_type, record_storage_type,
 };
 use buffers::{
     BUFFER_HEAP_BASE, BufferPlan, MEMORY_EXPORT_NAME, element_size_log2,
@@ -789,8 +788,12 @@ fn emit_inner(
 ) -> Result<EmitResult, Diagnostic> {
     let started = CompilerTimer::start();
     let declared_imports = used_declared_imports(module);
-    let array_types = collect_array_types(module);
-    let (record_types, record_key_by_ptr) = collect_record_types(module);
+    let arrays::GcTypeCollection {
+        array_types,
+        record_types,
+        record_key_by_ptr,
+        nullable_box_kinds,
+    } = arrays::collect_gc_types(module, &declared_imports);
     let string_constants = host::collect_string_constants(module);
     let bytes_constants = host::collect_bytes_constants(module);
     let buffer_plan = BufferPlan::new(module);
@@ -802,7 +805,6 @@ fn emit_inner(
     // Typed nullable box structs (`$nullable_box_K`, backing `i32?` etc.) come
     // first in the type section so array/record storage types can reference
     // them as backward references.
-    let nullable_box_kinds = collect_nullable_box_kinds(module, &declared_imports);
     let array_type_base = nullable_box_kinds.len() as u32;
     // Each array type occupies two type-section slots: the raw storage array
     // followed by its growable wrapper struct (see ArrayTypeRegistry).
