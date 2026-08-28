@@ -104,16 +104,8 @@ local function empty_boss_scene_node(): entity.Node
 
     local shop: ShopState = ShopState.new(run_state)
     shop.slots = {
-        {
-            item = SpellScroll.new(SpellKind.Firebolt, 1),
-            price = 5,
-            sold = true,
-        },
-        {
-            item = SpellScroll.new(SpellKind.Clone, 2),
-            price = 8,
-            sold = true,
-        },
+        { item = SpellScroll.new(SpellKind.Firebolt, 1), price = 5, sold = true },
+        { item = SpellScroll.new(SpellKind.Clone, 2), price = 8, sold = true }
     }
     shop.cursor = 2
     return shop_entity.node(shop, run_state)
@@ -125,16 +117,8 @@ type InteractiveSession = { run: RunState, shop: ShopState }
 function InteractiveSession.new(): InteractiveSession
     local run, shop = new_state(45, 2)
     shop.slots = {
-        {
-            item = SpellScroll.new(SpellKind.Firebolt, 1)::Item,
-            price = 5,
-            sold = false,
-        },
-        {
-            item = SpellScroll.new(SpellKind.Clone, 2)::Item,
-            price = 8,
-            sold = false,
-        },
+        { item = SpellScroll.new(SpellKind.Firebolt, 1)::Item, price = 5, sold = false },
+        { item = SpellScroll.new(SpellKind.Clone, 2)::Item, price = 8, sold = false }
     }
     return { run = run, shop = shop }
 end

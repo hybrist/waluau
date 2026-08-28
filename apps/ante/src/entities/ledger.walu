@@ -2,7 +2,6 @@
 -- hands settled it. One row per round, and the rows are a column rather
 -- than a running y cursor, so the ledger of a three-round duel and the ledger
 -- of an empty one are the same code.
-
 local game = require("../game")
 local box = require("../ui/layout")
 local ui = require("../ui/node")
@@ -24,8 +23,12 @@ const VERDICT_INK: string = "#f8fafc"
 const FORMATION_INK: string = "#b5b5bd"
 
 function verdict_text(trick: game.Trick): string
-    if trick.winner > 0 then return "YOU +" .. tostring(trick.points) end
-    if trick.winner < 0 then return "OPPONENT" end
+    if trick.winner > 0 then
+        return "YOU +" .. tostring(trick.points)
+    end
+    if trick.winner < 0 then
+        return "OPPONENT"
+    end
     return "TIE"
 end
 
@@ -38,30 +41,35 @@ function cell(text: string, size: f64, color: string, width: f64): ui.Node
 end
 
 function row(trick: game.Trick): ui.Node
-    return ui.Node.across({ align = "baseline" }, {
-        cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
-        cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
-        label.left(
-            game.category_name(trick.player_value) .. " VS "
-                .. game.category_name(trick.computer_value),
-            FORMATION_SIZE, FORMATION_INK),
-    })
+    return ui.Node.across(
+        { align = "baseline" },
+        {
+            cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
+            cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
+            label.left(
+                game.category_name(
+                    trick.player_value
+                ) .. " VS " .. game.category_name(trick.computer_value),
+                FORMATION_SIZE,
+                FORMATION_INK
+            )
+        }
+    )
 end
 
 function body(state: game.View): ui.Node
     if #state.history == 0 then
-        return modal.column({
-            label.left("NO ROUNDS WON YET.", 16.0, "#8a8a92"),
-        }, ROW_GAP)
+        return modal.column({label.left("NO ROUNDS WON YET.", 16.0, "#8a8a92")}, ROW_GAP)
     end
     local rows: {ui.Node} = {}
-    for trick in state.history do table.insert(rows, row(trick)) end
+    for trick in state.history do
+        table.insert(rows, row(trick))
+    end
     return modal.column(rows, ROW_GAP)
 end
 
 function node(state: game.View): ui.Node
-    return modal.node(
-        "ROUND HISTORY", "H, ESC, OR A CLICK CLOSES THE HISTORY", body(state))
+    return modal.node("ROUND HISTORY", "H, ESC, OR A CLICK CLOSES THE HISTORY", body(state))
 end
 
 return { node = node }

@@ -1,6 +1,5 @@
 -- The player's fan: the one row on the board that arranges on an arc rather
 -- than a flow, and the only one whose hit test has to undo a rotation.
-
 require("waluau:vitest")
 
 local box = require("../ui/layout")
@@ -9,68 +8,96 @@ local hand_fan = require("./hand_fan")
 
 const COUNT: i32 = 5
 
-describe("hand fan", function(): unit
-    it("carries its own dip inside the box it asks for", function(): unit
-        local size = hand_fan.intrinsic(COUNT)
-        -- Four card widths of pitch plus the card itself, and a card's height
-        -- plus the arc's dip on both sides of the centre line.
-        expect(size.preferred_width):toBe(388.0)
-        expect(size.preferred_height):toBeCloseTo(
-            card.height + hand_fan.dip_of(COUNT) * 2.0, 9)
-        expect(hand_fan.dip_of(COUNT)):toBeCloseTo(11.2, 9)
-    end)
+describe(
+    "hand fan",
+    function(): unit
+        it(
+            "carries its own dip inside the box it asks for",
+            function(): unit
+                local size = hand_fan.intrinsic(COUNT)
+                -- Four card widths of pitch plus the card itself, and a card's height
+                -- plus the arc's dip on both sides of the centre line.
+                expect(size.preferred_width):toBe(388.0)
+                expect(
+                    size.preferred_height
+                ):toBeCloseTo(card.height + hand_fan.dip_of(COUNT) * 2.0, 9)
+                expect(hand_fan.dip_of(COUNT)):toBeCloseTo(11.2, 9)
+            end
+        )
 
-    it("hangs the closed fan symmetrically about the band's centre", function(): unit
-        local bounds = box.rect(
-            0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
-        local first = hand_fan.slot_rect(bounds, 0, 0.0, COUNT)
-        local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)
-        local last = hand_fan.slot_rect(bounds, 4, 0.0, COUNT)
+        it(
+            "hangs the closed fan symmetrically about the band's centre",
+            function(): unit
+                local bounds = box.rect(0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
+                local first = hand_fan.slot_rect(bounds, 0, 0.0, COUNT)
+                local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)
+                local last = hand_fan.slot_rect(bounds, 4, 0.0, COUNT)
 
-        expect(first.x):toBe(0.0)
-        expect(last.x + last.width):toBe(388.0)
-        expect(middle.x + middle.width * 0.5):toBe(194.0)
-        -- The outermost cards dip below the middle one by the arc's drop.
-        expect(first.y - middle.y):toBeCloseTo(11.2, 9)
-        expect(last.y):toBe(first.y)
-    end)
+                expect(first.x):toBe(0.0)
+                expect(last.x + last.width):toBe(388.0)
+                expect(middle.x + middle.width * 0.5):toBe(194.0)
+                -- The outermost cards dip below the middle one by the arc's drop.
+                expect(first.y - middle.y):toBeCloseTo(11.2, 9)
+                expect(last.y):toBe(first.y)
+            end
+        )
 
-    it("tilts out of the middle in both directions", function(): unit
-        expect(hand_fan.angle_at(2, 0.0, COUNT)):toBe(0.0)
-        expect(hand_fan.angle_at(0, 0.0, COUNT)):toBeCloseTo(
-            -hand_fan.angle_at(4, 0.0, COUNT), 9)
-        expect(hand_fan.angle_at(4, 0.0, COUNT) > 0.0):toBe(true)
-    end)
+        it(
+            "tilts out of the middle in both directions",
+            function(): unit
+                expect(hand_fan.angle_at(2, 0.0, COUNT)):toBe(0.0)
+                expect(
+                    hand_fan.angle_at(0, 0.0, COUNT)
+                ):toBeCloseTo(-hand_fan.angle_at(4, 0.0, COUNT), 9)
+                expect(hand_fan.angle_at(4, 0.0, COUNT) > 0.0):toBe(true)
+            end
+        )
 
-    it("flattens a longer hand back toward the reference silhouette", function(): unit
-        -- A seven-card boss hand keeps the outermost tilt of a five-card
-        -- one rather than curling off the board.
-        expect(hand_fan.angle_at(6, 0.0, 7)):toBeCloseTo(
-            hand_fan.angle_at(4, 0.0, COUNT), 9)
-        expect(hand_fan.dip_of(7)):toBeCloseTo(hand_fan.dip_of(COUNT), 9)
-    end)
+        it(
+            "flattens a longer hand back toward the reference silhouette",
+            function(): unit
+                -- A seven-card boss hand keeps the outermost tilt of a five-card
+                -- one rather than curling off the board.
+                expect(
+                    hand_fan.angle_at(6, 0.0, 7)
+                ):toBeCloseTo(hand_fan.angle_at(4, 0.0, COUNT), 9)
+                expect(hand_fan.dip_of(7)):toBeCloseTo(hand_fan.dip_of(COUNT), 9)
+            end
+        )
 
-    it("opens around the focused card and closes with no focus", function(): unit
-        expect(hand_fan.part_target(0, 2) < 0.0):toBe(true)
-        expect(hand_fan.part_target(2, 2)):toBe(0.0)
-        expect(hand_fan.part_target(4, 2) > 0.0):toBe(true)
-        expect(hand_fan.part_target(0, hand_fan.closed)):toBe(0.0)
-    end)
+        it(
+            "opens around the focused card and closes with no focus",
+            function(): unit
+                expect(hand_fan.part_target(0, 2) < 0.0):toBe(true)
+                expect(hand_fan.part_target(2, 2)):toBe(0.0)
+                expect(hand_fan.part_target(4, 2) > 0.0):toBe(true)
+                expect(hand_fan.part_target(0, hand_fan.closed)):toBe(0.0)
+            end
+        )
 
-    it("prefers the card drawn on top where two overlap", function(): unit
-        local bounds = box.rect(
-            0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
-        local parts: {f64} = { 0.0, 0.0, 0.0, 0.0, 0.0 }
-        local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)
+        it(
+            "prefers the card drawn on top where two overlap",
+            function(): unit
+                local bounds = box.rect(0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
+                local parts: {f64} = {0.0, 0.0, 0.0, 0.0, 0.0}
+                local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)
 
-        expect(hand_fan.hit(
-            bounds, parts,
-            middle.x + card.width * 0.5, middle.y + card.height * 0.5)):toBe(2)
-        -- The overlap between two cards belongs to the later one, which is
-        -- the one drawn over the other.
-        local third = hand_fan.slot_rect(bounds, 3, 0.0, COUNT)
-        expect(hand_fan.hit(
-            bounds, parts, third.x + 4.0, third.y + card.height * 0.5)):toBe(3)
-        expect(hand_fan.hit(bounds, parts, -50.0, 0.0)):toBe(-1)
-    end)
-end)
+                expect(
+                    hand_fan.hit(
+                        bounds,
+                        parts,
+                        middle.x + card.width * 0.5,
+                        middle.y + card.height * 0.5
+                    )
+                ):toBe(2)
+                -- The overlap between two cards belongs to the later one, which is
+                -- the one drawn over the other.
+                local third = hand_fan.slot_rect(bounds, 3, 0.0, COUNT)
+                expect(
+                    hand_fan.hit(bounds, parts, third.x + 4.0, third.y + card.height * 0.5)
+                ):toBe(3)
+                expect(hand_fan.hit(bounds, parts, -50.0, 0.0)):toBe(-1)
+            end
+        )
+    end
+)

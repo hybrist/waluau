@@ -73,12 +73,13 @@ function Book:scene(spec: Scene): storybook.Scene
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         self.assets:prepare(graphics)
         local present: (() -> unit)? = spec.present
-        if present ~= nil then present() end
+        if present ~= nil then
+            present()
+        end
         local surface = self.assets:surface(graphics)
         graphics:push()
         graphics:scale(spec.scale, spec.scale)
-        root:draw(surface, 0.0, 0.0,
-            graphics.width / spec.scale, graphics.height / spec.scale)
+        root:draw(surface, 0.0, 0.0, graphics.width / spec.scale, graphics.height / spec.scale)
         graphics:pop()
     end
 

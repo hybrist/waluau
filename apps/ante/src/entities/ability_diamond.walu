@@ -6,7 +6,6 @@
 -- Every position is always present. A run that only carries its starting
 -- spell therefore reads as one ready ability and three empty sockets instead
 -- of a text hint whose width changes with the chosen spell.
-
 local game = require("../game")
 local spells = require("../spells/spell")
 local spell_launch = require("../spell_launch")
@@ -43,22 +42,38 @@ const CONNECTOR_INK: string = "#27272a"
 -- then West, North, and East. Keeping this mapping here makes the visual
 -- arrangement independent from the order it happens to be painted in.
 function slot_x(slot: i32): f64
-    if slot == 1 then return CENTER_X - PITCH_X end
-    if slot == 3 then return CENTER_X + PITCH_X end
+    if slot == 1 then
+        return CENTER_X - PITCH_X
+    end
+    if slot == 3 then
+        return CENTER_X + PITCH_X
+    end
     return CENTER_X
 end
 
 function slot_y(slot: i32): f64
-    if slot == 0 then return CENTER_Y + PITCH_Y end
-    if slot == 2 then return CENTER_Y - PITCH_Y end
+    if slot == 0 then
+        return CENTER_Y + PITCH_Y
+    end
+    if slot == 2 then
+        return CENTER_Y - PITCH_Y
+    end
     return CENTER_Y
 end
 
 function short_name(kind: spells.SpellKind): string
-    if kind == spells.SpellKind.Firebolt then return "FIRE" end
-    if kind == spells.SpellKind.FreezeRay then return "FROST" end
-    if kind == spells.SpellKind.RaiseCard then return "RAISE" end
-    if kind == spells.SpellKind.Clone then return "CLONE" end
+    if kind == spells.SpellKind.Firebolt then
+        return "FIRE"
+    end
+    if kind == spells.SpellKind.FreezeRay then
+        return "FROST"
+    end
+    if kind == spells.SpellKind.RaiseCard then
+        return "RAISE"
+    end
+    if kind == spells.SpellKind.Clone then
+        return "CLONE"
+    end
     return ""
 end
 
@@ -80,9 +95,7 @@ function draw_connector(surface: ui.Surface, bounds: box.Rect): unit
     graphics:line(east_x, east_y, north_x, north_y)
 end
 
-function draw_slot(
-    surface: ui.Surface, state: game.View, bounds: box.Rect, slot: i32
-): unit
+function draw_slot(surface: ui.Surface, state: game.View, bounds: box.Rect, slot: i32): unit
     local graphics = surface.graphics
     local x: f64 = bounds.x + slot_x(slot)
     local y: f64 = bounds.y + slot_y(slot)
@@ -109,15 +122,23 @@ function draw_slot(
     if occupied then
         local spell: game.Spell = state.spells[slot]
         ink.text_centered(
-            graphics, short_name(spell.kind), x,
-            y + NAME_SIZE * 0.5 - 3.0, NAME_SIZE, caption)
+            graphics,
+            short_name(spell.kind),
+            x,
+            y + NAME_SIZE * 0.5 - 3.0,
+            NAME_SIZE,
+            caption
+        )
         ink.text_centered(
-            graphics, tostring(spell.cost) .. "G", x,
-            y + COST_SIZE + 7.0, COST_SIZE, caption)
+            graphics,
+            tostring(spell.cost) .. "G",
+            x,
+            y + COST_SIZE + 7.0,
+            COST_SIZE,
+            caption
+        )
     else
-        ink.text_centered(
-            graphics, "+", x, y + NAME_SIZE * 0.5,
-            NAME_SIZE, EMPTY_INK)
+        ink.text_centered(graphics, "+", x, y + NAME_SIZE * 0.5, NAME_SIZE, EMPTY_INK)
     end
 
     -- The key badge overlaps the socket like a controller-button legend, so
@@ -129,8 +150,13 @@ function draw_slot(
     graphics:set_color(KEY_FILL)
     graphics:fill_circle(key_x, key_y, KEY_RADIUS - 1.5)
     ink.text_centered(
-        graphics, tostring(slot + 1), key_x,
-        key_y + KEY_SIZE * 0.5, KEY_SIZE, KEY_INK)
+        graphics,
+        tostring(slot + 1),
+        key_x,
+        key_y + KEY_SIZE * 0.5,
+        KEY_SIZE,
+        KEY_INK
+    )
 end
 
 type DiamondPresentation = { state: game.View }
@@ -139,13 +165,15 @@ export type Stateful = { presentation: DiamondPresentation, root: ui.Node }
 function Stateful.new(state: game.View): Stateful
     local presentation: DiamondPresentation = { state = state }
     local root: ui.Node = ui.Node.sized(
-        WIDTH, HEIGHT,
+        WIDTH,
+        HEIGHT,
         function(surface: ui.Surface, bounds: box.Rect): unit
             draw_connector(surface, bounds)
             for slot = 0::i32, SLOT_COUNT - 1 do
                 draw_slot(surface, presentation.state, bounds, slot)
             end
-        end)
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -164,5 +192,5 @@ return {
     short_name = short_name,
     slot_count = SLOT_COUNT,
     width = WIDTH,
-    height = HEIGHT,
+    height = HEIGHT
 }

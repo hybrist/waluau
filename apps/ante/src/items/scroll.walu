@@ -4,32 +4,29 @@ local item_ = require("./item")
 
 type Item = item_.Item
 
-export type SpellScroll = Item & {
-  kind: spells.SpellKind,
-  level: number,
-}
+export type SpellScroll = Item & { kind: spells.SpellKind, level: number }
 
 function SpellScroll:can_use(run: run_module.State)
-  -- if this is a new spell and the player has no open slots, they can't use this scroll.
-  return true
+    -- if this is a new spell and the player has no open slots, they can't use this scroll.
+    return true
 end
 
 function SpellScroll:use(run: run_module.State)
-  -- if the player already knows the spell, we increase the level.
-  -- otherwise, we learn a new spell at the first open slot.
-  run:learn(self.kind, 1)
+    -- if the player already knows the spell, we increase the level.
+    -- otherwise, we learn a new spell at the first open slot.
+    run:learn(self.kind, 1)
 end
 
 function SpellScroll:describe(): string
-  return self.kind:__tostring() .. " (level " .. self.level .. ")"
+    return self.kind:__tostring() .. " (level " .. self.level .. ")"
 end
 
 function SpellScroll:base_price(run: run_module.State): number
-  -- if the player already knows the spell, we increase the level.
-  -- otherwise, we learn a new spell at the first open slot.
-  return 5
+    -- if the player already knows the spell, we increase the level.
+    -- otherwise, we learn a new spell at the first open slot.
+    return 5
 end
 
 function SpellScroll.new(kind: spells.SpellKind, level: number): SpellScroll
-  return { kind = kind, level = level }
+    return { kind = kind, level = level }
 end

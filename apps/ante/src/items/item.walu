@@ -1,8 +1,8 @@
 local run_module = require("../run")
 
 export type Item = {
-  can_use: (self, run: run_module.State) -> bool,
-  use: (self, run: run_module.State) -> unit,
-  describe: (self) -> string,
-  base_price: (self, run: run_module.State) -> number,
+    can_use: (self, run: run_module.State) -> bool,
+    use: (self, run: run_module.State) -> unit,
+    describe: (self) -> string,
+    base_price: (self, run: run_module.State) -> number
 }

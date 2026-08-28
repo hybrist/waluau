@@ -1,7 +1,6 @@
 -- The retained presentation boundary, measured with no canvas behind it.
 -- Every assertion here runs headless: a node's size is a content/layout question, not
 -- about a frame, and that is exactly what makes the board testable.
-
 require("waluau:vitest")
 
 local box = require("./layout")
@@ -14,293 +13,391 @@ local verdict = require("../entities/verdict")
 
 function blank(width: f64, height: f64): ui.Node
     return ui.Node.sized(
-        width, height, function(surface: ui.Surface, bounds: box.Rect): unit end)
+        width,
+        height,
+        function(surface: ui.Surface, bounds: box.Rect): unit
+        end
+    )
 end
 
-function arrange(
-    children: {ui.Node}, style: box.Style, bounds: box.Rect
-): {box.Rect}
+function arrange(children: {ui.Node}, style: box.Style, bounds: box.Rect): {box.Rect}
     local root: ui.Node = ui.Node.flow(children, style)
     root:measure(nil)
     root:arrange(bounds.x, bounds.y, bounds.width, bounds.height)
     local result: {box.Rect} = {}
-    for child in children do table.insert(result, child:bounds()) end
+    for child in children do
+        table.insert(result, child:bounds())
+    end
     return result
 end
 
-describe("retained presentation boundary", function(): unit
-    it("measures a flow as the box layout of its children", function(): unit
-        local band: ui.Node = ui.Node.flow(
-            { blank(40.0, 20.0), blank(60.0, 30.0), blank(50.0, 24.0) },
-            box.row(10.0, "start", "start"))
+describe(
+    "retained presentation boundary",
+    function(): unit
+        it(
+            "measures a flow as the box layout of its children",
+            function(): unit
+                local band: ui.Node = ui.Node.flow(
+                    {blank(40.0, 20.0), blank(60.0, 30.0), blank(50.0, 24.0)},
+                    box.row(10.0, "start", "start")
+                )
 
-        local size: box.Intrinsic = band:measure(nil)
-        expect(size.preferred_width):toBe(170.0)
-        expect(size.preferred_height):toBe(30.0)
-    end)
+                local size: box.Intrinsic = band:measure(nil)
+                expect(size.preferred_width):toBe(170.0)
+                expect(size.preferred_height):toBe(30.0)
+            end
+        )
 
-    it("hands every child of a flow its solved rectangle", function(): unit
-        local children: {ui.Node} = {
-            blank(40.0, 20.0), blank(60.0, 30.0), blank(50.0, 24.0),
-        }
-        local rects: {box.Rect} = arrange(
-            children,
-            box.row(10.0, "start", "start"),
-            box.rect(0.0, 0.0, 200.0, 40.0))
+        it(
+            "hands every child of a flow its solved rectangle",
+            function(): unit
+                local children: {ui.Node} = {
+                    blank(40.0, 20.0),
+                    blank(60.0, 30.0),
+                    blank(50.0, 24.0)
+                }
+                local rects: {box.Rect} = arrange(
+                    children,
+                    box.row(10.0, "start", "start"),
+                    box.rect(0.0, 0.0, 200.0, 40.0)
+                )
 
-        expect(#rects):toBe(3)
-        expect(rects[0].x):toBe(0.0)
-        expect(rects[1].x):toBe(50.0)
-        expect(rects[2].x):toBe(120.0)
-        expect(rects[1].width):toBe(60.0)
-    end)
+                expect(#rects):toBe(3)
+                expect(rects[0].x):toBe(0.0)
+                expect(rects[1].x):toBe(50.0)
+                expect(rects[2].x):toBe(120.0)
+                expect(rects[1].width):toBe(60.0)
+            end
+        )
 
-    it("lets a stretch spacer absorb the room left over", function(): unit
-        local children: {ui.Node} = {
-            blank(40.0, 20.0), ui.Node.stretch(1.0),
-            blank(50.0, 20.0),
-        }
-        local rects: {box.Rect} = arrange(
-            children,
-            box.row(0.0, "start", "start"),
-            box.rect(0.0, 0.0, 200.0, 20.0))
+        it(
+            "lets a stretch spacer absorb the room left over",
+            function(): unit
+                local children: {ui.Node} = {
+                    blank(40.0, 20.0),
+                    ui.Node.stretch(1.0),
+                    blank(50.0, 20.0)
+                }
+                local rects: {box.Rect} = arrange(
+                    children,
+                    box.row(0.0, "start", "start"),
+                    box.rect(0.0, 0.0, 200.0, 20.0)
+                )
 
-        expect(rects[1].width):toBe(110.0)
-        expect(rects[2].x):toBe(150.0)
-    end)
+                expect(rects[1].width):toBe(110.0)
+                expect(rects[2].x):toBe(150.0)
+            end
+        )
 
-    it("measures a layer as the largest of its children", function(): unit
-        local stack: ui.Node = ui.Node.layer({
-            blank(40.0, 60.0), blank(90.0, 20.0),
-        })
+        it(
+            "measures a layer as the largest of its children",
+            function(): unit
+                local stack: ui.Node = ui.Node.layer({blank(40.0, 60.0), blank(90.0, 20.0)})
 
-        local size: box.Intrinsic = stack:measure(nil)
-        expect(size.preferred_width):toBe(90.0)
-        expect(size.preferred_height):toBe(60.0)
-    end)
+                local size: box.Intrinsic = stack:measure(nil)
+                expect(size.preferred_width):toBe(90.0)
+                expect(size.preferred_height):toBe(60.0)
+            end
+        )
 
-    it("takes a band's height from the entity rather than the caller", function(): unit
-        local stack: ui.Node = ui.Node.flow(
-            { blank(40.0, 20.0), blank(40.0, 30.0) },
-            box.column(5.0, "start", "start"))
+        it(
+            "takes a band's height from the entity rather than the caller",
+            function(): unit
+                local stack: ui.Node = ui.Node.flow(
+                    {blank(40.0, 20.0), blank(40.0, 30.0)},
+                    box.column(5.0, "start", "start")
+                )
 
-        local height: f64 = stack:measure(nil).preferred_height
-        local band: box.Rect = box.rect(10.0, 5.0, 300.0, height)
-        expect(band.x):toBe(10.0)
-        expect(band.y):toBe(5.0)
-        expect(band.width):toBe(300.0)
-        expect(band.height):toBe(55.0)
+                local height: f64 = stack:measure(nil).preferred_height
+                local band: box.Rect = box.rect(10.0, 5.0, 300.0, height)
+                expect(band.x):toBe(10.0)
+                expect(band.y):toBe(5.0)
+                expect(band.width):toBe(300.0)
+                expect(band.height):toBe(55.0)
 
-        local hung: box.Rect = box.rect(10.0, 500.0 - height, 300.0, height)
-        expect(hung.y):toBe(445.0)
-        expect(hung.height):toBe(55.0)
-    end)
-end)
+                local hung: box.Rect = box.rect(10.0, 500.0 - height, 300.0, height)
+                expect(hung.y):toBe(445.0)
+                expect(hung.height):toBe(55.0)
+            end
+        )
+    end
+)
 
-describe("type-sized entities", function(): unit
-    it("measures a label against the font it would draw with", function(): unit
-        local line: ui.Node = label.left("ABC", 10.0, "#ffffff")
+describe(
+    "type-sized entities",
+    function(): unit
+        it(
+            "measures a label against the font it would draw with",
+            function(): unit
+                local line: ui.Node = label.left("ABC", 10.0, "#ffffff")
 
-        local size: box.Intrinsic = line:measure(nil)
-        -- Headless, that font is the built-in bitmap one: six pixels of
-        -- advance on an eight-pixel em.
-        expect(size.preferred_width):toBe(22.5)
-        expect(size.preferred_height):toBe(10.0)
-        -- The engine prints on the box's bottom edge.
-        expect(size.baseline):toBe(10.0)
-    end)
+                local size: box.Intrinsic = line:measure(nil)
+                -- Headless, that font is the built-in bitmap one: six pixels of
+                -- advance on an eight-pixel em.
+                expect(size.preferred_width):toBe(22.5)
+                expect(size.preferred_height):toBe(10.0)
+                -- The engine prints on the box's bottom edge.
+                expect(size.baseline):toBe(10.0)
+            end
+        )
 
-    it("sizes a capsule from its own label", function(): unit
-        local short: box.Intrinsic = capsule.node("PASS", true):measure(nil)
-        local long: box.Intrinsic = capsule.node("MAKE SWAP", true):measure(nil)
+        it(
+            "sizes a capsule from its own label",
+            function(): unit
+                local short: box.Intrinsic = capsule.node("PASS", true):measure(nil)
+                local long: box.Intrinsic = capsule.node("MAKE SWAP", true):measure(nil)
 
-        expect(short.preferred_width):toBe(97.0)
-        expect(long.preferred_width):toBe(138.25)
-        expect(short.preferred_height):toBe(capsule.height)
-        -- Both capsules print on the same line whatever their width.
-        expect(short.baseline):toBe(long.baseline)
-    end)
+                expect(short.preferred_width):toBe(97.0)
+                expect(long.preferred_width):toBe(138.25)
+                expect(short.preferred_height):toBe(capsule.height)
+                -- Both capsules print on the same line whatever their width.
+                expect(short.baseline):toBe(long.baseline)
+            end
+        )
 
-    it("routes a pointer through the capsule bounds the bar arranged", function(): unit
-        local actions: {action_bar.Action} = {
-            action_bar.action("MAKE SWAP", true),
-            action_bar.action("PASS", true),
-        }
-        local first: ui.Node = capsule.node(actions[0].text, true):accept_pointer(0)
-        local second: ui.Node = capsule.node(actions[1].text, true):accept_pointer(1)
-        local bar: ui.Node = ui.Node.flow(
-            { first, second }, action_bar.bar_style())
-        bar:measure(nil)
-        bar:arrange(0.0, 100.0, 400.0, capsule.height)
+        it(
+            "routes a pointer through the capsule bounds the bar arranged",
+            function(): unit
+                local actions: {action_bar.Action} = {
+                    action_bar.action("MAKE SWAP", true),
+                    action_bar.action("PASS", true)
+                }
+                local first: ui.Node = capsule.node(actions[0].text, true):accept_pointer(0)
+                local second: ui.Node = capsule.node(actions[1].text, true):accept_pointer(1)
+                local bar: ui.Node = ui.Node.flow({first, second}, action_bar.bar_style())
+                bar:measure(nil)
+                bar:arrange(0.0, 100.0, 400.0, capsule.height)
 
-        -- The row is centred, so the pair starts 63 in: 400 less the 163 and
-        -- 97 capsules and the 14 between them, halved.
-        expect(bar:hit(100.0, 110.0)):toBe(0)
-        expect(bar:hit(300.0, 110.0)):toBe(1)
-        expect(bar:hit(10.0, 110.0)):toBe(-1)
-        expect(bar:hit(100.0, 200.0)):toBe(-1)
-    end)
+                -- The row is centred, so the pair starts 63 in: 400 less the 163 and
+                -- 97 capsules and the 14 between them, halved.
+                expect(bar:hit(100.0, 110.0)):toBe(0)
+                expect(bar:hit(300.0, 110.0)):toBe(1)
+                expect(bar:hit(10.0, 110.0)):toBe(-1)
+                expect(bar:hit(100.0, 200.0)):toBe(-1)
+            end
+        )
 
-    it("sets a verdict's two figures side by side and centred", function(): unit
-        local page: box.Rect = box.rect(0.0, 0.0, 600.0, 200.0)
-        local pair: ui.Node = verdict.ledger("GOLD HELD", 7, "TARGET", 12)
-        local size: box.Intrinsic = pair:measure(nil)
+        it(
+            "sets a verdict's two figures side by side and centred",
+            function(): unit
+                local page: box.Rect = box.rect(0.0, 0.0, 600.0, 200.0)
+                local pair: ui.Node = verdict.ledger("GOLD HELD", 7, "TARGET", 12)
+                local size: box.Intrinsic = pair:measure(nil)
 
-        -- Two figures and the daylight between them, and a box that will take
-        -- the whole width the page stretches it to so the pair sits centred.
-        expect(size.preferred_width > verdict.ledger_gap):toBe(true)
-        expect(size.max_width > size.preferred_width):toBe(true)
+                -- Two figures and the daylight between them, and a box that will take
+                -- the whole width the page stretches it to so the pair sits centred.
+                expect(size.preferred_width > verdict.ledger_gap):toBe(true)
+                expect(size.max_width > size.preferred_width):toBe(true)
 
-        local placed: {box.Rect} = arrange(
-            { pair },
-            box.row(0.0, "center", "start"),
-            page)
-        expect(placed[0].x + placed[0].width * 0.5):toBe(300.0)
-    end)
+                local placed: {box.Rect} = arrange({pair}, box.row(0.0, "center", "start"), page)
+                expect(placed[0].x + placed[0].width * 0.5):toBe(300.0)
+            end
+        )
 
-    it("keeps a modal on one page until its body outgrows it", function(): unit
-        local short: box.Intrinsic = modal.node(
-            "TITLE", "SUB", modal.column({ modal.body_line("ONE") }, 10.0)
-        ):measure(nil)
-        -- A short body does not shrink the page: an empty ledger and a full
-        -- one are the same screen.
-        expect(short.preferred_width):toBe(776.0)
-        expect(short.preferred_height):toBe(476.0)
+        it(
+            "keeps a modal on one page until its body outgrows it",
+            function(): unit
+                local short: box.Intrinsic = modal.node(
+                    "TITLE",
+                    "SUB",
+                    modal.column({modal.body_line("ONE")}, 10.0)
+                ):measure(nil)
+                -- A short body does not shrink the page: an empty ledger and a full
+                -- one are the same screen.
+                expect(short.preferred_width):toBe(776.0)
+                expect(short.preferred_height):toBe(476.0)
 
-        local lines: {ui.Node} = {}
-        for _ = 1::i32, 40::i32 do
-            table.insert(lines, modal.body_line("A LINE OF BODY TYPE"))
-        end
-        local tall: box.Intrinsic = modal.node(
-            "TITLE", "SUB", modal.column(lines, 10.0)):measure(nil)
-        expect(tall.preferred_height > short.preferred_height):toBe(true)
+                local lines: {ui.Node} = {}
+                for _ = 1::i32, 40::i32 do
+                    table.insert(lines, modal.body_line("A LINE OF BODY TYPE"))
+                end
+                local tall: box.Intrinsic = modal.node(
+                    "TITLE",
+                    "SUB",
+                    modal.column(lines, 10.0)
+                ):measure(nil)
+                expect(tall.preferred_height > short.preferred_height):toBe(true)
 
-        -- A line wider than the page widens the shell rather than being
-        -- clipped by it.
-        local wide: box.Intrinsic = modal.node(
-            "TITLE", "SUB",
-            modal.column({ modal.body_line(
-                "A LINE OF BODY TYPE FAR TOO LONG FOR THE PAGE IT IS SET ON,"
-                    .. " WHICH THE SHELL HAS TO GROW TO HOLD") }, 10.0)
-        ):measure(nil)
-        expect(wide.preferred_width > short.preferred_width):toBe(true)
-    end)
-end)
+                -- A line wider than the page widens the shell rather than being
+                -- clipped by it.
+                local wide: box.Intrinsic = modal.node(
+                    "TITLE",
+                    "SUB",
+                    modal.column(
+                        {
+                            modal.body_line(
+                                "A LINE OF BODY TYPE FAR TOO LONG FOR THE PAGE IT IS SET ON," .. " WHICH THE SHELL HAS TO GROW TO HOLD"
+                            )
+                        },
+                        10.0
+                    )
+                ):measure(nil)
+                expect(wide.preferred_width > short.preferred_width):toBe(true)
+            end
+        )
+    end
+)
 
 -- The modifiers. A modified entity answers the same two questions as the one it
 -- wraps, so what is asserted here is what layout above it will read. Where the
 -- content lands inside a padded box is a paint-time question, and paint needs a
 -- surface, so that is covered by the browser suite rather than here.
-describe("modifiers", function(): unit
-    it("grows an entity by the room around it", function(): unit
-        local padded: box.Intrinsic =
-            blank(40.0, 20.0):padded(4.0, 3.0):measure(nil)
+describe(
+    "modifiers",
+    function(): unit
+        it(
+            "grows an entity by the room around it",
+            function(): unit
+                local padded: box.Intrinsic = blank(40.0, 20.0):padded(4.0, 3.0):measure(nil)
 
-        expect(padded.preferred_width):toBe(48.0)
-        expect(padded.preferred_height):toBe(26.0)
-        expect(padded.min_width):toBe(48.0)
-        expect(padded.min_height):toBe(26.0)
-    end)
+                expect(padded.preferred_width):toBe(48.0)
+                expect(padded.preferred_height):toBe(26.0)
+                expect(padded.min_width):toBe(48.0)
+                expect(padded.min_height):toBe(26.0)
+            end
+        )
 
-    it("carries a line's baseline down with its padding", function(): unit
-        local line: ui.Node = label.left("AB", 10.0, "#ffffff")
-        expect(line:measure(nil).baseline):toBe(10.0)
+        it(
+            "carries a line's baseline down with its padding",
+            function(): unit
+                local line: ui.Node = label.left("AB", 10.0, "#ffffff")
+                expect(line:measure(nil).baseline):toBe(10.0)
 
-        local boxed: box.Intrinsic =
-            line:padding(box.edges(2.0, 3.0, 4.0, 5.0)):measure(nil)
+                local boxed: box.Intrinsic = line:padding(
+                    box.edges(2.0, 3.0, 4.0, 5.0)
+                ):measure(nil)
 
-        -- Down by the top inset only, and wider by both horizontal insets.
-        expect(boxed.baseline):toBe(13.0)
-        expect(boxed.preferred_width):toBe(21.0)
-        expect(boxed.preferred_height):toBe(18.0)
-    end)
+                -- Down by the top inset only, and wider by both horizontal insets.
+                expect(boxed.baseline):toBe(13.0)
+                expect(boxed.preferred_width):toBe(21.0)
+                expect(boxed.preferred_height):toBe(18.0)
+            end
+        )
 
-    it("leaves an entity with no baseline without one", function(): unit
-        local padded: box.Intrinsic =
-            blank(10.0, 10.0):padded(4.0, 4.0):measure(nil)
-        expect(padded.baseline):toBe(-1.0)
-    end)
+        it(
+            "leaves an entity with no baseline without one",
+            function(): unit
+                local padded: box.Intrinsic = blank(10.0, 10.0):padded(4.0, 4.0):measure(nil)
+                expect(padded.baseline):toBe(-1.0)
+            end
+        )
 
-    it("holds a floor under a width without shrinking a wider entity", function(): unit
-        local floored: box.Intrinsic = blank(40.0, 20.0):min_width(90.0):measure(nil)
-        expect(floored.preferred_width):toBe(90.0)
-        expect(floored.min_width):toBe(90.0)
-        -- The floor is a floor, not a size: height is untouched.
-        expect(floored.preferred_height):toBe(20.0)
+        it(
+            "holds a floor under a width without shrinking a wider entity",
+            function(): unit
+                local floored: box.Intrinsic = blank(40.0, 20.0):min_width(90.0):measure(nil)
+                expect(floored.preferred_width):toBe(90.0)
+                expect(floored.min_width):toBe(90.0)
+                -- The floor is a floor, not a size: height is untouched.
+                expect(floored.preferred_height):toBe(20.0)
 
-        local already: box.Intrinsic = blank(120.0, 20.0):min_width(90.0):measure(nil)
-        expect(already.preferred_width):toBe(120.0)
-    end)
+                local already: box.Intrinsic = blank(120.0, 20.0):min_width(90.0):measure(nil)
+                expect(already.preferred_width):toBe(120.0)
+            end
+        )
 
-    it("lines a table's columns up whatever its cells measure", function(): unit
-        -- This is the guarantee the breach ledger's columns rest on: two cells
-        -- holding type of very different widths start the next column in the
-        -- same place.
-        local narrow: ui.Node = label.left("A", 13.0, "#ffffff"):min_width(120.0)
-        local broad: ui.Node =
-            label.left("ROBBERS +12", 13.0, "#ffffff"):min_width(120.0)
+        it(
+            "lines a table's columns up whatever its cells measure",
+            function(): unit
+                -- This is the guarantee the breach ledger's columns rest on: two cells
+                -- holding type of very different widths start the next column in the
+                -- same place.
+                local narrow: ui.Node = label.left("A", 13.0, "#ffffff"):min_width(120.0)
+                local broad: ui.Node = label.left("ROBBERS +12", 13.0, "#ffffff"):min_width(120.0)
 
-        expect(broad:measure(nil).preferred_width)
-            :toBe(narrow:measure(nil).preferred_width)
-    end)
+                expect(broad:measure(nil).preferred_width):toBe(narrow:measure(nil).preferred_width)
+            end
+        )
 
-    it("holds a floor under a height", function(): unit
-        local floored: box.Intrinsic = blank(40.0, 20.0):min_height(50.0):measure(nil)
-        expect(floored.preferred_height):toBe(50.0)
-        expect(floored.preferred_width):toBe(40.0)
-    end)
+        it(
+            "holds a floor under a height",
+            function(): unit
+                local floored: box.Intrinsic = blank(40.0, 20.0):min_height(50.0):measure(nil)
+                expect(floored.preferred_height):toBe(50.0)
+                expect(floored.preferred_width):toBe(40.0)
+            end
+        )
 
-    it("chains", function(): unit
-        local stacked: box.Intrinsic =
-            blank(40.0, 20.0):padded(5.0, 5.0):min_width(100.0):measure(nil)
-        expect(stacked.preferred_width):toBe(100.0)
-        expect(stacked.preferred_height):toBe(30.0)
-    end)
-end)
+        it(
+            "chains",
+            function(): unit
+                local stacked: box.Intrinsic = blank(
+                    40.0,
+                    20.0
+                ):padded(5.0, 5.0):min_width(100.0):measure(nil)
+                expect(stacked.preferred_width):toBe(100.0)
+                expect(stacked.preferred_height):toBe(30.0)
+            end
+        )
+    end
+)
 
-describe("named flow options", function(): unit
-    it("stacks children down a column", function(): unit
-        local size: box.Intrinsic = ui.Node.down(
-            { gap = 6.0 }, { blank(40.0, 20.0), blank(60.0, 30.0) }
-        ):measure(nil)
+describe(
+    "named flow options",
+    function(): unit
+        it(
+            "stacks children down a column",
+            function(): unit
+                local size: box.Intrinsic = ui.Node.down(
+                    { gap = 6.0 },
+                    {blank(40.0, 20.0), blank(60.0, 30.0)}
+                ):measure(nil)
 
-        expect(size.preferred_width):toBe(60.0)
-        expect(size.preferred_height):toBe(56.0)
-    end)
+                expect(size.preferred_width):toBe(60.0)
+                expect(size.preferred_height):toBe(56.0)
+            end
+        )
 
-    it("lays children across a row", function(): unit
-        local size: box.Intrinsic = ui.Node.across(
-            { gap = 10.0 }, { blank(40.0, 20.0), blank(60.0, 30.0) }
-        ):measure(nil)
+        it(
+            "lays children across a row",
+            function(): unit
+                local size: box.Intrinsic = ui.Node.across(
+                    { gap = 10.0 },
+                    {blank(40.0, 20.0), blank(60.0, 30.0)}
+                ):measure(nil)
 
-        expect(size.preferred_width):toBe(110.0)
-        expect(size.preferred_height):toBe(30.0)
-    end)
+                expect(size.preferred_width):toBe(110.0)
+                expect(size.preferred_height):toBe(30.0)
+            end
+        )
 
-    it("means the same thing as the style it names", function(): unit
-        local children: {ui.Node} = { blank(40.0, 20.0), blank(60.0, 30.0) }
-        local named: box.Intrinsic = ui.Node.across(
-            { gap = 10.0, justify = "center", align = "end" },
-            children):measure(nil)
-        local spelled: box.Intrinsic = ui.Node.flow(
-            children,
-            box.row(10.0, "center", "end")):measure(nil)
+        it(
+            "means the same thing as the style it names",
+            function(): unit
+                local children: {ui.Node} = {blank(40.0, 20.0), blank(60.0, 30.0)}
+                local named: box.Intrinsic = ui.Node.across(
+                    { gap = 10.0, justify = "center", align = "end" },
+                    children
+                ):measure(nil)
+                local spelled: box.Intrinsic = ui.Node.flow(
+                    children,
+                    box.row(10.0, "center", "end")
+                ):measure(nil)
 
-        expect(named.preferred_width):toBe(spelled.preferred_width)
-        expect(named.preferred_height):toBe(spelled.preferred_height)
-    end)
+                expect(named.preferred_width):toBe(spelled.preferred_width)
+                expect(named.preferred_height):toBe(spelled.preferred_height)
+            end
+        )
 
-    it("takes options it is not given as they come", function(): unit
-        -- Only the gap is named, so the row keeps a start justify and a start
-        -- align, which is what an unnamed option means.
-        local children: {ui.Node} = { blank(40.0, 20.0), blank(60.0, 30.0) }
-        local rects: {box.Rect} = arrange(
-            children, box.row(0.0, "start", "start"),
-            box.rect(0.0, 0.0, 200.0, 40.0))
-        local defaulted: box.Intrinsic =
-            ui.Node.across({ gap = 0.0 }, children):measure(nil)
+        it(
+            "takes options it is not given as they come",
+            function(): unit
+                -- Only the gap is named, so the row keeps a start justify and a start
+                -- align, which is what an unnamed option means.
+                local children: {ui.Node} = {blank(40.0, 20.0), blank(60.0, 30.0)}
+                local rects: {box.Rect} = arrange(
+                    children,
+                    box.row(0.0, "start", "start"),
+                    box.rect(0.0, 0.0, 200.0, 40.0)
+                )
+                local defaulted: box.Intrinsic = ui.Node.across(
+                    { gap = 0.0 },
+                    children
+                ):measure(nil)
 
-        expect(rects[0].x):toBe(0.0)
-        expect(defaulted.preferred_width):toBe(100.0)
-    end)
-end)
+                expect(rects[0].x):toBe(0.0)
+                expect(defaulted.preferred_width):toBe(100.0)
+            end
+        )
+    end
+)

@@ -1,7 +1,6 @@
 -- The band across the top of the duel: the ordinary hand or boss rounds.
 --
 -- The breach orbs sit centred in the header band across the top of the board.
-
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../ui/layout")
@@ -12,12 +11,10 @@ export type Stateful = { track: orb_track.Stateful, root: ui.Node }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
     local track: orb_track.Stateful = orb_track.Stateful.new(state)
-    return { track = track, root = ui.Node.across({
-        justify = "center",
-        align = "center",
-    }, {
-        track.root,
-    }) }
+    return {
+        track = track,
+        root = ui.Node.across({ justify = "center", align = "center" }, {track.root})
+    }
 end
 
 function Stateful:present(state: game.View, run: run_module.View): unit
@@ -28,6 +25,4 @@ function node(state: game.View, run: run_module.View): ui.Node
     return Stateful.new(state, run).root
 end
 
-return {
-    node = node,
-}
+return { node = node }

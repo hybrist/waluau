@@ -11,7 +11,6 @@
 -- route furniture and then the surrounding city drop away, so what is left
 -- growing into the frame is the one house being entered — its dark interior
 -- becomes the room the duel's own backdrop fades in behind.
-
 local engine = require("waluau:engine")
 local ink = require("./ink")
 local city_map = require("./city_map")
@@ -40,29 +39,35 @@ const VENDOR_INK: string = "#67e8f9"
 const VENDOR_DIM: string = "#4a5560"
 
 function roof_tone(tone: i32): string
-    if tone == 0 then return "#151620" end
-    if tone == 1 then return "#191821" end
-    if tone == 2 then return "#131922" end
+    if tone == 0 then
+        return "#151620"
+    end
+    if tone == 1 then
+        return "#191821"
+    end
+    if tone == 2 then
+        return "#131922"
+    end
     return "#1b1720"
 end
 
 function draw_rooftop(graphics: Graphics, building: city_map.Building, alpha: f64): unit
     graphics:set_color(ink.fade("#07080d", alpha))
-    graphics:fill_rectangle(
-        building.x + 3.0, building.y + 4.0,
-        building.width, building.height)
+    graphics:fill_rectangle(building.x + 3.0, building.y + 4.0, building.width, building.height)
     graphics:set_color(ink.fade(roof_tone(building.tone), alpha))
-    graphics:fill_rectangle(
-        building.x, building.y, building.width, building.height)
+    graphics:fill_rectangle(building.x, building.y, building.width, building.height)
     graphics:set_color(ink.fade("#292b36", alpha))
     graphics:set_line_width(1.0)
-    graphics:stroke_rectangle(
-        building.x, building.y, building.width, building.height)
+    graphics:stroke_rectangle(building.x, building.y, building.width, building.height)
 
     local unit_x: f64 = building.x + building.width * 0.5 - 7.0
     local unit_y: f64 = building.y + building.height * 0.5 - 5.0
-    if building.detail == 1 then unit_x = building.x + 9.0 end
-    if building.detail == 2 then unit_y = building.y + 9.0 end
+    if building.detail == 1 then
+        unit_x = building.x + 9.0
+    end
+    if building.detail == 2 then
+        unit_y = building.y + 9.0
+    end
     graphics:set_color(ink.fade("#0d0f16", alpha))
     graphics:fill_rectangle(unit_x, unit_y, 14.0, 10.0)
     graphics:set_color(ink.fade("#30323d", alpha))
@@ -84,9 +89,13 @@ function draw_street_marks(
     alpha: f64
 ): unit
     local first: i32 = math.floor(along_low / 28.0)::i32 * 28
-    if first < 8 then first = 8 end
+    if first < 8 then
+        first = 8
+    end
     local last: i32 = math.floor(along_high)::i32 + 28
-    if last > limit - 8 then last = limit - 8 end
+    if last > limit - 8 then
+        last = limit - 8
+    end
     graphics:set_color(ink.fade("#252833", alpha))
     graphics:set_line_width(1.0)
     for street in streets do
@@ -103,28 +112,42 @@ function draw_street_marks(
 end
 
 function clamp(value: f64, low: f64, high: f64): f64
-    if value < low then return low end
-    if value > high then return high end
+    if value < low then
+        return low
+    end
+    if value > high then
+        return high
+    end
     return value
 end
 
 -- 0 at or below `low`, 1 at or above `high`, eased between them.
 function ramp(value: f64, low: f64, high: f64): f64
-    if value <= low then return 0.0 end
-    if value >= high then return 1.0 end
+    if value <= low then
+        return 0.0
+    end
+    if value >= high then
+        return 1.0
+    end
     local progress: f64 = (value - low) / (high - low)
     return progress * progress * (3.0 - 2.0 * progress)
 end
 
 function draw_streak(state: city_map.State, graphics: Graphics, color: string, alpha: f64): unit
-    if state.streak_clock < 0.0 or state.streak_clock > state.streak_duration then return end
+    if state.streak_clock < 0.0 or state.streak_clock > state.streak_duration then
+        return
+    end
     local progress: f64 = state.streak_clock / state.streak_duration
     local travel: f64 = city_map.width + STREAK_LENGTH * 2.0
-    if not state.streak_horizontal then travel = city_map.height + STREAK_LENGTH * 2.0 end
+    if not state.streak_horizontal then
+        travel = city_map.height + STREAK_LENGTH * 2.0
+    end
     local head: f64 = -STREAK_LENGTH + travel * progress
     local tail: f64 = head - STREAK_LENGTH
     local limit: f64 = city_map.width
-    if not state.streak_horizontal then limit = city_map.height end
+    if not state.streak_horizontal then
+        limit = city_map.height
+    end
     if not state.streak_forward then
         head = limit - head
         tail = limit - tail
@@ -158,24 +181,27 @@ end
 
 -- A dashed run between two points, walked in even steps so corners of the route
 -- keep the same rhythm as its straights.
-function dashed_line(
-    graphics: Graphics,
-    from_x: f64, from_y: f64,
-    into_x: f64, into_y: f64
-): unit
+function dashed_line(graphics: Graphics, from_x: f64, from_y: f64, into_x: f64, into_y: f64): unit
     local span_x: f64 = into_x - from_x
     local span_y: f64 = into_y - from_y
     local length: f64 = math.sqrt(span_x * span_x + span_y * span_y)
-    if length < 1.0 then return end
+    if length < 1.0 then
+        return
+    end
     local step_x: f64 = span_x / length
     local step_y: f64 = span_y / length
     local walked: f64 = 0.0
     while walked < length do
         local ends: f64 = walked + DASH_LENGTH
-        if ends > length then ends = length end
+        if ends > length then
+            ends = length
+        end
         graphics:line(
-            from_x + step_x * walked, from_y + step_y * walked,
-            from_x + step_x * ends, from_y + step_y * ends)
+            from_x + step_x * walked,
+            from_y + step_y * walked,
+            from_x + step_x * ends,
+            from_y + step_y * ends
+        )
         walked = ends + DASH_GAP
     end
 end
@@ -186,7 +212,9 @@ function draw_route_ahead(state: city_map.State, graphics: Graphics, alpha: f64)
     local last: i32 = state:stop_count() - 1
     local standing: Point = state:position_at(state.travel)
     local next_stop: i32 = math.floor(state.travel)::i32 + 1
-    if next_stop > last then return end
+    if next_stop > last then
+        return
+    end
     graphics:set_color(ink.fade(ROUTE_AHEAD, alpha * 0.85))
     graphics:set_line_width(2.0)
     local from_x: f64 = standing.x
@@ -208,21 +236,29 @@ function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64):
     if passed > state:stop_count() - 1 then
         passed = state:stop_count() - 1
     end
-    if passed < 0 then return end
+    if passed < 0 then
+        return
+    end
     graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.30))
     graphics:set_line_width(9.0)
     for index = 0::i32, passed - 1 do
         graphics:line(
-            state.stops[index].x, state.stops[index].y,
-            state.stops[index + 1].x, state.stops[index + 1].y)
+            state.stops[index].x,
+            state.stops[index].y,
+            state.stops[index + 1].x,
+            state.stops[index + 1].y
+        )
     end
     graphics:line(state.stops[passed].x, state.stops[passed].y, standing.x, standing.y)
     graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.92))
     graphics:set_line_width(2.5)
     for index = 0::i32, passed - 1 do
         graphics:line(
-            state.stops[index].x, state.stops[index].y,
-            state.stops[index + 1].x, state.stops[index + 1].y)
+            state.stops[index].x,
+            state.stops[index].y,
+            state.stops[index + 1].x,
+            state.stops[index + 1].y
+        )
     end
     graphics:line(state.stops[passed].x, state.stops[passed].y, standing.x, standing.y)
 end
@@ -248,7 +284,9 @@ function draw_duel_stop(
     label_alpha: f64
 ): unit
     local tone: string = VAULT_DIM
-    if reached then tone = VAULT_INK end
+    if reached then
+        tone = VAULT_INK
+    end
     graphics:set_color(ink.fade("#0b0c12", alpha))
     graphics:fill_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
     graphics:set_color(ink.fade(tone, alpha))
@@ -260,7 +298,9 @@ function draw_duel_stop(
         graphics:line(stop.x - 22.0, stop.y - 17.0, stop.x, stop.y - 31.0)
         graphics:line(stop.x, stop.y - 31.0, stop.x + 22.0, stop.y - 17.0)
     end
-    if label_alpha <= 0.0 then return end
+    if label_alpha <= 0.0 then
+        return
+    end
     -- The dial is the marker saying "duel", not part of the building: a house
     -- being walked into keeps its walls and gives that up, rather than hanging
     -- a storey-high disc in the room.
@@ -274,21 +314,16 @@ function draw_duel_stop(
     end
     graphics:set_color(ink.fade("#0b0c12", label_alpha * 0.9))
     graphics:fill_rectangle(stop.x - plate * 0.5, stop.y + 19.0, plate, 17.0)
-    ink.text_centered(
-        graphics, writing, stop.x, stop.y + 32.0, 10,
-        ink.fade(tone, label_alpha))
+    ink.text_centered(graphics, writing, stop.x, stop.y + 32.0, 10, ink.fade(tone, label_alpha))
 end
 
 -- A street vendor: a stall with an awning, small enough that the houses stay
 -- the landmarks of the route.
-function draw_vendor_stop(
-    graphics: Graphics,
-    stop: city_map.Stop,
-    reached: bool,
-    alpha: f64
-): unit
+function draw_vendor_stop(graphics: Graphics, stop: city_map.Stop, reached: bool, alpha: f64): unit
     local tone: string = VENDOR_DIM
-    if reached then tone = VENDOR_INK end
+    if reached then
+        tone = VENDOR_INK
+    end
     graphics:set_color(ink.fade("#0b0c12", alpha))
     graphics:fill_rectangle(stop.x - 11.0, stop.y - 4.0, 22.0, 14.0)
     graphics:set_color(ink.fade(tone, alpha))
@@ -304,7 +339,9 @@ end
 -- It is the only one that keeps its full weight through a dive: the others are
 -- map furniture, and the map is on its way out.
 function entered_stop(state: city_map.State): i32
-    if state.dive <= 0.0 then return -1 end
+    if state.dive <= 0.0 then
+        return -1
+    end
     return math.floor(state.target + 0.5)::i32
 end
 
@@ -314,7 +351,10 @@ end
 function draw_stops(
     state: city_map.State,
     graphics: Graphics,
-    left: f64, right: f64, top: f64, bottom: f64,
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
     alpha: f64,
     furniture: f64,
     landmark: i32
@@ -328,13 +368,25 @@ function draw_stops(
             local final: bool = index == landmark
             if index == entered then
                 draw_duel_stop(
-                    graphics, stop, tostring(city_map.stop_duel(index)),
-                    reached, final, alpha, furniture)
+                    graphics,
+                    stop,
+                    tostring(city_map.stop_duel(index)),
+                    reached,
+                    final,
+                    alpha,
+                    furniture
+                )
             elseif furniture > 0.0 then
                 if stop.duel then
                     draw_duel_stop(
-                        graphics, stop, tostring(city_map.stop_duel(index)),
-                        reached, final, furniture, furniture)
+                        graphics,
+                        stop,
+                        tostring(city_map.stop_duel(index)),
+                        reached,
+                        final,
+                        furniture,
+                        furniture
+                    )
                 else
                     draw_vendor_stop(graphics, stop, reached, furniture)
                 end
@@ -376,10 +428,14 @@ function draw(
     alpha: f64,
     landmark: i32
 ): unit
-    if alpha <= 0.0 then return end
+    if alpha <= 0.0 then
+        return
+    end
     -- A map that owns the frame clears it; one handing the screen to a duel
     -- must leave the duel underneath it to come through.
-    if alpha >= 1.0 then graphics:clear(NIGHT) end
+    if alpha >= 1.0 then
+        graphics:clear(NIGHT)
+    end
     graphics:set_color(ink.fade(ASPHALT, alpha))
     graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)
 
@@ -399,25 +455,42 @@ function draw(
         apply_camera(state, graphics)
         graphics:set_color(ink.fade(BLOCK, city_ink))
         for building in state.buildings do
-            if building.x + building.width >= left and building.x <= right
-                and building.y + building.height >= top and building.y <= bottom then
+            if building.x + building.width >= left and building.x <= right and building.y + building.height >= top and building.y <= bottom then
                 graphics:fill_rectangle(
-                    building.x - 5.0, building.y - 5.0,
-                    building.width + 10.0, building.height + 10.0)
+                    building.x - 5.0,
+                    building.y - 5.0,
+                    building.width + 10.0,
+                    building.height + 10.0
+                )
             end
         end
         for building in state.buildings do
-            if building.x + building.width >= left and building.x <= right
-                and building.y + building.height >= top and building.y <= bottom then
+            if building.x + building.width >= left and building.x <= right and building.y + building.height >= top and building.y <= bottom then
                 draw_rooftop(graphics, building, city_ink)
             end
         end
         draw_street_marks(
-            graphics, state.vertical_streets, true, city_map.height::i32,
-            left, right, top, bottom, city_ink)
+            graphics,
+            state.vertical_streets,
+            true,
+            city_map.height::i32,
+            left,
+            right,
+            top,
+            bottom,
+            city_ink
+        )
         draw_street_marks(
-            graphics, state.horizontal_streets, false, city_map.width::i32,
-            top, bottom, left, right, city_ink)
+            graphics,
+            state.horizontal_streets,
+            false,
+            city_map.width::i32,
+            top,
+            bottom,
+            left,
+            right,
+            city_ink
+        )
         draw_streak(state, graphics, streak_color, city_ink)
         graphics:pop()
     end
@@ -432,9 +505,10 @@ function draw(
         draw_route_ahead(state, graphics, furniture)
         draw_route_done(state, graphics, furniture)
     end
-    draw_stops(
-        state, graphics, left, right, top, bottom, alpha, furniture, landmark)
-    if furniture > 0.0 then draw_party(state, graphics, furniture) end
+    draw_stops(state, graphics, left, right, top, bottom, alpha, furniture, landmark)
+    if furniture > 0.0 then
+        draw_party(state, graphics, furniture)
+    end
     graphics:pop()
 end
 

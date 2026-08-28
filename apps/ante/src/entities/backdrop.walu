@@ -2,7 +2,6 @@
 -- diagonals that meet along its own edges. It takes whatever rectangle the
 -- board is, and the diagonals are struck at a fixed spacing, so a wider canvas
 -- gets more of them rather than a stretched few.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 
@@ -21,9 +20,7 @@ function draw_at(surface: ui.Surface, bounds: box.Rect): unit
     local columns: i32 = math.ceil(bounds.width / RULE_PITCH)::i32
     for column = 0::i32, columns do
         local x: f64 = (column::f64) * RULE_PITCH
-        graphics:line(
-            bounds.x + x, bounds.y,
-            bounds.x + bounds.width - x, bounds.y + bounds.height)
+        graphics:line(bounds.x + x, bounds.y, bounds.x + bounds.width - x, bounds.y + bounds.height)
     end
 end
 
@@ -32,10 +29,8 @@ function node(): ui.Node
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
             box.set_fixed(into, 0.0, 0.0)
         end,
-        draw_at)
+        draw_at
+    )
 end
 
-return {
-    node = node,
-    draw_at = draw_at,
-}
+return { node = node, draw_at = draw_at }

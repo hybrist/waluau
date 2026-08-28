@@ -108,11 +108,11 @@ function shop_slot_color(slot: shop_.Slot): string
 end
 
 function price_label(slot: Slot): Node
-    return
-        if slot.sold then
-            label.right("SOLD", ROW_TEXT_SIZE, SOLD_INK)
-        else
-            label.right(tostring(slot.price) .. " GOLD", ROW_TEXT_SIZE, PRICE_INK)
+    return if slot.sold then label.right(
+        "SOLD",
+        ROW_TEXT_SIZE,
+        SOLD_INK
+    ) else label.right(tostring(slot.price) .. " GOLD", ROW_TEXT_SIZE, PRICE_INK)
 end
 
 function shop_slot_button(slot: shop_.Slot, focused: bool): Node
@@ -124,10 +124,7 @@ function shop_slot_button(slot: shop_.Slot, focused: bool): Node
             align = "center",
             padding = entity_.even_padding(ROW_PAD_X, 0.0)
         },
-        {
-            label.left(label_text, ROW_TEXT_SIZE, tone),
-            price_label(slot),
-        }
+        {label.left(label_text, ROW_TEXT_SIZE, tone), price_label(slot)}
     )
     return Node.layer({button_background(focused), content}):wide()
 end
@@ -140,7 +137,7 @@ function header_node(state: ShopState, run: RunState): Node
 
     local right_col: Node = Node.down(
         { gap = GOLD_GAP, align = "end" },
-        { gold_label, on_hand_label }
+        {gold_label, on_hand_label}
     )
 
     return Node.across(
@@ -204,11 +201,7 @@ function shell(): Node
 end
 
 function body_items(state: ShopState, run: RunState): {Node}
-    return {
-        header_node(state, run),
-        Node.gap(0.0, HEADER_GAP),
-        rows_node(state, run),
-    }
+    return {header_node(state, run), Node.gap(0.0, HEADER_GAP), rows_node(state, run)}
 end
 
 function body_style(): box.Style
@@ -255,7 +248,4 @@ function hit(
     return -1
 end
 
-return {
-    node = node,
-    hit = hit
-}
+return { node = node, hit = hit }

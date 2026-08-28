@@ -2,71 +2,97 @@
 -- a settled round leaves standing. Its slots are also animation anchors, so
 -- these assertions are as much about where a dealt card lands as about where
 -- one is drawn.
-
 require("waluau:vitest")
 
 local box = require("../ui/layout")
 local card = require("./card")
 local card_row = require("./card_row")
 
-describe("card row", function(): unit
-    it("centres a three-table_card row on its authored pitch", function(): unit
-        local bounds = box.rect(0.0, 40.0, 324.0, card.height)
-        local slots = card_row.slot_rects(3, card_row.flat_pitch, bounds)
+describe(
+    "card row",
+    function(): unit
+        it(
+            "centres a three-table_card row on its authored pitch",
+            function(): unit
+                local bounds = box.rect(0.0, 40.0, 324.0, card.height)
+                local slots = card_row.slot_rects(3, card_row.flat_pitch, bounds)
 
-        expect(#slots):toBe(3)
-        expect(slots[0].x):toBe(0.0)
-        expect(slots[1].x):toBe(116.0)
-        expect(slots[2].x):toBe(232.0)
-        expect(slots[0].y):toBe(40.0)
-        expect(slots[2].x + slots[2].width):toBe(324.0)
-    end)
+                expect(#slots):toBe(3)
+                expect(slots[0].x):toBe(0.0)
+                expect(slots[1].x):toBe(116.0)
+                expect(slots[2].x):toBe(232.0)
+                expect(slots[0].y):toBe(40.0)
+                expect(slots[2].x + slots[2].width):toBe(324.0)
+            end
+        )
 
-    it("measures as the span its slots actually occupy", function(): unit
-        local three = card_row.intrinsic(3, card_row.flat_pitch)
-        local five = card_row.intrinsic(5, card_row.flat_pitch)
+        it(
+            "measures as the span its slots actually occupy",
+            function(): unit
+                local three = card_row.intrinsic(3, card_row.flat_pitch)
+                local five = card_row.intrinsic(5, card_row.flat_pitch)
 
-        expect(three.preferred_width):toBe(324.0)
-        expect(five.preferred_width):toBe(556.0)
-        expect(five.preferred_height):toBe(card.height)
-    end)
+                expect(three.preferred_width):toBe(324.0)
+                expect(five.preferred_width):toBe(556.0)
+                expect(five.preferred_height):toBe(card.height)
+            end
+        )
 
-    it("keeps the community cards where they were when the reveal pair arrives", function(): unit
-        -- The winner's pair flanks the five-card community on the same pitch,
-        -- so the public cards must not move out from under the reveal.
-        local table_cards = card_row.slot_rects(
-            5, card_row.flat_pitch, box.rect(-278.0, 0.0, 556.0, card.height))
-        local hand = card_row.slot_rects(
-            7, card_row.flat_pitch, box.rect(-394.0, 0.0, 788.0, card.height))
+        it(
+            "keeps the community cards where they were when the reveal pair arrives",
+            function(): unit
+                -- The winner's pair flanks the five-card community on the same pitch,
+                -- so the public cards must not move out from under the reveal.
+                local table_cards = card_row.slot_rects(
+                    5,
+                    card_row.flat_pitch,
+                    box.rect(-278.0, 0.0, 556.0, card.height)
+                )
+                local hand = card_row.slot_rects(
+                    7,
+                    card_row.flat_pitch,
+                    box.rect(-394.0, 0.0, 788.0, card.height)
+                )
 
-        expect(hand[1].x):toBe(table_cards[0].x)
-        expect(hand[3].x):toBe(table_cards[2].x)
-        expect(hand[5].x):toBe(table_cards[4].x)
-    end)
+                expect(hand[1].x):toBe(table_cards[0].x)
+                expect(hand[3].x):toBe(table_cards[2].x)
+                expect(hand[5].x):toBe(table_cards[4].x)
+            end
+        )
 
-    it("tightens its pitch rather than running off a narrow board", function(): unit
-        local roomy = box.rect(0.0, 0.0, 324.0, card.height)
-        local tight = box.rect(0.0, 0.0, 300.0, card.height)
+        it(
+            "tightens its pitch rather than running off a narrow board",
+            function(): unit
+                local roomy = box.rect(0.0, 0.0, 324.0, card.height)
+                local tight = box.rect(0.0, 0.0, 300.0, card.height)
 
-        expect(card_row.pitch_in(roomy, 3, card_row.flat_pitch)):toBe(116.0)
-        expect(card_row.pitch_in(tight, 3, card_row.flat_pitch)):toBe(104.0)
+                expect(card_row.pitch_in(roomy, 3, card_row.flat_pitch)):toBe(116.0)
+                expect(card_row.pitch_in(tight, 3, card_row.flat_pitch)):toBe(104.0)
 
-        local slots = card_row.slot_rects(
-            3, card_row.pitch_in(tight, 3, card_row.flat_pitch), tight)
-        expect(slots[0].x):toBe(0.0)
-        expect(slots[2].x + slots[2].width):toBe(300.0)
-    end)
+                local slots = card_row.slot_rects(
+                    3,
+                    card_row.pitch_in(tight, 3, card_row.flat_pitch),
+                    tight
+                )
+                expect(slots[0].x):toBe(0.0)
+                expect(slots[2].x + slots[2].width):toBe(300.0)
+            end
+        )
 
-    it("overlaps a boss battle's row instead of widening it", function(): unit
-        local bounds = box.rect(0.0, 0.0, 368.0, card.height)
-        local pitch = card_row.pitch_in(bounds, 7, card_row.flat_pitch)
-        -- Seven cards over a 276-unit span is a 46 pitch: half a card, so
-        -- every card covers half of its neighbour.
-        expect(pitch):toBe(46.0)
+        it(
+            "overlaps a boss battle's row instead of widening it",
+            function(): unit
+                local bounds = box.rect(0.0, 0.0, 368.0, card.height)
+                local pitch = card_row.pitch_in(bounds, 7, card_row.flat_pitch)
+                -- Seven cards over a 276-unit span is a 46 pitch: half a card, so
+                -- every card covers half of its neighbour.
+                expect(pitch):toBe(46.0)
 
-        local slots = card_row.slot_rects(7, pitch, bounds)
-        expect(slots[0].x):toBe(0.0)
-        expect(slots[6].x + slots[6].width):toBe(368.0)
-        expect(slots[1].x - slots[0].x):toBe(46.0)
-    end)
-end)
+                local slots = card_row.slot_rects(7, pitch, bounds)
+                expect(slots[0].x):toBe(0.0)
+                expect(slots[6].x + slots[6].width):toBe(368.0)
+                expect(slots[1].x - slots[0].x):toBe(46.0)
+            end
+        )
+    end
+)

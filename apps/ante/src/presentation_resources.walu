@@ -1,7 +1,6 @@
 -- Resource lifetime and failure policy for Ante Magic presentation assets.
 -- Engine callbacks ask this module to load, prepare, unlock, play, diagnose,
 -- and dispose; source/GPU ownership no longer leaks across the entry module.
-
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local resources = require("waluau:engine/resources")
@@ -50,17 +49,21 @@ function State.new(): State
         fatal_audio_code = "",
         fatal_audio_message = "",
         warnings = "",
-        shader_warnings = "",
+        shader_warnings = ""
     }
 end
 
 function State:append_warning(warning: string): unit
-    if #self.warnings > 0 then self.warnings ..= "; " end
+    if #self.warnings > 0 then
+        self.warnings ..= "; "
+    end
     self.warnings ..= warning
 end
 
 function State:fatal_audio(code: string, message: string): unit
-    if #self.fatal_audio_code > 0 then return end
+    if #self.fatal_audio_code > 0 then
+        return
+    end
     self.fatal_audio_code = code
     self.fatal_audio_message = message
 end
@@ -70,8 +73,11 @@ function State:load_async(): i32
     self.bundle = result.bundle
     self.sound_finished = true
     for _, error in result.errors do
-        if error.path == SOUND_PATH then self:fatal_audio(error.code, error.message)
-        else self:append_warning(error.code .. ": " .. error.message) end
+        if error.path == SOUND_PATH then
+            self:fatal_audio(error.code, error.message)
+        else
+            self:append_warning(error.code .. ": " .. error.message)
+        end
     end
     return 0
 end
@@ -96,8 +102,11 @@ function State:prepare(graphics: engine.Graphics): unit
             local result: graphics_module.TextureResult = graphics:texture_from_image(source)
             resources.release_image(source)
             bundle.card_back = nil
-            if result.ok then self.texture = result.texture
-            else self:append_warning(result.error.code .. ": " .. result.error.message) end
+            if result.ok then
+                self.texture = result.texture
+            else
+                self:append_warning(result.error.code .. ": " .. result.error.message)
+            end
         end
         local maybe_suits: resources.ImageResource? = bundle.suit_symbols
         if maybe_suits ~= nil then
@@ -105,8 +114,11 @@ function State:prepare(graphics: engine.Graphics): unit
             local result: graphics_module.TextureResult = graphics:texture_from_image(source)
             resources.release_image(source)
             bundle.suit_symbols = nil
-            if result.ok then self.suit_texture = result.texture
-            else self:append_warning(result.error.code .. ": " .. result.error.message) end
+            if result.ok then
+                self.suit_texture = result.texture
+            else
+                self:append_warning(result.error.code .. ": " .. result.error.message)
+            end
         end
         local maybe_noise: resources.ImageResource? = bundle.ice_noise
         if maybe_noise ~= nil then
@@ -114,8 +126,11 @@ function State:prepare(graphics: engine.Graphics): unit
             local result: graphics_module.TextureResult = graphics:texture_from_image(source)
             resources.release_image(source)
             bundle.ice_noise = nil
-            if result.ok then self.effects.noise_texture = result.texture
-            else self:append_warning(result.error.code .. ": " .. result.error.message) end
+            if result.ok then
+                self.effects.noise_texture = result.texture
+            else
+                self:append_warning(result.error.code .. ": " .. result.error.message)
+            end
         end
         local maybe_font_source: resources.FontResource? = bundle.vault_font
         if maybe_font_source ~= nil then
@@ -123,8 +138,11 @@ function State:prepare(graphics: engine.Graphics): unit
             local result: graphics_module.FontResult = graphics:font_from_typed_resource(source)
             resources.release_font(source)
             bundle.vault_font = nil
-            if result.ok then self.font = result.font
-            else self:append_warning(result.error.code .. ": " .. result.error.message) end
+            if result.ok then
+                self.font = result.font
+            else
+                self:append_warning(result.error.code .. ": " .. result.error.message)
+            end
         end
     end
 
@@ -133,11 +151,15 @@ function State:prepare(graphics: engine.Graphics): unit
     if maybe_font ~= nil then
         custom_font_ready = graphics:set_font_resource(maybe_font::graphics_module.Font, 14.0)
     end
-    if not custom_font_ready then graphics:use_builtin_font() end
+    if not custom_font_ready then
+        graphics:use_builtin_font()
+    end
 end
 
 function State:unlock_audio(): bool
-    if self.audio_unlocked then return true end
+    if self.audio_unlocked then
+        return true
+    end
     if not audio.unlock() then
         self:fatal_audio("unavailable", "the audio host could not unlock its playback device")
         return false
@@ -147,7 +169,9 @@ function State:unlock_audio(): bool
 end
 
 function State:play_flip(): unit
-    if #self.fatal_audio_code > 0 then return end
+    if #self.fatal_audio_code > 0 then
+        return
+    end
     local maybe_bundle: assets.Bundle? = self.bundle
     if maybe_bundle == nil then
         self:fatal_audio("invalid_handle", "decoded card flip sound has no resource handle")
@@ -158,8 +182,7 @@ function State:play_flip(): unit
         self:fatal_audio("invalid_handle", "decoded card flip sound has no resource handle")
         return
     end
-    if not audio.play_sound(
-        maybe_sound::resources.SoundResource, false, FLIP_SOUND_VOLUME) then
+    if not audio.play_sound(maybe_sound::resources.SoundResource, false, FLIP_SOUND_VOLUME) then
         print("ante: the audio host refused to start decoded sound playback")
     end
 end
@@ -176,7 +199,7 @@ function State:surface(graphics: engine.Graphics): ui.Surface
         graphics = graphics,
         effects = self.effects,
         card_back = self.texture,
-        suit_symbols = self.suit_texture,
+        suit_symbols = self.suit_texture
     }
 end
 
@@ -188,9 +211,7 @@ function State:draw_failure(graphics: engine.Graphics): bool
         return true
     end
     if #self.fatal_audio_code > 0 then
-        failure.audio(
-            board, viewport, SOUND_PATH, self.fatal_audio_code,
-            self.fatal_audio_message)
+        failure.audio(board, viewport, SOUND_PATH, self.fatal_audio_code, self.fatal_audio_message)
         return true
     end
     return false

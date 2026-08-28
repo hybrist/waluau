@@ -38,38 +38,51 @@ local book = ui_story.Book.new()
 -- mounted. The clock is a story's own and restarts with it.
 local shared = { clock = 0.0 }
 
-local face_suit = storybook.select("suit", 0::i32, {
-    storybook.choice("Red", 0::i32),
-    storybook.choice("Blue", 1::i32),
-    storybook.choice("Black", 2::i32),
-    storybook.choice("Green", 3::i32)
-})
+local face_suit = storybook.select(
+    "suit",
+    0::i32,
+    {
+        storybook.choice("Red", 0::i32),
+        storybook.choice("Blue", 1::i32),
+        storybook.choice("Black", 2::i32),
+        storybook.choice("Green", 3::i32)
+    }
+)
 local face_rank = storybook.range("rank", 13, 2, 14, 1)
 
 type Playback = "loop" | "scrub"
 type DealOrder = "left-first" | "right-first"
-local draw_playback = storybook.select("playback", "loop"::Playback, {
-    storybook.choice("Loop", "loop"::Playback),
-    storybook.choice("Scrub", "scrub"::Playback)
-})
+local draw_playback = storybook.select(
+    "playback",
+    "loop"::Playback,
+    {storybook.choice("Loop", "loop"::Playback), storybook.choice("Scrub", "scrub"::Playback)}
+)
 local draw_phase = storybook.range("phase", 0, 0, 100, 1)
 local draw_speed = storybook.range("speed", 130, 25, 300, 5)
 local draw_count = storybook.range("count", 3, 1, 5, 1)
-local draw_order = storybook.select("order", "left-first"::DealOrder, {
-    storybook.choice("Left first", "left-first"::DealOrder),
-    storybook.choice("Right first", "right-first"::DealOrder)
-})
+local draw_order = storybook.select(
+    "order",
+    "left-first"::DealOrder,
+    {
+        storybook.choice("Left first", "left-first"::DealOrder),
+        storybook.choice("Right first", "right-first"::DealOrder)
+    }
+)
 local draw_gap = storybook.range("gap", -5, -60, 40, 1)
 local draw_stagger = storybook.range("stagger", 15, 0, 100, 5)
 local draw_stretch = storybook.range("stretch", 160, 100, 200, 1)
 local draw_overshoot = storybook.range("overshoot", 30, 0, 40, 1)
 local draw_rise = storybook.range("rise", 270, 0, 400, 10)
-local draw_arc = storybook.select("arc", "very-late"::card_draw.Arc, {
-    storybook.choice("Even", "even"::card_draw.Arc),
-    storybook.choice("Late", "late"::card_draw.Arc),
-    storybook.choice("Very late", "very-late"::card_draw.Arc),
-    storybook.choice("Early", "early"::card_draw.Arc)
-})
+local draw_arc = storybook.select(
+    "arc",
+    "very-late"::card_draw.Arc,
+    {
+        storybook.choice("Even", "even"::card_draw.Arc),
+        storybook.choice("Late", "late"::card_draw.Arc),
+        storybook.choice("Very late", "very-late"::card_draw.Arc),
+        storybook.choice("Early", "early"::card_draw.Arc)
+    }
+)
 
 local function load(): unit
     shared.clock = 0.0
@@ -97,17 +110,20 @@ local function state(
 end
 
 local face_up_view: card_entity.Stateful = card_entity.Stateful.new(
-    card_entity.look(card(13, 0), false, false, false, false, false))
+    card_entity.look(card(13, 0), false, false, false, false, false)
+)
 
 local function present_face_up(): unit
-    face_up_view:present(card_entity.look(
-        card(face_rank.value(), storybook.selected<i32>(face_suit)),
-        false,
-        false,
-        false,
-        false,
-        false
-    ))
+    face_up_view:present(
+        card_entity.look(
+            card(face_rank.value(), storybook.selected<i32>(face_suit)),
+            false,
+            false,
+            false,
+            false,
+            false
+        )
+    )
 end
 
 local function face_up(): ui.Node
@@ -442,7 +458,8 @@ end
 -- A card story is one card entity on a small flex stage. The stage does not
 -- know a card's dimensions; it reads them from the entity on every frame.
 local function card_scene(node: () -> ui.Node, present: (() -> unit)?): storybook.Scene
-    return book:scene({
+    return book:scene(
+        {
             node = node,
             present = present,
             load = load,
@@ -470,7 +487,8 @@ storybook.publish(
         storybook.story("Turning over", card_scene(turning, nil)),
         storybook.story(
             "Every color",
-            book:scene({
+            book:scene(
+                {
                     node = colors,
                     load = load,
                     update = tick,
@@ -483,7 +501,8 @@ storybook.publish(
         ),
         storybook.story(
             "Drawn from the deck",
-            book:scene({
+            book:scene(
+                {
                     node = drawing_cards,
                     load = load,
                     update = tick,

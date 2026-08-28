@@ -10,10 +10,7 @@ local hand_fan = require("../entities/hand_fan")
 
 const HAND_CAPACITY: i32 = 7
 
-export type Action = {
-    kind: "none" | "hand" | "table-card" | "commit" | "modal",
-    index: i32,
-}
+export type Action = { kind: "none" | "hand" | "table-card" | "commit" | "modal", index: i32 }
 
 export type Frame = {
     viewport_width: f64,
@@ -27,7 +24,7 @@ export type Frame = {
     casting: bool,
     modal_open: bool,
     finished: bool,
-    play_pick_count: i32,
+    play_pick_count: i32
 }
 
 type Presentation = {
@@ -37,7 +34,7 @@ type Presentation = {
     fan_parts: {f64},
     hand_count: i32,
     table_count: i32,
-    pending: Action,
+    pending: Action
 }
 
 export opaque type State = {
@@ -53,7 +50,7 @@ export opaque type State = {
     commit_node: ui.Node,
     commit_target: router_module.Target,
     modal_node: ui.Node,
-    modal_target: router_module.Target,
+    modal_target: router_module.Target
 }
 
 function State:root_node(): ui.Node
@@ -89,8 +86,8 @@ function State:hand_enabled(index: i32): bool
     return self.hand_nodes[index]:is_enabled()
 end
 
-
-function empty_paint(surface: ui.Surface, bounds: box.Rect): unit end
+function empty_paint(surface: ui.Surface, bounds: box.Rect): unit
+end
 
 function handlers(
     presentation: Presentation,
@@ -104,9 +101,7 @@ function handlers(
     return callbacks
 end
 
-function State.new(
-    visual_children: {ui.Node}, table_nodes: {ui.Node}, commit_node: ui.Node
-): State
+function State.new(visual_children: {ui.Node}, table_nodes: {ui.Node}, commit_node: ui.Node): State
     local presentation: Presentation = {
         viewport_width = 0.0,
         viewport_height = 0.0,
@@ -114,17 +109,25 @@ function State.new(
         fan_parts = {},
         hand_count = 0,
         table_count = 0,
-        pending = { kind = "none", index = -1 },
+        pending = { kind = "none", index = -1 }
     }
     local hand_nodes: {ui.Node} = {}
     for index = 0::i32, HAND_CAPACITY - 1 do
         local slot_index: i32 = index
         local node: ui.Node = ui.Node.sized(card.width, card.height, empty_paint)
-        node:set_hit_test(function(bounds: box.Rect, x: f64, y: f64): bool
-            if slot_index >= presentation.hand_count then return false end
-            return hand_fan.hit(
-                presentation.fan_bounds, presentation.fan_parts, x, y) == slot_index
-        end)
+        node:set_hit_test(
+            function(bounds: box.Rect, x: f64, y: f64): bool
+                if slot_index >= presentation.hand_count then
+                    return false
+                end
+                return hand_fan.hit(
+                    presentation.fan_bounds,
+                    presentation.fan_parts,
+                    x,
+                    y
+                ) == slot_index
+            end
+        )
         table.insert(hand_nodes, node)
         table.insert(visual_children, node)
     end
@@ -136,19 +139,30 @@ function State.new(
     local modal_scope: i32 = router:add_scope("column", true)
     local hand_targets: {router_module.Target} = {}
     for index, node in hand_nodes do
-        table.insert(hand_targets, router:add(
-            node, board_scope, true, handlers(presentation, "hand", index)))
+        table.insert(
+            hand_targets,
+            router:add(node, board_scope, true, handlers(presentation, "hand", index))
+        )
     end
     local table_targets: {router_module.Target} = {}
     for index, node in table_nodes do
-        table.insert(table_targets, router:add(
-            node, board_scope, true,
-            handlers(presentation, "table-card", index)))
+        table.insert(
+            table_targets,
+            router:add(node, board_scope, true, handlers(presentation, "table-card", index))
+        )
     end
     local commit_target: router_module.Target = router:add(
-        commit_node, board_scope, true, handlers(presentation, "commit", 0))
+        commit_node,
+        board_scope,
+        true,
+        handlers(presentation, "commit", 0)
+    )
     local modal_target: router_module.Target = router:add(
-        modal_node, modal_scope, true, handlers(presentation, "modal", 0))
+        modal_node,
+        modal_scope,
+        true,
+        handlers(presentation, "modal", 0)
+    )
     router:activate_scope(board_scope)
     return {
         presentation = presentation,
@@ -163,14 +177,16 @@ function State.new(
         commit_node = commit_node,
         commit_target = commit_target,
         modal_node = modal_node,
-        modal_target = modal_target,
+        modal_target = modal_target
     }
 end
 
 function State:focused_hand(): i32
     local key: i32 = self.router:focused()
     for index, target in self.hand_targets do
-        if target.key == key then return index end
+        if target.key == key then
+            return index
+        end
     end
     return -1
 end
@@ -178,13 +194,17 @@ end
 function State:focused_table(): i32
     local key: i32 = self.router:focused()
     for index, target in self.table_targets do
-        if target.key == key then return index end
+        if target.key == key then
+            return index
+        end
     end
     return -1
 end
 
 function State:focus_hand(index: i32): bool
-    if index < 0 or index >= #self.hand_targets then return false end
+    if index < 0 or index >= #self.hand_targets then
+        return false
+    end
     -- Input can move focus between presentations, before the next draw has
     -- refreshed target visibility for the new mode.
     self.hand_targets[index]:set_visible(true)
@@ -192,7 +212,9 @@ function State:focus_hand(index: i32): bool
 end
 
 function State:focus_table(index: i32): bool
-    if index < 0 or index >= #self.table_targets then return false end
+    if index < 0 or index >= #self.table_targets then
+        return false
+    end
     self.table_targets[index]:set_visible(true)
     return self.router:focus(self.table_targets[index].key)
 end
@@ -201,12 +223,11 @@ end
 -- actionable between frames. Move to the next live card in the same row.
 function State:repair_table_focus(): bool
     local focused: i32 = self:focused_table()
-    if focused < 0 then return false end
+    if focused < 0 then
+        return false
+    end
     local count: i32 = self.presentation.table_count
-    if focused < count
-        and self.table_nodes[focused]:is_visible()
-        and self.table_nodes[focused]:is_enabled()
-    then
+    if focused < count and self.table_nodes[focused]:is_visible() and self.table_nodes[focused]:is_enabled() then
         return false
     end
     for offset = 1::i32, count - 1 do
@@ -234,8 +255,10 @@ function State:present(frame: Frame): unit
     for index, target in self.hand_targets do
         target:set_visible(board_live and not frame.casting and index < frame.hand_count)
         if index < frame.hand_count then
-            target:link("left", self.hand_targets[
-                (index + frame.hand_count - 1) % frame.hand_count])
+            target:link(
+                "left",
+                self.hand_targets[(index + frame.hand_count - 1) % frame.hand_count]
+            )
             target:link("right", self.hand_targets[(index + 1) % frame.hand_count])
             if frame.swap_open and frame.table_count > 0 then
                 target:link("up", self.table_targets[index % frame.table_count])
@@ -243,33 +266,36 @@ function State:present(frame: Frame): unit
         end
     end
     for index, target in self.table_targets do
-        target:set_visible(board_live
-            and (frame.swap_open or frame.casting)
-            and index < frame.table_count)
-        target:set_enabled(index < frame.table_count
-            and (frame.casting or not frame.frozen_table[index]))
+        target:set_visible(
+            board_live and (frame.swap_open or frame.casting) and index < frame.table_count
+        )
+        target:set_enabled(
+            index < frame.table_count and (frame.casting or not frame.frozen_table[index])
+        )
         if index < frame.table_count then
-            target:link("left", self.table_targets[
-                (index + frame.table_count - 1) % frame.table_count])
+            target:link(
+                "left",
+                self.table_targets[(index + frame.table_count - 1) % frame.table_count]
+            )
             target:link("right", self.table_targets[(index + 1) % frame.table_count])
             if frame.hand_count > 0 then
                 target:link("down", self.hand_targets[index % frame.hand_count])
             end
         end
     end
-    self.commit_target:set_visible(board_live
-        and (frame.swap_open or frame.play_pick_count == 2))
+    self.commit_target:set_visible(board_live and (frame.swap_open or frame.play_pick_count == 2))
     self.modal_target:set_visible(frame.modal_open)
-    if frame.modal_open then self.router:activate_scope(self.modal_scope)
-    else self.router:activate_scope(self.board_scope) end
+    if frame.modal_open then
+        self.router:activate_scope(self.modal_scope)
+    else
+        self.router:activate_scope(self.board_scope)
+    end
     if board_live and (frame.swap_open or frame.casting) then
         self:repair_table_focus()
     end
     if board_live and frame.casting and self:focused_table() < 0 then
         self:focus_table(0)
-    elseif board_live and not frame.casting
-        and not frame.swap_open and self:focused_table() >= 0
-    then
+    elseif board_live and not frame.casting and not frame.swap_open and self:focused_table() >= 0 then
         self:focus_hand(0)
     elseif board_live and self.router:focused() < 0 then
         self:focus_hand(0)
@@ -281,23 +307,29 @@ function State:arrange(): unit
     for index, node in self.hand_nodes do
         if index < presentation.hand_count then
             local bounds: box.Rect = hand_fan.slot_rect(
-                presentation.fan_bounds, index,
-                presentation.fan_parts[index], presentation.hand_count)
+                presentation.fan_bounds,
+                index,
+                presentation.fan_parts[index],
+                presentation.hand_count
+            )
             node:arrange(bounds.x, bounds.y, bounds.width, bounds.height)
         end
     end
-    self.modal_node:arrange(
-        0.0, 0.0, presentation.viewport_width, presentation.viewport_height)
+    self.modal_node:arrange(0.0, 0.0, presentation.viewport_width, presentation.viewport_height)
 end
 
 function State:fan_focus(animating: bool): i32
-    if animating then return hand_fan.closed end
+    if animating then
+        return hand_fan.closed
+    end
     return self:focused_hand()
 end
 
 function State:apply_hand_order(order: {i32}): unit
     local focused: i32 = self:focused_hand()
-    if focused < 0 then return end
+    if focused < 0 then
+        return
+    end
     for new_slot, old_slot in order do
         if old_slot == focused then
             self:focus_hand(new_slot)
@@ -308,7 +340,9 @@ end
 
 function State:pointer_move(x: f64, y: f64): i32
     local target: i32 = self.router:pointer_move(x, y)
-    if target >= 0 then self.router:focus(target) end
+    if target >= 0 then
+        self.router:focus(target)
+    end
     return target
 end
 

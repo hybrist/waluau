@@ -8,7 +8,6 @@
 -- the burn, and are drawn wherever the card they came off is standing. Their
 -- coordinates are card-local — the emitter sits at the card's centre — so a
 -- card burning inside the fan's rotation sheds along the card's own down.
-
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
 local game = require("./game")
@@ -56,7 +55,11 @@ const SHEET_GONE: f64 = 0.68
 
 function smooth_step(edge0: f64, edge1: f64, value: f64): f64
     local t: f64 = (value - edge0) / (edge1 - edge0)
-    if t < 0.0 then t = 0.0 elseif t > 1.0 then t = 1.0 end
+    if t < 0.0 then
+        t = 0.0
+    elseif t > 1.0 then
+        t = 1.0
+    end
     return t * t * (3.0 - 2.0 * t)
 end
 
@@ -64,24 +67,31 @@ end
 -- span. The reveal and every spell read their sheet's progress through this.
 function progress_over(clock: f64, start: f64, seconds: f64): f64
     local progress: f64 = (clock - start) / seconds
-    if progress < 0.0 then return 0.0 end
-    if progress > 1.0 then return 1.0 end
+    if progress < 0.0 then
+        return 0.0
+    end
+    if progress > 1.0 then
+        return 1.0
+    end
     return progress
 end
 
-function use_card_burn(
-    surface: ui.Surface, progress: f64, seed: i32, suit: i32
-): bool
+function use_card_burn(surface: ui.Surface, progress: f64, seed: i32, suit: i32): bool
     local graphics = surface.graphics
     local maybe_shader: graphics_module.Shader? = surface.effects.card_burn.shader
-    if maybe_shader == nil then return false end
+    if maybe_shader == nil then
+        return false
+    end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(shader, {
-        graphics_module.float_parameter("u_progress", progress),
-        graphics_module.float_parameter("u_seed", seed::f64),
-        graphics_module.float_parameter("u_aspect", card.width / card.height),
-        graphics_module.float_parameter("u_particle_mode", 0.0),
-    })
+    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(
+        shader,
+        {
+            graphics_module.float_parameter("u_progress", progress),
+            graphics_module.float_parameter("u_seed", seed::f64),
+            graphics_module.float_parameter("u_aspect", card.width / card.height),
+            graphics_module.float_parameter("u_particle_mode", 0.0)
+        }
+    )
     return binding.ok
 end
 
@@ -104,8 +114,12 @@ function aim_at_front(system: particles.ParticleSystem, progress: f64): unit
     local ring_y: f64 = radius
     local limit_x: f64 = card.width * 0.5 - 4.0
     local limit_y: f64 = card.height * 0.5 - 4.0
-    if ring_x > limit_x then ring_x = limit_x end
-    if ring_y > limit_y then ring_y = limit_y end
+    if ring_x > limit_x then
+        ring_x = limit_x
+    end
+    if ring_y > limit_y then
+        ring_y = limit_y
+    end
     system:set_emission_area("borderellipse", ring_x, ring_y, 0.0, true)
 end
 
@@ -125,12 +139,12 @@ function new_sheet_ash(seed: i32): particles.ParticleSystem
     system:set_linear_damping(0.15, 0.6)
     system:set_sway_amplitude(1.5, 4.5)
     system:set_sway_frequency(1.1, 2.2)
-    system:set_sizes({ 1.0, 0.86, 0.5, 0.0 })
+    system:set_sizes({1.0, 0.86, 0.5, 0.0})
     system:set_size_variation(0.75)
     system:set_rotation(0.0, math.pi * 2.0)
     system:set_spin(-5.4, 5.4)
     system:set_spin_variation(1.0)
-    system:set_colors_hex({ "#292524", "#9a3412", "#78716c" })
+    system:set_colors_hex({"#292524", "#9a3412", "#78716c"})
     system:set_color_variation(0.9)
     system:set_shape_size(7.0, 12.0)
     return system
@@ -148,12 +162,12 @@ function new_table_card_ash(seed: i32): particles.ParticleSystem
     system:set_linear_damping(0.15, 0.55)
     system:set_sway_amplitude(2.0, 6.0)
     system:set_sway_frequency(1.2, 2.4)
-    system:set_sizes({ 1.0, 0.82, 0.46, 0.0 })
+    system:set_sizes({1.0, 0.82, 0.46, 0.0})
     system:set_size_variation(0.8)
     system:set_rotation(0.0, math.pi * 2.0)
     system:set_spin(-4.2, 4.2)
     system:set_spin_variation(1.0)
-    system:set_colors_hex({ "#44403c", "#9a3412", "#78716c" })
+    system:set_colors_hex({"#44403c", "#9a3412", "#78716c"})
     system:set_color_variation(0.9)
     system:set_shape_size(11.0, 15.0)
     return system
@@ -164,7 +178,7 @@ function CardAsh.new(): CardAsh
         reveal_first = new_sheet_ash(401),
         reveal_second = new_sheet_ash(929),
         table_card_sheet = new_sheet_ash(613),
-        table_card_fall = new_table_card_ash(607),
+        table_card_fall = new_table_card_ash(607)
     }
 end
 
@@ -208,10 +222,11 @@ function draw_ash(
     y: f64,
     seed: i32
 ): unit
-    if system:count() == 0 then return end
+    if system:count() == 0 then
+        return
+    end
     local graphics = surface.graphics
-    local particles_ok: bool = burn_particles.use(
-        graphics, surface.effects, seed, false)
+    local particles_ok: bool = burn_particles.use(graphics, surface.effects, seed, false)
     if particles_ok then
         system:set_draw_mode("square")
     else
@@ -219,13 +234,19 @@ function draw_ash(
         system:set_draw_mode("circle")
     end
     system:draw(graphics, x + card.width * 0.5, y + card.height * 0.5)
-    if particles_ok then ink.stop_effect(graphics) end
+    if particles_ok then
+        ink.stop_effect(graphics)
+    end
 end
 
 function draw_captured(
     surface: ui.Surface,
     target: graphics_module.RenderTarget,
-    x: f64, y: f64, progress: f64, seed: i32, suit: i32,
+    x: f64,
+    y: f64,
+    progress: f64,
+    seed: i32,
+    suit: i32,
     ash: particles.ParticleSystem
 ): unit
     local graphics = surface.graphics
@@ -256,29 +277,36 @@ end
 -- last flakes have landed, so the ash outlives the card it came off instead of
 -- being cut with it.
 function draw_disintegrating(
-    surface: ui.Surface, value: card.Look, x: f64, y: f64,
-    progress: f64, seed: i32, ash: particles.ParticleSystem
+    surface: ui.Surface,
+    value: card.Look,
+    x: f64,
+    y: f64,
+    progress: f64,
+    seed: i32,
+    ash: particles.ParticleSystem
 ): unit
     if progress <= 0.0 then
         card.draw_at(surface, value, x, y)
         return
     end
     local lift: f64 = 0.0
-    if value.selected then lift = -card.select_lift end
+    if value.selected then
+        lift = -card.select_lift
+    end
     if progress >= 1.0 then
         draw_ash(surface, ash, x, y + lift, seed + 401)
         return
     end
-    local target: graphics_module.RenderTarget? = card.capture_face(
-        surface, card.plain(value.card))
+    local target: graphics_module.RenderTarget? = card.capture_face(surface, card.plain(value.card))
     if target == nil then
-        if progress < SHEET_GONE then card.draw_at(surface, value, x, y) end
+        if progress < SHEET_GONE then
+            card.draw_at(surface, value, x, y)
+        end
         draw_ash(surface, ash, x, y + lift, seed + 401)
         return
     end
     local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    draw_captured(
-        surface, captured, x, y + lift, progress, seed, value.card.suit, ash)
+    draw_captured(surface, captured, x, y + lift, progress, seed, value.card.suit, ash)
     surface.graphics:release_render_target(captured)
 end
 
@@ -286,46 +314,59 @@ end
 -- the reverse burn front seals it. This is deliberately clock-derived rather
 -- than a live particle system: a discard reappearance may be skipped, restored,
 -- or shared by Firebolt without adding another piece of snapshot state.
-function draw_reappearing_ash(
-    surface: ui.Surface, x: f64, y: f64, progress: f64, seed: i32
-): unit
-    if progress >= 1.0 then return end
+function draw_reappearing_ash(surface: ui.Surface, x: f64, y: f64, progress: f64, seed: i32): unit
+    if progress >= 1.0 then
+        return
+    end
     local graphics = surface.graphics
-    local particles_ok: bool = burn_particles.use(
-        graphics, surface.effects, seed + 809, false)
-    if not particles_ok then ink.stop_effect(graphics) end
+    local particles_ok: bool = burn_particles.use(graphics, surface.effects, seed + 809, false)
+    if not particles_ok then
+        ink.stop_effect(graphics)
+    end
     for fleck = 0::i32, ASH_FLECKS - 1 do
         local id: i32 = seed * 71 + fleck
         local local_x: f64 = (burn_particles.hash(id, 1.0) - 0.5) * (card.width - 12.0)
         local local_y: f64 = (burn_particles.hash(id, 2.0) - 0.5) * (card.height - 14.0)
         local delay: f64 = burn_particles.hash(id, 3.0) * 0.16
         local gather: f64 = (progress - delay) / (0.82 - delay)
-        if gather < 0.0 then gather = 0.0 elseif gather > 1.0 then gather = 1.0 end
+        if gather < 0.0 then
+            gather = 0.0
+        elseif gather > 1.0 then
+            gather = 1.0
+        end
         gather = easing.in_out_cubic(gather)
         local radial_x: f64 = local_x / (card.width * 0.5)
         local radial_y: f64 = local_y / (card.height * 0.5)
         local spread: f64 = 24.0 + burn_particles.hash(id, 4.0) * 48.0
-        local source_x: f64 = local_x
-            + radial_x * spread
-            + (burn_particles.hash(id, 5.0) - 0.5) * 36.0
-        local source_y: f64 = local_y
-            + 26.0 + burn_particles.hash(id, 6.0) * 74.0
-        local fleck_x: f64 = x + card.width * 0.5
-            + source_x + (local_x - source_x) * gather
-        local fleck_y: f64 = y + card.height * 0.5
-            + source_y + (local_y - source_y) * gather
+        local source_x: f64 = local_x + radial_x * spread + (burn_particles.hash(
+            id,
+            5.0
+        ) - 0.5) * 36.0
+        local source_y: f64 = local_y + 26.0 + burn_particles.hash(id, 6.0) * 74.0
+        local fleck_x: f64 = x + card.width * 0.5 + source_x + (local_x - source_x) * gather
+        local fleck_y: f64 = y + card.height * 0.5 + source_y + (local_y - source_y) * gather
         local width: f64 = 1.5 + burn_particles.hash(id, 7.0) * 3.6
         local height: f64 = 2.8 + burn_particles.hash(id, 8.0) * 6.8
         local color: string = "#292524"
-        if fleck % 7 == 0 then color = "#9a3412"
-        elseif fleck % 3 == 0 then color = "#78716c" end
+        if fleck % 7 == 0 then
+            color = "#9a3412"
+        elseif fleck % 3 == 0 then
+            color = "#78716c"
+        end
         burn_particles.draw(
-            graphics, fleck_x, fleck_y,
-            width, height,
+            graphics,
+            fleck_x,
+            fleck_y,
+            width,
+            height,
             (burn_particles.hash(id, 9.0) - 0.5) * 8.0 * (1.0 - gather),
-            color .. burn_particles.alpha(progress), particles_ok)
+            color .. burn_particles.alpha(progress),
+            particles_ok
+        )
     end
-    if particles_ok then ink.stop_effect(graphics) end
+    if particles_ok then
+        ink.stop_effect(graphics)
+    end
 end
 
 -- Rebuild one face-up public card at the discard anchor. Running the burn
@@ -333,15 +374,18 @@ end
 -- destruction, while the converging flecks make the reversal read as ash
 -- becoming paper rather than an ordinary fade-in.
 function draw_reappearance(
-    surface: ui.Surface, value: game.Card, x: f64, y: f64, progress: f64
+    surface: ui.Surface,
+    value: game.Card,
+    x: f64,
+    y: f64,
+    progress: f64
 ): unit
     local graphics = surface.graphics
     local seed: i32 = seed_of(value, 317)
     draw_reappearing_ash(surface, x, y, progress, seed)
     local sheet: f64 = smooth_step(0.08, 0.96, progress)
     local burn_progress: f64 = 1.0 - sheet
-    local target: graphics_module.RenderTarget? = card.capture_face(
-        surface, card.plain(value))
+    local target: graphics_module.RenderTarget? = card.capture_face(surface, card.plain(value))
     if target == nil then
         if burn_progress < SHEET_GONE then
             card.draw_at(surface, card.plain(value), x, y)
@@ -374,5 +418,5 @@ return {
     progress_over = progress_over,
     seed_of = seed_of,
     disintegrate_seconds = DISINTEGRATE_SECONDS,
-    sheet_gone = SHEET_GONE,
+    sheet_gone = SHEET_GONE
 }

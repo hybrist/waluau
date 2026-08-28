@@ -12,7 +12,7 @@ export type Intrinsic = {
     min_height: f64,
     preferred_height: f64,
     max_height: f64,
-    baseline: f64,
+    baseline: f64
 }
 export type Axis = "row" | "column"
 export type Justify = "start" | "center" | "end" | "space-between"
@@ -27,7 +27,7 @@ export type Result = {
     left: f64,
     top: f64,
     right: f64,
-    bottom: f64,
+    bottom: f64
 }
 -- Arrangement state is mutated only by this module. Keeping it opaque also
 -- bounds the recursive structural checking tracked by waluau-4ggh.
@@ -45,7 +45,7 @@ export opaque type Box = {
     floor_width: f64,
     floor_height: f64,
     wide: bool,
-    result: Result,
+    result: Result
 }
 
 -- Large enough to mean "no authored cap" without allowing infinities into
@@ -69,9 +69,7 @@ function no_edges(): Edges
     return edges(0.0, 0.0, 0.0, 0.0)
 end
 
-function style(
-    axis: Axis, gap: f64, justify: Justify, align: Align, padding: Edges
-): Style
+function style(axis: Axis, gap: f64, justify: Justify, align: Align, padding: Edges): Style
     return { axis = axis, gap = gap, justify = justify, align = align, padding = padding }
 end
 
@@ -91,7 +89,7 @@ function empty_intrinsic(): Intrinsic
         min_height = 0.0,
         preferred_height = 0.0,
         max_height = 0.0,
-        baseline = -1.0,
+        baseline = -1.0
     }
 end
 
@@ -105,7 +103,7 @@ function result(): Result
         left = 0.0,
         top = 0.0,
         right = 0.0,
-        bottom = 0.0,
+        bottom = 0.0
     }
 end
 
@@ -198,7 +196,7 @@ function make(kind: "leaf" | "flow" | "layer" | "padding" | "minimum", children:
         floor_width = 0.0,
         floor_height = 0.0,
         wide = false,
-        result = result(),
+        result = result()
     }
 end
 
@@ -228,7 +226,7 @@ end
 
 function Box.padding(child: Box, insets: Edges): Box
     validate_edges(insets)
-    local box: Box = make("padding", { child })
+    local box: Box = make("padding", {child})
     box.insets.left = insets.left
     box.insets.top = insets.top
     box.insets.right = insets.right
@@ -241,7 +239,7 @@ end
 function Box.minimum(child: Box, width: f64, height: f64, is_wide: bool): Box
     assert(valid_number(width) and width >= 0.0)
     assert(valid_number(height) and height >= 0.0)
-    local box: Box = make("minimum", { child })
+    local box: Box = make("minimum", {child})
     box.floor_width = width
     box.floor_height = height
     box.wide = is_wide
@@ -294,17 +292,23 @@ end
 
 function gap_count(children: {Box}): f64
     local count: f64 = 0.0
-    for child in children do count += 1.0 end
+    for child in children do
+        count += 1.0
+    end
     return math.max(0.0, count - 1.0)
 end
 
 function child_baseline(value: Intrinsic): f64
-    if value.baseline >= 0.0 then return value.baseline end
+    if value.baseline >= 0.0 then
+        return value.baseline
+    end
     return value.preferred_height
 end
 
 function baseline_at_height(value: Intrinsic, height: f64): f64
-    if value.baseline >= 0.0 then return value.baseline end
+    if value.baseline >= 0.0 then
+        return value.baseline
+    end
     return height
 end
 
@@ -343,7 +347,9 @@ function measure_flow(self: Box): unit
                 max_ascent = math.max(max_ascent, max_base)
                 min_descent = math.max(min_descent, value.min_height - min_base)
                 preferred_descent = math.max(
-                    preferred_descent, value.preferred_height - preferred_base)
+                    preferred_descent,
+                    value.preferred_height - preferred_base
+                )
                 max_descent = math.max(max_descent, value.max_height - max_base)
             end
         else
@@ -353,7 +359,9 @@ function measure_flow(self: Box): unit
             min_cross = math.max(min_cross, value.min_width)
             preferred_cross = math.max(preferred_cross, value.preferred_width)
             max_cross = math.max(max_cross, value.max_width)
-            if baseline < 0.0 then baseline = child_baseline(value) end
+            if baseline < 0.0 then
+                baseline = child_baseline(value)
+            end
         end
     end
 
@@ -384,7 +392,9 @@ function measure_flow(self: Box): unit
     min_cross += padding_cross
     preferred_cross += padding_cross
     max_cross = cap(max_cross + padding_cross)
-    if baseline >= 0.0 then baseline += self.style.padding.top end
+    if baseline >= 0.0 then
+        baseline += self.style.padding.top
+    end
 
     local value: Intrinsic = self.intrinsic
     if horizontal then
@@ -442,14 +452,18 @@ function Box:measure(): Intrinsic
         value.preferred_height = child_value.preferred_height + vertical
         value.max_height = cap(child_value.max_height + vertical)
         value.baseline = child_value.baseline
-        if value.baseline >= 0.0 then value.baseline += self.insets.top end
+        if value.baseline >= 0.0 then
+            value.baseline += self.insets.top
+        end
         return value
     end
 
     value.min_width = math.max(child_value.min_width, self.floor_width)
     value.preferred_width = math.max(child_value.preferred_width, self.floor_width)
     value.max_width = math.max(child_value.max_width, self.floor_width)
-    if self.wide then value.max_width = UNBOUNDED end
+    if self.wide then
+        value.max_width = UNBOUNDED
+    end
     value.min_height = math.max(child_value.min_height, self.floor_height)
     value.preferred_height = math.max(child_value.preferred_height, self.floor_height)
     value.max_height = math.max(child_value.max_height, self.floor_height)
@@ -458,32 +472,44 @@ function Box:measure(): Intrinsic
 end
 
 function main_min(value: Intrinsic, horizontal: bool): f64
-    if horizontal then return value.min_width end
+    if horizontal then
+        return value.min_width
+    end
     return value.min_height
 end
 
 function main_preferred(value: Intrinsic, horizontal: bool): f64
-    if horizontal then return value.preferred_width end
+    if horizontal then
+        return value.preferred_width
+    end
     return value.preferred_height
 end
 
 function main_max(value: Intrinsic, horizontal: bool): f64
-    if horizontal then return value.max_width end
+    if horizontal then
+        return value.max_width
+    end
     return value.max_height
 end
 
 function cross_min(value: Intrinsic, horizontal: bool): f64
-    if horizontal then return value.min_height end
+    if horizontal then
+        return value.min_height
+    end
     return value.min_width
 end
 
 function cross_preferred(value: Intrinsic, horizontal: bool): f64
-    if horizontal then return value.preferred_height end
+    if horizontal then
+        return value.preferred_height
+    end
     return value.preferred_width
 end
 
 function cross_max(value: Intrinsic, horizontal: bool): f64
-    if horizontal then return value.max_height end
+    if horizontal then
+        return value.max_height
+    end
     return value.max_width
 end
 
@@ -499,13 +525,17 @@ function distribute_grow(self: Box, horizontal: bool, extra: f64): f64
         local index: i32 = 0
         while index < #self.children do
             local child: Box = self.children[index]
-            if child.grow > 0.0 and self.sizes[index]
-                < main_max(child.intrinsic, horizontal) - EPSILON then
+            if child.grow > 0.0 and self.sizes[index] < main_max(
+                child.intrinsic,
+                horizontal
+            ) - EPSILON then
                 total_weight += child.grow
             end
             index += 1
         end
-        if total_weight <= 0.0 then break end
+        if total_weight <= 0.0 then
+            break
+        end
         local spent: f64 = 0.0
         index = 0
         while index < #self.children do
@@ -518,9 +548,13 @@ function distribute_grow(self: Box, horizontal: bool, extra: f64): f64
             end
             index += 1
         end
-        if spent <= EPSILON then break end
+        if spent <= EPSILON then
+            break
+        end
         remaining -= spent
-        if remaining <= EPSILON then return 0.0 end
+        if remaining <= EPSILON then
+            return 0.0
+        end
         pass += 1
     end
     return remaining
@@ -534,13 +568,17 @@ function distribute_shrink(self: Box, horizontal: bool, deficit: f64): f64
         local index: i32 = 0
         while index < #self.children do
             local child: Box = self.children[index]
-            if child.shrink > 0.0 and self.sizes[index]
-                > main_min(child.intrinsic, horizontal) + EPSILON then
+            if child.shrink > 0.0 and self.sizes[index] > main_min(
+                child.intrinsic,
+                horizontal
+            ) + EPSILON then
                 total_weight += child.shrink * self.sizes[index]
             end
             index += 1
         end
-        if total_weight <= 0.0 then break end
+        if total_weight <= 0.0 then
+            break
+        end
         local reduced: f64 = 0.0
         index = 0
         while index < #self.children do
@@ -554,9 +592,13 @@ function distribute_shrink(self: Box, horizontal: bool, deficit: f64): f64
             end
             index += 1
         end
-        if reduced <= EPSILON then break end
+        if reduced <= EPSILON then
+            break
+        end
         remaining -= reduced
-        if remaining <= EPSILON then return 0.0 end
+        if remaining <= EPSILON then
+            return 0.0
+        end
         pass += 1
     end
     return remaining
@@ -586,7 +628,9 @@ function arrange_box(self: Box, into: Result): unit
     if self.intrinsic.baseline >= 0.0 then
         self.baseline = bounds.y + self.intrinsic.baseline
     end
-    if self.kind == "leaf" then return end
+    if self.kind == "leaf" then
+        return
+    end
 
     if self.kind == "layer" or self.kind == "minimum" then
         for child in self.children do
@@ -603,19 +647,24 @@ function arrange_box(self: Box, into: Result): unit
             bounds.x + self.insets.left,
             bounds.y + self.insets.top,
             nonnegative(bounds.width - self.insets.left - self.insets.right),
-            nonnegative(bounds.height - self.insets.top - self.insets.bottom))
+            nonnegative(bounds.height - self.insets.top - self.insets.bottom)
+        )
         arrange_box(child, into)
         return
     end
-    if #self.children == 0 then return end
+    if #self.children == 0 then
+        return
+    end
 
     local horizontal: bool = self.style.axis == "row"
     local inner_x: f64 = bounds.x + self.style.padding.left
     local inner_y: f64 = bounds.y + self.style.padding.top
     local inner_width: f64 = nonnegative(
-        bounds.width - self.style.padding.left - self.style.padding.right)
+        bounds.width - self.style.padding.left - self.style.padding.right
+    )
     local inner_height: f64 = nonnegative(
-        bounds.height - self.style.padding.top - self.style.padding.bottom)
+        bounds.height - self.style.padding.top - self.style.padding.bottom
+    )
     local available_main: f64 = inner_width
     local available_cross: f64 = inner_height
     if not horizontal then
@@ -633,7 +682,9 @@ function arrange_box(self: Box, into: Result): unit
         index += 1
     end
     local gap: f64 = self.style.gap
-    if #self.children > 1 then used += gap * gap_count(self.children) end
+    if #self.children > 1 then
+        used += gap * gap_count(self.children)
+    end
 
     local free: f64 = available_main - used
     if free > EPSILON then
@@ -669,7 +720,10 @@ function arrange_box(self: Box, into: Result): unit
         local child_cross: f64 = cross_preferred(value, horizontal)
         if self.style.align == "stretch" then
             child_cross = clamp(
-                available_cross, cross_min(value, horizontal), cross_max(value, horizontal))
+                available_cross,
+                cross_min(value, horizontal),
+                cross_max(value, horizontal)
+            )
         end
         local cross_offset: f64 = 0.0
         if self.style.align == "center" then
@@ -681,11 +735,21 @@ function arrange_box(self: Box, into: Result): unit
         end
 
         if horizontal then
-            set_rect(child.bounds, inner_x + cursor, inner_y + cross_offset,
-                self.sizes[index], child_cross)
+            set_rect(
+                child.bounds,
+                inner_x + cursor,
+                inner_y + cross_offset,
+                self.sizes[index],
+                child_cross
+            )
         else
-            set_rect(child.bounds, inner_x + cross_offset, inner_y + cursor,
-                child_cross, self.sizes[index])
+            set_rect(
+                child.bounds,
+                inner_x + cross_offset,
+                inner_y + cursor,
+                child_cross,
+                self.sizes[index]
+            )
         end
         arrange_box(child, into)
         cursor += self.sizes[index] + gap
@@ -707,10 +771,8 @@ function Box:arrange(x: f64, y: f64, width: f64, height: f64): Result
     into.bottom = 0.0
     arrange_box(self, into)
     set_rect(into.content, into.left, into.top, into.right - into.left, into.bottom - into.top)
-    into.overflow_x = math.max(0.0, x - into.left)
-        + math.max(0.0, into.right - (x + width))
-    into.overflow_y = math.max(0.0, y - into.top)
-        + math.max(0.0, into.bottom - (y + height))
+    into.overflow_x = math.max(0.0, x - into.left) + math.max(0.0, into.right - (x + width))
+    into.overflow_y = math.max(0.0, y - into.top) + math.max(0.0, into.bottom - (y + height))
     into.overflowed = into.overflow_x > EPSILON or into.overflow_y > EPSILON
     return into
 end
@@ -728,8 +790,7 @@ function Box:absolute_baseline(): f64
 end
 
 function contains(bounds: Rect, x: f64, y: f64): bool
-    return x >= bounds.x and x <= bounds.x + bounds.width
-        and y >= bounds.y and y <= bounds.y + bounds.height
+    return x >= bounds.x and x <= bounds.x + bounds.width and y >= bounds.y and y <= bounds.y + bounds.height
 end
 
 return {
@@ -741,5 +802,5 @@ return {
     row = row,
     column = column,
     contains = contains,
-    set_fixed = set_fixed,
+    set_fixed = set_fixed
 }

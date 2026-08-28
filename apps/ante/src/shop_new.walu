@@ -10,11 +10,7 @@ type Item = item_.Item
 
 const DEFAULT_SHOP_ITEM_COUNT = 2
 
-export type Slot = {
-    item: Item,
-    price: number,
-    sold: bool,
-}
+export type Slot = { item: Item, price: number, sold: bool }
 
 export type State = { open: bool, slots: {Slot}, cursor: i32 }
 
@@ -81,7 +77,9 @@ function State:keypressed(run: RunState, key: string): bool
         return false
     end
 
-    if key == "Enter" or key == " " then return self:confirm_choice(run) end
+    if key == "Enter" or key == " " then
+        return self:confirm_choice(run)
+    end
 
     return key == "Escape"
 end

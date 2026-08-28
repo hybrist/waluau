@@ -57,21 +57,30 @@ export opaque type State = {
     computer_hidden: {bool},
     table_hidden: {bool},
     modal_kind: "none" | "history" | "help" | "final",
-    modal_content: ui.Node?,
+    modal_content: ui.Node?
 }
 
 function new(state: game.View, run: run_module.View): State
     local sample: game.Card = { rank = 2, suit = 0 }
-    if #state.middle > 0 then sample = state.middle[0] end
+    if #state.middle > 0 then
+        sample = state.middle[0]
+    end
     local computer_views: {card.Stateful} = {}
     for index = 0::i32, HAND_CAPACITY - 1 do
         table.insert(computer_views, card.Stateful.new(card.sealed(sample, false)))
     end
     local table_views: {powered_card.Stateful} = {}
     for index = 0::i32, TABLE_CAPACITY - 1 do
-        table.insert(table_views, powered_card.Stateful.new(
-            card.plain(sample), nil, 0.0, card_burn.CardAsh.new(),
-            powered_card.new_grave_dust()))
+        table.insert(
+            table_views,
+            powered_card.Stateful.new(
+                card.plain(sample),
+                nil,
+                0.0,
+                card_burn.CardAsh.new(),
+                powered_card.new_grave_dust()
+            )
+        )
     end
     local hud_view: hud.Stateful = hud.Stateful.new(state, run)
     local footer_view: footer.Stateful = footer.Stateful.new(state, run)
@@ -79,9 +88,7 @@ function new(state: game.View, run: run_module.View): State
     local pile_view: pile.Stateful = pile.Stateful.new({}, 0)
     local player_view: hand_fan.Stateful = hand_fan.Stateful.new({}, {}, {})
     local panel_view: ui.Node = table_card_panel.node()
-    local action_items: {action_bar.Action} = {
-        action_bar.action("CONFIRM", false),
-    }
+    local action_items: {action_bar.Action} = {action_bar.action("CONFIRM", false)}
     local action_view: action_bar.Stateful = action_bar.Stateful.new(action_items)
 
     local hud_node: ui.Node = hud_view.root
@@ -89,9 +96,7 @@ function new(state: game.View, run: run_module.View): State
     local deck_node: ui.Node = deck_view.root
     local pile_node: ui.Node = pile_view.root
     local player_node: ui.Node = player_view.root
-    local visual_children: {ui.Node} = {
-        hud_node, footer_node, deck_node, pile_node,
-    }
+    local visual_children: {ui.Node} = {hud_node, footer_node, deck_node, pile_node}
     local computer_nodes: {ui.Node} = {}
     for view in computer_views do
         local node: ui.Node = view.root
@@ -109,32 +114,50 @@ function new(state: game.View, run: run_module.View): State
     local commit_node: ui.Node = action_view.capsules[0].root
     table.insert(visual_children, commit_node)
     table.insert(visual_children, player_node)
-    local input: input_module.State = input_module.new(
-        visual_children, table_nodes, commit_node)
+    local input: input_module.State = input_module.new(visual_children, table_nodes, commit_node)
     return {
-        root = input:root_node(), input = input, surface = nil,
-        table_nodes = table_nodes, commit_node = commit_node,
-        hud_node = hud_node, footer_node = footer_node,
-        deck_node = deck_node, pile_node = pile_node,
-        player_node = player_node, computer_nodes = computer_nodes,
-        panel_node = panel_node, hud_view = hud_view,
-        footer_view = footer_view, deck_view = deck_view,
-        pile_view = pile_view, player_view = player_view,
-        computer_views = computer_views, table_views = table_views,
-        panel_view = panel_view, action_view = action_view,
-        action_items = action_items, player_looks = {}, player_hidden = {},
-        computer_hidden = {}, table_hidden = {}, modal_kind = "none",
-        modal_content = nil,
+        root = input:root_node(),
+        input = input,
+        surface = nil,
+        table_nodes = table_nodes,
+        commit_node = commit_node,
+        hud_node = hud_node,
+        footer_node = footer_node,
+        deck_node = deck_node,
+        pile_node = pile_node,
+        player_node = player_node,
+        computer_nodes = computer_nodes,
+        panel_node = panel_node,
+        hud_view = hud_view,
+        footer_view = footer_view,
+        deck_view = deck_view,
+        pile_view = pile_view,
+        player_view = player_view,
+        computer_views = computer_views,
+        table_views = table_views,
+        panel_view = panel_view,
+        action_view = action_view,
+        action_items = action_items,
+        player_looks = {},
+        player_hidden = {},
+        computer_hidden = {},
+        table_hidden = {},
+        modal_kind = "none",
+        modal_content = nil
     }
 end
 
 function clear_bool(values: {bool}): unit
-    while #values > 0 do table.remove(values) end
+    while #values > 0 do
+        table.remove(values)
+    end
 end
 
 function State:present_chrome(
-    state: game.View, run: run_module.View,
-    discards: {game.Card}, discard_count: i32
+    state: game.View,
+    run: run_module.View,
+    discards: {game.Card},
+    discard_count: i32
 ): unit
     self.hud_view:present(state, run)
     self.footer_view:present(state, run)
@@ -147,7 +170,9 @@ function State:present_pile(discards: {game.Card}, count: i32): unit
 end
 
 function State:begin_player(): unit
-    while #self.player_looks > 0 do table.remove(self.player_looks) end
+    while #self.player_looks > 0 do
+        table.remove(self.player_looks)
+    end
     clear_bool(self.player_hidden)
 end
 
@@ -178,8 +203,13 @@ function State:begin_table(): unit
 end
 
 function State:present_table(
-    index: i32, value: card.Look, kind: spells.SpellKind?, clock: f64,
-    ash: card_burn.CardAsh, dust: particles.ParticleSystem, hidden: bool
+    index: i32,
+    value: card.Look,
+    kind: spells.SpellKind?,
+    clock: f64,
+    ash: card_burn.CardAsh,
+    dust: particles.ParticleSystem,
+    hidden: bool
 ): unit
     table.insert(self.table_hidden, hidden)
     self.table_views[index]:present(value, kind, clock, ash, dust)
@@ -187,22 +217,32 @@ end
 
 function State:present_modal(
     kind: "none" | "history" | "help" | "final",
-    state: game.View, run: run_module.View
+    state: game.View,
+    run: run_module.View
 ): unit
-    if kind == self.modal_kind then return end
+    if kind == self.modal_kind then
+        return
+    end
     self.modal_kind = kind
-    if kind == "help" then self.modal_content = help_card.node()
-    elseif kind == "history" then self.modal_content = ledger.node(state)
-    elseif kind == "final" then self.modal_content = verdict.node(state, run)
-    else self.modal_content = nil end
+    if kind == "help" then
+        self.modal_content = help_card.node()
+    elseif kind == "history" then
+        self.modal_content = ledger.node(state)
+    elseif kind == "final" then
+        self.modal_content = verdict.node(state, run)
+    else
+        self.modal_content = nil
+    end
 end
 
 function State:prepare_surface(surface: ui.Surface): unit
     local retained: ui.Surface? = self.surface
     if retained == nil then
         self.surface = {
-            graphics = surface.graphics, effects = surface.effects,
-            card_back = surface.card_back, suit_symbols = surface.suit_symbols,
+            graphics = surface.graphics,
+            effects = surface.effects,
+            card_back = surface.card_back,
+            suit_symbols = surface.suit_symbols
         }
         return
     end
@@ -213,9 +253,7 @@ function State:prepare_surface(surface: ui.Surface): unit
     current.suit_symbols = surface.suit_symbols
 end
 
-function State:measure_arrange(
-    surface: ui.Surface, width: f64, height: f64
-): unit
+function State:measure_arrange(surface: ui.Surface, width: f64, height: f64): unit
     self:prepare_surface(surface)
     self.root:measure(surface.graphics)
     self.root:arrange(0.0, 0.0, width, height)
@@ -236,14 +274,26 @@ function State:footer_height(graphics: ui.Graphics?): f64
     return self.footer_view.root:measure(graphics).preferred_height
 end
 
-function State:paint_hud(bounds: box.Rect): unit self:paint_node(self.hud_node, bounds) end
-function State:paint_footer(bounds: box.Rect): unit self:paint_node(self.footer_node, bounds) end
-function State:paint_deck(bounds: box.Rect): unit self:paint_node(self.deck_node, bounds) end
-function State:paint_pile(bounds: box.Rect): unit self:paint_node(self.pile_node, bounds) end
-function State:paint_panel(bounds: box.Rect): unit self:paint_node(self.panel_node, bounds) end
+function State:paint_hud(bounds: box.Rect): unit
+    self:paint_node(self.hud_node, bounds)
+end
+function State:paint_footer(bounds: box.Rect): unit
+    self:paint_node(self.footer_node, bounds)
+end
+function State:paint_deck(bounds: box.Rect): unit
+    self:paint_node(self.deck_node, bounds)
+end
+function State:paint_pile(bounds: box.Rect): unit
+    self:paint_node(self.pile_node, bounds)
+end
+function State:paint_panel(bounds: box.Rect): unit
+    self:paint_node(self.panel_node, bounds)
+end
 
 function State:paint_table(index: i32, bounds: box.Rect): unit
-    if not self.table_hidden[index] then self:paint_node(self.table_nodes[index], bounds) end
+    if not self.table_hidden[index] then
+        self:paint_node(self.table_nodes[index], bounds)
+    end
 end
 
 function State:paint_computer(index: i32, bounds: box.Rect): unit
@@ -262,37 +312,61 @@ function State:paint_action(text: string, active: bool, band: box.Rect): unit
     self.action_view:present(self.action_items)
     local retained: ui.Surface? = self.surface
     assert(retained ~= nil)
-    local width: f64 = self.commit_node:measure(
-        (retained::ui.Surface).graphics).preferred_width
-    self:paint_node(self.commit_node, box.rect(
-        band.x + (band.width - width) * 0.5,
-        band.y, width, capsule.height))
+    local width: f64 = self.commit_node:measure((retained::ui.Surface).graphics).preferred_width
+    self:paint_node(
+        self.commit_node,
+        box.rect(band.x + (band.width - width) * 0.5, band.y, width, capsule.height)
+    )
 end
 
 function State:paint_modal(surface: ui.Surface, bounds: box.Rect): unit
     local content: ui.Node? = self.modal_content
-    if content ~= nil then modal.show(surface, bounds, content::ui.Node) end
+    if content ~= nil then
+        modal.show(surface, bounds, content::ui.Node)
+    end
 end
 
-function State:focus_hand(index: i32): bool return self.input:focus_hand(index) end
-function State:focus_table(index: i32): bool return self.input:focus_table(index) end
-function State:focused_hand(): i32 return self.input:focused_hand() end
-function State:focused_table(): i32 return self.input:focused_table() end
-function State:repair_table_focus(): bool return self.input:repair_table_focus() end
-function State:fan_focus(animating: bool): i32 return self.input:fan_focus(animating) end
-function State:apply_hand_order(order: {i32}): unit self.input:apply_hand_order(order) end
-function State:pointer_move(x: f64, y: f64): i32 return self.input:pointer_move(x, y) end
+function State:focus_hand(index: i32): bool
+    return self.input:focus_hand(index)
+end
+function State:focus_table(index: i32): bool
+    return self.input:focus_table(index)
+end
+function State:focused_hand(): i32
+    return self.input:focused_hand()
+end
+function State:focused_table(): i32
+    return self.input:focused_table()
+end
+function State:repair_table_focus(): bool
+    return self.input:repair_table_focus()
+end
+function State:fan_focus(animating: bool): i32
+    return self.input:fan_focus(animating)
+end
+function State:apply_hand_order(order: {i32}): unit
+    self.input:apply_hand_order(order)
+end
+function State:pointer_move(x: f64, y: f64): i32
+    return self.input:pointer_move(x, y)
+end
 function State:pointer_down(x: f64, y: f64, button: i32): i32
     return self.input:pointer_down(x, y, button)
 end
 function State:pointer_up(x: f64, y: f64, button: i32): input_module.Action
     return self.input:pointer_up(x, y, button)
 end
-function State:pointer_leave(): unit self.input:pointer_leave() end
+function State:pointer_leave(): unit
+    self.input:pointer_leave()
+end
 function State:navigate(direction: "left" | "right" | "up" | "down"): bool
     return self.input:navigate(direction)
 end
-function State:activate(): input_module.Action return self.input:activate() end
-function State:activate_modal(): input_module.Action return self.input:activate_modal() end
+function State:activate(): input_module.Action
+    return self.input:activate()
+end
+function State:activate_modal(): input_module.Action
+    return self.input:activate_modal()
+end
 
 return { new = new }

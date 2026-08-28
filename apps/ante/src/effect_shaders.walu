@@ -60,7 +60,11 @@ function State.new(): State
         "card burn",
         false
     )
-    local red: shader_program.State = shader_program.State.new("ante.effects.red-fire", "red", false)
+    local red: shader_program.State = shader_program.State.new(
+        "ante.effects.red-fire",
+        "red",
+        false
+    )
     local blue: shader_program.State = shader_program.State.new(
         "ante.effects.blue-caustics",
         "blue",
@@ -76,7 +80,11 @@ function State.new(): State
         "green",
         false
     )
-    local ice: shader_program.State = shader_program.State.new("ante.effects.ice-freeze", "ice", false)
+    local ice: shader_program.State = shader_program.State.new(
+        "ante.effects.ice-freeze",
+        "ice",
+        false
+    )
     return {
         shaders = {
             card_paper = paper,
@@ -192,4 +200,3 @@ function State:release(graphics: Graphics): unit
     end
     self.shaders.noise_texture = nil
 end
-

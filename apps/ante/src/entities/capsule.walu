@@ -6,7 +6,6 @@
 -- The capsule is as wide as its label plus its padding. That is the whole
 -- reason it is an entity: COMMIT SWAP and PASS no longer need two authored
 -- widths that have to be re-tuned whenever either word changes.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
@@ -35,13 +34,11 @@ function intrinsic(graphics: ui.Graphics?, text: string): box.Intrinsic
         max_height = HEIGHT,
         -- The label rides the middle of the capsule, so that is where its
         -- baseline is; a row of capsules and captions lines up on it.
-        baseline = (HEIGHT + LABEL_SIZE) * 0.5,
+        baseline = (HEIGHT + LABEL_SIZE) * 0.5
     }
 end
 
-function draw_at(
-    surface: ui.Surface, text: string, active: bool, bounds: box.Rect
-): unit
+function draw_at(surface: ui.Surface, text: string, active: bool, bounds: box.Rect): unit
     local graphics = surface.graphics
     local edge: string = QUIET_EDGE
     local caption: string = QUIET_INK
@@ -55,10 +52,13 @@ function draw_at(
     graphics:set_line_width(1.5)
     graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
     ink.text_centered(
-        graphics, text,
+        graphics,
+        text,
         bounds.x + bounds.width * 0.5,
         bounds.y + (bounds.height + LABEL_SIZE) * 0.5,
-        LABEL_SIZE, caption)
+        LABEL_SIZE,
+        caption
+    )
 end
 
 type CapsulePresentation = { text: string, active: bool }
@@ -79,7 +79,8 @@ function Stateful.new(text: string, active: bool): Stateful
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
             draw_at(surface, presentation.text, presentation.active, bounds)
-        end)
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -92,9 +93,4 @@ function node(text: string, active: bool): ui.Node
     return Stateful.new(text, active).root
 end
 
-return {
-    node = node,
-    draw_at = draw_at,
-    intrinsic = intrinsic,
-    height = HEIGHT,
-}
+return { node = node, draw_at = draw_at, intrinsic = intrinsic, height = HEIGHT }

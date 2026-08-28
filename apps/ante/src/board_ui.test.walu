@@ -7,32 +7,37 @@ local box = require("./ui/layout")
 local card = require("./entities/card")
 local hand_fan = require("./entities/hand_fan")
 
-function empty_paint(surface: ui.Surface, bounds: box.Rect): unit end
+function empty_paint(surface: ui.Surface, bounds: box.Rect): unit
+end
 
 function fan_band(viewport: viewport_layout.State): box.Rect
     local height: f64 = hand_fan.intrinsic(5).preferred_height
     return box.rect(
         viewport.center_x - (viewport.hand_span + card.width) * 0.5,
         viewport.player_y - height * 0.5,
-        viewport.hand_span + card.width, height)
+        viewport.hand_span + card.width,
+        height
+    )
 end
 
 function present_board(board: board_input.State, parts: {f64}): unit
     local viewport: viewport_layout.State = viewport_layout.current()
-    board:prepare_headless({
-        viewport_width = viewport.width,
-        viewport_height = viewport.height,
-        fan_bounds = fan_band(viewport),
-        fan_parts = parts,
-        hand_count = 5,
-        table_count = 3,
-        frozen_table = { false, false, false },
-        swap_open = true,
-        casting = false,
-        modal_open = false,
-        finished = false,
-        play_pick_count = 0,
-    })
+    board:prepare_headless(
+        {
+            viewport_width = viewport.width,
+            viewport_height = viewport.height,
+            fan_bounds = fan_band(viewport),
+            fan_parts = parts,
+            hand_count = 5,
+            table_count = 3,
+            frozen_table = {false, false, false},
+            swap_open = true,
+            casting = false,
+            modal_open = false,
+            finished = false,
+            play_pick_count = 0
+        }
+    )
 end
 
 function prepared_board(): board_input.State
@@ -47,68 +52,86 @@ function prepared_board(): board_input.State
     local commit: ui.Node = ui.Node.sized(120.0, 30.0, empty_paint)
     table.insert(children, commit)
     local board: board_input.State = board_input.new(children, table_nodes, commit)
-    present_board(board, { 0.0, 0.0, 0.0, 0.0, 0.0 })
+    present_board(board, {0.0, 0.0, 0.0, 0.0, 0.0})
     return board
 end
 
-describe("retained duel board UI", function(): unit
-    it("keeps node identity across presentations", function(): unit
-        local board: board_input.State = prepared_board()
-        board:focus_hand(2)
-        board:set_hand_enabled(0, false)
-        local before_x: f64 = board:hand_bounds(2).x
+describe(
+    "retained duel board UI",
+    function(): unit
+        it(
+            "keeps node identity across presentations",
+            function(): unit
+                local board: board_input.State = prepared_board()
+                board:focus_hand(2)
+                board:set_hand_enabled(0, false)
+                local before_x: f64 = board:hand_bounds(2).x
 
-        present_board(board, { -0.1, 0.0, 0.2, 0.1, 0.1 })
+                present_board(board, {-0.1, 0.0, 0.2, 0.1, 0.1})
 
-        expect(board:focused_hand()):toBe(2)
-        expect(board:hand_bounds(2).x == before_x):toBe(false)
-        expect(board:hand_enabled(0)):toBe(false)
-    end)
+                expect(board:focused_hand()):toBe(2)
+                expect(board:hand_bounds(2).x == before_x):toBe(false)
+                expect(board:hand_enabled(0)):toBe(false)
+            end
+        )
 
-    it("routes pointer and keyboard activation to the same board action", function(): unit
-        local board: board_input.State = prepared_board()
-        local bounds = board:hand_bounds(1)
-        local x: f64 = bounds.x + bounds.width * 0.5
-        local y: f64 = bounds.y + bounds.height * 0.5
-        board:pointer_down(x, y, 1)
-        local pointer: board_input.Action = board:pointer_up(x, y, 1)
+        it(
+            "routes pointer and keyboard activation to the same board action",
+            function(): unit
+                local board: board_input.State = prepared_board()
+                local bounds = board:hand_bounds(1)
+                local x: f64 = bounds.x + bounds.width * 0.5
+                local y: f64 = bounds.y + bounds.height * 0.5
+                board:pointer_down(x, y, 1)
+                local pointer: board_input.Action = board:pointer_up(x, y, 1)
 
-        board:focus_hand(1)
-        local keyboard: board_input.Action = board:activate()
-        expect(tostring(pointer.kind)):toBe("hand")
-        expect(pointer.index):toBe(1)
-        expect(tostring(keyboard.kind)):toBe("hand")
-        expect(keyboard.index):toBe(pointer.index)
-    end)
+                board:focus_hand(1)
+                local keyboard: board_input.Action = board:activate()
+                expect(tostring(pointer.kind)):toBe("hand")
+                expect(pointer.index):toBe(1)
+                expect(tostring(keyboard.kind)):toBe("hand")
+                expect(keyboard.index):toBe(pointer.index)
+            end
+        )
 
-    it("uses reverse paint order and the rotated fan's custom shape", function(): unit
-        local board: board_input.State = prepared_board()
-        local band: box.Rect = fan_band(viewport_layout.current())
-        local first = hand_fan.slot_rect(band, 0, 0.0, 5)
-        local x: f64 = first.x + first.width - 4.0
-        local y: f64 = first.y + first.height * 0.5
-        local expected: i32 = hand_fan.hit(band, board:fan_parts(), x, y)
+        it(
+            "uses reverse paint order and the rotated fan's custom shape",
+            function(): unit
+                local board: board_input.State = prepared_board()
+                local band: box.Rect = fan_band(viewport_layout.current())
+                local first = hand_fan.slot_rect(band, 0, 0.0, 5)
+                local x: f64 = first.x + first.width - 4.0
+                local y: f64 = first.y + first.height * 0.5
+                local expected: i32 = hand_fan.hit(band, board:fan_parts(), x, y)
 
-        board:pointer_move(x, y)
-        expect(expected >= 0):toBe(true)
-        expect(board:focused_hand()):toBe(expected)
-    end)
+                board:pointer_move(x, y)
+                expect(expected >= 0):toBe(true)
+                expect(board:focused_hand()):toBe(expected)
+            end
+        )
 
-    it("keeps table navigation in its row when the focused card freezes", function(): unit
-        local board: board_input.State = prepared_board()
-        board:focus_table(1)
-        board:set_table_enabled(1, false)
+        it(
+            "keeps table navigation in its row when the focused card freezes",
+            function(): unit
+                local board: board_input.State = prepared_board()
+                board:focus_table(1)
+                board:set_table_enabled(1, false)
 
-        expect(board:repair_table_focus()):toBe(true)
-        expect(board:focused_table()):toBe(2)
-        expect(board:focused_hand()):toBe(-1)
-    end)
+                expect(board:repair_table_focus()):toBe(true)
+                expect(board:focused_table()):toBe(2)
+                expect(board:focused_hand()):toBe(-1)
+            end
+        )
 
-    it("confines activation to modal focus while a modal is active", function(): unit
-        local board: board_input.State = prepared_board()
-        local action: board_input.Action = board:activate_modal()
-        expect(tostring(action.kind)):toBe("modal")
-        expect(board:focused_hand()):toBe(-1)
-        expect(board:focused_table()):toBe(-1)
-    end)
-end)
+        it(
+            "confines activation to modal focus while a modal is active",
+            function(): unit
+                local board: board_input.State = prepared_board()
+                local action: board_input.Action = board:activate_modal()
+                expect(tostring(action.kind)):toBe("modal")
+                expect(board:focused_hand()):toBe(-1)
+                expect(board:focused_table()):toBe(-1)
+            end
+        )
+    end
+)

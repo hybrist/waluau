@@ -72,8 +72,7 @@ function step(
         -- The single frame the carrier crosses into its target. A restored
         -- condition comes back already settled past this, so a hot reload
         -- never replays a landing that has already happened.
-        arriving = previous < spell_cast.travel_seconds
-            and clock >= spell_cast.travel_seconds
+        arriving = previous < spell_cast.travel_seconds and clock >= spell_cast.travel_seconds
         burst_color = color(active)
         if active == spells.SpellKind.Firebolt then
             flight = cast.progress
@@ -82,10 +81,8 @@ function step(
             head_y = head.y
         end
     end
-    spell_cast.step_burst(
-        sparks.burst, arriving, target_x, target_y, burst_color, dt)
-    firebolt.step_trail(
-        sparks.trail, flight, head_x, head_y, previous <= 0.0, dt)
+    spell_cast.step_burst(sparks.burst, arriving, target_x, target_y, burst_color, dt)
+    firebolt.step_trail(sparks.trail, flight, head_x, head_y, previous <= 0.0, dt)
 end
 
 function draw(
@@ -110,14 +107,7 @@ function draw(
     -- One burst for every spell, outside the dispatch because the sparks a
     -- landing threw are still in the air after the carrier that threw them is
     -- gone. Fire is the only one of the four that burns.
-    spell_cast.draw_burst(
-        graphics, effects, sparks.burst, kind == spells.SpellKind.Firebolt)
+    spell_cast.draw_burst(graphics, effects, sparks.burst, kind == spells.SpellKind.Firebolt)
 end
 
-return {
-    draw = draw,
-    step = step,
-    new_sparks = new_sparks,
-    name = name,
-    color = color
-}
+return { draw = draw, step = step, new_sparks = new_sparks, name = name, color = color }

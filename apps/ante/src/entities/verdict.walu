@@ -5,7 +5,6 @@
 -- There are four of those moments and they are branched on the run's own
 -- classifier rather than re-decided from the board, so what this screen says
 -- and what the run then does are the same answer.
-
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../ui/layout")
@@ -38,10 +37,18 @@ function walks_on(run: run_module.View): bool
 end
 
 function title_of(run: run_module.View): string
-    if run.outcome == "lost-health" then return "THE RUN ENDS" end
-    if run.outcome == "lost-vault" then return "THE RUN ENDS" end
-    if run.outcome == "lost-target" then return "THE RUN ENDS" end
-    if run.outcome == "won" then return "THE DUEL IS DONE" end
+    if run.outcome == "lost-health" then
+        return "THE RUN ENDS"
+    end
+    if run.outcome == "lost-vault" then
+        return "THE RUN ENDS"
+    end
+    if run.outcome == "lost-target" then
+        return "THE RUN ENDS"
+    end
+    if run.outcome == "won" then
+        return "THE DUEL IS DONE"
+    end
     return "DUEL " .. tostring(run.duel) .. " IS YOURS"
 end
 
@@ -50,45 +57,61 @@ function subtitle_of(run: run_module.View): string
         return "YOUR LAST HEART WAS LOST IN DUEL " .. tostring(run.duel)
     end
     if run.outcome == "lost-vault" then
-        return "THE OPPONENT WON DUEL " .. tostring(run.duel)
-            .. ". YOUR GOLD IS LOST"
+        return "THE OPPONENT WON DUEL " .. tostring(run.duel) .. ". YOUR GOLD IS LOST"
     end
     -- The duel opened and the player still could not afford to leave it.
     if run.outcome == "lost-target" then
         return "DUEL " .. tostring(run.duel) .. " WON, BUT THE GOLD TARGET WAS MISSED"
     end
     if run.outcome == "won" then
-        return "ALL " .. tostring(run.run_length)
-            .. " DUELS WON. THE CITY GOES ON PAST THEM"
+        return "ALL " .. tostring(run.run_length) .. " DUELS WON. THE CITY GOES ON PAST THEM"
     end
     return "THE ROUNDS ARE COMPLETE. THE RUN GOES ON"
 end
 
 -- One figure under its caption.
 function figure(
-    caption: string, caption_ink: string, value: string,
-    figure_ink: string, caption_size: f64, figure_size: f64
+    caption: string,
+    caption_ink: string,
+    value: string,
+    figure_ink: string,
+    caption_size: f64,
+    figure_size: f64
 ): ui.Node
-    return modal.column({
-        label.middle(caption, caption_size, caption_ink),
-        label.middle(value, figure_size, figure_ink),
-    }, FIGURE_GAP)
+    return modal.column(
+        {
+            label.middle(caption, caption_size, caption_ink),
+            label.middle(value, figure_size, figure_ink)
+        },
+        FIGURE_GAP
+    )
 end
 
 -- Two figures side by side, for the verdict that is about a comparison: what
 -- was held against what was owed. A screen that showed only the shortfall would
 -- read as an arbitrary death.
-function ledger(
-    left_label: string, left_value: i32, right_label: string, right_value: i32
-): ui.Node
-    return ui.Node.flow({
-        figure(
-            left_label, HEADLINE_INK, tostring(left_value), FIGURE_INK,
-            LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
-        figure(
-            right_label, OWED_INK, tostring(right_value), OWED_INK,
-            LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
-    }, box.row(LEDGER_GAP, "center", "start")):wide()
+function ledger(left_label: string, left_value: i32, right_label: string, right_value: i32): ui.Node
+    return ui.Node.flow(
+        {
+            figure(
+                left_label,
+                HEADLINE_INK,
+                tostring(left_value),
+                FIGURE_INK,
+                LEDGER_HEADLINE_SIZE,
+                LEDGER_FIGURE_SIZE
+            ),
+            figure(
+                right_label,
+                OWED_INK,
+                tostring(right_value),
+                OWED_INK,
+                LEDGER_HEADLINE_SIZE,
+                LEDGER_FIGURE_SIZE
+            )
+        },
+        box.row(LEDGER_GAP, "center", "start")
+    ):wide()
 end
 
 -- What the run walks away with. A lost duel has only what it took; the other
@@ -96,25 +119,35 @@ end
 function tally(state: game.View, run: run_module.View): ui.Node
     if run.outcome == "lost-health" or run.outcome == "lost-vault" then
         return figure(
-            "DUELS WON", HEADLINE_INK, tostring(run.cleared), FIGURE_INK,
-            HEADLINE_SIZE, FIGURE_SIZE)
+            "DUELS WON",
+            HEADLINE_INK,
+            tostring(run.cleared),
+            FIGURE_INK,
+            HEADLINE_SIZE,
+            FIGURE_SIZE
+        )
     end
     if run.outcome == "lost-target" then
         return ledger("GOLD HELD", state.player_points, "TARGET", run.target)
     end
     if run.outcome == "won" then
         return figure(
-            "GOLD CARRIED ON", HEADLINE_INK,
-            tostring(state.player_points - run.target), WON_INK,
-            HEADLINE_SIZE, FIGURE_SIZE)
+            "GOLD CARRIED ON",
+            HEADLINE_INK,
+            tostring(state.player_points - run.target),
+            WON_INK,
+            HEADLINE_SIZE,
+            FIGURE_SIZE
+        )
     end
-    return ledger(
-        "GOLD CARRIED ON", state.player_points - run.target, "TARGET MET", run.target)
+    return ledger("GOLD CARRIED ON", state.player_points - run.target, "TARGET MET", run.target)
 end
 
 function ahead_text(run: run_module.View): string
     local text: string = "NEXT: DUEL " .. tostring(run.duel + 1)
-    if run.next_is_boss then text = text .. "   CHALLENGE" end
+    if run.next_is_boss then
+        text = text .. "   CHALLENGE"
+    end
     return text .. "   TARGET " .. tostring(run.ante_ahead)
 end
 
@@ -126,7 +159,9 @@ function onward(run: run_module.View): {ui.Node}
         return {
             label.middle(
                 "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER",
-                KEYS_SIZE, modal.keys_ink),
+                KEYS_SIZE,
+                modal.keys_ink
+            )
         }
     end
     local prompt: string = "ENTER OR CLICK VISITS THE SHOP   H OPENS THE HISTORY"
@@ -135,7 +170,7 @@ function onward(run: run_module.View): {ui.Node}
     end
     return {
         label.middle(ahead_text(run), NOTE_SIZE, modal.keys_ink),
-        label.middle(prompt, KEYS_SIZE, modal.keys_ink),
+        label.middle(prompt, KEYS_SIZE, modal.keys_ink)
     }
 end
 
@@ -143,17 +178,18 @@ function body(state: game.View, run: run_module.View): ui.Node
     local lines: {ui.Node} = {
         tally(state, run),
         ui.Node.gap(0.0, BLOCK_GAP),
-        label.middle(
-            "ROUNDS WON " .. tostring(state.player_tricks) .. " / 5",
-            NOTE_SIZE, NOTE_INK),
-        ui.Node.gap(0.0, BLOCK_GAP),
+        label.middle("ROUNDS WON " .. tostring(state.player_tricks) .. " / 5", NOTE_SIZE, NOTE_INK),
+        ui.Node.gap(0.0, BLOCK_GAP)
     }
-    for line in onward(run) do table.insert(lines, line) end
+    for line in onward(run) do
+        table.insert(lines, line)
+    end
     table.insert(lines, ui.Node.gap(0.0, BLOCK_GAP))
-    table.insert(lines, label.middle(
-        "R RESTARTS THE RUN   M RETURNS TO MENU", KEYS_SIZE, QUIET_INK))
-    return ui.Node.flow(
-        lines, box.column(BLOCK_GAP * 0.5, "start", "stretch"))
+    table.insert(
+        lines,
+        label.middle("R RESTARTS THE RUN   M RETURNS TO MENU", KEYS_SIZE, QUIET_INK)
+    )
+    return ui.Node.flow(lines, box.column(BLOCK_GAP * 0.5, "start", "stretch"))
 end
 
 function node(state: game.View, run: run_module.View): ui.Node
@@ -165,5 +201,5 @@ return {
     -- The comparison the three target-facing verdicts are all about, exported so
     -- its two halves can be measured without playing a duel to reach one.
     ledger = ledger,
-    ledger_gap = LEDGER_GAP,
+    ledger_gap = LEDGER_GAP
 }
