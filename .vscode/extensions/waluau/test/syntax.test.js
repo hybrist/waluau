@@ -32,6 +32,10 @@ test('registers .walu files as the Waluau language with its grammar', () => {
     'utf8',
   );
   assert.match(workspaceSettings, /"\*\.walu"\s*:\s*"waluau"/);
+  assert.match(
+    workspaceSettings,
+    /"\[waluau\]"\s*:\s*\{[^}]*"editor\.defaultFormatter"\s*:\s*"waluau-dev\.waluau-vscode"[^}]*\}/,
+  );
 });
 
 test('layers Waluau syntax rules over the Lua grammar', () => {
