@@ -148,44 +148,32 @@ function rank_marks(rank: i32): {Mark}
     return marks
 end
 
--- A small, unsealed school glyph for the repeated rank constellations. These
--- are signs scratched into the card rather than a suit icon on a poker deck:
--- flame, tide, void-star, and leaf respectively.
+-- The packaged atlas is one horizontal row of four square folk-print sprites:
+-- red cup, blue bell, black sword, and green leaf. Both the repeated pips and
+-- the larger help sigils draw through this one seam, so their object, ink, and
+-- left-to-right shading cannot drift apart.
+function draw_suit_symbol(
+    surface: entity.Surface, suit: i32, x: f64, y: f64, diameter: f64
+): bool
+    local maybe_texture: graphics_module.Texture? = surface.suit_symbols
+    if maybe_texture == nil then return false end
+    local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
+    -- A horizontal atlas of square cells names its own cell size by its
+    -- height. Reject a malformed upload rather than sampling an adjacent suit.
+    if texture.height <= 0 or texture.width < texture.height * 4 then return false end
+    local cell: f64 = texture.height::f64
+    surface.graphics:set_color("#ffffffff")
+    return surface.graphics:draw_sprite(
+        texture,
+        x - diameter * 0.5, y - diameter * 0.5, diameter, diameter,
+        (suit::f64) * cell, 0.0, cell, cell)
+end
+
+-- A small, unsealed suit sprite for the repeated rank constellations.
 function draw_school_mark(
     surface: entity.Surface, suit: i32, x: f64, y: f64, size: f64
 ): unit
-    local graphics = surface.graphics
-    graphics:set_color(ink.fade(ink.color_ink(suit), 0.90))
-    graphics:set_line_width(math.max(0.75, size * 0.22))
-    graphics:begin_path()
-    if suit == 0 then
-        graphics:move_to(x, y + size)
-        graphics:quadratic_curve_to(x - size * 0.9, y, x + size * 0.15, y - size)
-        graphics:quadratic_curve_to(x + size * 0.95, y, x, y + size)
-        graphics:move_to(x, y + size * 0.55)
-        graphics:quadratic_curve_to(x - size * 0.15, y, x + size * 0.25, y - size * 0.45)
-        graphics:stroke()
-    elseif suit == 1 then
-        graphics:move_to(x - size, y - size * 0.25)
-        graphics:quadratic_curve_to(x - size * 0.25, y - size, x + size, y - size * 0.15)
-        graphics:move_to(x - size, y + size * 0.35)
-        graphics:quadratic_curve_to(x, y - size * 0.2, x + size, y + size * 0.35)
-        graphics:stroke()
-    elseif suit == 2 then
-        graphics:stroke()
-        graphics:fill_circle(x, y, size * 0.34)
-        graphics:line(x - size, y, x - size * 0.5, y)
-        graphics:line(x + size * 0.5, y, x + size, y)
-        graphics:line(x, y - size, x, y - size * 0.5)
-        graphics:line(x, y + size * 0.5, x, y + size)
-    else
-        graphics:move_to(x, y + size)
-        graphics:quadratic_curve_to(x - size, y, x, y - size)
-        graphics:quadratic_curve_to(x + size, y, x, y + size)
-        graphics:move_to(x, y - size * 0.7)
-        graphics:line_to(x, y + size * 0.8)
-        graphics:stroke()
-    end
+    draw_suit_symbol(surface, suit, x, y, size * 3.0)
 end
 
 function draw_arcane_field(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
@@ -328,36 +316,7 @@ function use_color_field(
 end
 
 function draw_sigil(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
-    -- Every color mark sits on the same compact ink seal. Active shaders can
-    -- become bright directly beneath a line, so relying on contrast from the
-    -- card field alone would let the colored symbol disappear frame-to-frame.
-    local graphics = surface.graphics
-    graphics:set_color("#09090b")
-    graphics:fill_circle(x + 11.0, y + 3.0, 18.0)
-    graphics:set_color(ink.color_ink(suit))
-    graphics:set_line_width(3.0)
-    if suit == 0 then
-        -- Red color: a cut gem — flat crown, girdle line, pointed pavilion.
-        graphics:line(x + 5.0, y - 9.0, x + 17.0, y - 9.0)
-        graphics:line(x + 17.0, y - 9.0, x + 22.0, y - 1.0)
-        graphics:line(x + 22.0, y - 1.0, x + 11.0, y + 17.0)
-        graphics:line(x + 11.0, y + 17.0, x, y - 1.0)
-        graphics:line(x, y - 1.0, x + 5.0, y - 9.0)
-        graphics:line(x, y - 1.0, x + 22.0, y - 1.0)
-    elseif suit == 1 then
-        graphics:fill_circle(x + 11.0, y + 3.0, 12.0)
-        graphics:set_color("#111827")
-        graphics:fill_circle(x + 11.0, y - 1.0, 6.0)
-    elseif suit == 2 then
-        graphics:fill_rectangle(x, y - 9.0, 22.0, 22.0)
-        graphics:set_color("#09090b")
-        graphics:fill_rectangle(x + 6.0, y - 3.0, 10.0, 10.0)
-    else
-        -- Green color: a leaf blade with a midrib and two side veins.
-        graphics:line(x, y + 16.0, x + 22.0, y - 9.0)
-        graphics:line(x + 7.0, y + 8.0, x + 12.0, y + 13.0)
-        graphics:line(x + 14.0, y, x + 19.0, y + 5.0)
-    end
+    draw_suit_symbol(surface, suit, x + 11.0, y + 3.0, 36.0)
 end
 
 -- The mark a card carries once the other side has watched it come off the
@@ -558,6 +517,7 @@ return {
     fill_shape = fill_shape,
     fill_silhouette = fill_silhouette,
     draw_sigil = draw_sigil,
+    draw_suit_symbol = draw_suit_symbol,
     draw_school_mark = draw_school_mark,
     draw_high_arcana = draw_high_arcana,
     rank_marks = rank_marks,

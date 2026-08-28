@@ -33,7 +33,8 @@ type Graphics = engine.Graphics
 export type Surface = {
     graphics: Graphics,
     effects: effect_shaders.EffectShaders,
-    card_back: graphics_module.Texture?
+    card_back: graphics_module.Texture?,
+    suit_symbols: graphics_module.Texture?
 }
 
 export type Metrics = { graphics: Graphics? }

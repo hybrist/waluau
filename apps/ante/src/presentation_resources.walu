@@ -15,6 +15,7 @@ local layout = require("./layout")
 export type State = {
     bundle: assets.Bundle?,
     texture: graphics_module.Texture?,
+    suit_texture: graphics_module.Texture?,
     font: graphics_module.Font?,
     effects: effect_shaders.EffectShaders,
     effect_set: effect_shaders.State,
@@ -38,6 +39,7 @@ function State.new(): State
     return {
         bundle = nil,
         texture = nil,
+        suit_texture = nil,
         font = nil,
         effects = effect_set.shaders,
         effect_set = effect_set,
@@ -95,6 +97,15 @@ function State:prepare(graphics: engine.Graphics): unit
             resources.release_image(source)
             bundle.card_back = nil
             if result.ok then self.texture = result.texture
+            else self:append_warning(result.error.code .. ": " .. result.error.message) end
+        end
+        local maybe_suits: resources.ImageResource? = bundle.suit_symbols
+        if maybe_suits ~= nil then
+            local source: resources.ImageResource = maybe_suits::resources.ImageResource
+            local result: graphics_module.TextureResult = graphics:texture_from_image(source)
+            resources.release_image(source)
+            bundle.suit_symbols = nil
+            if result.ok then self.suit_texture = result.texture
             else self:append_warning(result.error.code .. ": " .. result.error.message) end
         end
         local maybe_noise: resources.ImageResource? = bundle.ice_noise
@@ -165,6 +176,7 @@ function State:surface(graphics: engine.Graphics): entity.Surface
         graphics = graphics,
         effects = self.effects,
         card_back = self.texture,
+        suit_symbols = self.suit_texture,
     }
 end
 
@@ -194,6 +206,11 @@ function State:dispose(): unit
             graphics:release_texture(maybe_texture::graphics_module.Texture)
             self.texture = nil
         end
+        local maybe_suits: graphics_module.Texture? = self.suit_texture
+        if maybe_suits ~= nil then
+            graphics:release_texture(maybe_suits::graphics_module.Texture)
+            self.suit_texture = nil
+        end
         local maybe_font: graphics_module.Font? = self.font
         if maybe_font ~= nil then
             graphics:release_font(maybe_font::graphics_module.Font)
@@ -207,4 +224,3 @@ function State:dispose(): unit
         self.bundle = nil
     end
 end
-

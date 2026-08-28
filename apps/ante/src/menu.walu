@@ -20,7 +20,7 @@
 local engine = require("waluau:engine")
 local render = require("./render")
 local ink = require("./ink")
-local effect_shaders = require("./effect_shaders")
+local entity = require("./entity")
 local spell_launch = require("./spell_launch")
 local spells = require("./spells/spell")
 local city_map = require("./city_map")
@@ -199,13 +199,13 @@ end
 -- The city map is already on the screen by the time this runs: the entry module
 -- draws it under whichever screen is live, so what is drawn here is only the
 -- list standing over it.
-function State:draw(viewport: layout.State, graphics: engine.Graphics, effects: effect_shaders.EffectShaders, ready: bool): unit
+function State:draw(viewport: layout.State, surface: entity.Surface, ready: bool): unit
+    local graphics: engine.Graphics = surface.graphics
     local heading_y: f64 = title_y(viewport)
     if self.help_open then
-        -- The same help card the duel shows, drawn on a surface with no card
-        -- back: nothing on it is a card.
-        render.draw_help(
-            { graphics = graphics, effects = effects, card_back = nil }, viewport)
+        -- The same help card the duel shows. It draws no card backs, while its
+        -- suit legend uses the same atlas as the live cards.
+        render.draw_help(surface, viewport)
         return
     end
     if self.stage == "spell" then
