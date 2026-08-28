@@ -1,69 +1,63 @@
--- The shop's screen: the intermission between two duels, drawn as one
--- cursor-driven list of offers in the duel's own panel chrome. The shop module
--- owns what the lines are and what they cost; this module owns where they sit,
--- which is also why the pointer's row lookup lives here.
---
--- The list stands on the city map, at the vendor the route has reached, and
--- keeps to a column so the map beside it can be read at the same time. Every
--- colour it draws goes through `alpha`: arriving at a shop and leaving one are
--- dissolves the map runs, and the offers travel with it.
+-- The shop's retained screen tree. Three stable row nodes cover both the
+-- ordinary two-offer list plus exit and the modal trade-choice list. Presenting
+-- refreshes their row data and availability; geometry, focus, hover, and click
+-- routing remain owned here instead of being duplicated in the game screen.
 
-local engine = require("waluau:engine")
 local game = require("./game")
 local ink = require("./ink")
 local spell_launch = require("./spell_launch")
 local run_module = require("./run")
 local shop = require("./shop")
 local spells = require("./spells/spell")
-local layout = require("./layout")
+local viewport_layout = require("./layout")
+local ui = require("./ui/node")
+local ui_layout = require("./ui/layout")
+local interaction = require("./ui/interaction")
 
--- The offers keep to a column down the left so the right of the screen stays
--- the city map: where the run has got to and which house is next are as much
--- of this screen as the prices are.
 const PANEL_X: f64 = 44.0
 const PANEL_W: f64 = 540.0
 const PANEL_CENTER: f64 = 314.0
-
 const ROW_X: f64 = 76.0
 const ROW_W: f64 = 476.0
 const ROW_H: f64 = 54.0
 const ROW_PITCH: f64 = 64.0
-
--- The panel opens a share of the live height down the screen, and its header
--- — title, subtitle, and the gold readout — takes a fixed band before the
--- first offer line.
 const PANEL_TOP_SHARE: f64 = 0.1133333333
 const PANEL_HEADER_H: f64 = 128.0
+const ROW_CAPACITY: i32 = 3
 
-function panel_top(viewport: layout.State): f64
+export type FenceAction = shop.ShopResult
+type Presentation = {
+    state: shop.State,
+    run: run_module.State,
+    viewport: viewport_layout.State,
+    rows: {shop.Row},
+    alpha: f64,
+    pending_action: FenceAction,
+}
+export type View = {
+    presentation: Presentation,
+    root: ui.Node,
+    list: ui.Node,
+    row_nodes: {ui.Node},
+    router: interaction.Router,
+    scope: i32,
+    targets: {interaction.Target},
+}
+
+function panel_top(viewport: viewport_layout.State): f64
     return viewport.height * PANEL_TOP_SHARE
 end
 
-function row_top(viewport: layout.State, index: i32): f64
-    return panel_top(viewport) + PANEL_HEADER_H + (index::f64) * ROW_PITCH
+function list_style(viewport: viewport_layout.State): ui_layout.Style
+    return ui_layout.style(
+        "column", ROW_PITCH - ROW_H, "start", "start",
+        ui_layout.edges(ROW_X, panel_top(viewport) + PANEL_HEADER_H, 0.0, 0.0))
 end
 
--- The offer line under a point, or -1. The gaps between lines are dead space,
--- so a pointer between two offers leaves the cursor on whichever it was.
-function row_at(viewport: layout.State, x: f64, y: f64, count: i32): i32
-    if x < ROW_X or x > ROW_X + ROW_W then return -1 end
-    for index = 0::i32, count - 1 do
-        local top: f64 = row_top(viewport, index)
-        if y >= top and y <= top + ROW_H then return index end
-    end
-    return -1
-end
-
--- What a sale line says on its left. Each kind of goods writes its own copy,
--- next to the numbers it is about; prices are the right-hand column, so nothing
--- here repeats them. A spent line drops the detail it used to carry: the numbers
--- it quoted were the ones it has already changed.
 function goods_label(goods: shop.Goods, sold: bool, run: run_module.State): string
     if Upgrade(upgrade) = goods then
         local name: string = spell_launch.name(upgrade.kind)
         if sold then return "UPGRADED " .. name end
-        -- The spell a slot named can leave the loadout: another slot of the same
-        -- visit may have traded it away.
         local key: i32 = run:slot_of(upgrade.kind)
         if key < 0 then return "UPGRADE " .. name .. "   TRADED AWAY" end
         if not run:can_sharpen(key) then
@@ -81,16 +75,12 @@ function goods_label(goods: shop.Goods, sold: bool, run: run_module.State): stri
                 .. "   KEY " .. tostring(run:slot_of(offered.kind) + 1)
         end
         local key: i32 = run:open_slot()
-        if key < 0 then
-            return "LEARN " .. name .. "   TRADES A SPELL AWAY"
-        end
+        if key < 0 then return "LEARN " .. name .. "   TRADES A SPELL AWAY" end
         return "LEARN " .. name .. "   KEY " .. tostring(key + 1)
     end
     return ""
 end
 
--- What one line says on its left. A sale line asks the goods its slot holds
--- rather than carrying a copy, so the copy and the sale cannot drift apart.
 function row_label(
     state: shop.State, row: shop.Row, run: run_module.State,
     offered: spells.SpellKind?
@@ -110,69 +100,64 @@ function row_label(
     end
     if row.kind == "cancel" then return "KEEP BOTH SPELLS" end
     local duel: string = "ENTER DUEL " .. tostring(run.duel)
-    if run:boss() then duel = duel .. "   CHALLENGE" end
+    if run:boss() then duel ..= "   CHALLENGE" end
     return duel .. "   TARGET " .. tostring(run:target())
 end
 
--- Idle ink: a line about a spell wears that spell's colour the way the menu's
--- selection list does, and a line the purse cannot cover goes dark whether it
--- names a spell or not.
 function row_ink(row: shop.Row): string
     if not row.available then return "#52525b" end
-    if row.spell ~= nil then
-        return spell_launch.color(row.spell::spells.SpellKind)
-    end
+    if row.spell ~= nil then return spell_launch.color(row.spell::spells.SpellKind) end
     return "#d4d4d8"
 end
 
 function draw_row(
-    graphics: engine.Graphics,
-    viewport: layout.State,
-    row: shop.Row,
-    label: string,
-    index: i32,
-    focused: bool,
-    alpha: f64
+    presentation: Presentation,
+    surface: ui.Surface,
+    bounds: ui_layout.Rect,
+    index: i32
 ): unit
-    local top: f64 = row_top(viewport, index)
+    if presentation.alpha <= 0.0 or index >= #presentation.rows then return end
+    local row: shop.Row = presentation.rows[index]
+    local graphics = surface.graphics
+    local alpha: f64 = presentation.alpha
     local edge: string = "#3f3f46"
     local tone: string = row_ink(row)
     local price_ink: string = "#52525b"
     if row.available and row.price > 0 then price_ink = "#fbbf24" end
-    if focused then
+    if index == presentation.state.cursor then
         edge = "#fbbf24"
         if row.available then tone = "#fbbf24" end
     end
     ink.panel(
-        graphics, ROW_X, top, ROW_W, ROW_H,
+        graphics, bounds.x, bounds.y, bounds.width, bounds.height,
         ink.fade("#17171c", alpha), ink.fade(edge, alpha))
     ink.text(
-        graphics, label, ROW_X + 22.0, top + 33.0, 13, ink.fade(tone, alpha))
-    -- A bought line keeps its place with its price struck off: the stock of a
-    -- visit is two offers, and one of them is now spent.
+        graphics,
+        row_label(
+            presentation.state, row, presentation.run,
+            presentation.state:pending_spell()),
+        bounds.x + 22.0, bounds.y + 33.0, 13, ink.fade(tone, alpha))
     if row.sold then
         ink.text_right(
-            graphics, "SOLD", ROW_X + ROW_W - 22.0, top + 33.0, 13,
-            ink.fade("#52525b", alpha))
+            graphics, "SOLD", bounds.x + bounds.width - 22.0, bounds.y + 33.0,
+            13, ink.fade("#52525b", alpha))
     elseif row.price > 0 then
         ink.text_right(
             graphics, tostring(row.price) .. " GOLD",
-            ROW_X + ROW_W - 22.0, top + 33.0, 13, ink.fade(price_ink, alpha))
+            bounds.x + bounds.width - 22.0, bounds.y + 33.0,
+            13, ink.fade(price_ink, alpha))
     end
 end
 
--- `run` is read only here: every purchase has already been applied by the time
--- a frame is drawn, so this module never asks the run to change. The backdrop
--- is the city map the entry module has already drawn, so the panel is laid over
--- the street the vendor is standing on rather than over a board.
-function draw(
-    state: shop.State,
-    run: run_module.State,
-    viewport: layout.State,
-    graphics: engine.Graphics,
-    alpha: f64
+function draw_chrome(
+    presentation: Presentation, surface: ui.Surface, bounds: ui_layout.Rect
 ): unit
+    local alpha: f64 = presentation.alpha
     if alpha <= 0.0 then return end
+    local viewport: viewport_layout.State = presentation.viewport
+    local state: shop.State = presentation.state
+    local run: run_module.State = presentation.run
+    local graphics = surface.graphics
     local panel_y: f64 = panel_top(viewport)
     local panel_h: f64 = viewport.height - panel_y - 56.0
     local choosing: bool = state:choosing()
@@ -181,44 +166,152 @@ function draw(
         ink.fade("#09090b", alpha * 0.94), ink.fade("#a1a1aa", alpha))
     ink.text(graphics, "THE SHOP", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
     local subtitle: string = "GOLD SPENT HERE WILL NOT ENTER DUEL " .. tostring(run.duel)
-    local offered: spells.SpellKind? = state:pending_spell()
-    if choosing then
-        subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
-    end
+    if choosing then subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?" end
     ink.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, ink.fade("#a1a1aa", alpha))
     ink.text_right(
         graphics, tostring(run.gold), 550.0, panel_y + 54.0, 24, ink.fade("#67e8f9", alpha))
     ink.text_right(
         graphics, "GOLD ON HAND", 550.0, panel_y + 77.0, 9, ink.fade("#155e75", alpha))
-    -- What the duel beyond this list will cost to walk out of, under the purse
-    -- it will be paid from. The shop informs rather than refuses — the target is
-    -- charged on the way out and there is a whole duel in between to earn it —
-    -- but it cannot inform once the gold is already spent.
     ink.text_right(
         graphics, "TARGET " .. tostring(run:target()) .. " TO CLEAR IT",
         550.0, panel_y + 95.0, 9, ink.fade("#b45309", alpha))
-
-    local rows: {shop.Row} = state:rows(run)
-    for index, row in rows do
-        draw_row(
-            graphics, viewport, row, row_label(state, row, run, offered),
-            index, index == state.cursor, alpha)
-    end
     if not choosing then
-        -- The slots are the whole stock of a visit, so say what the list is
-        -- rather than leaving the player waiting for it to refill.
         ink.text_centered(
             graphics, "TWO OFFERS PER VISIT. THE NEXT SHOP HAS ITS OWN",
-            PANEL_CENTER, row_top(viewport, #rows) + 33.0, 11, ink.fade("#8a8a92", alpha))
+            PANEL_CENTER,
+            panel_y + PANEL_HEADER_H + (#presentation.rows::f64) * ROW_PITCH + 33.0,
+            11, ink.fade("#8a8a92", alpha))
     end
     ink.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE DUEL",
         PANEL_CENTER, viewport.height - 34.0, 11, ink.fade("#a1a1aa", alpha))
 end
 
+function row_handlers(
+    presentation: Presentation, index: i32
+): interaction.Handlers
+    local callbacks: interaction.Handlers = interaction.handlers()
+    callbacks.on_focus = function(): unit presentation.state.cursor = index end
+    callbacks.on_activate = function(): unit
+        presentation.state.cursor = index
+        presentation.pending_action = presentation.state:activate(presentation.run)
+    end
+    return callbacks
+end
+
+function View.new(state: shop.State, run: run_module.State): View
+    local presentation: Presentation = {
+        state = state,
+        run = run,
+        viewport = viewport_layout.current(),
+        rows = {},
+        alpha = 0.0,
+        pending_action = "stay",
+    }
+    local rows: {ui.Node} = {}
+    for index = 0::i32, ROW_CAPACITY - 1 do
+        table.insert(rows, ui.Node.sized(ROW_W, ROW_H,
+            function(surface: ui.Surface, bounds: ui_layout.Rect): unit
+                draw_row(presentation, surface, bounds, index)
+            end))
+    end
+    local chrome: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit end,
+        function(surface: ui.Surface, bounds: ui_layout.Rect): unit
+            draw_chrome(presentation, surface, bounds)
+        end)
+    local list: ui.Node = ui.Node.flow(rows, list_style(presentation.viewport))
+    local root: ui.Node = ui.Node.layer({ chrome, list })
+    local router: interaction.Router = interaction.Router.new(root)
+    local scope: i32 = router:add_scope("column", true)
+    local targets: {interaction.Target} = {}
+    for index, node in rows do
+        table.insert(targets,
+            router:add(node, scope, true, row_handlers(presentation, index)))
+    end
+    router:activate_scope(scope)
+    return {
+        presentation = presentation,
+        root = root,
+        list = list,
+        row_nodes = rows,
+        router = router,
+        scope = scope,
+        targets = targets,
+    }
+end
+
+function View:sync(): unit
+    local presentation: Presentation = self.presentation
+    presentation.rows = presentation.state:rows(presentation.run)
+    assert(#presentation.rows <= ROW_CAPACITY)
+    for index, target in self.targets do
+        target:set_visible(index < #presentation.rows)
+    end
+    if #presentation.rows == 0 then
+        self.router:clear_focus()
+        return
+    end
+    if presentation.state.cursor < 0 or presentation.state.cursor >= #presentation.rows then
+        presentation.state.cursor = 0
+    end
+    self.router:focus(self.targets[presentation.state.cursor].key)
+end
+
+function View:take_action(): FenceAction
+    local action: FenceAction = self.presentation.pending_action
+    self.presentation.pending_action = "stay"
+    return action
+end
+
+function View:draw(viewport: viewport_layout.State, surface: ui.Surface, alpha: f64): unit
+    self.presentation.viewport = viewport
+    self.presentation.alpha = alpha
+    self.list:present_style(list_style(viewport))
+    self:sync()
+    self.root:draw(surface, 0.0, 0.0, viewport.width, viewport.height)
+end
+
+function View:keypressed(key: string): FenceAction
+    self:sync()
+    if key == "Escape" then
+        if self.presentation.state:choosing() then
+            self.presentation.state:cancel()
+            self:sync()
+            return "stay"
+        end
+        return "leave"
+    end
+    local routed: string = key
+    if key == "w" or key == "W" then routed = "ArrowUp" end
+    if key == "s" or key == "S" then routed = "ArrowDown" end
+    self.router:key_pressed(routed)
+    self:sync()
+    return self:take_action()
+end
+
+function View:mousemoved(x: f64, y: f64): unit
+    local hit: i32 = self.router:pointer_move(x, y)
+    if hit >= 0 then self.router:focus(hit) end
+end
+
+function View:mousepressed(x: f64, y: f64, button: i32): unit
+    if button ~= 1 then return end
+    self.router:pointer_down(x, y, button)
+end
+
+function View:mousereleased(x: f64, y: f64, button: i32): FenceAction
+    if button ~= 1 then return "stay" end
+    self.router:pointer_up(x, y, button)
+    self:sync()
+    return self:take_action()
+end
+
+function View:pointer_leave(): unit
+    self.router:pointer_leave()
+end
+
 return {
-    draw = draw,
-    row_at = row_at,
     row_label = row_label,
     row_ink = row_ink,
 }
