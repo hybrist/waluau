@@ -8296,6 +8296,21 @@ impl Builder<'_> {
                 let target = coerce_type(actual.clone(), Some(expected.clone()))?;
                 if target == actual {
                     Ok(value)
+                } else if target.nullable_inner() == Some(Type::Unknown) && actual != Type::Nil {
+                    // Guarded recursive aliases use `unknown` as the finite
+                    // runtime anchor. `unknown` is already a nullable anyref,
+                    // so widening a concrete recursive record into `Node?`
+                    // first boxes it to that anchor; there is no separate
+                    // nullable wrapper (or numeric conversion) to emit.
+                    if actual == Type::Unknown {
+                        Ok(value)
+                    } else {
+                        Ok(self.emit(Instruction::Cast {
+                            value,
+                            from: to_runtime_type(&actual),
+                            to: Type::Unknown,
+                        }))
+                    }
                 } else if to_runtime_type(&target) == to_runtime_type(&actual) {
                     // The two annotations name the same runtime value — a tagged
                     // union against the canonical record that represents it, or a
