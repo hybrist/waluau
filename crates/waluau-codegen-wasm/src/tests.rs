@@ -330,6 +330,19 @@ fn recursive_record_fields_dispatch_resolved_methods() {
 }
 
 #[test]
+fn nullable_recursive_record_traversal_emits_valid_wasm() {
+    let source = include_str!("../../../conformance/nullable_recursive_record_traversal.walu");
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("recursive nullable traversal should emit");
+
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted recursive nullable traversal should validate");
+}
+
+#[test]
 fn exports_top_level_code_as_main_without_a_start_section() {
     let source = r#"
         local value: i32 = 1

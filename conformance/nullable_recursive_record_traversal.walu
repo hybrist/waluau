@@ -1,0 +1,38 @@
+-- Recursive record traversal may return a nullable reference. Once a nil
+-- check proves the result present, the same record value can be returned and
+-- used without a numeric conversion.
+type Node = {
+    value: i32,
+    children: {Node},
+}
+
+function find(root: Node, wanted: i32): Node?
+    if root.value == wanted then return root end
+
+    for child in root.children do
+        local found: Node? = find(child, wanted)
+        if found ~= nil then
+            return found
+        end
+    end
+    return nil
+end
+
+function node_value(node: Node): i32
+    return node.value
+end
+
+function find_value(root: Node, wanted: i32): i32
+    local found: Node? = find(root, wanted)
+    if found ~= nil then
+        return node_value(found)
+    end
+    return -1
+end
+
+local leaf: Node = { value = 7, children = {} }
+local root: Node = { value = 1, children = { leaf } }
+assert(find(root, 7) ~= nil)
+assert(find(root, 8) == nil)
+assert(find_value(root, 7) == 7)
+assert(find_value(root, 8) == -1)
