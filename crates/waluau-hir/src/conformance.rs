@@ -137,7 +137,7 @@ fn check_conformance(
     // resolved `Type::Named` reference to this declaration.
     let self_ty = Type::Opaque {
         name: decl.name.clone(),
-        ty: Box::new(decl.ty.clone()),
+        ty: waluau_ast::OpaquePayload::new(decl.ty.clone()),
         generic_extern: None,
     };
 
@@ -1619,7 +1619,8 @@ fn interface_if_cast_statements(
 fn record_field_types(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => record_field_types(ty),
+        Type::Opaque { ty, .. } => record_field_types(ty),
+        Type::Nullable(ty) => record_field_types(ty),
         _ => None,
     }
 }
@@ -1628,7 +1629,8 @@ fn record_field_types(ty: &Type) -> Option<&BTreeMap<String, Type>> {
 fn array_element_type(ty: &Type) -> Option<&Type> {
     match ty {
         Type::Array(element) => Some(element),
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => array_element_type(ty),
+        Type::Opaque { ty, .. } => array_element_type(ty),
+        Type::Nullable(ty) => array_element_type(ty),
         _ => None,
     }
 }

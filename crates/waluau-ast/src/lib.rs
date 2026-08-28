@@ -401,6 +401,62 @@ impl TypedArrayKind {
     ];
 }
 
+/// Shared representation of a resolved opaque alias.
+///
+/// Named aliases form a graph: a large record can mention the same nested
+/// alias from many fields and signatures. Sharing the resolved payload keeps
+/// that graph a graph instead of cloning it into an exponentially larger
+/// tree. Equality remains structural across independently-created payloads,
+/// while the common shared case exits by identity.
+#[derive(Clone, Debug)]
+pub struct OpaquePayload(std::sync::Arc<Type>);
+
+impl OpaquePayload {
+    pub fn new(ty: Type) -> Self {
+        Self(std::sync::Arc::new(ty))
+    }
+
+    pub fn as_ptr(&self) -> *const Type {
+        std::sync::Arc::as_ptr(&self.0)
+    }
+
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    pub fn make_mut(&mut self) -> &mut Type {
+        std::sync::Arc::make_mut(&mut self.0)
+    }
+}
+
+impl std::ops::Deref for OpaquePayload {
+    type Target = Type;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<Type> for OpaquePayload {
+    fn as_ref(&self) -> &Type {
+        &self.0
+    }
+}
+
+impl PartialEq for OpaquePayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other) || self.0 == other.0
+    }
+}
+
+impl Eq for OpaquePayload {}
+
+impl std::hash::Hash for OpaquePayload {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.0, state);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Type {
     Numeric(NumericType),
@@ -429,7 +485,7 @@ pub enum Type {
     },
     Opaque {
         name: String,
-        ty: Box<Type>,
+        ty: OpaquePayload,
         generic_extern: Option<Box<GenericExternType>>,
     },
     Array(Box<Type>),
@@ -513,7 +569,8 @@ impl Type {
         match self {
             Self::Array(element) | Self::Variadic(element) => Some(*element.clone()),
             Self::TypedArray(kind) => Some(Self::Numeric(kind.element_numeric_type())),
-            Self::Nullable(inner) | Self::Opaque { ty: inner, .. } => inner.element_type(),
+            Self::Nullable(inner) => inner.element_type(),
+            Self::Opaque { ty: inner, .. } => inner.element_type(),
             _ => None,
         }
     }
@@ -664,7 +721,7 @@ impl Type {
                 generic_extern,
             } => ty.remove_tagged_variant(tag).map(|inner| Self::Opaque {
                 name: name.clone(),
-                ty: Box::new(inner),
+                ty: OpaquePayload::new(inner),
                 generic_extern: generic_extern.clone(),
             }),
             _ => None,
@@ -1867,7 +1924,9 @@ pub fn resolve_symbols(
 
 #[cfg(test)]
 mod type_tests {
-    use super::{NumericType, TaggedVariant, Type};
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    use super::{NumericType, OpaquePayload, TaggedVariant, Type};
 
     fn goods() -> Type {
         Type::TaggedUnion(vec![
@@ -1903,9 +1962,9 @@ mod type_tests {
     fn constructed_tagged_variant_looks_through_an_aliased_nullable() {
         let aliased = Type::Opaque {
             name: "MaybeGoods".to_string(),
-            ty: Box::new(Type::Nullable(Box::new(Type::Opaque {
+            ty: OpaquePayload::new(Type::Nullable(Box::new(Type::Opaque {
                 name: "Goods".to_string(),
-                ty: Box::new(goods()),
+                ty: OpaquePayload::new(goods()),
                 generic_extern: None,
             }))),
             generic_extern: None,
@@ -1923,5 +1982,26 @@ mod type_tests {
     fn constructed_tagged_variant_rejects_an_unknown_tag() {
         let nullable = Type::Nullable(Box::new(goods()));
         assert!(nullable.constructed_tagged_variant("Trinket").is_none());
+    }
+
+    #[test]
+    fn opaque_payload_identity_and_structural_hash_agree() {
+        let shared = OpaquePayload::new(Type::Numeric(NumericType::I32));
+        let shared_clone = shared.clone();
+        let independent = OpaquePayload::new(Type::Numeric(NumericType::I32));
+
+        assert!(shared.ptr_eq(&shared_clone));
+        assert!(!shared.ptr_eq(&independent));
+        assert_eq!(shared, independent);
+
+        let hash = |payload: &OpaquePayload| {
+            let mut hasher = DefaultHasher::new();
+            payload.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&shared), hash(&independent));
+
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<OpaquePayload>();
     }
 }
