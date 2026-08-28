@@ -92,7 +92,10 @@ void main() {
         + max(fiber, 0.0) * 0.16
         + 0.05;
     break_through *= 1.0 + rim * 0.9;
-    float press_alpha = min(break_through, 0.8) * v_color.a;
+    // The press pass renders once into a bake target and is composited from
+    // there, so its alpha passes through blending twice; the fractional power
+    // gives the twice-blended result roughly the authored coverage.
+    float press_alpha = pow(min(break_through, 0.8), 0.75) * v_color.a;
 
     vec4 output_color = mix(
         vec4(board, v_color.a),

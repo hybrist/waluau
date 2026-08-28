@@ -333,6 +333,60 @@ function use_paper_field(surface: ui.Surface, aspect: f64, press: f64): bool
     return binding.ok
 end
 
+-- The paper is identical for every card, so each shader pass renders once
+-- into a target the effect registry keeps, and every card after that costs a
+-- sprite draw instead of a full per-pixel procedural evaluation — the
+-- difference between the board's frame budget surviving a software
+-- rasterizer and not. Baked at double the design size so a card scaled up
+-- on the board stays crisp.
+const PAPER_BAKE_SCALE: f64 = 2.0
+
+function bake_paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
+    local graphics = surface.graphics
+    local result: graphics_module.RenderTargetResult = graphics:create_render_target(
+        (WIDTH * PAPER_BAKE_SCALE)::i32, (HEIGHT * PAPER_BAKE_SCALE)::i32)
+    if not result.ok then return nil end
+    local target: graphics_module.RenderTarget = result.target
+    if not graphics:set_render_target(target) then
+        graphics:release_render_target(target)
+        return nil
+    end
+    graphics:push_identity()
+    graphics:clear("#00000000")
+    local bound: bool = use_paper_field(surface, WIDTH / HEIGHT, press)
+    if bound then
+        graphics:set_color("#ffffffff")
+        graphics:fill_rectangle(
+            0.0, 0.0, WIDTH * PAPER_BAKE_SCALE, HEIGHT * PAPER_BAKE_SCALE)
+        ink.stop_effect(graphics)
+    end
+    graphics:pop()
+    graphics:set_screen_target()
+    if not bound then
+        graphics:release_render_target(target)
+        return nil
+    end
+    return target
+end
+
+-- One pass of the baked paper, baking it first if the program is ready. The
+-- bake only starts while drawing to the screen: switching targets inside a
+-- capture would hand the rest of the capture to the wrong surface.
+function paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
+    local baked: graphics_module.RenderTarget? = surface.effects.paper_board
+    if press > 0.5 then baked = surface.effects.paper_press end
+    if baked ~= nil then return baked end
+    if surface.effects.card_paper.shader == nil then return nil end
+    if surface.graphics.current_target ~= 0 then return nil end
+    local fresh: graphics_module.RenderTarget? = bake_paper_pass(surface, press)
+    if press > 0.5 then
+        surface.effects.paper_press = fresh
+    else
+        surface.effects.paper_board = fresh
+    end
+    return fresh
+end
+
 function draw_sigil(surface: ui.Surface, suit: i32, x: f64, y: f64): unit
     draw_suit_symbol(surface, suit, x + 11.0, y + 3.0, 36.0)
 end
@@ -392,15 +446,18 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
         graphics:set_color("#211d24")
         graphics:fill_rectangle(x, y, WIDTH, HEIGHT)
         ink.stop_effect(graphics)
-    elseif use_paper_field(surface, WIDTH / HEIGHT, 0.0) then
-        -- The resting face is card stock rather than a flat tile: the paper
-        -- shader renders pressed board over the same quad-and-silhouette seam
-        -- the animated fields use.
-        graphics:set_color("#211d24")
-        graphics:fill_rectangle(x, y, WIDTH, HEIGHT)
-        ink.stop_effect(graphics)
     else
-        fill_silhouette(graphics, x, y, "#211d24")
+        -- The resting face is card stock rather than a flat tile: the baked
+        -- board pass, cut to the same rounded silhouette the animated fields
+        -- use. Flat fill only while the paper program is still loading.
+        local paper: graphics_module.RenderTarget? = paper_pass(surface, 0.0)
+        if paper ~= nil then
+            graphics:set_color("#ffffffff")
+            graphics:draw_render_target(
+                paper::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
+        else
+            fill_silhouette(graphics, x, y, "#211d24")
+        end
     end
     draw_arcane_field(surface, card.suit, x, y)
 
@@ -435,10 +492,11 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     -- printed, so pips, labels, and court plates carry the sheet's grain
     -- instead of floating above it. Status marks stay on top — they are the
     -- table talking about the card, not part of its printing.
-    if use_paper_field(surface, WIDTH / HEIGHT, 1.0) then
-        graphics:set_color("#ffffff")
-        graphics:fill_rectangle(x, y, WIDTH, HEIGHT)
-        ink.stop_effect(graphics)
+    local pressed: graphics_module.RenderTarget? = paper_pass(surface, 1.0)
+    if pressed ~= nil then
+        graphics:set_color("#ffffffff")
+        graphics:draw_render_target(
+            pressed::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
     end
 
     if value.selected then
