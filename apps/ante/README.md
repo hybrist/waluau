@@ -235,9 +235,10 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and presentation snapshots. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
-| `box_layout.walu` | DOM-free intrinsic box layout: rows, columns, gaps, padding, alignment, flex, and paint-order hit testing. |
-| `entity.walu` | The boundary every visible thing shares: measure yourself, draw yourself into this rectangle, compose into flows. |
-| `entity_story.walu` | The entity-story boundary: load the presentation surface and place one entity at the centre of a flex stage, preserving its intrinsic and grow/shrink layout. |
+| `ui/layout.walu` | Retained, DOM-free intrinsic layout storage: stable boxes, in-place measurement/arrangement, rows, columns, padding, alignment, flex, and retained bounds. |
+| `ui/node.walu` | The opaque retained-node interface shared by visible things: controlled presentation, measure, arrange, paint, and paint-order hit traversal. |
+| `ui/interaction.walu` | Pointer enter/leave/down/up/click routing plus focus scopes, directional navigation, activation, and modal focus. |
+| `ui/story.walu` | The retained-story boundary: load the presentation surface and place one stable node at the centre of a flex stage. |
 | `entities/` | One file per thing on the board — see the entity table below. |
 | `ink.walu` | The drawing vocabulary entities share: type, panels, school colours, and the one fade a screen is taken down by. |
 | `easing.walu` | The four curves the board moves on. |
@@ -258,43 +259,46 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
 | `shop_item.test.walu` | Deterministic Vitest assertions that independent item effects can mutate gold, health, and the spell loadout through the bought-item seam. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
-| `entity.test.walu` | Headless assertions for the boundary: flow measurement, solved rectangles, bands, and the type-sized entities. |
+| `ui/node.test.walu` | Headless assertions for retained identity, layout, arrangement, hit order, and controlled presentation. |
+| `ui/presentation.test.walu` | Headless assertions for composition and the type-sized retained presenters. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |
 | `hand.stories.walu` | Storybook controls for the live hand-fan entity across card counts, selections, and focus positions. |
-| `box_layout.stories.walu` | Storybook stories for the layout solver itself, on synthetic leaves. |
+| `ui/layout.stories.walu` | Storybook stories for the retained layout solver itself, on synthetic leaves. |
 | `.storybook/main.js` | Storybook configuration: the story glob and the compiler options stories are built with. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
 
-## Entities
+## Retained UI
 
-Everything visible on the board is an entity, and an entity answers exactly two
-questions: how large would you like to be, and draw yourself into this
-rectangle. That contract is [`src/entity.walu`](src/entity.walu), and it is the
-whole of what one entity knows about another — none of them reads a screen
-coordinate, a viewport scale, or where its neighbours ended up.
+Everything visible on the board owns a stable opaque `ui.Node`. Constructors run
+when a screen or bounded presenter is created; explicit `present` methods update
+the values those nodes show. Each frame remeasures, rearranges, and paints the
+existing tree. Painting is intentionally still immediate and complete, but a
+settled frame does not rebuild node trees, layout trees, rectangles, or solver
+scratch.
 
-Because the contract is uniform, entities compose: `entity.flow` turns a list of
-them into a single entity that measures like the [box
-layout](src/box_layout.walu) of its children and paints by handing each child
-its solved rectangle. A band is a column of rows of leaves, and every level of
-that answers the same two questions as the card at the bottom of it.
+The small interface lives in [`src/ui/node.walu`](src/ui/node.walu). Nodes
+compose into retained rows, columns, layers, padding, and minimum-size wrappers;
+[`src/ui/layout.walu`](src/ui/layout.walu) stores their intrinsic measurements,
+arranged bounds, baselines, overflow result, and flex scratch in place. All
+layout-affecting mutation goes through presentation methods, leaving one clear
+place to add dirty propagation and cached layout decisions later without
+changing callers. There is no reactive dependency graph, and pre-rendered
+subtree caching is not part of this design.
 
-Measuring and drawing take different things. Drawing needs a surface — live
-graphics, effect programs, the packaged card back. Measuring needs only metrics,
-and metrics may be empty, so the whole board can be measured DOM-free with no
-canvas at all; that is what `src/entity.test.walu` and the entity tests do. With
-a live context a label asks the font that has actually loaded how wide its
-string is; without one it answers for the built-in bitmap font, which is what
-would be drawn if nothing else had arrived.
+Measuring needs only optional graphics metrics, so the whole tree remains
+DOM-free and can be tested headlessly. With a live context a label asks the
+loaded font for its width; without one it uses the built-in bitmap-font advance.
+Drawing receives the WebGL2 presentation surface and the bounds retained by
+layout.
 
-Where an entity is asked about a rectangle is also where it is asked about a
-click. The commit capsules and the footer's help target are sized from the type
-they hold, so their hit rectangles are the ones the frame painted rather than a
-second description that can drift; the flat card rows answer their slot
-geometry as a pure function, which is how choreography aims a deal at the same
-frames the row will paint into.
+[`src/ui/interaction.walu`](src/ui/interaction.walu) routes pointer movement,
+enter/leave, down/up, and release-synthesized clicks through reverse paint-order
+hit traversal. The same retained bounds feed focus scopes, arrow navigation,
+and Enter/Space activation. Focus is generic UI state; card selection, spell
+targets, purchase rules, and other game choices remain domain state. Modal focus
+scopes prevent the covered board from responding.
 
 | Entity | What it is |
 | --- | --- |
@@ -370,11 +374,12 @@ The deployed game carries its storybook with it, at `/storybook`:
 Vercel build runs it after the game's own `vite build` so one deployment serves
 both.
 
-Every Ante story supplies an `entity.Node` to
-[`src/entity_story.walu`](src/entity_story.walu). The adapter loads the
+Every Ante story supplies a retained `ui.Node` to
+[`src/ui/story.walu`](src/ui/story.walu). The story module loads the
 same presentation surface as the game and makes the Storybook canvas a centred
-flex stage. It does not author the subject's rectangle: the entity's intrinsic
-measurement and grow/shrink factors decide how it uses the available canvas.
+flex stage. It constructs the subject and stage once; controls call presentation
+methods before each draw, and the node's intrinsic measurement and flex factors
+decide how it uses the available canvas.
 
 The relic's states — face up, sealed, selected, focused, watched, mid-turn, one
 per color, and in the fan — therefore render the real card, card-row, and

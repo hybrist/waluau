@@ -5,13 +5,13 @@
 
 require("waluau:vitest")
 
-local entity = require("./adapter")
+local box = require("../ui/layout")
 local card = require("./card")
 local card_row = require("./card_row")
 
 describe("card row", function(): unit
     it("centres a three-table_card row on its authored pitch", function(): unit
-        local bounds = entity.rect(0.0, 40.0, 324.0, card.height)
+        local bounds = box.rect(0.0, 40.0, 324.0, card.height)
         local slots = card_row.slot_rects(3, card_row.flat_pitch, bounds)
 
         expect(#slots):toBe(3)
@@ -35,9 +35,9 @@ describe("card row", function(): unit
         -- The winner's pair flanks the five-card community on the same pitch,
         -- so the public cards must not move out from under the reveal.
         local table_cards = card_row.slot_rects(
-            5, card_row.flat_pitch, entity.rect(-278.0, 0.0, 556.0, card.height))
+            5, card_row.flat_pitch, box.rect(-278.0, 0.0, 556.0, card.height))
         local hand = card_row.slot_rects(
-            7, card_row.flat_pitch, entity.rect(-394.0, 0.0, 788.0, card.height))
+            7, card_row.flat_pitch, box.rect(-394.0, 0.0, 788.0, card.height))
 
         expect(hand[1].x):toBe(table_cards[0].x)
         expect(hand[3].x):toBe(table_cards[2].x)
@@ -45,8 +45,8 @@ describe("card row", function(): unit
     end)
 
     it("tightens its pitch rather than running off a narrow board", function(): unit
-        local roomy = entity.rect(0.0, 0.0, 324.0, card.height)
-        local tight = entity.rect(0.0, 0.0, 300.0, card.height)
+        local roomy = box.rect(0.0, 0.0, 324.0, card.height)
+        local tight = box.rect(0.0, 0.0, 300.0, card.height)
 
         expect(card_row.pitch_in(roomy, 3, card_row.flat_pitch)):toBe(116.0)
         expect(card_row.pitch_in(tight, 3, card_row.flat_pitch)):toBe(104.0)
@@ -58,7 +58,7 @@ describe("card row", function(): unit
     end)
 
     it("overlaps a boss battle's row instead of widening it", function(): unit
-        local bounds = entity.rect(0.0, 0.0, 368.0, card.height)
+        local bounds = box.rect(0.0, 0.0, 368.0, card.height)
         local pitch = card_row.pitch_in(bounds, 7, card_row.flat_pitch)
         -- Seven cards over a 276-unit span is a 46 pitch: half a card, so
         -- every card covers half of its neighbour.

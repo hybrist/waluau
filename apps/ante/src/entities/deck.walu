@@ -7,7 +7,7 @@
 -- one.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local card = require("./card")
 
 const CAPTION_DROP: f64 = 0.0
@@ -16,7 +16,7 @@ function intrinsic(): box.Intrinsic
     return box.Intrinsic.fixed(card.width, card.height)
 end
 
-function draw_at(surface: entity.Surface, count: i32, x: f64, y: f64): unit
+function draw_at(surface: ui.Surface, count: i32, x: f64, y: f64): unit
     if count <= 0 then return end
     local graphics = surface.graphics
     if count > 18 then
@@ -29,15 +29,15 @@ function draw_at(surface: entity.Surface, count: i32, x: f64, y: f64): unit
 end
 
 type DeckPresentation = { count: i32 }
-export type Stateful = { presentation: DeckPresentation, root: entity.Node }
+export type Stateful = { presentation: DeckPresentation, root: ui.Node }
 
 function Stateful.new(count: i32): Stateful
     local presentation: DeckPresentation = { count = count }
-    local root: entity.Node = entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return intrinsic()
+    local root: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            box.set_fixed(into, card.width, card.height)
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             draw_at(surface, presentation.count, bounds.x, bounds.y)
         end)
     return { presentation = presentation, root = root }
@@ -47,7 +47,7 @@ function Stateful:present(count: i32): unit
     self.presentation.count = count
 end
 
-function node(count: i32): entity.Node
+function node(count: i32): ui.Node
     return Stateful.new(count).root
 end
 

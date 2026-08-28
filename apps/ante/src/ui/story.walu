@@ -1,17 +1,17 @@
--- Ante's entity-story boundary. A story supplies one entity; this module owns the
--- canvas, presentation resources, and the flex stage that places that entity.
--- The stage authors no size for its child. It gives the entity the whole
--- logical canvas as available space and lets the entity's intrinsic
+-- Ante retained-story boundary. A story supplies one retained node; this module owns the
+-- canvas, presentation resources, and the flex stage that places that node.
+-- The stage authors no size for its child. It gives the node the whole
+-- logical canvas as available space and lets the node's intrinsic
 -- measurement plus grow/shrink factors decide the rectangle it receives.
 local engine = require("waluau:engine")
 local storybook = require("waluau:engine/storybook")
-local entity = require("./entities/adapter")
-local presentation_resources = require("./presentation_resources")
+local ui = require("./node")
+local presentation_resources = require("../presentation_resources")
 
 export type Book = { assets: presentation_resources.State, started: bool }
 
 type Scene = {
-    node: () -> entity.Node,
+    node: () -> ui.Node,
     present: (() -> unit)?,
     width: f64,
     height: f64,
@@ -50,9 +50,9 @@ end
 -- A one-child row is the story's flex container. With centre justification
 -- and alignment, unused room surrounds the subject. The direct child keeps
 -- its own flex factors, so available width is distributed through the same
--- layout path the entity uses on the live board.
-function stage(node: entity.Node): entity.Node
-    return entity.Node.across({ justify = "center", align = "center" }, {node})
+-- layout path the node uses on the live board.
+function stage(subject: ui.Node): ui.Node
+    return ui.Node.across({ justify = "center", align = "center" }, {subject})
 end
 
 function Book:scene(spec: Scene): storybook.Scene
@@ -68,7 +68,7 @@ function Book:scene(spec: Scene): storybook.Scene
 
     -- Construct the subject and stage once. Story controls update presentation
     -- through `present`; drawing only remeasures, arranges, and paints this tree.
-    local root: entity.Node = stage(spec.node())
+    local root: ui.Node = stage(spec.node())
 
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         self.assets:prepare(graphics)
@@ -77,12 +77,8 @@ function Book:scene(spec: Scene): storybook.Scene
         local surface = self.assets:surface(graphics)
         graphics:push()
         graphics:scale(spec.scale, spec.scale)
-        root.paint(surface, {
-            x = 0.0,
-            y = 0.0,
-            width = graphics.width / spec.scale,
-            height = graphics.height / spec.scale,
-        })
+        root:draw(surface, 0.0, 0.0,
+            graphics.width / spec.scale, graphics.height / spec.scale)
         graphics:pop()
     end
 

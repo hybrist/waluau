@@ -1,12 +1,11 @@
--- The duel board, composed. Everything the player can see is an entity that
--- knows its own size and draws itself into the rectangle it is handed
--- (`entity.walu` and `entities/`); this module decides which entities are on
--- the board this frame and which part of the live viewport each of them gets.
+-- The duel board, composed. Board owns stable entity presenters and interaction
+-- nodes for the lifetime of the screen; each frame only presents new values,
+-- measures, arranges, and paints those retained objects.
 --
 -- What stays here is what is not an entity: the cards in flight. An animation
 -- leg is a card between two places rather than a thing standing in one, so it
 -- is drawn against the board's slot anchors instead of being laid out — and
--- those anchors are the same box-layout frames the rows paint into, so a card
+-- those anchors are the same retained-layout frames the rows paint into, so a card
 -- can only ever land where a card is actually going to be.
 
 local graphics_module = require("waluau:engine/graphics")
@@ -21,27 +20,24 @@ local layout = require("./layout")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
 local divine_intervention = require("./divine_intervention")
-local box = require("./box_layout")
-local entity = require("./entity")
+local box = require("./ui/layout")
+local ui = require("./ui/node")
+local board_interaction = require("./board/interaction")
+local board_view = require("./board/view")
 local ink = require("./ink")
 local easing = require("./easing")
 local card_burn = require("./card_burn")
 local card = require("./entities/card")
+local card_flip = require("./entities/card_flip")
 local card_row = require("./entities/card_row")
 local hand_fan = require("./entities/hand_fan")
-local table_card_panel = require("./entities/table_card_panel")
 local deck = require("./entities/deck")
-local pile = require("./entities/pile")
-local hud = require("./entities/hud")
-local footer = require("./entities/footer")
 local action_bar = require("./entities/action_bar")
 local capsule = require("./entities/capsule")
 local powered_card = require("./entities/powered_card")
 local backdrop = require("./entities/backdrop")
 local modal = require("./entities/modal")
 local help_card = require("./entities/help_card")
-local ledger = require("./entities/ledger")
-local verdict = require("./entities/verdict")
 
 -- A position on the logical canvas. Everything that travels — animation legs,
 -- slot anchors, gather points, pointer hits — moves through Points, so a
@@ -63,8 +59,6 @@ end
 function top_left(rect: box.Rect): Point
     return point(rect.x, rect.y)
 end
-
-const FLIP_SECONDS: f64 = 0.55
 
 -- Where the board's own bands sit inside the live viewport. Each band says
 -- where an entity starts and how wide it may be; how tall it turns out to be
@@ -124,7 +118,7 @@ const THROW_RISE: f64 = 270.0
 -- Once both flips have landed, the winner's pair flies out of its row and
 -- joins the five community cards, so all seven candidates stand together in
 -- the middle of the board. FLY_START leaves a beat after the second flip
--- (which finishes at 0.2 + FLIP_SECONDS * 1.7), and the second card trails
+-- (which finishes at 0.2 + card_flip.seconds * 1.7), and the second card trails
 -- the first by FLY_STAGGER so the pair arrives as two beats rather than a
 -- block slide.
 const FLY_START: f64 = 1.3
@@ -183,8 +177,6 @@ export type Anim = {
 -- final spell/card implementation.
 export type Interaction = {
     hand_focus: i32,
-    table_card_cursor: i32,
-    cursor_area: "hand" | "table-cards",
     play_picks: {i32},
     swap_hand: {i32},
     swap_table_cards: {i32},
@@ -196,6 +188,8 @@ export type Interaction = {
     -- prompt names, and whose price it quotes.
     cast_slot: i32
 }
+
+export type BoardAction = board_interaction.Action
 type Motion = {
     fan_parts: {f64},
     reveal_clock: f64,
@@ -260,14 +254,14 @@ end
 
 function computer_band(viewport: layout.State): box.Rect
     local width: f64 = hand_width(viewport)
-    return entity.rect(
+    return box.rect(
         viewport.center_x - width * 0.5, viewport.computer_y, width, card.height)
 end
 
 function fan_band(viewport: layout.State, count: i32): box.Rect
     local width: f64 = hand_width(viewport)
     local height: f64 = hand_fan.intrinsic(count).preferred_height
-    return entity.rect(
+    return box.rect(
         viewport.center_x - width * 0.5, viewport.player_y - height * 0.5,
         width, height)
 end
@@ -277,47 +271,47 @@ end
 -- winner's pair has joined the table cards.
 function table_card_band(viewport: layout.State, slots: i32): box.Rect
     local size: box.Intrinsic = card_row.intrinsic(slots, card_row.flat_pitch)
-    return entity.rect(
+    return box.rect(
         viewport.center_x - size.preferred_width * 0.5, viewport.table_card_y,
         size.preferred_width, size.preferred_height)
 end
 
 function action_band(viewport: layout.State): box.Rect
-    return entity.rect(0.0, viewport.action_y, viewport.width, capsule.height)
+    return box.rect(0.0, viewport.action_y, viewport.width, capsule.height)
 end
 
 function deck_band(viewport: layout.State): box.Rect
-    return entity.rect(
+    return box.rect(
         viewport.side_left, viewport.table_card_y,
         card.width, card.height + deck.caption_drop)
 end
 
 function board_rect(viewport: layout.State): box.Rect
-    return entity.rect(0.0, 0.0, viewport.width, viewport.height)
+    return box.rect(0.0, 0.0, viewport.width, viewport.height)
 end
 
-function header_band(metrics: entity.Metrics, node: entity.Node, viewport: layout.State): box.Rect
-    return entity.band(
-        metrics, node, BOARD_EDGE, HEADER_TOP, viewport.width - BOARD_EDGE * 2.0)
+function header_band(height: f64, viewport: layout.State): box.Rect
+    return box.rect(
+        BOARD_EDGE, HEADER_TOP, viewport.width - BOARD_EDGE * 2.0, height)
 end
 
-function footer_band(metrics: entity.Metrics, node: entity.Node, viewport: layout.State): box.Rect
-    return entity.band_above(
-        metrics, node, FOOTER_EDGE, viewport.height - FOOTER_BOTTOM,
-        viewport.width - FOOTER_EDGE * 2.0)
+function footer_band(height: f64, viewport: layout.State): box.Rect
+    return box.rect(
+        FOOTER_EDGE, viewport.height - FOOTER_BOTTOM - height,
+        viewport.width - FOOTER_EDGE * 2.0, height)
 end
 
 -- A line of type centred across the board, hung off a baseline the way the
 -- board's prompts always have been.
 function centered_line(
-    surface: entity.Surface, viewport: layout.State,
+    surface: ui.Surface, viewport: layout.State,
     text: string, baseline: f64, size: f64, color: string
 ): unit
     ink.text_centered(surface.graphics, text, viewport.center_x, baseline, size, color)
 end
 
 -- ---------------------------------------------------------------------------
--- Slot anchors. The same box-layout frames the rows paint into, answered
+-- Slot anchors. The same retained-layout frames the rows paint into, answered
 -- without a frame so choreography can aim an animation at them.
 -- ---------------------------------------------------------------------------
 
@@ -409,61 +403,146 @@ function slot_hidden(anims: {Anim}, clock: f64, kind: Slot, index: i32): bool
     return false
 end
 
-function hidden_slots(anims: {Anim}, clock: f64, kind: Slot, count: i32): {bool}
-    local flags: {bool} = {}
-    for index = 0::i32, count - 1 do
-        table.insert(flags, slot_hidden(anims, clock, kind, index))
-    end
-    return flags
-end
-
 function is_picked(picks: {i32}, value: i32): bool
     for pick in picks do if pick == value then return true end end
     return false
 end
 
--- ---------------------------------------------------------------------------
--- Pointer hits. Every one of these answers from the same rectangle the entity
--- was painted into.
--- ---------------------------------------------------------------------------
+export opaque type Board = { view: board_view.State }
 
-function hit_hand(viewport: layout.State, at: Point, parts: {f64}): i32
-    return hand_fan.hit(fan_band(viewport, #parts), parts, at.x, at.y)
-end
-
--- The table_card under a point, or -1. Table cards lie square to the board.
-function hit_table_card(viewport: layout.State, at: Point, count: i32): i32
-    for index = 0::i32, count - 1 do
-        if entity.contains(row_slot(viewport, count, index), at.x, at.y) then
-            return index
+function settled_pile_count(frame: Frame): i32
+    local pending: i32 = 0
+    for anim in frame.motion.anims do
+        if anim.dest_kind == SLOT_ASIDE and frame.motion.anim_clock < anim.vanish then
+            pending += 1
         end
     end
-    return -1
+    return #frame.piles.discards - pending
 end
 
--- The rectangles the last painted frame put its type-sized controls in. A
--- control the frame did not draw keeps the empty rectangle, which no point is
--- inside, so it is not there to click either.
-type Targets = { commit: box.Rect, pass: box.Rect }
-
-function nowhere(): box.Rect
-    return entity.rect(0.0, 0.0, -1.0, -1.0)
+function Board.new(state: game.View, run: run_module.View): Board
+    return { view = board_view.new(state, run) }
 end
 
-local targets: Targets = {
-    commit = nowhere(), pass = nowhere(),
-}
+function Board:begin_frame(frame: Frame): unit
+    local hand_count: i32 = #frame.view.player_hand
+    local table_count: i32 = #frame.view.middle
+    self.view:present_chrome(
+        frame.view, frame.run, frame.piles.discards, settled_pile_count(frame))
+    self.view:begin_player()
+    for index = 0::i32, hand_count - 1 do
+        local selected: bool = is_picked(frame.interaction.play_picks, index)
+        if frame.view.swap_open then
+            selected = is_picked(frame.interaction.swap_hand, index)
+        end
+        self.view:add_player(card.look(
+            frame.view.player_hand[index].card,
+            selected,
+            index == frame.interaction.hand_focus,
+            false,
+            false,
+            frame.view.player_hand[index].known), slot_hidden(
+                frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, index))
+    end
+    self.view:end_player(frame.motion.fan_parts)
 
-function clear_targets(): unit
-    targets = { commit = nowhere(), pass = nowhere() }
+    self.view:begin_computer()
+    for index = 0::i32, hand_count - 1 do
+        local hidden: bool = slot_hidden(
+            frame.motion.anims, frame.motion.anim_clock, SLOT_COMPUTER, index)
+        self.view:present_computer(index, card.sealed(
+            frame.view.computer_hand[index].card,
+            frame.view.computer_hand[index].known), hidden)
+    end
+
+    local modal_open: bool = frame.interaction.modal ~= "none"
+        or frame.interaction.revealing
+    self.view:present_input({
+        viewport_width = frame.viewport.width,
+        viewport_height = frame.viewport.height,
+        fan_bounds = fan_band(frame.viewport, hand_count),
+        fan_parts = frame.motion.fan_parts,
+        hand_count = hand_count,
+        table_count = table_count,
+        frozen_table = frame.view.frozen_middle,
+        swap_open = frame.view.swap_open,
+        casting = frame.interaction.casting,
+        modal_open = modal_open,
+        finished = frame.interaction.finished,
+        play_pick_count = #frame.interaction.play_picks,
+    })
+    self.view:present_modal(frame.interaction.modal, frame.view, frame.run)
+    self.view:begin_table()
+    local table_focus: i32 = self:focused_table()
+    for index = 0::i32, table_count - 1 do
+        local hidden: bool = slot_hidden(
+            frame.motion.anims, frame.motion.anim_clock, SLOT_MIDDLE, index)
+        local selected: bool = frame.view.swap_open
+            and is_picked(frame.interaction.swap_table_cards, index)
+        local focused: bool = table_focus == index
+            and (frame.view.swap_open or frame.interaction.casting)
+        local power: spells.SpellKind? = nil
+        if index == frame.spell.target then power = frame.spell.kind end
+        self.view:present_table(index,
+            card.look(frame.view.middle[index], selected, focused, hidden, false, false),
+            power, frame.spell.clock, frame.ash, frame.spells.grave_dust, hidden)
+    end
 end
 
-function hit_commit(at: Point): bool
-    return entity.contains(targets.commit, at.x, at.y)
+function Board:focus_hand(index: i32): bool
+    return self.view:focus_hand(index)
 end
 
-function hit_pass(at: Point): bool
-    return entity.contains(targets.pass, at.x, at.y)
+function Board:focus_table(index: i32): bool
+    return self.view:focus_table(index)
+end
+
+function Board:focused_hand(): i32
+    return self.view:focused_hand()
+end
+
+function Board:focused_table(): i32
+    return self.view:focused_table()
+end
+
+function Board:repair_table_focus(): bool
+    return self.view:repair_table_focus()
+end
+
+function Board:fan_focus(animating: bool): i32
+    return self.view:fan_focus(animating)
+end
+
+function Board:apply_hand_order(order: {i32}): unit
+    self.view:apply_hand_order(order)
+end
+
+function Board:pointer_move(x: f64, y: f64): i32
+    return self.view:pointer_move(x, y)
+end
+
+function Board:pointer_down(x: f64, y: f64, button: i32): i32
+    return self.view:pointer_down(x, y, button)
+end
+
+function Board:pointer_up(x: f64, y: f64, button: i32): BoardAction
+    return self.view:pointer_up(x, y, button)
+end
+
+function Board:pointer_leave(): unit
+    self.view:pointer_leave()
+end
+
+function Board:navigate(direction: "left" | "right" | "up" | "down"): bool
+    return self.view:navigate(direction)
+end
+
+function Board:activate(): BoardAction
+    return self.view:activate()
+end
+
+function Board:activate_modal(): BoardAction
+    return self.view:activate_modal()
 end
 
 -- ---------------------------------------------------------------------------
@@ -475,7 +554,7 @@ end
 -- it is drawn before all five cards, the cards mask its centre while the
 -- continuous field remains visible around them and through every gap.
 function use_result_field(
-    surface: entity.Surface, strength: f64, aspect: f64, player_won: bool
+    surface: ui.Surface, strength: f64, aspect: f64, player_won: bool
 ): bool
     local effects: effect_shaders.EffectShaders = surface.effects
     local maybe_shader: graphics_module.Shader? = effects.defeat_shroud.shader
@@ -490,7 +569,7 @@ function use_result_field(
 end
 
 function draw_result_field(
-    surface: entity.Surface, bounds: box.Rect, strength: f64, player_won: bool
+    surface: ui.Surface, bounds: box.Rect, strength: f64, player_won: bool
 ): unit
     if strength <= 0.0 then return end
     local graphics = surface.graphics
@@ -515,39 +594,6 @@ function draw_result_field(
     ink.stop_effect(graphics)
 end
 
--- Fakes a card picked up off the table and turned over midair: cos
--- collapses the width (back, edge-on, then face) while sin lifts the card
--- toward the viewer — rising and growing around mid-flip — so the rotation
--- happens in the air instead of sweeping through the table surface. A
--- slight sin-driven skew tilts the silhouette for perspective. Everything
--- inherits the transform stack, so the regular card renderer draws both
--- halves of the flip.
-function draw_flipping_card(
-    surface: entity.Surface, value: game.Card, x: f64, y: f64,
-    clock: f64, delay: f64, colored: bool
-): unit
-    local graphics = surface.graphics
-    local progress: f64 = easing.clamp01((clock - delay) / FLIP_SECONDS)
-    local turn: f64 = easing.in_out_cubic(progress)
-    local angle: f64 = turn * math.pi
-    local flat: f64 = math.cos(angle)
-    local depth: f64 = math.sin(angle)
-    local hidden: bool = flat >= 0.0
-    local width_scale: f64 = flat
-    if not hidden then width_scale = -flat end
-    local lift: f64 = 1.0 + 0.14 * depth
-    graphics:push()
-    graphics:translate(x + card.width * 0.5, y + card.height * 0.5 - 10.0 * depth)
-    graphics:apply_transform(width_scale * lift, 0.18 * depth, 0.0, lift, 0.0, 0.0)
-    -- A card being turned over is on its way to public: whether the other side
-    -- knew it a moment ago stops mattering the instant it lands face up, so no
-    -- eye rides the flip.
-    card.draw_at(
-        surface, card.look(value, false, false, hidden, colored, false),
-        -(card.width * 0.5), -(card.height * 0.5))
-    graphics:pop()
-end
-
 -- A card thrown to a table_card slot: the deck draw the card stories rehearse,
 -- played on the live board. The card is card_warp's sheet rather than a
 -- rectangle — it rises toward the viewer, stretches with its own momentum,
@@ -556,7 +602,7 @@ end
 -- The face is captured fresh each frame, the same bargain ash reappearance
 -- strikes: a throw is short and rare, and a captured card is exact.
 function draw_throw_card(
-    surface: entity.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh
+    surface: ui.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh
 ): unit
     local graphics = surface.graphics
     local clock: f64 = part * card_draw.land_end
@@ -610,7 +656,7 @@ end
 -- and lifted slightly toward the viewer while it moves (matching the reveal
 -- flip's midair feel).
 function draw_anim_card(
-    surface: entity.Surface, anim: Anim, clock: f64, sheet: card_warp.Mesh
+    surface: ui.Surface, anim: Anim, clock: f64, sheet: card_warp.Mesh
 ): unit
     if clock < anim.appear or clock >= anim.vanish then return end
     local graphics = surface.graphics
@@ -650,7 +696,7 @@ function draw_anim_card(
 end
 
 function draw_anims(
-    surface: entity.Surface, anims: {Anim}, clock: f64, sheet: card_warp.Mesh
+    surface: ui.Surface, anims: {Anim}, clock: f64, sheet: card_warp.Mesh
 ): unit
     for anim in anims do draw_anim_card(surface, anim, clock, sheet) end
 end
@@ -728,7 +774,7 @@ end
 -- Like a card in flight it is drawn against the board's anchors rather than
 -- laid out: it is a visitor crossing the board, not a thing standing on it.
 function draw_divine_intervention(
-    surface: entity.Surface, clock: f64, active: bool, fan_parts: {f64}
+    surface: ui.Surface, clock: f64, active: bool, fan_parts: {f64}
 ): unit
     if not active or #fan_parts < 2 then return end
     local graphics = surface.graphics
@@ -766,7 +812,7 @@ end
 -- use keeps it airborne in between. ease 0 means the flight has not begun and
 -- the card still sits in its row, so nothing is drawn.
 function draw_winner_flight(
-    surface: entity.Surface, value: game.Card, start: Point, sangle: f64,
+    surface: ui.Surface, value: game.Card, start: Point, sangle: f64,
     dest: Point, ease: f64, colored: bool
 ): unit
     if ease <= 0.0 then return end
@@ -798,7 +844,7 @@ end
 -- to capture, only the last flakes falling — and they fall inside the card's
 -- own tilt, the way they did while it was still there.
 function draw_hand_disintegration(
-    surface: entity.Surface, viewport: layout.State, value: game.Card,
+    surface: ui.Surface, viewport: layout.State, value: game.Card,
     index: i32, part: f64, count: i32, progress: f64, seed: i32,
     ash: particles.ParticleSystem
 ): unit
@@ -861,7 +907,7 @@ function step_spell_particles(
 end
 
 function draw_spell_launch(
-    surface: entity.Surface, viewport: layout.State,
+    surface: ui.Surface, viewport: layout.State,
     kind: spells.SpellKind?, clock: f64, target: i32, middle_count: i32,
     sparks: spell_cast.Sparks
 ): unit
@@ -877,30 +923,28 @@ end
 -- The board, composed.
 -- ---------------------------------------------------------------------------
 
-function draw_backdrop(surface: entity.Surface, viewport: layout.State): unit
+function draw_backdrop(surface: ui.Surface, viewport: layout.State): unit
     backdrop.draw_at(surface, board_rect(viewport))
 end
 
 function draw_hud(
-    surface: entity.Surface, viewport: layout.State,
-    state: game.View, run: run_module.View
+    board: Board, surface: ui.Surface, viewport: layout.State
 ): unit
-    local band: entity.Node = hud.node(state, run)
-    band.paint(surface, header_band(surface:metrics(), band, viewport))
+    board.view:paint_hud(header_band(
+        board.view:hud_height(surface.graphics), viewport))
 end
 
 function draw_footer(
-    surface: entity.Surface, viewport: layout.State,
-    state: game.View, run: run_module.View
+    board: Board, surface: ui.Surface, viewport: layout.State
 ): unit
-    local metrics: entity.Metrics = surface:metrics()
-    local strip: entity.Node = footer.node(state, run)
-    local bounds: box.Rect = footer_band(metrics, strip, viewport)
-    strip.paint(surface, bounds)
+    local height: f64 = board.view:footer_height(surface.graphics)
+    board.view:paint_footer(footer_band(height, viewport))
 end
 
-function draw_deck(surface: entity.Surface, viewport: layout.State, count: i32): unit
-    deck.node(count).paint(surface, deck_band(viewport))
+function draw_deck(
+    board: Board, viewport: layout.State
+): unit
+    board.view:paint_deck(deck_band(viewport))
 end
 
 -- How many of a pile's cards have actually arrived: the ledger's total minus
@@ -917,25 +961,30 @@ end
 
 -- The one right-edge pile, drawn only once it holds cards.
 function draw_pile(
-    surface: entity.Surface, viewport: layout.State,
+    board: Board, surface: ui.Surface, viewport: layout.State,
     cards: {game.Card}, count: i32
 ): unit
     local slot: Point = slot_pos(viewport, SLOT_ASIDE, 0)
-    pile.node(cards, count).paint(
-        surface, entity.rect(slot.x, slot.y, card.width, card.height))
+    board.view:present_pile(cards, count)
+    board.view:paint_pile(box.rect(slot.x, slot.y, card.width, card.height))
 end
 
 -- One slot of the middle row, powered or plain. A table_card at rest is face up for
 -- both sides to read, so it never carries an eye: the mark only says something
 -- about a hand.
-function table_card_node(frame: Frame, value: game.Card, index: i32, selected: bool, focused: bool, colored: bool): entity.Node
+function draw_table_card_at(
+    surface: ui.Surface, frame: Frame, bounds: box.Rect,
+    value: game.Card, index: i32, selected: bool, focused: bool, colored: bool
+): unit
     local look: card.Look = card.look(value, selected, focused, false, colored, false)
     if index == frame.spell.target then
-        return powered_card.node(
-            look, frame.spell.kind, frame.spell.clock, frame.ash,
+        powered_card.draw_at(
+            surface, look, bounds.x, bounds.y,
+            frame.spell.kind, frame.spell.clock, frame.ash,
             frame.spells.grave_dust)
+        return
     end
-    return card.node(look)
+    card.draw_at(surface, look, bounds.x, bounds.y)
 end
 
 function trick_scoring(trick: game.Trick): {bool}
@@ -953,13 +1002,18 @@ end
 -- The live community cards on their field: a panel, and the row of slots standing on
 -- it. Both take the same band, so the field is always exactly as wide as the
 -- row it backs.
-function draw_table_card_band(surface: entity.Surface, viewport: layout.State, slots: {entity.Node}): unit
-    local band: box.Rect = table_card_band(viewport, #slots)
-    table_card_panel.node().paint(surface, band)
-    card_row.node(slots, card_row.flat_pitch).paint(surface, band)
+function draw_table_card_band(
+    board: Board, surface: ui.Surface, frame: Frame
+): unit
+    local count: i32 = #frame.view.middle
+    local band: box.Rect = table_card_band(frame.viewport, count)
+    board.view:paint_panel(band)
+    for index = 0::i32, count - 1 do
+        board.view:paint_table(index, row_slot(frame.viewport, count, index))
+    end
 end
 
-function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
+function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame): unit
     local graphics = surface.graphics
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
@@ -971,8 +1025,8 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
     -- trick's layout even though a boss battle's live hands have already
     -- shrunk underneath it.
     local hand_count: i32 = #trick.player_hand
-    draw_hud(surface, viewport, state, frame.run)
-    draw_deck(surface, viewport, state.deck_count)
+    draw_hud(board, surface, viewport)
+    draw_deck(board, viewport)
     local scoring: {bool} = trick_scoring(trick)
     -- Flight progress for the winner's two cards; a stalemate has no winner,
     -- so nothing takes off and both played pairs stay where they revealed.
@@ -1002,7 +1056,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
     -- rebuilds both cards from ash on the pile.
     local burn_landed: i32 = #discards
     if trick.winner ~= 0 then burn_landed -= 2 end
-    draw_pile(surface, viewport, discards, burn_landed)
+    draw_pile(board, surface, viewport, discards, burn_landed)
     if trick.winner > 0 then
         centered_line(
             surface, viewport,
@@ -1036,7 +1090,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                         surface, card.plain(trick.computer_cards[0]),
                         slot.x, slot.y, loss_progress, 11, frame.ash.reveal_first)
                 else
-                    draw_flipping_card(
+                    card_flip.draw(
                         surface, trick.computer_cards[0], slot.x, slot.y,
                         reveal_clock, 0.2, trick.winner < 0 and scoring[5])
                 end
@@ -1048,9 +1102,9 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                         surface, card.plain(trick.computer_cards[1]),
                         slot.x, slot.y, loss_progress, 29, frame.ash.reveal_second)
                 else
-                    draw_flipping_card(
+                    card_flip.draw(
                         surface, trick.computer_cards[1], slot.x, slot.y,
-                        reveal_clock, 0.2 + FLIP_SECONDS * 0.7,
+                        reveal_clock, 0.2 + card_flip.seconds * 0.7,
                         trick.winner < 0 and scoring[6])
                 end
             end
@@ -1067,13 +1121,13 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
     -- layer; once the hand is complete, they move into the foreground
     -- layer with the winning pair.
     local hand: box.Rect = table_card_band(viewport, FORMATION_SLOTS)
-    table_card_panel.node().paint(surface, hand)
+    board.view:paint_panel(hand)
     if glow <= 0.0 then
         for i = 0::i32, 4::i32 do
-            table_card_node(
-                frame, trick.middle[i], i, false, false,
-                trick.winner ~= 0 and scoring[i]
-            ).paint(surface, row_slot(viewport, 5, i))
+            draw_table_card_at(
+                surface, frame, row_slot(viewport, 5, i),
+                trick.middle[i], i, false, false,
+                trick.winner ~= 0 and scoring[i])
         end
     end
 
@@ -1124,7 +1178,7 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
                 fan, i, fan_parts[i], hand_count)
         end
     end
-    draw_footer(surface, viewport, state, frame.run)
+    draw_footer(board, surface, viewport)
 
     -- Once complete, the entire winning hand becomes a foreground layer:
     -- it eases toward the viewer around its shared centre, rises slightly, and
@@ -1142,8 +1196,9 @@ function draw_resolution_board(surface: entity.Surface, frame: Frame): unit
         graphics:translate(-center_x, -center_y)
         draw_result_field(surface, hand, glow, trick.winner > 0)
         for i = 0::i32, 4::i32 do
-            table_card_node(frame, trick.middle[i], i, false, false, scoring[i])
-                .paint(surface, row_slot(viewport, FORMATION_SLOTS, i + 1))
+            draw_table_card_at(
+                surface, frame, row_slot(viewport, FORMATION_SLOTS, i + 1),
+                trick.middle[i], i, false, false, scoring[i])
         end
     end
 
@@ -1185,60 +1240,30 @@ end
 -- The Opponent's sealed row. Slots claimed by an in-flight card stay empty
 -- until it lands, so the already-updated game state cannot leak ahead of the
 -- animation.
-function draw_computer_row(surface: entity.Surface, frame: Frame): unit
+function draw_computer_row(board: Board, surface: ui.Surface, frame: Frame): unit
     local state: game.View = frame.view
-    local hidden: {bool} = hidden_slots(
-        frame.motion.anims, frame.motion.anim_clock, SLOT_COMPUTER,
-        #state.computer_hand)
-    local slots: {entity.Node} = {}
+    local band: box.Rect = computer_band(frame.viewport)
+    local pitch: f64 = card_row.pitch_in(
+        band, #state.computer_hand, card_row.flat_pitch)
     for i = 0::i32, #state.computer_hand - 1 do
-        if hidden[i] then
-            table.insert(slots, entity.Node.sized(
-                card.width, card.height,
-                function(surface: entity.Surface, bounds: box.Rect): unit end))
-        else
-            table.insert(slots, card.node(card.sealed(
-                state.computer_hand[i].card, state.computer_hand[i].known)))
-        end
+        board.view:paint_computer(
+            i, card_row.slot_rect(#state.computer_hand, pitch, band, i))
     end
-    card_row.node(slots, card_row.flat_pitch).paint(
-        surface, computer_band(frame.viewport))
 end
 
 -- The player's fan, with the binds and the cursor the screen is holding.
-function draw_player_fan(surface: entity.Surface, frame: Frame): unit
-    local state: game.View = frame.view
-    local interaction: Interaction = frame.interaction
-    local looks: {card.Look} = {}
-    for i = 0::i32, #state.player_hand - 1 do
-        local selected: bool = is_picked(interaction.play_picks, i)
-        if state.swap_open then selected = is_picked(interaction.swap_hand, i) end
-        table.insert(looks, card.look(
-            state.player_hand[i].card, selected, i == interaction.hand_focus,
-            false, false, state.player_hand[i].known))
-    end
-    hand_fan.node(
-        looks, frame.motion.fan_parts,
-        hidden_slots(
-            frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, #looks)
-    ).paint(surface, fan_band(frame.viewport, #looks))
+function draw_player_fan(board: Board, surface: ui.Surface, frame: Frame): unit
+    board.view:paint_player(fan_band(frame.viewport, #frame.view.player_hand))
 end
 
 -- Draw the controls of the band and remember where they landed, in the order
 -- the band offers them: commit first, then pass.
-function draw_actions(
-    surface: entity.Surface, actions: {action_bar.Action}, band: box.Rect
-): unit
-    action_bar.node(actions).paint(surface, band)
-    local rects: {box.Rect} = entity.place(
-        surface:metrics(), action_bar.capsules(actions),
-        action_bar.bar_style(), band)
-    targets.commit = rects[0]
-    if #rects > 1 then targets.pass = rects[1] end
+function draw_action(board: Board, text: string, active: bool, band: box.Rect): unit
+    board.view:paint_action(text, active, band)
 end
 
 -- What the board is asking for, and the controls it is asking with.
-function draw_action_band(surface: entity.Surface, frame: Frame): unit
+function draw_action_band(board: Board, surface: ui.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local interaction: Interaction = frame.interaction
@@ -1253,12 +1278,12 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
             "AIM " .. spell_launch.name(aimed.kind) .. " AT A TABLE CARD",
             viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE,
             spell_launch.color(aimed.kind))
-        action_bar.prompt(
+        centered_line(
+            surface, viewport,
             "ARROWS MOVE   ENTER CASTS " .. tostring(aimed.cost)
-                .. " GOLD   ESC CANCELS"
-        ).paint(surface, entity.rect(
-            band.x, viewport.action_y + PROMPT_DROP - action_bar.prompt_size,
-            band.width, action_bar.prompt_size))
+                .. " GOLD   ESC CANCELS",
+            viewport.action_y + PROMPT_DROP,
+            action_bar.prompt_size, "#fbbf24")
         return
     end
     if state.swap_open then
@@ -1282,9 +1307,7 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
             and #interaction.swap_hand == #interaction.swap_table_cards
             and #interaction.swap_hand <= state.player_points
             and (#interaction.swap_hand == 0 or #interaction.swap_hand >= minimum_swap)
-        draw_actions(surface, {
-            action_bar.action("CONFIRM", balanced),
-        }, band)
+        draw_action(board, "CONFIRM", balanced, band)
         return
     end
     if #interaction.play_picks == 2 then
@@ -1294,130 +1317,70 @@ function draw_action_band(surface: entity.Surface, frame: Frame): unit
         centered_line(
             surface, viewport, "HAND: " .. game.category_name(preview),
             viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE, PROMPT_INK)
-        draw_actions(
-            surface, { action_bar.action("PLAY HAND", true) }, band)
+        draw_action(board, "PLAY HAND", true, band)
         return
     end
-    action_bar.prompt("PLAY: SELECT TWO CARDS").paint(surface, entity.rect(
-        band.x, viewport.action_y + PROMPT_DROP - action_bar.prompt_size,
-        band.width, action_bar.prompt_size))
+    centered_line(
+        surface, viewport, "PLAY: SELECT TWO CARDS",
+        viewport.action_y + PROMPT_DROP,
+        action_bar.prompt_size, "#fbbf24")
 end
 
-function draw_playfield(surface: entity.Surface, frame: Frame): unit
+function draw_playfield(board: Board, surface: ui.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local anims: {Anim} = frame.motion.anims
     local anim_clock: f64 = frame.motion.anim_clock
     if frame.interaction.revealing and #state.history > 0 then
-        draw_resolution_board(surface, frame)
+        draw_resolution_board(board, surface, frame)
         return
     end
-    draw_hud(surface, viewport, state, frame.run)
-    draw_deck(surface, viewport, state.deck_count)
+    draw_hud(board, surface, viewport)
+    draw_deck(board, viewport)
     draw_pile(
-        surface, viewport,
+        board, surface, viewport,
         frame.piles.discards,
         pile_landed(frame.piles.discards, anims, anim_clock, SLOT_ASIDE))
-    draw_computer_row(surface, frame)
+    draw_computer_row(board, surface, frame)
+    draw_table_card_band(board, surface, frame)
 
-    local table_card_hidden: {bool} = hidden_slots(
-        anims, anim_clock, SLOT_MIDDLE, #state.middle)
-    local slots: {entity.Node} = {}
-    for i = 0::i32, #state.middle - 1 do
-        if table_card_hidden[i] then
-            table.insert(slots, entity.Node.sized(
-                card.width, card.height,
-                function(surface: entity.Surface, bounds: box.Rect): unit end))
-        else
-            local selected: bool = state.swap_open
-                and is_picked(frame.interaction.swap_table_cards, i)
-            -- Targeting a cast borrows the table_card focus ring for its aim cursor,
-            -- whichever phase the board is in.
-            local focused: bool = (state.swap_open
-                and frame.interaction.cursor_area == "table-cards"
-                and frame.interaction.table_card_cursor == i)
-                or (frame.interaction.casting and frame.interaction.table_card_cursor == i)
-            table.insert(
-                slots, table_card_node(frame, state.middle[i], i, selected, focused, false))
-        end
-    end
-    draw_table_card_band(surface, viewport, slots)
-
-    draw_action_band(surface, frame)
-    draw_player_fan(surface, frame)
-    draw_footer(surface, viewport, state, frame.run)
+    draw_action_band(board, surface, frame)
+    draw_player_fan(board, surface, frame)
+    draw_footer(board, surface, viewport)
     draw_anims(surface, anims, anim_clock, frame.sheet)
     draw_spell_launch(
         surface, viewport, frame.spell.kind, frame.spell.clock,
         frame.spell.target, #state.middle, frame.spells.sparks)
 end
 
-function draw_help(surface: entity.Surface, viewport: layout.State): unit
-    modal.show(surface, board_rect(viewport), help_card.node())
+local retained_help: ui.Node = help_card.node()
+
+function draw_help(surface: ui.Surface, viewport: layout.State): unit
+    modal.show(surface, board_rect(viewport), retained_help)
 end
 
-function draw_history(surface: entity.Surface, viewport: layout.State, state: game.View): unit
-    modal.show(surface, board_rect(viewport), ledger.node(state))
-end
-
-function draw_final(
-    surface: entity.Surface, viewport: layout.State,
-    state: game.View, run: run_module.View
-): unit
-    modal.show(surface, board_rect(viewport), verdict.node(state, run))
-end
-
-function draw(surface: entity.Surface, frame: Frame): unit
+function draw_frame(board: Board, surface: ui.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local modal_kind: "none" | "history" | "help" | "final" = frame.interaction.modal
-    -- Every control the pointer can reach is recorded by the paint that draws
-    -- it, so a frame starts with nothing clickable on it.
-    clear_targets()
     draw_backdrop(surface, viewport)
     -- The terminal round still flips on the board, so keep the playfield up
     -- while a reveal is running even after the duel or run finishes. Health
     -- can finish the run before the duel reaches its own normal verdict.
     if not frame.interaction.finished or frame.interaction.revealing then
-        draw_playfield(surface, frame)
+        draw_playfield(board, surface, frame)
     else
-        draw_hud(surface, viewport, state, frame.run)
+        draw_hud(board, surface, viewport)
     end
-    if modal_kind == "history" then draw_history(surface, viewport, state)
-    elseif modal_kind == "help" then draw_help(surface, viewport)
-    elseif modal_kind == "final" then draw_final(surface, viewport, state, frame.run) end
+    if modal_kind ~= "none" then
+        board.view:paint_modal(surface, board_rect(viewport))
+    end
 end
 
-function draw_shader_error(surface: entity.Surface, viewport: layout.State, detail: string): unit
-    draw_backdrop(surface, viewport)
-    local graphics = surface.graphics
-    local top: f64 = viewport.center_y - 130.0
-    ink.panel(graphics, 90.0, top, viewport.width - 180.0, 260.0, "#220016", "#ff00ff")
-    centered_line(
-        surface, viewport, "SHADER COMPILATION FAILED", top + 65.0, 21, "#ff66ff")
-    centered_line(
-        surface, viewport, "THE RESULT EFFECT IS REQUIRED", top + 112.0, 13, "#f8fafc")
-    ink.text(graphics, detail, 125.0, top + 170.0, 11, "#fecdd3")
-end
-
-function draw_audio_error(
-    surface: entity.Surface, viewport: layout.State,
-    path: string, code: string, detail: string
-): unit
-    draw_backdrop(surface, viewport)
-    local graphics = surface.graphics
-    local top: f64 = viewport.center_y - 165.0
-    ink.panel(graphics, 70.0, top, viewport.width - 140.0, 330.0, "#260b08", "#fb7185")
-    centered_line(
-        surface, viewport, "REQUIRED SOUND EFFECT FAILED", top + 70.0, 21, "#fb7185")
-    centered_line(
-        surface, viewport, "ANTE MAGIC HAS STOPPED", top + 113.0, 13, "#f8fafc")
-    ink.text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
-    ink.text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
-    ink.text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")
-    ink.text(
-        graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.",
-        105.0, top + 286.0, 10, "#fda4af")
+function Board:draw(surface: ui.Surface, frame: Frame): unit
+    self:begin_frame(frame)
+    self.view:measure_arrange(surface, frame.viewport.width, frame.viewport.height)
+    draw_frame(self, surface, frame)
 end
 
 function new_card_ash(): card_burn.CardAsh
@@ -1425,14 +1388,9 @@ function new_card_ash(): card_burn.CardAsh
 end
 
 return {
-    draw = draw,
-    draw_shader_error = draw_shader_error,
-    draw_audio_error = draw_audio_error,
     draw_backdrop = draw_backdrop,
     draw_help = draw_help,
     draw_divine_intervention = draw_divine_intervention,
-    -- One card turning over, which is the board's own flip and the storybook's.
-    draw_flipping_card = draw_flipping_card,
     -- The band the player's hand is dealt into, so a story can run the real
     -- measure-then-arrange pipeline instead of a copy of it.
     fan_band = fan_band,
@@ -1447,11 +1405,6 @@ return {
     hand_part_target = hand_part_target,
     row_left = row_left,
     row_right = row_right,
-    -- Pointer hits, each answered from the rectangle its entity was painted in.
-    hit_hand = hit_hand,
-    hit_table_card = hit_table_card,
-    hit_commit = hit_commit,
-    hit_pass = hit_pass,
     -- The board anchor, face-mode, and easing vocabulary Anim records use.
     -- Declared once here so choreography builds animations against the same
     -- ids this module interprets, instead of mirroring the integers.

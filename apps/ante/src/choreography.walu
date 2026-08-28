@@ -6,7 +6,7 @@ local game = require("./game")
 local spells = require("./spells/spell")
 local render = require("./render")
 local card_burn = require("./card_burn")
-local entity = require("./entity")
+local ui = require("./ui/node")
 local run_module = require("./run")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
@@ -896,7 +896,8 @@ function State.restore(snapshot_value: string): State?
 end
 
 function State:draw(
-    surface: entity.Surface,
+    board: render.Board,
+    surface: ui.Surface,
     view: game.View,
     run: run_module.View,
     interaction: render.Interaction
@@ -911,7 +912,7 @@ function State:draw(
         clock = active.clock
         target = active.target
     end
-    render.draw(surface, {
+    board:draw(surface, {
         viewport = layout.current(),
         view = view,
         run = run,
@@ -934,10 +935,6 @@ function State:draw(
         spells = self.session.spells,
         sheet = self.sheet,
     })
-end
-
-function State:hit_hand(at: render.Point): i32
-    return render.hit_hand(layout.current(), at, self.fan_parts)
 end
 
 return {

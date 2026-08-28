@@ -1,0 +1,54 @@
+-- Fatal presentation diagnostics. Resource loading owns when these screens
+-- appear; this module owns only their small, self-contained visual treatment.
+-- Keeping that seam independent lets diagnostics and stories load without the
+-- retained duel board.
+local layout = require("../layout")
+local box = require("../ui/layout")
+local ui = require("../ui/node")
+local backdrop = require("../entities/backdrop")
+local ink = require("../ink")
+
+function draw_backdrop(surface: ui.Surface, viewport: layout.State): unit
+    backdrop.draw_at(surface, box.rect(0.0, 0.0, viewport.width, viewport.height))
+end
+
+function centered_line(
+    surface: ui.Surface, viewport: layout.State,
+    text: string, baseline: f64, size: f64, color: string
+): unit
+    ink.text_centered(surface.graphics, text, viewport.center_x, baseline, size, color)
+end
+
+function shader(surface: ui.Surface, viewport: layout.State, detail: string): unit
+    draw_backdrop(surface, viewport)
+    local graphics = surface.graphics
+    local top: f64 = viewport.center_y - 130.0
+    ink.panel(graphics, 90.0, top, viewport.width - 180.0, 260.0, "#220016", "#ff00ff")
+    centered_line(
+        surface, viewport, "SHADER COMPILATION FAILED", top + 65.0, 21, "#ff66ff")
+    centered_line(
+        surface, viewport, "THE RESULT EFFECT IS REQUIRED", top + 112.0, 13, "#f8fafc")
+    ink.text(graphics, detail, 125.0, top + 170.0, 11, "#fecdd3")
+end
+
+function audio(
+    surface: ui.Surface, viewport: layout.State,
+    path: string, code: string, detail: string
+): unit
+    draw_backdrop(surface, viewport)
+    local graphics = surface.graphics
+    local top: f64 = viewport.center_y - 165.0
+    ink.panel(graphics, 70.0, top, viewport.width - 140.0, 330.0, "#260b08", "#fb7185")
+    centered_line(
+        surface, viewport, "REQUIRED SOUND EFFECT FAILED", top + 70.0, 21, "#fb7185")
+    centered_line(
+        surface, viewport, "ANTE MAGIC HAS STOPPED", top + 113.0, 13, "#f8fafc")
+    ink.text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
+    ink.text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
+    ink.text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")
+    ink.text(
+        graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.",
+        105.0, top + 286.0, 10, "#fda4af")
+end
+
+return { shader = shader, audio = audio }

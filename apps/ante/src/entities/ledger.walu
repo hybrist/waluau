@@ -5,7 +5,7 @@
 
 local game = require("../game")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local modal = require("./modal")
 local label = require("./label")
 
@@ -33,12 +33,12 @@ end
 -- is what keeps the three columns lined up down the card. The floor is the
 -- column's width, so a short verdict and a long one start the next column in
 -- the same place; the line inside still aligns itself left.
-function cell(text: string, size: f64, color: string, width: f64): entity.Node
+function cell(text: string, size: f64, color: string, width: f64): ui.Node
     return label.left(text, size, color):min_width(width)
 end
 
-function row(trick: game.Trick): entity.Node
-    return entity.Node.across({ align = "baseline" }, {
+function row(trick: game.Trick): ui.Node
+    return ui.Node.across({ align = "baseline" }, {
         cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
         cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
         label.left(
@@ -48,18 +48,18 @@ function row(trick: game.Trick): entity.Node
     })
 end
 
-function body(state: game.View): entity.Node
+function body(state: game.View): ui.Node
     if #state.history == 0 then
         return modal.column({
             label.left("NO ROUNDS WON YET.", 16.0, "#8a8a92"),
         }, ROW_GAP)
     end
-    local rows: {entity.LegacyNode} = {}
+    local rows: {ui.Node} = {}
     for trick in state.history do table.insert(rows, row(trick)) end
     return modal.column(rows, ROW_GAP)
 end
 
-function node(state: game.View): entity.Node
+function node(state: game.View): ui.Node
     return modal.node(
         "ROUND HISTORY", "H, ESC, OR A CLICK CLOSES THE HISTORY", body(state))
 end

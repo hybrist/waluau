@@ -2,13 +2,12 @@
 -- of capsules while there is something to commit, and a line of type when the
 -- board is still waiting for binds.
 --
--- The bar owns both the drawing and the hit test, and both go through one
--- solve of the same entities against the same rectangle. A capsule that moved
--- because its label grew moves its click target with it; there is no second
--- description of where the controls are to fall out of step.
+-- The bar owns stable capsule nodes. Pointer routing reads their retained
+-- arranged bounds through the board's interaction tree, so drawing and input
+-- share one geometry source.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local capsule = require("./capsule")
 local label = require("./label")
 
@@ -24,33 +23,33 @@ function action(text: string, active: bool): Action
     return { text = text, active = active }
 end
 
-function bar_style(): entity.LegacyStyle
-    return entity.legacy_row(GAP, "center", "start")
+function bar_style(): box.Style
+    return box.row(GAP, "center", "start")
 end
 
-function capsules(actions: {Action}): {entity.LegacyNode}
-    local nodes: {entity.LegacyNode} = {}
+function capsules(actions: {Action}): {ui.Node}
+    local nodes: {ui.Node} = {}
     for item in actions do
         table.insert(nodes, capsule.node(item.text, item.active))
     end
     return nodes
 end
 
-function node(actions: {Action}): entity.Node
-    return entity.flow_legacy(capsules(actions), bar_style())
+function node(actions: {Action}): ui.Node
+    return ui.Node.flow(capsules(actions), bar_style())
 end
 
-export type Stateful = { capsules: {capsule.Stateful}, root: entity.Node }
+export type Stateful = { capsules: {capsule.Stateful}, root: ui.Node }
 
 function Stateful.new(actions: {Action}): Stateful
     local views: {capsule.Stateful} = {}
-    local roots: {entity.LegacyNode} = {}
+    local roots: {ui.Node} = {}
     for item in actions do
         local view: capsule.Stateful = capsule.Stateful.new(item.text, item.active)
         table.insert(views, view)
         table.insert(roots, view.root)
     end
-    return { capsules = views, root = entity.flow_legacy(roots, bar_style()) }
+    return { capsules = views, root = ui.Node.flow(roots, bar_style()) }
 end
 
 function Stateful:present(actions: {Action}): unit
@@ -64,24 +63,10 @@ end
 -- A band with nothing to commit still says what the board is waiting for. The
 -- prompt takes the same rectangle the capsules would have, so the two states
 -- of the band occupy the same place on the board.
-function prompt(text: string): entity.Node
-    return entity.Node.flow(
+function prompt(text: string): ui.Node
+    return ui.Node.flow(
         { label.centered(text, PROMPT_SIZE, PROMPT_INK) },
-        entity.row(0.0, "center", "center"))
-end
-
--- Which control a point is inside, or -1. Solved from the same actions and
--- bounds the frame painted.
-function hit(
-    metrics: entity.Metrics, actions: {Action}, bounds: box.Rect, x: f64, y: f64
-): i32
-    local retained_style: box.Style = entity.row(GAP, "center", "start")
-    local rects: {box.Rect} = entity.place(
-        metrics, capsules(actions), retained_style, bounds)
-    for index = 0::i32, #rects - 1 do
-        if entity.contains(rects[index], x, y) then return index end
-    end
-    return -1
+        box.row(0.0, "center", "center"))
 end
 
 return {
@@ -90,6 +75,5 @@ return {
     capsules = capsules,
     bar_style = bar_style,
     prompt = prompt,
-    hit = hit,
     prompt_size = PROMPT_SIZE,
 }

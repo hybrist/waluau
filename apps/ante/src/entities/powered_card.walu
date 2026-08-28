@@ -17,7 +17,7 @@ local burn_particles = require("../burn_particles")
 local card_burn = require("../card_burn")
 local easing = require("../easing")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local ink = require("../ink")
 local card = require("./card")
 
@@ -70,7 +70,7 @@ function settled_clock(): f64
         + FIREBALL_ASH_FADE_SECONDS
 end
 
-function use_ice_freeze(surface: entity.Surface, freeze: f64): bool
+function use_ice_freeze(surface: ui.Surface, freeze: f64): bool
     local graphics = surface.graphics
     local maybe_shader: graphics_module.Shader? = surface.effects.ice_freeze.shader
     if maybe_shader == nil then return false end
@@ -90,7 +90,7 @@ function use_ice_freeze(surface: entity.Surface, freeze: f64): bool
     return binding.ok
 end
 
-function draw_ring(surface: entity.Surface, x: f64, y: f64, radius: f64): unit
+function draw_ring(surface: ui.Surface, x: f64, y: f64, radius: f64): unit
     local graphics = surface.graphics
     graphics:begin_path()
     for step = 0::i32, 32::i32 do
@@ -104,7 +104,7 @@ function draw_ring(surface: entity.Surface, x: f64, y: f64, radius: f64): unit
 end
 
 function draw_ellipse(
-    surface: entity.Surface, x: f64, y: f64,
+    surface: ui.Surface, x: f64, y: f64,
     radius_x: f64, radius_y: f64, color: string, width: f64
 ): unit
     local graphics = surface.graphics
@@ -118,7 +118,7 @@ function draw_ellipse(
 end
 
 function draw_scaled(
-    surface: entity.Surface, value: card.Look,
+    surface: ui.Surface, value: card.Look,
     center_x: f64, center_y: f64, scale: f64
 ): unit
     local graphics = surface.graphics
@@ -135,7 +135,7 @@ end
 -- Two falls overlap: the sheet ash every burning card sheds, and a coarser
 -- departing fall of larger pieces released later off the same front.
 function draw_fireball(
-    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    surface: ui.Surface, value: card.Look, x: f64, y: f64,
     progress: f64, ash: card_burn.CardAsh
 ): unit
     local lift: f64 = 0.0
@@ -163,7 +163,7 @@ end
 -- vector overlay below survives only as the fallback while the shader or its
 -- noise texture is unavailable.
 function draw_freeze(
-    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    surface: ui.Surface, value: card.Look, x: f64, y: f64,
     progress: f64, clock: f64
 ): unit
     local graphics = surface.graphics
@@ -249,7 +249,7 @@ function draw_freeze(
 end
 
 function draw_zombie_overlay(
-    surface: entity.Surface, x: f64, y: f64, progress: f64, clock: f64
+    surface: ui.Surface, x: f64, y: f64, progress: f64, clock: f64
 ): unit
     local graphics = surface.graphics
     graphics:set_color("#26382b99")
@@ -285,7 +285,7 @@ end
 -- out of a black ground aperture. Its healed pose keeps holes, torn stock,
 -- sutures, corpse tint, and circling grave-flies as the persistent condition.
 function draw_raise(
-    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    surface: ui.Surface, value: card.Look, x: f64, y: f64,
     progress: f64, clock: f64, dust: particles.ParticleSystem
 ): unit
     local graphics = surface.graphics
@@ -316,7 +316,7 @@ end
 -- smaller copies while a shared membrane swells around them. Individual
 -- daughter-cell rings and drifting organelles keep the settled pair alive.
 function draw_growth(
-    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    surface: ui.Surface, value: card.Look, x: f64, y: f64,
     progress: f64, clock: f64
 ): unit
     local graphics = surface.graphics
@@ -406,7 +406,7 @@ function grave_progress(kind: spells.SpellKind?, clock: f64): f64
 end
 
 function draw_at(
-    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    surface: ui.Surface, value: card.Look, x: f64, y: f64,
     kind: spells.SpellKind?, clock: f64,
     ash: card_burn.CardAsh, dust: particles.ParticleSystem
 ): unit
@@ -435,7 +435,7 @@ type PoweredPresentation = {
     ash: card_burn.CardAsh,
     dust: particles.ParticleSystem,
 }
-export type Stateful = { presentation: PoweredPresentation, root: entity.Node }
+export type Stateful = { presentation: PoweredPresentation, root: ui.Node }
 
 function Stateful.new(
     value: card.Look, kind: spells.SpellKind?, clock: f64,
@@ -444,11 +444,11 @@ function Stateful.new(
     local presentation: PoweredPresentation = {
         value = value, kind = kind, clock = clock, ash = ash, dust = dust,
     }
-    local root: entity.Node = entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return card.intrinsic()
+    local root: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            box.set_fixed(into, card.width, card.height)
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             draw_at(surface, presentation.value, bounds.x, bounds.y,
                 presentation.kind, presentation.clock, presentation.ash, presentation.dust)
         end)
@@ -469,7 +469,7 @@ end
 function node(
     value: card.Look, kind: spells.SpellKind?, clock: f64,
     ash: card_burn.CardAsh, dust: particles.ParticleSystem
-): entity.Node
+): ui.Node
     return Stateful.new(value, kind, clock, ash, dust).root
 end
 
