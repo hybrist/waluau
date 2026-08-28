@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { pathToFileURL } = require('node:url');
 
 const extensionRoot = path.join(__dirname, '..');
 const readJson = (relativePath) =>
@@ -81,4 +82,40 @@ test('layers Waluau syntax rules over the Lua grammar', () => {
   for (const value of ['+=', '//', '//=', '..=', '->', '::', '?', '&', '|', 'is']) {
     assert.ok(operator.test(value), `expected ${value} to be a Waluau operator`);
   }
+});
+
+test('loads a bundled language client from inside the extension root', async () => {
+  const mainPath = fs.realpathSync(path.resolve(extensionRoot, manifest.main));
+  const relativeMainPath = path.relative(fs.realpathSync(extensionRoot), mainPath);
+  assert.ok(
+    relativeMainPath &&
+      !relativeMainPath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativeMainPath),
+    `extension main must remain inside the extension root, got ${mainPath}`,
+  );
+
+  const { buildExtension } = await import(
+    pathToFileURL(path.join(extensionRoot, 'esbuild.mjs')).href
+  );
+  const result = await buildExtension({ write: false });
+  const inputs = Object.keys(result.metafile.inputs);
+  assert.ok(
+    inputs.some((input) =>
+      /node_modules\/\.pnpm\/vscode-languageclient@[^/]+\/node_modules\/vscode-languageclient\/lib\/node\/main\.js$/.test(
+        input,
+      ),
+    ),
+    'expected vscode-languageclient to be included in the bundle',
+  );
+
+  const runtimeImports = Object.values(result.metafile.outputs).flatMap(
+    ({ imports }) => imports,
+  );
+  assert.ok(runtimeImports.some(({ path: specifier }) => specifier === 'vscode'));
+  assert.ok(
+    runtimeImports.every(
+      ({ path: specifier }) => !specifier.startsWith('vscode-languageclient'),
+    ),
+    'vscode-languageclient must not be resolved at runtime outside the extension root',
+  );
 });

@@ -9,9 +9,11 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "main": "./extension.js",
+  "main": "./dist/extension.js",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "build": "node ./esbuild.mjs",
+    "check:bundle": "node ./esbuild.mjs --check",
+    "test": "pnpm run check:bundle && node --test test/*.test.js"
   },
   "activationEvents": [
     "workspaceContains:**/*.walu",
@@ -51,5 +53,8 @@
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   }
 }
