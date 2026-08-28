@@ -9,7 +9,7 @@ local audio = require("waluau:engine/audio")
 local assets = require("waluau:assets")
 local effect_shaders = require("./effect_shaders")
 local render = require("./render")
-local entity = require("./entity")
+local entity = require("./entities/adapter")
 local layout = require("./layout")
 
 export type State = {

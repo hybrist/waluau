@@ -114,10 +114,32 @@ function legacy_surface(surface: ui.Surface): legacy.Surface
     }
 end
 
+-- TODO(waluau-1x1i): Store this directly as a `retained: ui.Node` field on
+-- Node once imported record aliases accept extra fields in legacy.Node arrays.
+-- Until then this synchronous query lets the wrapper reveal its captured root
+-- without widening the compatibility record passed through those arrays.
+local exposing_retained: bool = false
+local exposed_retained: ui.Node? = nil
+
+function retained_root(node: Node): ui.Node
+    exposing_retained = true
+    exposed_retained = nil
+    node.measure({ graphics = nil })
+    exposing_retained = false
+    local result: ui.Node? = exposed_retained
+    assert(result ~= nil)
+    return result::ui.Node
+end
+
 function wrap(root: ui.Node): Node
-    return {
+    local result: Node = {
         measure = function(metrics: legacy.Metrics): legacy_layout.Intrinsic
-            return legacy_intrinsic(root:measure(metrics.graphics))
+            local result: legacy_layout.Intrinsic = legacy_intrinsic(
+                root:measure(metrics.graphics))
+            -- Nested adapter nodes reveal themselves during root:measure; the
+            -- outer wrapper writes last so the query receives exactly `node`.
+            if exposing_retained then exposed_retained = root end
+            return result
         end,
         paint = function(surface: legacy.Surface, bounds: legacy_layout.Rect): unit
             root:draw(ui_surface(surface_from_legacy(surface)),
@@ -126,6 +148,7 @@ function wrap(root: ui.Node): Node
         grow = 0.0,
         shrink = 1.0,
     }
+    return result
 end
 
 function retain(node: legacy.Node): ui.Node
@@ -239,7 +262,7 @@ function Node.layer(children: {legacy.Node}): Node
 end
 
 function Node:padding(insets: layout.Edges): Node
-    local result: Node = wrap(retain(self):padding(insets))
+    local result: Node = wrap(retained_root(self):padding(insets))
     result.grow = self.grow
     result.shrink = self.shrink
     return result
@@ -250,21 +273,21 @@ function Node:padded(horizontal: f64, vertical: f64): Node
 end
 
 function Node:min_width(width: f64): Node
-    local result: Node = wrap(retain(self):min_width(width))
+    local result: Node = wrap(retained_root(self):min_width(width))
     result.grow = self.grow
     result.shrink = self.shrink
     return result
 end
 
 function Node:min_height(height: f64): Node
-    local result: Node = wrap(retain(self):min_height(height))
+    local result: Node = wrap(retained_root(self):min_height(height))
     result.grow = self.grow
     result.shrink = self.shrink
     return result
 end
 
 function Node:wide(): Node
-    local result: Node = wrap(retain(self):wide())
+    local result: Node = wrap(retained_root(self):wide())
     result.grow = self.grow
     result.shrink = self.shrink
     return result
@@ -354,6 +377,7 @@ end
 
 return {
     wrap = wrap,
+    retained_root = retained_root,
     rect = rect,
     edges = edges,
     even_padding = even_padding,

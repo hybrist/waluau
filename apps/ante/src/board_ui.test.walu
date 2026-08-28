@@ -1,0 +1,95 @@
+require("waluau:vitest")
+
+local game_screen = require("./game_screen")
+local viewport_layout = require("./layout")
+local render = require("./render")
+local hand_fan = require("./entities/hand_fan")
+
+function prepared_board(): render.Board
+    math.randomseed(211)
+    viewport_layout.update(960.0, 720.0)
+    local screen: game_screen.State = game_screen.State.new()
+    local board: render.Board = screen.board
+    local viewport: viewport_layout.State = viewport_layout.current()
+    board.presentation.viewport = viewport
+    board.presentation.fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 }
+    board.presentation.hand_count = 5
+    board.presentation.table_count = 3
+    board.root:measure(nil)
+    board.root:arrange(0.0, 0.0, viewport.width, viewport.height)
+    board:arrange_targets()
+    for index, target in board.hand_targets do target:set_visible(index < 5) end
+    for index, target in board.table_targets do target:set_visible(index < 3) end
+    board.commit_target:set_visible(false)
+    board.modal_target:set_visible(false)
+    board.router:activate_scope(board.board_scope)
+    return board
+end
+
+describe("retained duel board UI", function(): unit
+    it("keeps visual and interaction node identity across presentations", function(): unit
+        local board: render.Board = prepared_board()
+        local root = board.root
+        local hand = board.player_view.root
+        local first_target = board.hand_nodes[0]
+
+        board.presentation.fan_parts = { -0.1, 0.0, 0.0, 0.1, 0.1 }
+        board:arrange_targets()
+
+        root:set_visible(false)
+        hand.grow = 3.0
+        first_target:set_enabled(false)
+        expect(board.root:is_visible()):toBe(false)
+        expect(board.player_view.root.grow):toBe(3.0)
+        expect(board.hand_nodes[0]:is_enabled()):toBe(false)
+    end)
+
+    it("routes pointer and keyboard activation to the same board action", function(): unit
+        local board: render.Board = prepared_board()
+        local bounds = board.hand_nodes[1]:bounds()
+        local x: f64 = bounds.x + bounds.width * 0.5
+        local y: f64 = bounds.y + bounds.height * 0.5
+        board:pointer_down(x, y, 1)
+        local pointer: render.BoardAction = board:pointer_up(x, y, 1)
+
+        board:focus_hand(1)
+        local keyboard: render.BoardAction = board:activate()
+        expect(tostring(pointer.kind)):toBe("hand")
+        expect(pointer.index):toBe(1)
+        expect(tostring(keyboard.kind)):toBe("hand")
+        expect(keyboard.index):toBe(pointer.index)
+    end)
+
+    it("uses reverse paint order and the rotated fan's custom shape", function(): unit
+        local board: render.Board = prepared_board()
+        local viewport: viewport_layout.State = viewport_layout.current()
+        local band = render.fan_band(viewport, 5)
+        local first = hand_fan.slot_rect(band, 0, 0.0, 5)
+        local x: f64 = first.x + first.width - 4.0
+        local y: f64 = first.y + first.height * 0.5
+        local expected: i32 = hand_fan.hit(
+            band, board.presentation.fan_parts, x, y)
+
+        board:pointer_move(x, y)
+        expect(expected >= 0):toBe(true)
+        expect(board:focused_hand()):toBe(expected)
+    end)
+
+    it("keeps table navigation in its row when the focused card freezes", function(): unit
+        local board: render.Board = prepared_board()
+        board:focus_table(1)
+        board.table_targets[1]:set_enabled(false)
+
+        expect(board:repair_table_focus()):toBe(true)
+        expect(board:focused_table()):toBe(2)
+        expect(board:focused_hand()):toBe(-1)
+    end)
+
+    it("confines activation to modal focus while a modal is active", function(): unit
+        local board: render.Board = prepared_board()
+        local action: render.BoardAction = board:activate_modal()
+        expect(tostring(action.kind)):toBe("modal")
+        expect(board:focused_hand()):toBe(-1)
+        expect(board:focused_table()):toBe(-1)
+    end)
+end)
