@@ -27,7 +27,9 @@ export type Target = {
     up: i32,
     down: i32,
 }
-export type Router = {
+-- Routing state has one mutation owner. Opacity also prevents the recursive
+-- retained graph expansion tracked by waluau-4ggh.
+export opaque type Router = {
     root: ui.Node,
     targets: {Target},
     scopes: {Scope},

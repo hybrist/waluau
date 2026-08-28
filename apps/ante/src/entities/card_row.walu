@@ -43,23 +43,23 @@ function row_style(pitch: f64): box.Style
 end
 
 function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
-    local children: {box.Box} = {}
-    for index = 0::i32, count - 1 do
-        table.insert(children, box.Box.leaf(card.intrinsic()))
-    end
-    local root: box.Box = box.Box.flow(children, row_style(pitch))
-    root:measure()
-    root:arrange(bounds.x, bounds.y, bounds.width, bounds.height)
     local rects: {box.Rect} = {}
+    local width: f64 = 0.0
+    if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
     for index = 0::i32, count - 1 do
-        local value: box.Rect = children[index]:rectangle()
-        table.insert(rects, entity.rect(value.x, value.y, value.width, value.height))
+        table.insert(rects, entity.rect(
+            bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
+            bounds.y, card.width, card.height))
     end
     return rects
 end
 
 function slot_rect(count: i32, pitch: f64, bounds: box.Rect, index: i32): box.Rect
-    return slot_rects(count, pitch, bounds)[index]
+    local width: f64 = 0.0
+    if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
+    return entity.rect(
+        bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
+        bounds.y, card.width, card.height)
 end
 
 -- The row's own size at the given pitch, which is what a band asks for before

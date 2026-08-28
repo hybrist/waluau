@@ -14,7 +14,7 @@ local particles = require("waluau:engine/particles")
 local game = require("./game")
 local burn_particles = require("./burn_particles")
 local easing = require("./easing")
-local entity = require("./entity")
+local entity = require("./entities/adapter")
 local ink = require("./ink")
 local card = require("./entities/card")
 

@@ -29,7 +29,9 @@ export type Result = {
     right: f64,
     bottom: f64,
 }
-export type Box = {
+-- Arrangement state is mutated only by this module. Keeping it opaque also
+-- bounds the recursive structural checking tracked by waluau-4ggh.
+export opaque type Box = {
     kind: "leaf" | "flow" | "layer" | "padding" | "minimum",
     children: {Box},
     style: Style,
