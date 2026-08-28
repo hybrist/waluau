@@ -5,7 +5,7 @@
 
 require("waluau:vitest")
 
-local entity = require("../entity")
+local entity = require("./adapter")
 local card = require("./card")
 local card_row = require("./card_row")
 

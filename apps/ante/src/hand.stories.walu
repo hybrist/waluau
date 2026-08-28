@@ -3,7 +3,7 @@
 -- overlap, arc, tilt, parting, and stacking states.
 local storybook = require("waluau:engine/storybook")
 local game = require("./game")
-local entity = require("./entity")
+local entity = require("./entities/adapter")
 local entity_story = require("./entity_story")
 local card = require("./entities/card")
 local hand_fan = require("./entities/hand_fan")
@@ -64,7 +64,7 @@ local function controlled_index(choice: Position, count: i32): i32
     return middle
 end
 
-local function hand(): entity.Node
+local function hand_values(): ({card.Look}, {f64}, {bool})
     local count: i32 = hand_count.value()
     local selected: i32 = controlled_index(storybook.selected<Position>(hand_selected), count)
     local focused: i32 = controlled_index(storybook.selected<Position>(hand_focused), count)
@@ -79,7 +79,22 @@ local function hand(): entity.Node
         table.insert(parts, hand_fan.part_target(index, focused))
         table.insert(hidden, false)
     end
-    return hand_fan.node(looks, parts, hidden)
+    return looks, parts, hidden
+end
+
+local initial_looks: {card.Look} = {
+    card.look(card_at(0), false, false, false, false, false),
+}
+local hand_view: hand_fan.Stateful = hand_fan.Stateful.new(
+    initial_looks, { 0.0 }, { false })
+
+local function present_hand(): unit
+    local looks, parts, hidden = hand_values()
+    hand_view:present(looks, parts, hidden)
+end
+
+local function hand(): entity.Node
+    return hand_view.root
 end
 
 storybook.publish(
@@ -88,6 +103,7 @@ storybook.publish(
             "Fan",
             book:scene({
                     node = hand,
+                    present = present_hand,
                     width = WIDTH,
                     height = HEIGHT,
                     scale = 1.0,

@@ -3,7 +3,7 @@
 
 require("waluau:vitest")
 
-local entity = require("../entity")
+local entity = require("./adapter")
 local card = require("./card")
 local hand_fan = require("./hand_fan")
 

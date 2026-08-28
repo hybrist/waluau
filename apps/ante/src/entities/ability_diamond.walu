@@ -10,8 +10,8 @@
 local game = require("../game")
 local spells = require("../spells/spell")
 local spell_launch = require("../spell_launch")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local ink = require("../ink")
 
 const SLOT_COUNT: i32 = 4
@@ -133,15 +133,28 @@ function draw_slot(
         key_y + KEY_SIZE * 0.5, KEY_SIZE, KEY_INK)
 end
 
-function node(state: game.View): entity.Node
-    return entity.Node.sized(
+type DiamondPresentation = { state: game.View }
+export type Stateful = { presentation: DiamondPresentation, root: entity.Node }
+
+function Stateful.new(state: game.View): Stateful
+    local presentation: DiamondPresentation = { state = state }
+    local root: entity.Node = entity.Node.sized(
         WIDTH, HEIGHT,
         function(surface: entity.Surface, bounds: box.Rect): unit
             draw_connector(surface, bounds)
             for slot = 0::i32, SLOT_COUNT - 1 do
-                draw_slot(surface, state, bounds, slot)
+                draw_slot(surface, presentation.state, bounds, slot)
             end
         end)
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(state: game.View): unit
+    self.presentation.state = state
+end
+
+function node(state: game.View): entity.Node
+    return Stateful.new(state).root
 end
 
 return {

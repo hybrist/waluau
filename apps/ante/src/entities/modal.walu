@@ -13,8 +13,8 @@
 -- one of them genuinely needs more room — which is how the help card grows tall
 -- without the ledger having been authored around its height.
 
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local label = require("./label")
 
 const PAD_X: f64 = 34.0
@@ -73,7 +73,7 @@ end
 -- so what is fitted is the modal's real size rather than an authored guess at
 -- it.
 function show(surface: entity.Surface, viewport: box.Rect, content: entity.Node): unit
-    local size: box.Intrinsic = content.measure(surface:metrics())
+    local size = content.measure({ graphics = surface.graphics })
     local width: f64 = size.preferred_width
     local height: f64 = size.preferred_height
     local fit: f64 = 1.0
@@ -112,7 +112,7 @@ function keys_line(text: string): entity.Node
     return label.left(text, BODY_SIZE, KEYS_INK)
 end
 
-function column(children: {entity.Node}, gap: f64): entity.Node
+function column(children: {entity.LegacyNode}, gap: f64): entity.Node
     return entity.Node.flow(
         children, entity.column(gap, "start", "stretch"))
 end

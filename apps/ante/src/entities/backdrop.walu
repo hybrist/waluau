@@ -3,8 +3,8 @@
 -- board is, and the diagonals are struck at a fixed spacing, so a wider canvas
 -- gets more of them rather than a stretched few.
 
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 
 const CLEAR: string = "#09090b"
 const FIELD: string = "#111114"

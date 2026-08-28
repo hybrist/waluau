@@ -5,10 +5,10 @@
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
-local box = require("./box_layout")
+local box = require("./ui/layout")
 local game = require("./game")
 local render = require("./render")
-local entity = require("./entity")
+local entity = require("./entities/adapter")
 local entity_story = require("./entity_story")
 local ink = require("./ink")
 local card_entity = require("./entities/card")
@@ -96,15 +96,22 @@ local function state(
     return card_entity.node(card_entity.look(subject, selected, focused, hidden, colored, known))
 end
 
-local function face_up(): entity.Node
-    return state(
+local face_up_view: card_entity.Stateful = card_entity.Stateful.new(
+    card_entity.look(card(13, 0), false, false, false, false, false))
+
+local function present_face_up(): unit
+    face_up_view:present(card_entity.look(
         card(face_rank.value(), storybook.selected<i32>(face_suit)),
         false,
         false,
         false,
         false,
         false
-    )
+    ))
+end
+
+local function face_up(): entity.Node
+    return face_up_view.root
 end
 
 local function face_down(): entity.Node
@@ -137,7 +144,7 @@ end
 -- pattern legible. Nothing else on the board shows them together.
 local function colors(): entity.Node
     const GAP = 12.0
-    local cards: {entity.Node} = {}
+    local cards: {entity.LegacyNode} = {}
     for suit = 0::i32, 3::i32 do
         table.insert(cards, state(card(11 + suit, suit), false, false, false, true, false))
     end
@@ -434,9 +441,10 @@ end
 
 -- A card story is one card entity on a small flex stage. The stage does not
 -- know a card's dimensions; it reads them from the entity on every frame.
-local function card_scene(node: () -> entity.Node): storybook.Scene
+local function card_scene(node: () -> entity.Node, present: (() -> unit)?): storybook.Scene
     return book:scene({
             node = node,
+            present = present,
             load = load,
             update = tick,
             width = WIDTH,
@@ -451,15 +459,15 @@ storybook.publish(
     {
         storybook.story(
             "Face up",
-            card_scene(face_up),
+            card_scene(face_up, present_face_up),
             {face_suit.declaration, face_rank.declaration}
         ),
-        storybook.story("Face down", card_scene(face_down)),
-        storybook.story("Selected", card_scene(selected)),
-        storybook.story("Focused", card_scene(focused)),
-        storybook.story("Contributing", card_scene(contributing)),
-        storybook.story("Watched", card_scene(watched)),
-        storybook.story("Turning over", card_scene(turning)),
+        storybook.story("Face down", card_scene(face_down, nil)),
+        storybook.story("Selected", card_scene(selected, nil)),
+        storybook.story("Focused", card_scene(focused, nil)),
+        storybook.story("Contributing", card_scene(contributing, nil)),
+        storybook.story("Watched", card_scene(watched, nil)),
+        storybook.story("Turning over", card_scene(turning, nil)),
         storybook.story(
             "Every color",
             book:scene({
