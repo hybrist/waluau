@@ -4431,9 +4431,11 @@ fn type_check_and_infer_collect_raw(
             .all(|(current, previous)| current == previous || current.return_type.is_some())
             .then_some((reusable, previous_typed.functions.len()))
     });
+    let mut reused_from_cache = false;
     if let Some((cached_reusable, cached_function_count)) = reusable_from_cache
         && cached_function_count == typed.functions.len()
     {
+        reused_from_cache = true;
         reusable = cached_reusable;
         let cache = cache.as_deref_mut().expect("HIR cache");
         let mut cached_typed = cache.typed.take().expect("cached typed program");
@@ -4562,16 +4564,32 @@ fn type_check_and_infer_collect_raw(
             .iter()
             .map(|idx| typed.functions[*idx].name.to_string())
             .collect();
+        // The privacy views over the signature/binding tables depend only on
+        // the source file, so build them once per file per iteration instead
+        // of once per unresolved function. Signatures resolved earlier in the
+        // same iteration become visible in the next one; `unresolved_names`
+        // already tells inference to defer on them, so convergence and
+        // diagnostics are unchanged.
+        let mut iteration_signatures = HashMap::new();
+        let mut iteration_bindings = HashMap::new();
+        for idx in &unresolved {
+            let file_path = &typed.functions[*idx].file_path;
+            if !iteration_signatures.contains_key(file_path) {
+                iteration_signatures.insert(
+                    file_path.clone(),
+                    signatures_visible_from_file(&fn_signatures, file_path, &module_opaque),
+                );
+                iteration_bindings.insert(
+                    file_path.clone(),
+                    bindings_visible_from_file(&module_bindings, file_path, &module_opaque),
+                );
+            }
+        }
         for idx in unresolved {
             let function = &typed.functions[idx];
             let visible_function = function_visible_from_file(function, &module_opaque);
-            let visible_signatures =
-                signatures_visible_from_file(&fn_signatures, &function.file_path, &module_opaque);
-            let visible_bindings = bindings_visible_from_file(
-                function_module_bindings(function, &module_bindings),
-                &function.file_path,
-                &module_opaque,
-            );
+            let visible_signatures = &iteration_signatures[&function.file_path];
+            let visible_bindings = &iteration_bindings[&function.file_path];
             let function_name = function.name.to_string();
             let function_vararg = function.vararg.clone();
             let function_file_path = function.file_path.clone();
@@ -4582,9 +4600,9 @@ fn type_check_and_infer_collect_raw(
                 .collect();
             match infer_top_level_function_return_type(
                 &visible_function,
-                &visible_signatures,
+                visible_signatures,
                 &unresolved_names,
-                &visible_bindings,
+                visible_bindings,
             ) {
                 Ok(Some(ret)) => {
                     let ret = restore_module_opaque_type(&ret, &module_opaque);
@@ -4671,11 +4689,21 @@ fn type_check_and_infer_collect_raw(
     // function. Building them once per file avoids repeatedly cloning and
     // rewriting the full signature/binding tables for every function in a
     // large linked browser program.
+    // Only files that still have work in the passes below need a view:
+    // functions the incremental cache did not reuse, plus — when the cached
+    // context did not match at all — every module's top-level initializer.
+    let top_level_check_files: &[String] = if reused_from_cache {
+        &[]
+    } else {
+        &typed.top_level_file_paths
+    };
     let privacy_file_paths = typed
         .functions
         .iter()
-        .map(|function| function.file_path.clone())
-        .chain(typed.top_level_file_paths.iter().cloned())
+        .zip(&reusable)
+        .filter(|(_, reusable)| !**reusable)
+        .map(|(function, _)| function.file_path.clone())
+        .chain(top_level_check_files.iter().cloned())
         .collect::<HashSet<_>>();
     let privacy_signatures_by_file = if module_opaque.is_empty() {
         HashMap::new()
@@ -4708,30 +4736,35 @@ fn type_check_and_infer_collect_raw(
     // privacy is checked per source module. This preserves initializer order
     // and storage while preventing an importing module's top level from seeing
     // another module's opaque representation.
-    let top_level_body = typed
-        .functions
-        .iter()
-        .find(|function| function.name.to_string() == "__waluau_top_level_init")
-        .map(|function| function.body.as_slice())
-        .unwrap_or_default();
-    for function in top_level_functions_for_check(&typed, top_level_body) {
-        let visible_function = function_visible_from_file(&function, &module_opaque);
-        let visible_signatures = privacy_signatures_by_file
-            .get(&function.file_path)
-            .unwrap_or(&fn_signatures);
-        let visible_bindings = privacy_bindings_by_file
-            .get(&function.file_path)
-            .unwrap_or(&module_bindings);
-        errors.extend(
-            statements::check_function_collect(
-                &visible_function,
-                visible_signatures,
-                &HashSet::new(),
-                visible_bindings,
-            )
-            .into_iter()
-            .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
-        );
+    // When the incremental cache proved the context (including every
+    // top-level statement) unchanged against a previously clean run, the
+    // initializer re-check would re-derive the same empty diagnostics.
+    if !reused_from_cache {
+        let top_level_body = typed
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "__waluau_top_level_init")
+            .map(|function| function.body.as_slice())
+            .unwrap_or_default();
+        for function in top_level_functions_for_check(&typed, top_level_body) {
+            let visible_function = function_visible_from_file(&function, &module_opaque);
+            let visible_signatures = privacy_signatures_by_file
+                .get(&function.file_path)
+                .unwrap_or(&fn_signatures);
+            let visible_bindings = privacy_bindings_by_file
+                .get(&function.file_path)
+                .unwrap_or(&module_bindings);
+            errors.extend(
+                statements::check_function_collect(
+                    &visible_function,
+                    visible_signatures,
+                    &HashSet::new(),
+                    visible_bindings,
+                )
+                .into_iter()
+                .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
+            );
+        }
     }
 
     #[cfg(target_family = "wasm")]
