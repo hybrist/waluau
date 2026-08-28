@@ -305,6 +305,8 @@ pub(crate) struct Monomorphizer<'a> {
     named_function_signatures: HashMap<String, Type>,
     method_signatures: HashMap<(SymbolId, String), Type>,
     property_signatures: HashMap<String, (Vec<Type>, Type)>,
+    // Module-level `local` bindings, visible from every function body.
+    module_local_types: HashMap<SymbolId, Type>,
     specialized_names: HashMap<SpecializationKey, String>,
     pending: Vec<SpecializationKey>,
 }
@@ -403,16 +405,48 @@ impl<'a> Monomorphizer<'a> {
             }
         }
 
-        Self {
+        let mut this = Self {
             generic_functions,
             generic_methods,
             function_signatures,
             named_function_signatures,
             method_signatures,
             property_signatures,
+            module_local_types: HashMap::new(),
             specialized_names: HashMap::new(),
             pending: Vec::new(),
+        };
+
+        // Module-level `local`s are in scope for every function body, so
+        // function-body inference needs their types up front. Untyped
+        // bindings are inferred in order; earlier bindings feed later ones.
+        let empty_subst = HashMap::new();
+        let mut module_local_types = HashMap::new();
+        let init_body = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "__waluau_top_level_init")
+            .map(|function| function.body.as_slice())
+            .unwrap_or_default();
+        for stmt in program.top_level.iter().chain(init_body) {
+            if let Stmt::Let {
+                symbol_id: Some(symbol_id),
+                ty,
+                value,
+                ..
+            } = stmt
+            {
+                let inferred = ty.clone().or_else(|| {
+                    this.infer_expr_type(value, &empty_subst, &module_local_types)
+                        .ok()
+                });
+                if let Some(inferred) = inferred {
+                    module_local_types.insert(*symbol_id, inferred);
+                }
+            }
         }
+        this.module_local_types = module_local_types;
+        this
     }
 
     pub(crate) fn run(&mut self, program: &Program) -> Result<Program, Diagnostic> {
@@ -1623,6 +1657,8 @@ impl<'a> Monomorphizer<'a> {
                 if let Some(ty) = types.get(&symbol_id) {
                     Ok(ty.clone())
                 } else if let Some(ty) = self.function_signatures.get(&symbol_id) {
+                    Ok(ty.clone())
+                } else if let Some(ty) = self.module_local_types.get(&symbol_id) {
                     Ok(ty.clone())
                 } else {
                     Err(Diagnostic::new(format!(
