@@ -48,12 +48,7 @@ export type State = {
     -- renderer rebuilds each frame a throw is in the air. Working state like
     -- the ash, never snapshotted — and kept here because a card deformed
     -- sixty times a second should not be sixty allocations.
-    sheet: card_warp.Mesh,
-    -- The renderer's kept nodes: entities whose making does not change frame
-    -- to frame survive the rebuild in this store. Working state like the
-    -- sheet, never snapshotted; each entry replaces itself when its seal
-    -- changes, so it is correct across resets too.
-    nodes: entity.Store<entity.Node>
+    sheet: card_warp.Mesh
 }
 
 
@@ -116,7 +111,6 @@ function State.new(): State
         fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 },
         session = new_session(),
         sheet = card_warp.Mesh.new(THROW_COLUMNS, THROW_ROWS),
-        nodes = entity.node_cache(),
     }
 end
 
@@ -939,7 +933,6 @@ function State:draw(
         ash = self.session.ash,
         spells = self.session.spells,
         sheet = self.sheet,
-        nodes = self.nodes,
     })
 end
 
