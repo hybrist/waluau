@@ -60,20 +60,26 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
 pub trait ModuleProvider {
     /// Return the (recovered) parsed program for `path` plus its parse
     /// diagnostics. `Err` is reserved for hard failures such as unreadable
-    /// files.
-    fn parsed_module(&mut self, path: &Path) -> Result<(Program, Vec<Diagnostic>), Diagnostic>;
+    /// files. The program is shared: cached providers hand out the same
+    /// parse to every analysis root instead of deep-cloning it per call, and
+    /// the linker never mutates a module's parsed AST in place.
+    fn parsed_module(&mut self, path: &Path)
+    -> Result<(Arc<Program>, Vec<Diagnostic>), Diagnostic>;
 }
 
 /// Stateless provider that reads from the filesystem and re-parses each call.
 pub struct FsModules;
 
 impl ModuleProvider for FsModules {
-    fn parsed_module(&mut self, path: &Path) -> Result<(Program, Vec<Diagnostic>), Diagnostic> {
+    fn parsed_module(
+        &mut self,
+        path: &Path,
+    ) -> Result<(Arc<Program>, Vec<Diagnostic>), Diagnostic> {
         let source = std::fs::read_to_string(path).map_err(|error| {
             Diagnostic::new(format!("read module `{}`: {error}", path.display()))
         })?;
         let outcome = waluau_parser::parse_with_recovery(&source, &path.to_string_lossy());
-        Ok((outcome.program, outcome.diagnostics))
+        Ok((Arc::new(outcome.program), outcome.diagnostics))
     }
 }
 
@@ -115,6 +121,7 @@ pub fn link_program_collect_with_assets(
         ))
     })?;
     let mut loader = Loader::new(provider, asset_module_source);
+    let started = crate::CompilerTimer::start();
 
     // Load builtin declarations first
     let (builtin_imports, builtin_constants) = loader.load_builtins()?;
@@ -145,6 +152,10 @@ pub fn link_program_collect_with_assets(
         .cloned()
         .collect();
     involved_files.sort();
+    let loaded_at = started.elapsed();
+    if crate::CompilerTimer::enabled() {
+        eprintln!("waluau link timings: load+parse={loaded_at:?}");
+    }
     match merge_with_builtins(
         &loader.modules,
         entry_id,
@@ -154,17 +165,25 @@ pub fn link_program_collect_with_assets(
         tfjs_externs,
         vitest_externs,
     ) {
-        Ok(program) => Ok(LinkOutcome {
-            program,
-            diagnostics: loader.diagnostics,
-            involved_files,
-        }),
+        Ok(program) => {
+            if crate::CompilerTimer::enabled() {
+                eprintln!(
+                    "waluau link timings: merge={:?}",
+                    started.elapsed() - loaded_at
+                );
+            }
+            Ok(LinkOutcome {
+                program,
+                diagnostics: loader.diagnostics,
+                involved_files,
+            })
+        }
         // A recovered (partial) AST can break merging in misleading ways —
         // e.g. a module whose `return` export failed to parse reports
         // "module has no export". The parse errors are the real story, so
         // surface them with the unmerged entry program instead.
         Err(_) if !loader.diagnostics.is_empty() => Ok(LinkOutcome {
-            program: loader.modules[entry_id].program.clone(),
+            program: Arc::unwrap_or_clone(loader.modules[entry_id].program.clone()),
             diagnostics: loader.diagnostics,
             involved_files,
         }),
@@ -173,7 +192,7 @@ pub fn link_program_collect_with_assets(
 }
 
 struct LoadedModule {
-    program: Program,
+    program: Arc<Program>,
     /// Raw `require` path strings to the module id they resolve to.
     requires: HashMap<String, usize>,
     /// Raw virtual extern module specifiers that do not resolve to source files.
@@ -318,7 +337,7 @@ impl<'a> Loader<'a> {
         self.stack.pop();
         let id = self.modules.len();
         self.modules.push(LoadedModule {
-            program,
+            program: Arc::new(program),
             requires,
             virtual_requires: HashSet::new(),
         });
@@ -384,7 +403,7 @@ impl<'a> Loader<'a> {
 
         let id = self.modules.len();
         self.modules.push(LoadedModule {
-            program,
+            program: Arc::new(program),
             requires,
             virtual_requires,
         });

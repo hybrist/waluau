@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use waluau_diagnostics::Diagnostic;
 
@@ -31,7 +32,7 @@ pub struct CompilerSession {
 
 struct CachedParse {
     content_hash: u64,
-    program: waluau_ast::Program,
+    program: Arc<waluau_ast::Program>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -239,7 +240,7 @@ impl CompilerSession {
     fn parsed_module_cached(
         &mut self,
         path: &Path,
-    ) -> Result<(waluau_ast::Program, Vec<Diagnostic>), Diagnostic> {
+    ) -> Result<(Arc<waluau_ast::Program>, Vec<Diagnostic>), Diagnostic> {
         let content = self.read(path)?;
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
@@ -253,15 +254,16 @@ impl CompilerSession {
 
         let outcome = waluau_parser::parse_with_recovery(&content, &path.to_string_lossy());
         self.parses_performed += 1;
+        let program = Arc::new(outcome.program);
         self.parse_cache.insert(
             path.to_path_buf(),
             CachedParse {
                 content_hash,
-                program: outcome.program.clone(),
+                program: program.clone(),
                 diagnostics: outcome.diagnostics.clone(),
             },
         );
-        Ok((outcome.program, outcome.diagnostics))
+        Ok((program, outcome.diagnostics))
     }
 
     /// Number of files with a live cached parse (test/diagnostic aid).
@@ -305,7 +307,7 @@ impl ModuleProvider for SessionModules<'_> {
     fn parsed_module(
         &mut self,
         path: &Path,
-    ) -> Result<(waluau_ast::Program, Vec<Diagnostic>), Diagnostic> {
+    ) -> Result<(Arc<waluau_ast::Program>, Vec<Diagnostic>), Diagnostic> {
         self.session.parsed_module_cached(path)
     }
 }

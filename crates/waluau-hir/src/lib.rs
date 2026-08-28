@@ -288,12 +288,40 @@ impl<'a> TypeVisibility<'a> {
     }
 }
 
+/// Whether a privacy rewrite could change `ty`: only `Type::Opaque` nodes are
+/// ever localized, so a type without any opaque node anywhere is returned as
+/// the same shared value without rebuilding its tree.
+fn type_contains_any_opaque(ty: &Type) -> bool {
+    match ty {
+        Type::Opaque { .. } => true,
+        Type::ExternSubtype(inner)
+        | Type::Nullable(inner)
+        | Type::Array(inner)
+        | Type::Variadic(inner) => type_contains_any_opaque(inner),
+        Type::Multi(types) => types.iter().any(type_contains_any_opaque),
+        Type::Function {
+            params,
+            return_type,
+            ..
+        } => params.iter().any(type_contains_any_opaque) || type_contains_any_opaque(return_type),
+        Type::Record(fields) => fields.values().any(type_contains_any_opaque),
+        Type::TaggedVariant(variant) => type_contains_any_opaque(&variant.payload),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .any(|variant| type_contains_any_opaque(&variant.payload)),
+        _ => false,
+    }
+}
+
 fn type_visible_from_file_cached(
     ty: &Type,
     file_path: &str,
     opaque: &ModuleOpaqueTypes,
     opaque_payloads: &mut HashMap<(*const Type, bool), waluau_ast::OpaquePayload>,
 ) -> Type {
+    if !type_contains_any_opaque(ty) {
+        return ty.clone();
+    }
     match ty {
         Type::Opaque { name, ty, .. }
             if opaque
