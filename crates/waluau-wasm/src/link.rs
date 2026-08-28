@@ -1946,7 +1946,7 @@ impl Rewriter<'_> {
                 if self.type_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
                 }
-                self.rewrite_type(ty);
+                self.rewrite_type(ty.make_mut());
             }
             Type::ExternSubtype(parent) => self.rewrite_type(parent),
             Type::Nullable(inner) => self.rewrite_type(inner),

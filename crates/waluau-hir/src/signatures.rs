@@ -136,7 +136,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 name: generic_extern
                     .as_ref()
                     .map_or_else(|| name.clone(), |generic| generic.canonical_name()),
-                ty: Box::new(substitute_type(ty, subst)),
+                ty: waluau_ast::OpaquePayload::new(substitute_type(ty, subst)),
                 generic_extern,
             }
         }
@@ -192,6 +192,14 @@ pub(super) fn validate_type_in_scope(
     ty: &Type,
     allowed: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    validate_type_in_scope_cached(ty, allowed, &mut HashSet::new())
+}
+
+fn validate_type_in_scope_cached(
+    ty: &Type,
+    allowed: &HashSet<String>,
+    visited_opaque_payloads: &mut HashSet<*const Type>,
+) -> Result<(), Diagnostic> {
     match ty {
         Type::TypeParam(name) if !allowed.contains(name) => Err(generic_diagnostic(
             "generic/unknown-type-param",
@@ -200,33 +208,47 @@ pub(super) fn validate_type_in_scope(
         )),
         Type::Named { type_args, .. } => {
             for ty in type_args {
-                validate_type_in_scope(ty, allowed)?;
+                validate_type_in_scope_cached(ty, allowed, visited_opaque_payloads)?;
             }
             Ok(())
         }
-        Type::TaggedVariant(variant) => validate_type_in_scope(variant.payload.as_ref(), allowed),
+        Type::TaggedVariant(variant) => validate_type_in_scope_cached(
+            variant.payload.as_ref(),
+            allowed,
+            visited_opaque_payloads,
+        ),
         Type::TaggedUnion(variants) => {
             for variant in variants {
-                validate_type_in_scope(variant.payload.as_ref(), allowed)?;
+                validate_type_in_scope_cached(
+                    variant.payload.as_ref(),
+                    allowed,
+                    visited_opaque_payloads,
+                )?;
             }
             Ok(())
         }
         Type::Opaque {
             ty, generic_extern, ..
         } => {
-            validate_type_in_scope(ty, allowed)?;
+            if visited_opaque_payloads.insert(ty.as_ptr()) {
+                validate_type_in_scope_cached(ty, allowed, visited_opaque_payloads)?;
+            }
             if let Some(generic) = generic_extern {
                 for arg in &generic.type_args {
-                    validate_type_in_scope(arg, allowed)?;
+                    validate_type_in_scope_cached(arg, allowed, visited_opaque_payloads)?;
                 }
             }
             Ok(())
         }
-        Type::Nullable(inner) => validate_type_in_scope(inner, allowed),
-        Type::Array(inner) => validate_type_in_scope(inner, allowed),
+        Type::Nullable(inner) => {
+            validate_type_in_scope_cached(inner, allowed, visited_opaque_payloads)
+        }
+        Type::Array(inner) => {
+            validate_type_in_scope_cached(inner, allowed, visited_opaque_payloads)
+        }
         Type::Record(fields) => {
             for ty in fields.values() {
-                validate_type_in_scope(ty, allowed)?;
+                validate_type_in_scope_cached(ty, allowed, visited_opaque_payloads)?;
             }
             Ok(())
         }
@@ -236,9 +258,9 @@ pub(super) fn validate_type_in_scope(
             ..
         } => {
             for param in params {
-                validate_type_in_scope(param, allowed)?;
+                validate_type_in_scope_cached(param, allowed, visited_opaque_payloads)?;
             }
-            validate_type_in_scope(return_type, allowed)
+            validate_type_in_scope_cached(return_type, allowed, visited_opaque_payloads)
         }
         _ => Ok(()),
     }

@@ -63,7 +63,8 @@ pub(super) fn nominal_type_names(mut ty: &Type) -> Vec<&str> {
 pub(super) fn is_record_like(ty: &Type) -> bool {
     match ty {
         Type::Record(_) => true,
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => is_record_like(ty),
+        Type::Opaque { ty, .. } => is_record_like(ty),
+        Type::Nullable(ty) => is_record_like(ty),
         _ => false,
     }
 }
@@ -71,7 +72,8 @@ pub(super) fn is_record_like(ty: &Type) -> bool {
 fn record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => record_fields(ty),
+        Type::Opaque { ty, .. } => record_fields(ty),
+        Type::Nullable(ty) => record_fields(ty),
         _ => None,
     }
 }
