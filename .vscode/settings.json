@@ -1,7 +1,6 @@
 {
-  // Use VS Code's built-in Lua grammar for .walu highlighting; diagnostics
-  // come from the repo-local language client in tools/vscode-waluau.
+  // Select the language and grammar from the repo-local Waluau extension.
   "files.associations": {
-    "*.walu": "lua"
+    "*.walu": "waluau"
   }
 }

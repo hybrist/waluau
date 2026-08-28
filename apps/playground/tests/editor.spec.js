@@ -51,6 +51,55 @@ test.describe('editor', () => {
     expect(languageId).toBe('waluau');
   });
 
+  test('current Waluau declarations and primitive types are syntax highlighted', async ({ page }) => {
+    await page.waitForSelector('.monaco-editor');
+    const primitiveTypes = [
+      'number',
+      'u32',
+      'u64',
+      'i32',
+      'i64',
+      'f32',
+      'f64',
+      'unit',
+      'void',
+      'bool',
+      'unknown',
+      'string',
+      'bytes',
+      'extern',
+      'thread',
+    ];
+    const highlighted = await page.evaluate((types) => {
+      const source = [
+        'export type State = { value: i32 }',
+        'export opaque type Handle = extern extends Node',
+        'export enum Direction { north, south }',
+        'match direction do',
+        'case Direction.north then',
+        'end',
+        ...types.map((type, index) => `type Primitive${index} = ${type}`),
+      ].join('\n');
+      const lines = source.split('\n');
+      return window.monaco.editor.tokenize(source, 'waluau').flatMap((tokens, lineIndex) =>
+        tokens.map((token, tokenIndex) => ({
+          text: lines[lineIndex].slice(
+            token.offset,
+            tokens[tokenIndex + 1]?.offset ?? lines[lineIndex].length,
+          ).trim(),
+          type: token.type,
+        })),
+      ).filter((token) => token.text);
+    }, primitiveTypes);
+
+    for (const keyword of ['export', 'type', 'opaque', 'extends', 'enum', 'match', 'case']) {
+      expect(highlighted).toContainEqual({ text: keyword, type: 'keyword.waluau' });
+    }
+    for (const type of primitiveTypes) {
+      expect(highlighted).toContainEqual({ text: type, type: 'type.waluau' });
+    }
+  });
+
   test('go to definition opens an imported enum in its file', async ({ page }) => {
     await page.getByRole('button', { name: 'Require Flow Example' }).click();
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {

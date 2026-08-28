@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Waluau",
+  "scopeName": "source.waluau",
+  "patterns": [
+    { "include": "#type-declarations" },
+    { "include": "#keywords" },
+    { "include": "#primitive-types" },
+    { "include": "#operators" },
+    { "include": "source.lua" }
+  ],
+  "repository": {
+    "type-declarations": {
+      "patterns": [
+        {
+          "match": "\\b(?:(export)\\s+)?(?:(opaque)\\s+)?(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.export.waluau" },
+            "2": { "name": "storage.modifier.opaque.waluau" },
+            "3": { "name": "storage.type.alias.waluau" },
+            "4": { "name": "entity.name.type.alias.waluau" }
+          }
+        },
+        {
+          "match": "\\b(?:(export)\\s+)?(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.export.waluau" },
+            "2": { "name": "storage.type.enum.waluau" },
+            "3": { "name": "entity.name.type.enum.waluau" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.waluau",
+          "match": "\\b(?:case|const|continue|declare|export|extends|match|opaque|property|type)\\b"
+        }
+      ]
+    },
+    "primitive-types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.waluau",
+          "match": "\\b(?:bool|bytes|enum|extern|f32|f64|i32|i64|number|string|thread|u32|u64|unit|unknown|void)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.waluau",
+          "match": "(?:\\+=|-=|\\*=|/=|//=?|%=|\\^=|\\.\\.=|->|::|[?&|])|\\b(?:is)\\b"
+        }
+      ]
+    }
+  }
+}
