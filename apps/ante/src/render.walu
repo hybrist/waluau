@@ -23,7 +23,7 @@ local divine_intervention = require("./divine_intervention")
 local box = require("./ui/layout")
 local entity = require("./entities/adapter")
 local ui = require("./ui/node")
-local interaction_router = require("./ui/interaction")
+local board_interaction = require("./board/interaction")
 local ink = require("./ink")
 local easing = require("./easing")
 local card_burn = require("./card_burn")
@@ -196,10 +196,7 @@ export type Interaction = {
     cast_slot: i32
 }
 
-export type BoardAction = {
-    kind: "none" | "hand" | "table-card" | "commit" | "modal",
-    index: i32,
-}
+export type BoardAction = board_interaction.Action
 type Motion = {
     fan_parts: {f64},
     reveal_clock: f64,
@@ -423,29 +420,12 @@ end
 const HAND_CAPACITY: i32 = 7
 const TABLE_CAPACITY: i32 = 5
 
-type BoardPresentation = {
-    viewport: layout.State,
-    fan_parts: {f64},
-    hand_count: i32,
-    table_count: i32,
-    pending: BoardAction,
-}
-
 export type Board = {
-    presentation: BoardPresentation,
     root: ui.Node,
+    input: board_interaction.State,
     surface: ui.Surface?,
-    router: interaction_router.Router,
-    board_scope: i32,
-    modal_scope: i32,
-    hand_nodes: {ui.Node},
-    hand_targets: {interaction_router.Target},
     table_nodes: {ui.Node},
-    table_targets: {interaction_router.Target},
     commit_node: ui.Node,
-    commit_target: interaction_router.Target,
-    modal_node: ui.Node,
-    modal_target: interaction_router.Target,
     hud_node: ui.Node,
     footer_node: ui.Node,
     deck_node: ui.Node,
@@ -471,20 +451,6 @@ export type Board = {
     modal_content: entity.Node?,
 }
 
-function empty_ui_paint(surface: ui.Surface, bounds: box.Rect): unit end
-
-function action_handlers(
-    presentation: BoardPresentation,
-    kind: "none" | "hand" | "table-card" | "commit" | "modal",
-    index: i32
-): interaction_router.Handlers
-    local callbacks: interaction_router.Handlers = interaction_router.handlers()
-    callbacks.on_activate = function(): unit
-        presentation.pending = { kind = kind, index = index }
-    end
-    return callbacks
-end
-
 function settled_pile_count(frame: Frame): i32
     local pending: i32 = 0
     for anim in frame.motion.anims do
@@ -496,13 +462,6 @@ function settled_pile_count(frame: Frame): i32
 end
 
 function Board.new(state: game.View, run: run_module.View): Board
-    local presentation: BoardPresentation = {
-        viewport = layout.current(),
-        fan_parts = {},
-        hand_count = 0,
-        table_count = 0,
-        pending = { kind = "none", index = -1 },
-    }
     -- Restoring while the city/shop is visible can legitimately have no live
     -- table cards. Presenters still need an initial value before the next duel
     -- presents real cards, so seed them with an inert placeholder.
@@ -561,58 +520,14 @@ function Board.new(state: game.View, run: run_module.View): Board
     table.insert(visual_children, commit_node)
     table.insert(visual_children, player_node)
 
-    local hand_nodes: {ui.Node} = {}
-    for index = 0::i32, HAND_CAPACITY - 1 do
-        local slot_index: i32 = index
-        local node: ui.Node = ui.Node.sized(card.width, card.height, empty_ui_paint)
-        node:set_hit_test(function(bounds: box.Rect, x: f64, y: f64): bool
-            if slot_index >= presentation.hand_count then return false end
-            return hand_fan.hit(
-                fan_band(presentation.viewport, presentation.hand_count),
-                presentation.fan_parts, x, y) == slot_index
-        end)
-        table.insert(hand_nodes, node)
-        table.insert(visual_children, node)
-    end
-    local modal_node: ui.Node = ui.Node.sized(1.0, 1.0, empty_ui_paint)
-    table.insert(visual_children, modal_node)
-    local root: ui.Node = ui.Node.layer(visual_children)
-    local router: interaction_router.Router = interaction_router.Router.new(root)
-    local board_scope: i32 = router:add_scope("spatial", true)
-    local modal_scope: i32 = router:add_scope("column", true)
-    local hand_targets: {interaction_router.Target} = {}
-    for index, node in hand_nodes do
-        table.insert(hand_targets, router:add(
-            node, board_scope, true, action_handlers(presentation, "hand", index)))
-    end
-    local table_targets: {interaction_router.Target} = {}
-    for index, node in table_nodes do
-        table.insert(table_targets, router:add(
-            node, board_scope, true,
-            action_handlers(presentation, "table-card", index)))
-    end
-    local commit_target: interaction_router.Target = router:add(
-        commit_node, board_scope, true,
-        action_handlers(presentation, "commit", 0))
-    local modal_target: interaction_router.Target = router:add(
-        modal_node, modal_scope, true,
-        action_handlers(presentation, "modal", 0))
-    router:activate_scope(board_scope)
+    local input: board_interaction.State = board_interaction.new(
+        visual_children, table_nodes, commit_node)
     return {
-        presentation = presentation,
-        root = root,
+        root = input.root,
+        input = input,
         surface = nil,
-        router = router,
-        board_scope = board_scope,
-        modal_scope = modal_scope,
-        hand_nodes = hand_nodes,
-        hand_targets = hand_targets,
         table_nodes = table_nodes,
-        table_targets = table_targets,
         commit_node = commit_node,
-        commit_target = commit_target,
-        modal_node = modal_node,
-        modal_target = modal_target,
         hud_node = hud_node,
         footer_node = footer_node,
         deck_node = deck_node,
@@ -640,11 +555,8 @@ function Board.new(state: game.View, run: run_module.View): Board
 end
 
 function Board:begin_frame(frame: Frame): unit
-    local presentation: BoardPresentation = self.presentation
-    presentation.viewport = frame.viewport
-    presentation.fan_parts = frame.motion.fan_parts
-    presentation.hand_count = #frame.view.player_hand
-    presentation.table_count = #frame.view.middle
+    local hand_count: i32 = #frame.view.player_hand
+    local table_count: i32 = #frame.view.middle
     self.hud_view:present(frame.view, frame.run)
     self.footer_view:present(frame.view, frame.run)
     self.deck_view:present(frame.view.deck_count)
@@ -653,7 +565,7 @@ function Board:begin_frame(frame: Frame): unit
 
     while #self.player_looks > 0 do table.remove(self.player_looks) end
     while #self.player_hidden > 0 do table.remove(self.player_hidden) end
-    for index = 0::i32, presentation.hand_count - 1 do
+    for index = 0::i32, hand_count - 1 do
         local selected: bool = is_picked(frame.interaction.play_picks, index)
         if frame.view.swap_open then
             selected = is_picked(frame.interaction.swap_hand, index)
@@ -672,7 +584,7 @@ function Board:begin_frame(frame: Frame): unit
         self.player_looks, frame.motion.fan_parts, self.player_hidden)
 
     while #self.computer_hidden > 0 do table.remove(self.computer_hidden) end
-    for index = 0::i32, presentation.hand_count - 1 do
+    for index = 0::i32, hand_count - 1 do
         local hidden: bool = slot_hidden(
             frame.motion.anims, frame.motion.anim_clock, SLOT_COMPUTER, index)
         table.insert(self.computer_hidden, hidden)
@@ -683,48 +595,20 @@ function Board:begin_frame(frame: Frame): unit
 
     local modal_open: bool = frame.interaction.modal ~= "none"
         or frame.interaction.revealing
-    local board_live: bool = not modal_open
-        and not frame.interaction.revealing
-        and not frame.interaction.finished
-
-    for index, target in self.hand_targets do
-        target:set_visible(board_live
-            and not frame.interaction.casting
-            and index < presentation.hand_count)
-        if index < presentation.hand_count then
-            target:link(
-                "left",
-                self.hand_targets[
-                    (index + presentation.hand_count - 1) % presentation.hand_count])
-            target:link(
-                "right", self.hand_targets[(index + 1) % presentation.hand_count])
-            if frame.view.swap_open and presentation.table_count > 0 then
-                target:link(
-                    "up", self.table_targets[index % presentation.table_count])
-            end
-        end
-    end
-    for index, target in self.table_targets do
-        target:set_visible(board_live
-            and (frame.view.swap_open or frame.interaction.casting)
-            and index < presentation.table_count)
-        target:set_enabled(index < presentation.table_count
-            and (frame.interaction.casting or not frame.view.frozen_middle[index]))
-        if index < presentation.table_count then
-            target:link(
-                "left",
-                self.table_targets[
-                    (index + presentation.table_count - 1) % presentation.table_count])
-            target:link(
-                "right", self.table_targets[(index + 1) % presentation.table_count])
-            if presentation.hand_count > 0 then
-                target:link("down", self.hand_targets[index % presentation.hand_count])
-            end
-        end
-    end
-    self.commit_target:set_visible(board_live
-        and (frame.view.swap_open or #frame.interaction.play_picks == 2))
-    self.modal_target:set_visible(modal_open)
+    self.input:present({
+        viewport_width = frame.viewport.width,
+        viewport_height = frame.viewport.height,
+        fan_bounds = fan_band(frame.viewport, hand_count),
+        fan_parts = frame.motion.fan_parts,
+        hand_count = hand_count,
+        table_count = table_count,
+        frozen_table = frame.view.frozen_middle,
+        swap_open = frame.view.swap_open,
+        casting = frame.interaction.casting,
+        modal_open = modal_open,
+        finished = frame.interaction.finished,
+        play_pick_count = #frame.interaction.play_picks,
+    })
     if frame.interaction.modal ~= self.modal_kind then
         self.modal_kind = frame.interaction.modal
         if self.modal_kind == "help" then
@@ -737,24 +621,9 @@ function Board:begin_frame(frame: Frame): unit
             self.modal_content = nil
         end
     end
-    if modal_open then self.router:activate_scope(self.modal_scope)
-    else self.router:activate_scope(self.board_scope) end
-    if board_live and (frame.view.swap_open or frame.interaction.casting) then
-        self:repair_table_focus()
-    end
-    if board_live and frame.interaction.casting and self:focused_table() < 0 then
-        self:focus_table(0)
-    elseif board_live and not frame.interaction.casting
-        and not frame.view.swap_open and self:focused_table() >= 0
-    then
-        self:focus_hand(0)
-    elseif board_live and self.router:focused() < 0 then
-        self:focus_hand(0)
-    end
-
     while #self.table_hidden > 0 do table.remove(self.table_hidden) end
     local table_focus: i32 = self:focused_table()
-    for index = 0::i32, presentation.table_count - 1 do
+    for index = 0::i32, table_count - 1 do
         local hidden: bool = slot_hidden(
             frame.motion.anims, frame.motion.anim_clock, SLOT_MIDDLE, index)
         table.insert(self.table_hidden, hidden)
@@ -770,132 +639,60 @@ function Board:begin_frame(frame: Frame): unit
     end
 end
 
-function Board:arrange_targets(): unit
-    local presentation: BoardPresentation = self.presentation
-    local viewport: layout.State = presentation.viewport
-    for index, node in self.hand_nodes do
-        if index < presentation.hand_count then
-            local bounds: box.Rect = hand_slot(
-                viewport, index, presentation.fan_parts[index], presentation.hand_count)
-            node:arrange(bounds.x, bounds.y, bounds.width, bounds.height)
-        end
-    end
-    self.modal_node:arrange(0.0, 0.0, viewport.width, viewport.height)
-end
-
 function Board:focus_hand(index: i32): bool
-    if index < 0 or index >= #self.hand_targets then return false end
-    -- Input can move focus between presentations, before the next draw has
-    -- refreshed target visibility for the new mode.
-    self.hand_targets[index]:set_visible(true)
-    return self.router:focus(self.hand_targets[index].key)
+    return self.input:focus_hand(index)
 end
 
 function Board:focus_table(index: i32): bool
-    if index < 0 or index >= #self.table_targets then return false end
-    self.table_targets[index]:set_visible(true)
-    return self.router:focus(self.table_targets[index].key)
+    return self.input:focus_table(index)
 end
 
 function Board:focused_hand(): i32
-    local key: i32 = self.router:focused()
-    for index, target in self.hand_targets do
-        if target.key == key then return index end
-    end
-    return -1
+    return self.input:focused_hand()
 end
 
 function Board:focused_table(): i32
-    local key: i32 = self.router:focused()
-    for index, target in self.table_targets do
-        if target.key == key then return index end
-    end
-    return -1
+    return self.input:focused_table()
 end
 
--- A condition such as Freeze Ray can make the focused table card stop being
--- actionable between frames. Keep navigation in the same semantic row by
--- moving to the next live card instead of leaving an invalid focus key for the
--- router to recover as the first board target (hand zero).
 function Board:repair_table_focus(): bool
-    local focused: i32 = self:focused_table()
-    if focused < 0 then return false end
-    local count: i32 = self.presentation.table_count
-    if focused < count
-        and self.table_nodes[focused]:is_visible()
-        and self.table_nodes[focused]:is_enabled()
-    then
-        return false
-    end
-    for offset = 1::i32, count - 1 do
-        local index: i32 = (focused + offset) % count
-        local node: ui.Node = self.table_nodes[index]
-        if node:is_visible() and node:is_enabled() then
-            self.router:focus(self.table_targets[index].key)
-            return true
-        end
-    end
-    self.router:clear_focus()
-    return true
+    return self.input:repair_table_focus()
 end
 
 function Board:fan_focus(animating: bool): i32
-    if animating then return hand_fan.closed end
-    return self:focused_hand()
+    return self.input:fan_focus(animating)
 end
 
 function Board:apply_hand_order(order: {i32}): unit
-    local focused: i32 = self:focused_hand()
-    if focused < 0 then return end
-    for new_slot, old_slot in order do
-        if old_slot == focused then
-            self:focus_hand(new_slot)
-            return
-        end
-    end
+    self.input:apply_hand_order(order)
 end
 
 function Board:pointer_move(x: f64, y: f64): i32
-    local target: i32 = self.router:pointer_move(x, y)
-    if target >= 0 then self.router:focus(target) end
-    return target
+    return self.input:pointer_move(x, y)
 end
 
 function Board:pointer_down(x: f64, y: f64, button: i32): i32
-    return self.router:pointer_down(x, y, button)
+    return self.input:pointer_down(x, y, button)
 end
 
 function Board:pointer_up(x: f64, y: f64, button: i32): BoardAction
-    self.presentation.pending = { kind = "none", index = -1 }
-    self.router:pointer_up(x, y, button)
-    return self:take_action()
+    return self.input:pointer_up(x, y, button)
 end
 
 function Board:pointer_leave(): unit
-    self.router:pointer_leave()
+    self.input:pointer_leave()
 end
 
-function Board:navigate(direction: interaction_router.Direction): bool
-    return self.router:navigate(direction)
+function Board:navigate(direction: "left" | "right" | "up" | "down"): bool
+    return self.input:navigate(direction)
 end
 
 function Board:activate(): BoardAction
-    self.presentation.pending = { kind = "none", index = -1 }
-    self.router:activate_focused()
-    return self:take_action()
+    return self.input:activate()
 end
 
 function Board:activate_modal(): BoardAction
-    self.modal_target:set_visible(true)
-    self.router:activate_scope(self.modal_scope)
-    self.router:focus(self.modal_target.key)
-    return self:activate()
-end
-
-function Board:take_action(): BoardAction
-    local action: BoardAction = self.presentation.pending
-    self.presentation.pending = { kind = "none", index = -1 }
-    return action
+    return self.input:activate_modal()
 end
 
 function Board:prepare_surface(surface: entity.Surface): unit
@@ -1826,7 +1623,7 @@ function Board:draw(surface: entity.Surface, frame: Frame): unit
     self.root:arrange(
         0.0, 0.0, frame.viewport.width, frame.viewport.height)
     draw_frame(self, surface, frame)
-    self:arrange_targets()
+    self.input:arrange()
 end
 
 function draw_shader_error(surface: entity.Surface, viewport: layout.State, detail: string): unit
