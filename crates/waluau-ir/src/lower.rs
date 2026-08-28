@@ -955,8 +955,8 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
                 collect_type_variant_tags(variant.payload.as_ref(), tag_ids);
             }
         }
-        Type::Opaque { ty, .. }
-        | Type::Array(ty)
+        Type::Opaque { ty, .. } => collect_type_variant_tags(ty, tag_ids),
+        Type::Array(ty)
         | Type::Variadic(ty)
         | Type::Nullable(ty)
         | Type::ExternSubtype(ty) => {
@@ -1635,8 +1635,8 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
 fn type_contains_opaque_name(ty: &Type, target: &str) -> bool {
     match ty {
         Type::Opaque { name, .. } if name == target => true,
-        Type::Opaque { ty, .. }
-        | Type::ExternSubtype(ty)
+        Type::Opaque { ty, .. } => type_contains_opaque_name(ty, target),
+        Type::ExternSubtype(ty)
         | Type::Nullable(ty)
         | Type::Array(ty)
         | Type::Variadic(ty) => type_contains_opaque_name(ty, target),
@@ -2073,9 +2073,8 @@ fn builtin_name(callee: &Expr) -> Option<String> {
 
 fn json_tag_payload_supported(ty: &Type) -> bool {
     match ty {
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => {
-            json_tag_payload_supported(ty)
-        }
+        Type::Opaque { ty, .. } => json_tag_payload_supported(ty),
+        Type::Nullable(ty) => json_tag_payload_supported(ty),
         // Tagged payloads are stored in `unknown` (anyref). Strings and bytes
         // are externref-shaped and cannot be boxed into that slot.
         Type::String | Type::Bytes | Type::StringLiteralUnion(_) => false,
@@ -2093,8 +2092,8 @@ fn json_supported_type(ty: &Type) -> bool {
         | Type::StringLiteralUnion(_)
         | Type::NumberLiteralUnion(_)
         | Type::TypeParam(_) => true,
-        Type::Opaque { ty, .. }
-        | Type::Nullable(ty)
+        Type::Opaque { ty, .. } => json_supported_type(ty),
+        Type::Nullable(ty)
         | Type::Array(ty) => json_supported_type(ty),
         Type::TypedArray(_) => true,
         Type::Record(fields) => fields.values().all(json_supported_type),
@@ -2462,7 +2461,8 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
 fn is_record_like(ty: &Type) -> bool {
     match ty {
         Type::Record(_) => true,
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => is_record_like(ty),
+        Type::Opaque { ty, .. } => is_record_like(ty),
+        Type::Nullable(ty) => is_record_like(ty),
         _ => false,
     }
 }
@@ -4085,7 +4085,7 @@ impl Builder<'_> {
                 generic_extern,
             } => Some(Type::Opaque {
                 name: name.clone(),
-                ty: Arc::new(Self::narrow_nullable_record_field(ty, field)?),
+                ty: waluau_ast::OpaquePayload::new(Self::narrow_nullable_record_field(ty, field)?),
                 generic_extern: generic_extern.clone(),
             }),
             _ => None,
@@ -13786,7 +13786,8 @@ fn call_arity_matches(params: &[Type], actual: usize) -> bool {
 fn type_record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => type_record_fields(ty),
+        Type::Opaque { ty, .. } => type_record_fields(ty),
+        Type::Nullable(ty) => type_record_fields(ty),
         _ => None,
     }
 }

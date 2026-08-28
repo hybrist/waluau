@@ -372,7 +372,8 @@ fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
                 insert_nullable_box_kinds(ty, out);
             }
         }
-        Type::Opaque { ty, .. } | Type::ExternSubtype(ty) => insert_nullable_box_kinds(ty, out),
+        Type::Opaque { ty, .. } => insert_nullable_box_kinds(ty, out),
+        Type::ExternSubtype(ty) => insert_nullable_box_kinds(ty, out),
         Type::TaggedVariant(variant) => insert_nullable_box_kinds(&variant.payload, out),
         Type::TaggedUnion(variants) => {
             for variant in variants {

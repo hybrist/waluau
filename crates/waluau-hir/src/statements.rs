@@ -74,7 +74,7 @@ fn property_setter_name(base: &str, property: &str) -> String {
 fn record_fields_from_type(ty: Type) -> Option<BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(Arc::unwrap_or_clone(fields)),
-        Type::Opaque { ty, .. } => record_fields_from_type(Arc::unwrap_or_clone(ty)),
+        Type::Opaque { ty, .. } => record_fields_from_type(ty.as_ref().clone()),
         _ => None,
     }
 }
@@ -792,7 +792,7 @@ fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
             generic_extern,
         } => Some(Type::Opaque {
             name: name.clone(),
-            ty: Arc::new(narrow_nullable_record_field(ty, field)?),
+            ty: waluau_ast::OpaquePayload::new(narrow_nullable_record_field(ty, field)?),
             generic_extern: generic_extern.clone(),
         }),
         _ => None,

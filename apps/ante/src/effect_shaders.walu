@@ -9,6 +9,7 @@ local shader_program = require("./shader_program")
 type Graphics = engine.Graphics
 type Source = shader_sources.Source
 export type EffectShaders = {
+    card_paper: shader_program.State,
     gold_shimmer: shader_program.State,
     defeat_shroud: shader_program.State,
     card_burn: shader_program.State,
@@ -19,7 +20,14 @@ export type EffectShaders = {
     ice_freeze: shader_program.State,
     -- The tileable data texture the ice shader samples. Presentation resource
     -- loading fills it in; it travels with the effect registry.
-    noise_texture: graphics_module.Texture?
+    noise_texture: graphics_module.Texture?,
+    -- The baked card stock: the paper shader's two passes rendered once — the
+    -- opaque board and the translucent press — so a card costs two sprite
+    -- draws instead of two per-pixel procedural evaluations. card.walu fills
+    -- these in lazily once the paper program compiles; a rebuild of that
+    -- program drops them so the next card re-bakes from the new source.
+    paper_board: graphics_module.RenderTarget?,
+    paper_press: graphics_module.RenderTarget?
 }
 export type State = {
     shaders: EffectShaders,
@@ -32,6 +40,11 @@ export type State = {
 export type Diagnostics = { fatal_error: string, warnings: string }
 
 function State.new(): State
+    local paper: shader_program.State = shader_program.State.new(
+        "ante.effects.card-paper",
+        "card paper",
+        false
+    )
     local gold: shader_program.State = shader_program.State.new(
         "ante.effects.gold-shimmer",
         "gold shimmer",
@@ -66,6 +79,7 @@ function State.new(): State
     local ice: shader_program.State = shader_program.State.new("ante.effects.ice-freeze", "ice", false)
     return {
         shaders = {
+            card_paper = paper,
             gold_shimmer = gold,
             defeat_shroud = defeat,
             card_burn = burn,
@@ -74,9 +88,11 @@ function State.new(): State
             black_hole = black,
             green_growth = green,
             ice_freeze = ice,
-            noise_texture = nil
+            noise_texture = nil,
+            paper_board = nil,
+            paper_press = nil
         },
-        programs = {gold, defeat, burn, red, blue, black, green, ice},
+        programs = {paper, gold, defeat, burn, red, blue, black, green, ice},
         vertex_source = shader_sources.open("ante.effects.vertex"),
         vertex_text = "",
         vertex_ready = false,
@@ -110,7 +126,25 @@ function State:refresh(graphics: Graphics): unit
     end
     for index, program in self.programs do
         program:refresh(graphics, self.vertex_text, vertex_changed, changed[index])
+        -- A rebuilt paper program orphans the baked card stock; dropping the
+        -- bake here lets the next drawn card re-bake from the new source.
+        if program.label == self.shaders.card_paper.label and (vertex_changed or changed[index]) then
+            self:release_paper_bake(graphics)
+        end
     end
+end
+
+function State:release_paper_bake(graphics: Graphics): unit
+    local board: graphics_module.RenderTarget? = self.shaders.paper_board
+    if board ~= nil then
+        graphics:release_render_target(board::graphics_module.RenderTarget)
+    end
+    self.shaders.paper_board = nil
+    local press: graphics_module.RenderTarget? = self.shaders.paper_press
+    if press ~= nil then
+        graphics:release_render_target(press::graphics_module.RenderTarget)
+    end
+    self.shaders.paper_press = nil
 end
 
 function append_warning(warnings: string, warning: string): string
@@ -151,6 +185,7 @@ function State:release(graphics: Graphics): unit
     for program in self.programs do
         program:release(graphics)
     end
+    self:release_paper_bake(graphics)
     local noise: graphics_module.Texture? = self.shaders.noise_texture
     if noise ~= nil then
         graphics:release_texture(noise::graphics_module.Texture)

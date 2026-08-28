@@ -569,9 +569,8 @@ fn resolve_type_to_record(
             fields: Arc::unwrap_or_clone(fields.clone()),
             declared_by: None,
         }),
-        Type::Opaque { ty: inner, .. } | Type::Nullable(inner) => {
-            resolve_type_to_record(inner, scope, load, depth - 1)
-        }
+        Type::Opaque { ty: inner, .. } => resolve_type_to_record(inner, scope, load, depth - 1),
+        Type::Nullable(inner) => resolve_type_to_record(inner, scope, load, depth - 1),
         Type::Named { name, .. } => {
             let (type_name, type_scope) = type_name_scope(name, scope, load)?;
             let type_def = type_scope

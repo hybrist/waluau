@@ -2334,7 +2334,7 @@ impl Rewriter<'_> {
                 if self.type_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
                 }
-                self.rewrite_type(Arc::make_mut(ty));
+                self.rewrite_type(ty.make_mut());
             }
             Type::ExternSubtype(parent) => self.rewrite_type(Arc::make_mut(parent)),
             Type::Nullable(inner) => self.rewrite_type(Arc::make_mut(inner)),

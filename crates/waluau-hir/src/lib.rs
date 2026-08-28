@@ -265,16 +265,48 @@ fn module_opaque_types(program: &Program) -> ModuleOpaqueTypes {
         .collect()
 }
 
-fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes) -> Type {
+struct TypeVisibility<'a> {
+    file_path: &'a str,
+    opaque: &'a ModuleOpaqueTypes,
+    opaque_payloads: HashMap<(*const Type, bool), waluau_ast::OpaquePayload>,
+}
+
+impl<'a> TypeVisibility<'a> {
+    fn new(file_path: &'a str, opaque: &'a ModuleOpaqueTypes) -> Self {
+        Self {
+            file_path,
+            opaque,
+            opaque_payloads: HashMap::new(),
+        }
+    }
+
+    fn visible(&mut self, ty: &Type) -> Type {
+        if self.opaque.is_empty() {
+            return ty.clone();
+        }
+        type_visible_from_file_cached(ty, self.file_path, self.opaque, &mut self.opaque_payloads)
+    }
+}
+
+fn type_visible_from_file_cached(
+    ty: &Type,
+    file_path: &str,
+    opaque: &ModuleOpaqueTypes,
+    opaque_payloads: &mut HashMap<(*const Type, bool), waluau_ast::OpaquePayload>,
+) -> Type {
     match ty {
-        Type::Opaque { name, .. }
+        Type::Opaque { name, ty, .. }
             if opaque
                 .get(name)
                 .is_some_and(|(owner, _)| owner != file_path) =>
         {
+            let visible_ty = opaque_payloads
+                .entry((ty.as_ptr(), true))
+                .or_insert_with(|| waluau_ast::OpaquePayload::new(Type::Unknown))
+                .clone();
             Type::Opaque {
                 name: name.clone(),
-                ty: Arc::new(Type::Unknown),
+                ty: visible_ty,
                 generic_extern: None,
             }
         }
@@ -282,29 +314,55 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
             name,
             ty,
             generic_extern,
-        } => Type::Opaque {
-            name: name.clone(),
-            ty: Arc::new(type_visible_from_file(ty, file_path, opaque)),
-            generic_extern: generic_extern.as_ref().map(|generic| {
-                Arc::new(generic.map_type_args(|ty| type_visible_from_file(ty, file_path, opaque)))
-            }),
-        },
-        Type::ExternSubtype(parent) => {
-            Type::ExternSubtype(Arc::new(type_visible_from_file(parent, file_path, opaque)))
+        } => {
+            let payload_key = (ty.as_ptr(), false);
+            let visible_ty = if let Some(visible) = opaque_payloads.get(&payload_key) {
+                visible.clone()
+            } else {
+                let visible = waluau_ast::OpaquePayload::new(type_visible_from_file_cached(
+                    ty,
+                    file_path,
+                    opaque,
+                    opaque_payloads,
+                ));
+                opaque_payloads.insert(payload_key, visible.clone());
+                visible
+            };
+            Type::Opaque {
+                name: name.clone(),
+                ty: visible_ty,
+                generic_extern: generic_extern.as_ref().map(|generic| {
+                    Arc::new(generic.map_type_args(|ty| {
+                        type_visible_from_file_cached(ty, file_path, opaque, opaque_payloads)
+                    }))
+                }),
+            }
         }
-        Type::Nullable(inner) => {
-            Type::Nullable(Arc::new(type_visible_from_file(inner, file_path, opaque)))
-        }
-        Type::Array(inner) => {
-            Type::Array(Arc::new(type_visible_from_file(inner, file_path, opaque)))
-        }
-        Type::Variadic(inner) => {
-            Type::Variadic(Arc::new(type_visible_from_file(inner, file_path, opaque)))
-        }
+        Type::ExternSubtype(parent) => Type::ExternSubtype(Arc::new(
+            type_visible_from_file_cached(parent, file_path, opaque, opaque_payloads),
+        )),
+        Type::Nullable(inner) => Type::Nullable(Arc::new(type_visible_from_file_cached(
+            inner,
+            file_path,
+            opaque,
+            opaque_payloads,
+        ))),
+        Type::Array(inner) => Type::Array(Arc::new(type_visible_from_file_cached(
+            inner,
+            file_path,
+            opaque,
+            opaque_payloads,
+        ))),
+        Type::Variadic(inner) => Type::Variadic(Arc::new(type_visible_from_file_cached(
+            inner,
+            file_path,
+            opaque,
+            opaque_payloads,
+        ))),
         Type::Multi(types) => Type::Multi(
             types
                 .iter()
-                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .map(|ty| type_visible_from_file_cached(ty, file_path, opaque, opaque_payloads))
                 .collect(),
         ),
         Type::Function {
@@ -314,27 +372,47 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
         } => Type::Function {
             params: params
                 .iter()
-                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .map(|ty| type_visible_from_file_cached(ty, file_path, opaque, opaque_payloads))
                 .collect(),
-            return_type: Arc::new(type_visible_from_file(return_type, file_path, opaque)),
+            return_type: Arc::new(type_visible_from_file_cached(
+                return_type,
+                file_path,
+                opaque,
+                opaque_payloads,
+            )),
             has_self: *has_self,
         },
         Type::Record(fields) => Type::record(
             fields
                 .iter()
-                .map(|(name, ty)| (name.clone(), type_visible_from_file(ty, file_path, opaque)))
+                .map(|(name, ty)| {
+                    (
+                        name.clone(),
+                        type_visible_from_file_cached(ty, file_path, opaque, opaque_payloads),
+                    )
+                })
                 .collect(),
         ),
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Arc::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+            payload: Arc::new(type_visible_from_file_cached(
+                &variant.payload,
+                file_path,
+                opaque,
+                opaque_payloads,
+            )),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Arc::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+                    payload: Arc::new(type_visible_from_file_cached(
+                        &variant.payload,
+                        file_path,
+                        opaque,
+                        opaque_payloads,
+                    )),
                 })
                 .collect(),
         ),
@@ -342,7 +420,7 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
             name: name.clone(),
             type_args: type_args
                 .iter()
-                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                .map(|ty| type_visible_from_file_cached(ty, file_path, opaque, opaque_payloads))
                 .collect(),
         },
         other => other.clone(),
@@ -353,7 +431,7 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
     match ty {
         Type::Opaque { name, .. } if opaque.contains_key(name) => Type::Opaque {
             name: name.clone(),
-            ty: Arc::new(opaque[name].1.clone()),
+            ty: waluau_ast::OpaquePayload::new(opaque[name].1.clone()),
             generic_extern: None,
         },
         Type::Opaque {
@@ -362,7 +440,7 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
             generic_extern,
         } => Type::Opaque {
             name: name.clone(),
-            ty: Arc::new(restore_module_opaque_type(ty, opaque)),
+            ty: waluau_ast::OpaquePayload::new(restore_module_opaque_type(ty, opaque)),
             generic_extern: generic_extern.as_ref().map(|generic| {
                 Arc::new(generic.map_type_args(|ty| restore_module_opaque_type(ty, opaque)))
             }),
@@ -425,18 +503,18 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
     }
 }
 
-fn localize_expr_types(expr: &mut Expr, file_path: &str, opaque: &ModuleOpaqueTypes) {
+fn localize_expr_types(expr: &mut Expr, visibility: &mut TypeVisibility<'_>) {
     match expr {
         Expr::Unary { expr, .. } | Expr::IsVariant { expr, .. } => {
-            localize_expr_types(expr, file_path, opaque)
+            localize_expr_types(expr, visibility)
         }
         Expr::Cast { expr, ty, .. } => {
-            *ty = type_visible_from_file(ty, file_path, opaque);
-            localize_expr_types(expr, file_path, opaque);
+            *ty = visibility.visible(ty);
+            localize_expr_types(expr, visibility);
         }
         Expr::Binary { left, right, .. } => {
-            localize_expr_types(left, file_path, opaque);
-            localize_expr_types(right, file_path, opaque);
+            localize_expr_types(left, visibility);
+            localize_expr_types(right, visibility);
         }
         Expr::If {
             condition,
@@ -444,9 +522,9 @@ fn localize_expr_types(expr: &mut Expr, file_path: &str, opaque: &ModuleOpaqueTy
             else_expr,
             ..
         } => {
-            localize_expr_types(condition, file_path, opaque);
-            localize_expr_types(then_expr, file_path, opaque);
-            localize_expr_types(else_expr, file_path, opaque);
+            localize_expr_types(condition, visibility);
+            localize_expr_types(then_expr, visibility);
+            localize_expr_types(else_expr, visibility);
         }
         Expr::Call {
             callee,
@@ -454,12 +532,12 @@ fn localize_expr_types(expr: &mut Expr, file_path: &str, opaque: &ModuleOpaqueTy
             args,
             ..
         } => {
-            localize_expr_types(callee, file_path, opaque);
+            localize_expr_types(callee, visibility);
             for ty in type_args {
-                *ty = type_visible_from_file(ty, file_path, opaque);
+                *ty = visibility.visible(ty);
             }
             for arg in args {
-                localize_expr_types(arg, file_path, opaque);
+                localize_expr_types(arg, visibility);
             }
         }
         Expr::MethodCall {
@@ -468,37 +546,37 @@ fn localize_expr_types(expr: &mut Expr, file_path: &str, opaque: &ModuleOpaqueTy
             args,
             ..
         } => {
-            localize_expr_types(receiver, file_path, opaque);
+            localize_expr_types(receiver, visibility);
             for ty in type_args {
-                *ty = type_visible_from_file(ty, file_path, opaque);
+                *ty = visibility.visible(ty);
             }
             for arg in args {
-                localize_expr_types(arg, file_path, opaque);
+                localize_expr_types(arg, visibility);
             }
         }
         Expr::Function(function) => {
             for param in &mut function.params {
-                param.ty = type_visible_from_file(&param.ty, file_path, opaque);
+                param.ty = visibility.visible(&param.ty);
             }
             if let Some(return_type) = &mut function.return_type {
-                *return_type = type_visible_from_file(return_type, file_path, opaque);
+                *return_type = visibility.visible(return_type);
             }
-            localize_stmt_types(&mut function.body, file_path, opaque);
+            localize_stmt_types(&mut function.body, visibility);
         }
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {
-                localize_expr_types(element, file_path, opaque);
+                localize_expr_types(element, visibility);
             }
         }
         Expr::TableLiteral { fields, .. } => {
             for field in fields {
-                localize_expr_types(&mut field.value, file_path, opaque);
+                localize_expr_types(&mut field.value, visibility);
             }
         }
-        Expr::Field { base, .. } => localize_expr_types(base, file_path, opaque),
+        Expr::Field { base, .. } => localize_expr_types(base, visibility),
         Expr::Index { base, index, .. } => {
-            localize_expr_types(base, file_path, opaque);
-            localize_expr_types(index, file_path, opaque);
+            localize_expr_types(base, visibility);
+            localize_expr_types(index, visibility);
         }
         Expr::Number(..)
         | Expr::Bool(..)
@@ -511,37 +589,37 @@ fn localize_expr_types(expr: &mut Expr, file_path: &str, opaque: &ModuleOpaqueTy
     }
 }
 
-fn localize_stmt_types(stmts: &mut [Stmt], file_path: &str, opaque: &ModuleOpaqueTypes) {
+fn localize_stmt_types(stmts: &mut [Stmt], visibility: &mut TypeVisibility<'_>) {
     for stmt in stmts {
         match stmt {
             Stmt::Let { ty, value, .. } => {
                 if let Some(ty) = ty {
-                    *ty = type_visible_from_file(ty, file_path, opaque);
+                    *ty = visibility.visible(ty);
                 }
-                localize_expr_types(value, file_path, opaque);
+                localize_expr_types(value, visibility);
             }
             Stmt::Assign { value, .. } | Stmt::Return(value) | Stmt::Expr(value) => {
-                localize_expr_types(value, file_path, opaque)
+                localize_expr_types(value, visibility)
             }
             Stmt::IndexAssign {
                 base, index, value, ..
             } => {
-                localize_expr_types(base, file_path, opaque);
-                localize_expr_types(index, file_path, opaque);
-                localize_expr_types(value, file_path, opaque);
+                localize_expr_types(base, visibility);
+                localize_expr_types(index, visibility);
+                localize_expr_types(value, visibility);
             }
             Stmt::FieldAssign { base, value, .. } => {
-                localize_expr_types(base, file_path, opaque);
-                localize_expr_types(value, file_path, opaque);
+                localize_expr_types(base, visibility);
+                localize_expr_types(value, visibility);
             }
             Stmt::If {
                 condition,
                 then_body,
                 else_body,
             } => {
-                localize_expr_types(condition, file_path, opaque);
-                localize_stmt_types(then_body, file_path, opaque);
-                localize_stmt_types(else_body, file_path, opaque);
+                localize_expr_types(condition, visibility);
+                localize_stmt_types(then_body, visibility);
+                localize_stmt_types(else_body, visibility);
             }
             Stmt::IfCast {
                 target_ty,
@@ -550,29 +628,29 @@ fn localize_stmt_types(stmts: &mut [Stmt], file_path: &str, opaque: &ModuleOpaqu
                 else_body,
                 ..
             } => {
-                *target_ty = type_visible_from_file(target_ty, file_path, opaque);
-                localize_expr_types(value, file_path, opaque);
-                localize_stmt_types(then_body, file_path, opaque);
-                localize_stmt_types(else_body, file_path, opaque);
+                *target_ty = visibility.visible(target_ty);
+                localize_expr_types(value, visibility);
+                localize_stmt_types(then_body, visibility);
+                localize_stmt_types(else_body, visibility);
             }
             Stmt::Match {
                 value,
                 enum_ty,
                 arms,
             } => {
-                *enum_ty = type_visible_from_file(enum_ty, file_path, opaque);
-                localize_expr_types(value, file_path, opaque);
+                *enum_ty = visibility.visible(enum_ty);
+                localize_expr_types(value, visibility);
                 for arm in arms {
-                    localize_stmt_types(&mut arm.body, file_path, opaque);
+                    localize_stmt_types(&mut arm.body, visibility);
                 }
             }
             Stmt::While { condition, body } => {
-                localize_expr_types(condition, file_path, opaque);
-                localize_stmt_types(body, file_path, opaque);
+                localize_expr_types(condition, visibility);
+                localize_stmt_types(body, visibility);
             }
             Stmt::Repeat { body, condition } => {
-                localize_stmt_types(body, file_path, opaque);
-                localize_expr_types(condition, file_path, opaque);
+                localize_stmt_types(body, visibility);
+                localize_expr_types(condition, visibility);
             }
             Stmt::NumericFor {
                 start,
@@ -581,34 +659,34 @@ fn localize_stmt_types(stmts: &mut [Stmt], file_path: &str, opaque: &ModuleOpaqu
                 body,
                 ..
             } => {
-                localize_expr_types(start, file_path, opaque);
-                localize_expr_types(stop, file_path, opaque);
+                localize_expr_types(start, visibility);
+                localize_expr_types(stop, visibility);
                 if let Some(step) = step {
-                    localize_expr_types(step, file_path, opaque);
+                    localize_expr_types(step, visibility);
                 }
-                localize_stmt_types(body, file_path, opaque);
+                localize_stmt_types(body, visibility);
             }
             Stmt::ForIn {
                 iterators, body, ..
             } => {
                 for iterator in iterators {
-                    localize_expr_types(iterator, file_path, opaque);
+                    localize_expr_types(iterator, visibility);
                 }
-                localize_stmt_types(body, file_path, opaque);
+                localize_stmt_types(body, visibility);
             }
             Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
                 for value in values {
-                    localize_expr_types(value, file_path, opaque);
+                    localize_expr_types(value, visibility);
                 }
             }
             Stmt::LetMulti { bindings, values } => {
                 for binding in bindings {
                     if let Some(ty) = &mut binding.ty {
-                        *ty = type_visible_from_file(ty, file_path, opaque);
+                        *ty = visibility.visible(ty);
                     }
                 }
                 for value in values {
-                    localize_expr_types(value, file_path, opaque);
+                    localize_expr_types(value, visibility);
                 }
             }
             Stmt::Break | Stmt::Continue => {}
@@ -623,14 +701,15 @@ fn function_visible_from_file(function: &Function, opaque: &ModuleOpaqueTypes) -
     if function.name.to_string() == "__waluau_top_level_init" {
         return function.clone();
     }
+    let mut visibility = TypeVisibility::new(&function.file_path, opaque);
     let mut visible = function.clone();
     for param in &mut visible.params {
-        param.ty = type_visible_from_file(&param.ty, &visible.file_path, opaque);
+        param.ty = visibility.visible(&param.ty);
     }
     if let Some(return_type) = &mut visible.return_type {
-        *return_type = type_visible_from_file(return_type, &visible.file_path, opaque);
+        *return_type = visibility.visible(return_type);
     }
-    localize_stmt_types(&mut visible.body, &visible.file_path, opaque);
+    localize_stmt_types(&mut visible.body, &mut visibility);
     visible
 }
 
@@ -665,6 +744,7 @@ fn signatures_visible_from_file(
     file_path: &str,
     opaque: &ModuleOpaqueTypes,
 ) -> HashMap<String, FnSignature> {
+    let mut visibility = TypeVisibility::new(file_path, opaque);
     signatures
         .iter()
         .map(|(name, signature)| {
@@ -674,21 +754,18 @@ fn signatures_visible_from_file(
                     vararg,
                     return_type,
                 } => FnSignature::Mono {
-                    params: params
-                        .iter()
-                        .map(|ty| type_visible_from_file(ty, file_path, opaque))
-                        .collect(),
+                    params: params.iter().map(|ty| visibility.visible(ty)).collect(),
                     vararg: vararg.clone(),
-                    return_type: type_visible_from_file(return_type, file_path, opaque),
+                    return_type: visibility.visible(return_type),
                 },
                 FnSignature::Generic(scheme) => FnSignature::Generic(GenericScheme {
                     type_params: scheme.type_params.clone(),
                     params: scheme
                         .params
                         .iter()
-                        .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                        .map(|ty| visibility.visible(ty))
                         .collect(),
-                    return_type: type_visible_from_file(&scheme.return_type, file_path, opaque),
+                    return_type: visibility.visible(&scheme.return_type),
                 }),
                 FnSignature::Overloaded(variants) => FnSignature::Overloaded(
                     variants
@@ -698,18 +775,14 @@ fn signatures_visible_from_file(
                             params: variant
                                 .params
                                 .iter()
-                                .map(|ty| type_visible_from_file(ty, file_path, opaque))
+                                .map(|ty| visibility.visible(ty))
                                 .collect(),
-                            return_type: type_visible_from_file(
-                                &variant.return_type,
-                                file_path,
-                                opaque,
-                            ),
+                            return_type: visibility.visible(&variant.return_type),
                         })
                         .collect(),
                 ),
                 FnSignature::Const { ty } => FnSignature::Const {
-                    ty: type_visible_from_file(ty, file_path, opaque),
+                    ty: visibility.visible(ty),
                 },
             };
             (name.clone(), signature)
@@ -722,11 +795,12 @@ fn bindings_visible_from_file(
     file_path: &str,
     opaque: &ModuleOpaqueTypes,
 ) -> HashMap<String, Binding> {
+    let mut visibility = TypeVisibility::new(file_path, opaque);
     bindings
         .iter()
         .map(|(name, binding)| {
             let mut binding = binding.clone();
-            binding.ty = type_visible_from_file(&binding.ty, file_path, opaque);
+            binding.ty = visibility.visible(&binding.ty);
             (name.clone(), binding)
         })
         .collect()
@@ -1234,7 +1308,7 @@ pub(crate) const ANY_ENUM_TYPE_NAME: &str = "enum";
 pub(crate) fn any_enum_type() -> Type {
     Type::Opaque {
         name: ANY_ENUM_TYPE_NAME.to_string(),
-        ty: Arc::new(Type::Numeric(NumericType::I32)),
+        ty: waluau_ast::OpaquePayload::new(Type::Numeric(NumericType::I32)),
         generic_extern: None,
     }
 }
@@ -1286,7 +1360,7 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             generic_extern,
         } => Type::Opaque {
             name: name.clone(),
-            ty: Arc::new(substitute_type_params(ty, subst)),
+            ty: waluau_ast::OpaquePayload::new(substitute_type_params(ty, subst)),
             generic_extern: generic_extern.as_ref().map(|generic| {
                 Arc::new(generic.map_type_args(|ty| substitute_type_params(ty, subst)))
             }),
@@ -1350,7 +1424,7 @@ fn specialize_generic_extern_constructor(
     match resolved {
         Type::Extern | Type::ExternSubtype(_) => Type::Opaque {
             name: generic_instantiation_name(name, type_args),
-            ty: Arc::new(resolved),
+            ty: waluau_ast::OpaquePayload::new(resolved),
             generic_extern: Some(Arc::new(GenericExternType {
                 constructor: name.to_string(),
                 source_name: decl.source_name.clone(),
@@ -1400,7 +1474,7 @@ fn resolve_decl_type_allowing_forward_refs(
 
     let opaque = Type::Opaque {
         name: name.to_string(),
-        ty: Arc::new(resolved_underlying),
+        ty: waluau_ast::OpaquePayload::new(resolved_underlying),
         generic_extern: None,
     };
     Ok(opaque)
@@ -1500,7 +1574,7 @@ fn resolve_type_refs_allowing_forward_refs(
                     // erasure turns this edge into an anyref plus checked casts.
                     return Ok(Type::Opaque {
                         name: name.to_string(),
-                        ty: Arc::new(Type::Unknown),
+                        ty: waluau_ast::OpaquePayload::new(Type::Unknown),
                         generic_extern: None,
                     });
                 }
@@ -1540,7 +1614,7 @@ fn resolve_type_refs_allowing_forward_refs(
             generic_extern,
         } => Ok(Type::Opaque {
             name: name.clone(),
-            ty: Arc::new(resolve_type_refs_allowing_forward_refs(
+            ty: waluau_ast::OpaquePayload::new(resolve_type_refs_allowing_forward_refs(
                 ty,
                 active_type_params,
                 raw_opaque,
@@ -1986,7 +2060,7 @@ fn resolve_type_refs_fixpoint(
                     .cloned()
                     .unwrap_or_else(|| Type::Opaque {
                         name: name.to_string(),
-                        ty: Arc::new(Type::Unit),
+                        ty: waluau_ast::OpaquePayload::new(Type::Unit),
                         generic_extern: None,
                     }))
             } else {
@@ -2006,7 +2080,7 @@ fn resolve_type_refs_fixpoint(
             generic_extern,
         } => Ok(Type::Opaque {
             name: name.clone(),
-            ty: Arc::new(resolve_type_refs_fixpoint(
+            ty: waluau_ast::OpaquePayload::new(resolve_type_refs_fixpoint(
                 ty,
                 active_type_params,
                 raw_opaque,
@@ -2192,7 +2266,7 @@ fn resolve_decl_type_fixpoint(
                 .cloned()
                 .unwrap_or_else(|| Type::Opaque {
                     name: name.to_string(),
-                    ty: Arc::new(Type::Unit),
+                    ty: waluau_ast::OpaquePayload::new(Type::Unit),
                     generic_extern: None,
                 }));
         } else {
@@ -2224,7 +2298,7 @@ fn resolve_decl_type_fixpoint(
     stack.pop();
     let opaque = Type::Opaque {
         name: name.to_string(),
-        ty: Arc::new(resolved_underlying),
+        ty: waluau_ast::OpaquePayload::new(resolved_underlying),
         generic_extern: None,
     };
     opaque_cache.insert(name.to_string(), opaque.clone());

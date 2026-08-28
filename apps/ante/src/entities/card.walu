@@ -179,7 +179,7 @@ end
 function draw_arcane_field(surface: ui.Surface, suit: i32, x: f64, y: f64): unit
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
-    local center_y: f64 = y + HEIGHT * 0.54
+    local center_y: f64 = y + HEIGHT * 0.5
     -- Uneven washes, fibers, and rubbed patches keep the dark parchment from
     -- reading as a mathematically flat UI tile.
     graphics:set_color("#6f5b710d")
@@ -195,7 +195,7 @@ function draw_arcane_field(surface: ui.Surface, suit: i32, x: f64, y: f64): unit
     graphics:line(x + 29.0, y + 17.0, x + 25.0, y + 115.0)
     graphics:set_color(ink.fade(ink.color_ink(suit), 0.12))
     graphics:set_line_width(0.75)
-    graphics:line(center_x, y + 26.0, center_x, y + HEIGHT - 18.0)
+    graphics:line(center_x, y + 22.0, center_x, y + HEIGHT - 22.0)
     -- Interior compass rays are ornament, never a perimeter outline.
     graphics:line(center_x - 31.0, center_y, center_x - 27.0, center_y)
     graphics:line(center_x + 27.0, center_y, center_x + 31.0, center_y)
@@ -226,7 +226,7 @@ function draw_high_arcana(
 ): unit
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
-    local center_y: f64 = y + HEIGHT * 0.54
+    local center_y: f64 = y + HEIGHT * 0.5
     local school: string = ink.fade(ink.color_ink(suit), 0.72)
     graphics:set_color(ink.fade(ink.color_ink(suit), 0.13))
     graphics:fill_circle(center_x, center_y, 31.0)
@@ -315,6 +315,78 @@ function use_color_field(
     return binding.ok
 end
 
+-- The card stock itself: a shader that presses pulp mottling, fibers, edge
+-- wear, and a worn printed frame rule into the face, cut to the same rounded
+-- silhouette as every field shader. At press 0 it is the opaque board; at
+-- press 1 it is a sparse translucent pass of the same board, drawn over the
+-- printed content so the grain breaks through the ink. Binding can fail
+-- while sources are still loading, in which case the caller keeps the flat
+-- fill and the print stays clean.
+function use_paper_field(surface: ui.Surface, aspect: f64, press: f64): bool
+    local maybe_shader: graphics_module.Shader? = surface.effects.card_paper.shader
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(shader, {
+        graphics_module.float_parameter("u_aspect", aspect),
+        graphics_module.float_parameter("u_press", press),
+    })
+    return binding.ok
+end
+
+-- The paper is identical for every card, so each shader pass renders once
+-- into a target the effect registry keeps, and every card after that costs a
+-- sprite draw instead of a full per-pixel procedural evaluation — the
+-- difference between the board's frame budget surviving a software
+-- rasterizer and not. Baked at double the design size so a card scaled up
+-- on the board stays crisp.
+const PAPER_BAKE_SCALE: f64 = 2.0
+
+function bake_paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
+    local graphics = surface.graphics
+    local result: graphics_module.RenderTargetResult = graphics:create_render_target(
+        (WIDTH * PAPER_BAKE_SCALE)::i32, (HEIGHT * PAPER_BAKE_SCALE)::i32)
+    if not result.ok then return nil end
+    local target: graphics_module.RenderTarget = result.target
+    if not graphics:set_render_target(target) then
+        graphics:release_render_target(target)
+        return nil
+    end
+    graphics:push_identity()
+    graphics:clear("#00000000")
+    local bound: bool = use_paper_field(surface, WIDTH / HEIGHT, press)
+    if bound then
+        graphics:set_color("#ffffffff")
+        graphics:fill_rectangle(
+            0.0, 0.0, WIDTH * PAPER_BAKE_SCALE, HEIGHT * PAPER_BAKE_SCALE)
+        ink.stop_effect(graphics)
+    end
+    graphics:pop()
+    graphics:set_screen_target()
+    if not bound then
+        graphics:release_render_target(target)
+        return nil
+    end
+    return target
+end
+
+-- One pass of the baked paper, baking it first if the program is ready. The
+-- bake only starts while drawing to the screen: switching targets inside a
+-- capture would hand the rest of the capture to the wrong surface.
+function paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
+    local baked: graphics_module.RenderTarget? = surface.effects.paper_board
+    if press > 0.5 then baked = surface.effects.paper_press end
+    if baked ~= nil then return baked end
+    if surface.effects.card_paper.shader == nil then return nil end
+    if surface.graphics.current_target ~= 0 then return nil end
+    local fresh: graphics_module.RenderTarget? = bake_paper_pass(surface, press)
+    if press > 0.5 then
+        surface.effects.paper_press = fresh
+    else
+        surface.effects.paper_board = fresh
+    end
+    return fresh
+end
+
 function draw_sigil(surface: ui.Surface, suit: i32, x: f64, y: f64): unit
     draw_suit_symbol(surface, suit, x + 11.0, y + 3.0, 36.0)
 end
@@ -373,27 +445,40 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
         -- field shader cuts this quad to the same rounded paper silhouette.
         graphics:set_color("#211d24")
         graphics:fill_rectangle(x, y, WIDTH, HEIGHT)
+        ink.stop_effect(graphics)
     else
-        fill_silhouette(graphics, x, y, "#211d24")
+        -- The resting face is card stock rather than a flat tile: the baked
+        -- board pass, cut to the same rounded silhouette the animated fields
+        -- use. Flat fill only while the paper program is still loading.
+        local paper: graphics_module.RenderTarget? = paper_pass(surface, 0.0)
+        if paper ~= nil then
+            graphics:set_color("#ffffffff")
+            graphics:draw_render_target(
+                paper::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
+        else
+            fill_silhouette(graphics, x, y, "#211d24")
+        end
     end
-    if value.colored or value.selected then ink.stop_effect(graphics) end
     draw_arcane_field(surface, card.suit, x, y)
 
     -- Familiar rank labels preserve the deck's mechanics and instant reading;
     -- the artwork, surface, and court figures carry the tarot influence. The
-    -- small upper-left reading survives the hand-fan overlap.
+    -- small upper-left reading survives the hand-fan overlap, and the lower
+    -- reading is its exact half-turn mirror, as on a printed card — the paper
+    -- shader's symmetric frame makes any drift between the two corners read
+    -- as a misprint.
     local rank_label: string = game.rank_name(card.rank)
     ink.text(graphics, rank_label, x + 7.0, y + 17.0, 10.0, "#eee7d5")
     graphics:push()
-    graphics:translate(x + WIDTH - 7.0, y + HEIGHT - 11.0)
+    graphics:translate(x + WIDTH - 7.0, y + HEIGHT - 17.0)
     graphics:rotate(math.pi)
-    ink.text(graphics, rank_label, 0.0, 0.0, 8.0, "#bdb4a1")
+    ink.text(graphics, rank_label, 0.0, 0.0, 10.0, "#bdb4a1")
     graphics:pop()
 
     if card.rank <= 10 then
         local marks: {Mark} = rank_marks(card.rank)
         local center_x: f64 = x + WIDTH * 0.5
-        local center_y: f64 = y + HEIGHT * 0.54
+        local center_y: f64 = y + HEIGHT * 0.5
         for mark in marks do
             draw_school_mark(
                 surface, card.suit,
@@ -402,6 +487,18 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     else
         draw_high_arcana(surface, card.rank, card.suit, x, y)
     end
+
+    -- The press pass: the same paper drawn thinly back over everything just
+    -- printed, so pips, labels, and court plates carry the sheet's grain
+    -- instead of floating above it. Status marks stay on top — they are the
+    -- table talking about the card, not part of its printing.
+    local pressed: graphics_module.RenderTarget? = paper_pass(surface, 1.0)
+    if pressed ~= nil then
+        graphics:set_color("#ffffffff")
+        graphics:draw_render_target(
+            pressed::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
+    end
+
     if value.selected then
         ink.text_centered(
             graphics, "BOUND", x + WIDTH * 0.5, y + 119.0, 8, SELECTION_HIGHLIGHT)

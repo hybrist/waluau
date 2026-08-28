@@ -77,7 +77,8 @@ fn json_supported_type(ty: &Type) -> bool {
         | Type::StringLiteralUnion(_)
         | Type::NumberLiteralUnion(_)
         | Type::TypeParam(_) => true,
-        Type::Opaque { ty, .. } | Type::Nullable(ty) | Type::Array(ty) => json_supported_type(ty),
+        Type::Opaque { ty, .. } => json_supported_type(ty),
+        Type::Nullable(ty) | Type::Array(ty) => json_supported_type(ty),
         Type::TypedArray(_) => true,
         Type::Record(fields) => fields.values().all(json_supported_type),
         Type::TaggedVariant(variant) => json_tag_payload_supported(&variant.payload),
@@ -98,7 +99,8 @@ fn json_supported_type(ty: &Type) -> bool {
 
 fn json_tag_payload_supported(ty: &Type) -> bool {
     match ty {
-        Type::Opaque { ty, .. } | Type::Nullable(ty) => json_tag_payload_supported(ty),
+        Type::Opaque { ty, .. } => json_tag_payload_supported(ty),
+        Type::Nullable(ty) => json_tag_payload_supported(ty),
         Type::String | Type::Bytes | Type::StringLiteralUnion(_) => false,
         _ => json_supported_type(ty),
     }

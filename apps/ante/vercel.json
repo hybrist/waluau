@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "pnpm install --frozen-lockfile",
+  "installCommand": "pnpm install --frozen-lockfile && cargo build --release --manifest-path ../../Cargo.toml -p waluau-cli",
   "buildCommand": "pnpm build && pnpm build-storybook",
   "outputDirectory": "dist",
   "redirects": [
