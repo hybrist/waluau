@@ -6,7 +6,8 @@ search while replacing the casino-table presentation with a magical robbery
 inside an arcane vault. A won breach pays its round and pot, plus a bonus that
 climbs with the rarity of its five-card poker hand.
 
-The four suits are now the Red, Blue, Black, and Green schools of magic. Cards
+The four suits are now Red Cups, Blue Bells, Black Swords, and Green Leaves,
+the four schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
