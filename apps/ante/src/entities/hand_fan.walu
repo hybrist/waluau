@@ -11,7 +11,7 @@
 -- rectangle is narrower than the hand would like.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local card = require("./card")
 local card_row = require("./card_row")
 
@@ -92,7 +92,7 @@ end
 function slot_rect(bounds: box.Rect, index: i32, part: f64, count: i32): box.Rect
     local step: f64 = step_at(index, part, count)
     local scale: f64 = scale_of(count)
-    return entity.rect(
+    return box.rect(
         bounds.x + bounds.width * 0.5 + step * pitch_in(bounds, count)
             - card.width * 0.5,
         bounds.y + bounds.height * 0.5 + step * step * FAN_DROP * scale * scale
@@ -117,13 +117,18 @@ end
 -- everything with it — the select lift rises along the card's own axis rather
 -- than straight up the screen, and the focus edge stays square to the card.
 function draw_slot(
-    surface: entity.Surface, value: card.Look,
+    surface: ui.Surface, value: card.Look,
     bounds: box.Rect, index: i32, part: f64, count: i32
 ): unit
-    local slot: box.Rect = slot_rect(bounds, index, part, count)
+    local step: f64 = step_at(index, part, count)
+    local scale: f64 = scale_of(count)
+    local x: f64 = bounds.x + bounds.width * 0.5
+        + step * pitch_in(bounds, count) - card.width * 0.5
+    local y: f64 = bounds.y + bounds.height * 0.5
+        + step * step * FAN_DROP * scale * scale - card.height * 0.5
     local graphics = surface.graphics
     graphics:push()
-    graphics:translate(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
+    graphics:translate(x + card.width * 0.5, y + card.height * 0.5)
     graphics:rotate(angle_at(index, part, count))
     card.draw_at(surface, value, -(card.width * 0.5), -(card.height * 0.5))
     graphics:pop()
@@ -151,7 +156,7 @@ function hit(bounds: box.Rect, parts: {f64}, x: f64, y: f64): i32
     return -1
 end
 
--- The whole hand as one entity. Cards keep the order they were dealt in,
+-- The whole hand as one ui. Cards keep the order they were dealt in,
 -- focused or not: pulling the focused one to the front would slide it through
 -- its neighbours instead of opening a gap for it. The parting alone gives it
 -- room.
@@ -160,15 +165,22 @@ end
 -- the animation lands so state that has already changed is not revealed ahead
 -- of it.
 type FanPresentation = { looks: {card.Look}, parts: {f64}, hidden: {bool} }
-export type Stateful = { presentation: FanPresentation, root: entity.Node }
+export type Stateful = { presentation: FanPresentation, root: ui.Node }
 
 function Stateful.new(looks: {card.Look}, parts: {f64}, hidden: {bool}): Stateful
     local presentation: FanPresentation = { looks = looks, parts = parts, hidden = hidden }
-    local root: entity.Node = entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return intrinsic(#presentation.looks)
+    local root: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            local count: i32 = #presentation.looks
+            local width: f64 = 0.0
+            local height: f64 = 0.0
+            if count > 0 then
+                width = card.width + ((count - 1)::f64) * FAN_PITCH
+                height = card.height + dip_of(count) * 2.0
+            end
+            box.set_fixed(into, width, height)
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             for index = 0::i32, #presentation.looks - 1 do
                 if not presentation.hidden[index] then
                     draw_slot(
@@ -186,7 +198,7 @@ function Stateful:present(looks: {card.Look}, parts: {f64}, hidden: {bool}): uni
     self.presentation.hidden = hidden
 end
 
-function node(looks: {card.Look}, parts: {f64}, hidden: {bool}): entity.Node
+function node(looks: {card.Look}, parts: {f64}, hidden: {bool}): ui.Node
     return Stateful.new(looks, parts, hidden).root
 end
 

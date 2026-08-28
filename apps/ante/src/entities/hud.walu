@@ -5,14 +5,14 @@
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local orb_track = require("./orb_track")
 
-export type Stateful = { track: orb_track.Stateful, root: entity.Node }
+export type Stateful = { track: orb_track.Stateful, root: ui.Node }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
     local track: orb_track.Stateful = orb_track.Stateful.new(state)
-    return { track = track, root = entity.Node.across({
+    return { track = track, root = ui.Node.across({
         justify = "center",
         align = "center",
     }, {
@@ -24,7 +24,7 @@ function Stateful:present(state: game.View, run: run_module.View): unit
     self.track:present(state)
 end
 
-function node(state: game.View, run: run_module.View): entity.Node
+function node(state: game.View, run: run_module.View): ui.Node
     return Stateful.new(state, run).root
 end
 

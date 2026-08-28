@@ -7,7 +7,7 @@
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local label = require("./label")
 local ability_diamond = require("./ability_diamond")
 
@@ -21,16 +21,16 @@ const HEART_INK: string = "#fb7185"
 
 -- Keep the keyboard reminder off the canvas edge and carry its baseline down
 -- with the padding so it remains stable inside the taller diamond band.
-function padded_caption(caption: entity.Node): entity.Node
+function padded_caption(caption: ui.Node): ui.Node
     return caption:padded(CAPTION_PAD_X, CAPTION_PAD_Y)
 end
 
-function menu(): entity.Node
+function menu(): ui.Node
     return padded_caption(label.centered("M MENU", HINT_SIZE, QUIET_INK))
 end
 
-function stats(state: game.View, run: run_module.View): entity.Node
-    return padded_caption(entity.Node.down({ gap = 4.0, align = "start" }, {
+function stats(state: game.View, run: run_module.View): ui.Node
+    return padded_caption(ui.Node.down({ gap = 4.0, align = "start" }, {
         label.left(
             "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
             HINT_SIZE, HEART_INK),
@@ -44,7 +44,7 @@ export type Stateful = {
     hearts: label.Stateful,
     gold: label.Stateful,
     abilities: ability_diamond.Stateful,
-    root: entity.Node,
+    root: ui.Node,
 }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
@@ -55,16 +55,16 @@ function Stateful.new(state: game.View, run: run_module.View): Stateful
         "GOLD " .. tostring(state.player_points),
         HINT_SIZE, GOLD_INK, label.align_left, false)
     local abilities: ability_diamond.Stateful = ability_diamond.Stateful.new(state)
-    local stat_root: entity.Node = padded_caption(entity.Node.down(
+    local stat_root: ui.Node = padded_caption(ui.Node.down(
         { gap = 4.0, align = "start" }, { hearts.root, gold.root }))
-    local root: entity.Node = entity.Node.layer({
-        entity.Node.across(
+    local root: ui.Node = ui.Node.layer({
+        ui.Node.across(
             { justify = "start", align = "end" },
             { stat_root }),
-        entity.Node.across(
+        ui.Node.across(
             { justify = "center", align = "end" },
             { menu() }),
-        entity.Node.across(
+        ui.Node.across(
             { justify = "end", align = "end" },
             { abilities.root }),
     })
@@ -81,7 +81,7 @@ function Stateful:present(state: game.View, run: run_module.View): unit
     self.abilities:present(state)
 end
 
-function node(state: game.View, run: run_module.View): entity.Node
+function node(state: game.View, run: run_module.View): ui.Node
     return Stateful.new(state, run).root
 end
 

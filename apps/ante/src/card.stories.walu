@@ -7,8 +7,8 @@ local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local box = require("./ui/layout")
 local game = require("./game")
-local entity = require("./entities/adapter")
-local entity_story = require("./entity_story")
+local ui = require("./ui/node")
+local ui_story = require("./ui/story")
 local ink = require("./ink")
 local card_entity = require("./entities/card")
 local card_flip = require("./entities/card_flip")
@@ -33,7 +33,7 @@ const STAGE_SCALE = 1.2
 -- The card back, the display font, and the color shaders every story here
 -- draws with. One set is loaded for the whole file: Storybook moves between
 -- these stories constantly, and the assets do not change between them.
-local book = entity_story.Book.new()
+local book = ui_story.Book.new()
 -- Loading is asynchronous and happens once, however many times a story is
 -- mounted. The clock is a story's own and restarts with it.
 local shared = { clock = 0.0 }
@@ -92,7 +92,7 @@ local function state(
     hidden: bool,
     colored: bool,
     known: bool
-): entity.Node
+): ui.Node
     return card_entity.node(card_entity.look(subject, selected, focused, hidden, colored, known))
 end
 
@@ -110,41 +110,41 @@ local function present_face_up(): unit
     ))
 end
 
-local function face_up(): entity.Node
+local function face_up(): ui.Node
     return face_up_view.root
 end
 
-local function face_down(): entity.Node
+local function face_down(): ui.Node
     return state(card(13, 0), false, false, true, false, false)
 end
 
 -- Selected: the card is committed to the hand being built. It lifts, takes
 -- its color's edge, and runs that color's pattern.
-local function selected(): entity.Node
+local function selected(): ui.Node
     return state(card(14, 1), true, false, false, false, false)
 end
 
 -- Focused is where the cursor is, which is amber and independent of binding.
-local function focused(): entity.Node
+local function focused(): ui.Node
     return state(card(7, 3), false, true, false, false, false)
 end
 
 -- A contributing card in a finished hand, in full color.
-local function contributing(): entity.Node
+local function contributing(): ui.Node
     return state(card(12, 2), false, false, false, true, false)
 end
 
 -- Watched: the Opponent has seen this card. Sealed and watched at once is
 -- the state the player reads through the back.
-local function watched(): entity.Node
+local function watched(): ui.Node
     return state(card(10, 2), false, false, true, false, true)
 end
 
 -- The four colors side by side, in the colored state that makes each one's
 -- pattern legible. Nothing else on the board shows them together.
-local function colors(): entity.Node
+local function colors(): ui.Node
     const GAP = 12.0
-    local cards: {entity.LegacyNode} = {}
+    local cards: {ui.Node} = {}
     for suit = 0::i32, 3::i32 do
         table.insert(cards, state(card(11 + suit, suit), false, false, false, true, false))
     end
@@ -155,11 +155,11 @@ end
 -- revealed, off a clock this story owns.
 const FLIP_PERIOD = 1.7
 
-local function turning(): entity.Node
-    return entity.Node.sized(
+local function turning(): ui.Node
+    return ui.Node.sized(
         card_entity.width,
         card_entity.height,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             local clock: f64 = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
             card_flip.draw(surface, card(14, 0), bounds.x, bounds.y, clock, 0.35, false)
         end
@@ -204,7 +204,7 @@ end
 
 -- Both faces of the card, captured once. Until the packaged card back has
 -- arrived there is nothing worth capturing, so this simply waits.
-local function capture(surface: entity.Surface): bool
+local function capture(surface: ui.Surface): bool
     if sheet.captured then
         return true
     end
@@ -269,7 +269,7 @@ end
 
 -- The stack the card comes out of. A pull needs something to be pulled from,
 -- and the thinning silhouette is the same one the board's draw pile uses.
-local function draw_deck(surface: entity.Surface): unit
+local function draw_deck(surface: ui.Surface): unit
     local graphics = surface.graphics
     local x = DECK_X - card_entity.width * 0.5
     local y = DECK_Y - card_entity.height * 0.5
@@ -384,11 +384,11 @@ local function drawing(index: i32, count: i32): card_draw.Draw
     }
 end
 
-local function drawing_cards(): entity.Node
-    return entity.Node.sized(
+local function drawing_cards(): ui.Node
+    return ui.Node.sized(
         DRAW_WIDTH,
         DRAW_HEIGHT,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             local graphics = surface.graphics
             graphics:push()
             graphics:translate(bounds.x, bounds.y)
@@ -441,7 +441,7 @@ end
 
 -- A card story is one card entity on a small flex stage. The stage does not
 -- know a card's dimensions; it reads them from the entity on every frame.
-local function card_scene(node: () -> entity.Node, present: (() -> unit)?): storybook.Scene
+local function card_scene(node: () -> ui.Node, present: (() -> unit)?): storybook.Scene
     return book:scene({
             node = node,
             present = present,

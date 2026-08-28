@@ -6,7 +6,7 @@
 
 local game = require("../game")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 
 -- The live round's ring is the widest thing an orb ever draws, so it is what
 -- an orb's box measures.
@@ -28,7 +28,7 @@ const ORB_UNPLAYED_FILL: string = "#17171c"
 const LIVE_RING: string = "#fbbf24"
 
 function draw_orb(
-    surface: entity.Surface, x: f64, y: f64, edge: string, fill: string, played: bool
+    surface: ui.Surface, x: f64, y: f64, edge: string, fill: string, played: bool
 ): unit
     local graphics = surface.graphics
     graphics:set_color(edge)
@@ -47,7 +47,7 @@ type TrackPresentation = { state: game.View }
 
 function draw_round(
     presentation: TrackPresentation,
-    surface: entity.Surface, bounds: box.Rect, round: i32
+    surface: ui.Surface, bounds: box.Rect, round: i32
 ): unit
     local x: f64 = bounds.x + bounds.width * 0.5
     local y: f64 = bounds.y + bounds.height * 0.5
@@ -75,38 +75,38 @@ function draw_round(
     draw_orb(surface, x, y, edge, fill, played)
 end
 
-function orb_presented(presentation: TrackPresentation, round: i32): entity.Node
-    return entity.Node.sized(
+function orb_presented(presentation: TrackPresentation, round: i32): ui.Node
+    return ui.Node.sized(
         ORB_SIZE, ORB_SIZE,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             draw_round(presentation, surface, bounds, round)
         end)
 end
 
-function orb(state: game.View, round: i32): entity.Node
+function orb(state: game.View, round: i32): ui.Node
     return orb_presented({ state = state }, round)
 end
 
-export type Stateful = { presentation: TrackPresentation, root: entity.Node }
+export type Stateful = { presentation: TrackPresentation, root: ui.Node }
 
 function Stateful.new(state: game.View): Stateful
     local presentation: TrackPresentation = { state = state }
-    local root: entity.Node = entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
+    local root: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
             local count: i32 = 1
             if presentation.state.boss then count = game.max_rounds end
-            return box.Intrinsic.fixed(
+            box.set_fixed(into,
                 (count::f64) * ORB_SIZE + ((count - 1)::f64) * ORB_GAP,
                 ORB_SIZE)
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             local count: i32 = 1
             if presentation.state.boss then count = game.max_rounds end
             local width: f64 = (count::f64) * ORB_SIZE
                 + ((count - 1)::f64) * ORB_GAP
             local left: f64 = bounds.x + (bounds.width - width) * 0.5
             for round = 0::i32, count - 1 do
-                local slot: box.Rect = entity.rect(
+                local slot: box.Rect = box.rect(
                     left + (round::f64) * (ORB_SIZE + ORB_GAP),
                     bounds.y, ORB_SIZE, ORB_SIZE)
                 draw_round(presentation, surface, slot, round)
@@ -122,7 +122,7 @@ function Stateful:present(state: game.View): unit
     self.presentation.state = state
 end
 
-function node(state: game.View): entity.Node
+function node(state: game.View): ui.Node
     return Stateful.new(state).root
 end
 

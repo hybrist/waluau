@@ -14,7 +14,7 @@ local particles = require("waluau:engine/particles")
 local game = require("./game")
 local burn_particles = require("./burn_particles")
 local easing = require("./easing")
-local entity = require("./entities/adapter")
+local ui = require("./ui/node")
 local ink = require("./ink")
 local card = require("./entities/card")
 
@@ -70,7 +70,7 @@ function progress_over(clock: f64, start: f64, seconds: f64): f64
 end
 
 function use_card_burn(
-    surface: entity.Surface, progress: f64, seed: i32, suit: i32
+    surface: ui.Surface, progress: f64, seed: i32, suit: i32
 ): bool
     local graphics = surface.graphics
     local maybe_shader: graphics_module.Shader? = surface.effects.card_burn.shader
@@ -202,7 +202,7 @@ end
 -- fallback is what an optional-program failure falls back to, so a missing
 -- shader never exposes a rectangle in the fire.
 function draw_ash(
-    surface: entity.Surface,
+    surface: ui.Surface,
     system: particles.ParticleSystem,
     x: f64,
     y: f64,
@@ -223,7 +223,7 @@ function draw_ash(
 end
 
 function draw_captured(
-    surface: entity.Surface,
+    surface: ui.Surface,
     target: graphics_module.RenderTarget,
     x: f64, y: f64, progress: f64, seed: i32, suit: i32,
     ash: particles.ParticleSystem
@@ -256,7 +256,7 @@ end
 -- last flakes have landed, so the ash outlives the card it came off instead of
 -- being cut with it.
 function draw_disintegrating(
-    surface: entity.Surface, value: card.Look, x: f64, y: f64,
+    surface: ui.Surface, value: card.Look, x: f64, y: f64,
     progress: f64, seed: i32, ash: particles.ParticleSystem
 ): unit
     if progress <= 0.0 then
@@ -287,7 +287,7 @@ end
 -- than a live particle system: a discard reappearance may be skipped, restored,
 -- or shared by Firebolt without adding another piece of snapshot state.
 function draw_reappearing_ash(
-    surface: entity.Surface, x: f64, y: f64, progress: f64, seed: i32
+    surface: ui.Surface, x: f64, y: f64, progress: f64, seed: i32
 ): unit
     if progress >= 1.0 then return end
     local graphics = surface.graphics
@@ -333,7 +333,7 @@ end
 -- destruction, while the converging flecks make the reversal read as ash
 -- becoming paper rather than an ordinary fade-in.
 function draw_reappearance(
-    surface: entity.Surface, value: game.Card, x: f64, y: f64, progress: f64
+    surface: ui.Surface, value: game.Card, x: f64, y: f64, progress: f64
 ): unit
     local graphics = surface.graphics
     local seed: i32 = seed_of(value, 317)

@@ -6,7 +6,7 @@ local game = require("./game")
 local spells = require("./spells/spell")
 local render = require("./render")
 local card_burn = require("./card_burn")
-local entity = require("./entities/adapter")
+local ui = require("./ui/node")
 local run_module = require("./run")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
@@ -897,7 +897,7 @@ end
 
 function State:draw(
     board: render.Board,
-    surface: entity.Surface,
+    surface: ui.Surface,
     view: game.View,
     run: run_module.View,
     interaction: render.Interaction

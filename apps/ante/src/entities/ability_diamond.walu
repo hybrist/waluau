@@ -11,7 +11,7 @@ local game = require("../game")
 local spells = require("../spells/spell")
 local spell_launch = require("../spell_launch")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local ink = require("../ink")
 
 const SLOT_COUNT: i32 = 4
@@ -62,7 +62,7 @@ function short_name(kind: spells.SpellKind): string
     return ""
 end
 
-function draw_connector(surface: entity.Surface, bounds: box.Rect): unit
+function draw_connector(surface: ui.Surface, bounds: box.Rect): unit
     local graphics = surface.graphics
     graphics:set_color(CONNECTOR_INK)
     graphics:set_line_width(2.0)
@@ -81,7 +81,7 @@ function draw_connector(surface: entity.Surface, bounds: box.Rect): unit
 end
 
 function draw_slot(
-    surface: entity.Surface, state: game.View, bounds: box.Rect, slot: i32
+    surface: ui.Surface, state: game.View, bounds: box.Rect, slot: i32
 ): unit
     local graphics = surface.graphics
     local x: f64 = bounds.x + slot_x(slot)
@@ -134,13 +134,13 @@ function draw_slot(
 end
 
 type DiamondPresentation = { state: game.View }
-export type Stateful = { presentation: DiamondPresentation, root: entity.Node }
+export type Stateful = { presentation: DiamondPresentation, root: ui.Node }
 
 function Stateful.new(state: game.View): Stateful
     local presentation: DiamondPresentation = { state = state }
-    local root: entity.Node = entity.Node.sized(
+    local root: ui.Node = ui.Node.sized(
         WIDTH, HEIGHT,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             draw_connector(surface, bounds)
             for slot = 0::i32, SLOT_COUNT - 1 do
                 draw_slot(surface, presentation.state, bounds, slot)
@@ -153,7 +153,7 @@ function Stateful:present(state: game.View): unit
     self.presentation.state = state
 end
 
-function node(state: game.View): entity.Node
+function node(state: game.View): ui.Node
     return Stateful.new(state).root
 end
 

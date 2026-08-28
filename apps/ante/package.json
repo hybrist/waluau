@@ -7,8 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
-    "test:unit": "vitest run",
+    "check:retained-ui": "node tools/check-retained-ui.mjs",
+    "test": "pnpm check:retained-ui && vitest run",
+    "test:unit": "pnpm check:retained-ui && vitest run",
     "test:e2e": "playwright test",
     "storybook": "storybook dev -p 6006 --no-open",
     "build-storybook": "storybook build -o dist/storybook"
