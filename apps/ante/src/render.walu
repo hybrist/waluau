@@ -21,7 +21,7 @@ local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
 local divine_intervention = require("./divine_intervention")
 local box = require("./ui/layout")
-local entity = require("./entities/adapter")
+local ui = require("./ui/node")
 local board_interaction = require("./board/interaction")
 local board_view = require("./board/view")
 local ink = require("./ink")
@@ -254,14 +254,14 @@ end
 
 function computer_band(viewport: layout.State): box.Rect
     local width: f64 = hand_width(viewport)
-    return entity.rect(
+    return box.rect(
         viewport.center_x - width * 0.5, viewport.computer_y, width, card.height)
 end
 
 function fan_band(viewport: layout.State, count: i32): box.Rect
     local width: f64 = hand_width(viewport)
     local height: f64 = hand_fan.intrinsic(count).preferred_height
-    return entity.rect(
+    return box.rect(
         viewport.center_x - width * 0.5, viewport.player_y - height * 0.5,
         width, height)
 end
@@ -271,32 +271,32 @@ end
 -- winner's pair has joined the table cards.
 function table_card_band(viewport: layout.State, slots: i32): box.Rect
     local size: box.Intrinsic = card_row.intrinsic(slots, card_row.flat_pitch)
-    return entity.rect(
+    return box.rect(
         viewport.center_x - size.preferred_width * 0.5, viewport.table_card_y,
         size.preferred_width, size.preferred_height)
 end
 
 function action_band(viewport: layout.State): box.Rect
-    return entity.rect(0.0, viewport.action_y, viewport.width, capsule.height)
+    return box.rect(0.0, viewport.action_y, viewport.width, capsule.height)
 end
 
 function deck_band(viewport: layout.State): box.Rect
-    return entity.rect(
+    return box.rect(
         viewport.side_left, viewport.table_card_y,
         card.width, card.height + deck.caption_drop)
 end
 
 function board_rect(viewport: layout.State): box.Rect
-    return entity.rect(0.0, 0.0, viewport.width, viewport.height)
+    return box.rect(0.0, 0.0, viewport.width, viewport.height)
 end
 
 function header_band(height: f64, viewport: layout.State): box.Rect
-    return entity.rect(
+    return box.rect(
         BOARD_EDGE, HEADER_TOP, viewport.width - BOARD_EDGE * 2.0, height)
 end
 
 function footer_band(height: f64, viewport: layout.State): box.Rect
-    return entity.rect(
+    return box.rect(
         FOOTER_EDGE, viewport.height - FOOTER_BOTTOM - height,
         viewport.width - FOOTER_EDGE * 2.0, height)
 end
@@ -304,7 +304,7 @@ end
 -- A line of type centred across the board, hung off a baseline the way the
 -- board's prompts always have been.
 function centered_line(
-    surface: entity.Surface, viewport: layout.State,
+    surface: ui.Surface, viewport: layout.State,
     text: string, baseline: f64, size: f64, color: string
 ): unit
     ink.text_centered(surface.graphics, text, viewport.center_x, baseline, size, color)
@@ -554,7 +554,7 @@ end
 -- it is drawn before all five cards, the cards mask its centre while the
 -- continuous field remains visible around them and through every gap.
 function use_result_field(
-    surface: entity.Surface, strength: f64, aspect: f64, player_won: bool
+    surface: ui.Surface, strength: f64, aspect: f64, player_won: bool
 ): bool
     local effects: effect_shaders.EffectShaders = surface.effects
     local maybe_shader: graphics_module.Shader? = effects.defeat_shroud.shader
@@ -569,7 +569,7 @@ function use_result_field(
 end
 
 function draw_result_field(
-    surface: entity.Surface, bounds: box.Rect, strength: f64, player_won: bool
+    surface: ui.Surface, bounds: box.Rect, strength: f64, player_won: bool
 ): unit
     if strength <= 0.0 then return end
     local graphics = surface.graphics
@@ -602,7 +602,7 @@ end
 -- The face is captured fresh each frame, the same bargain ash reappearance
 -- strikes: a throw is short and rare, and a captured card is exact.
 function draw_throw_card(
-    surface: entity.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh
+    surface: ui.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh
 ): unit
     local graphics = surface.graphics
     local clock: f64 = part * card_draw.land_end
@@ -656,7 +656,7 @@ end
 -- and lifted slightly toward the viewer while it moves (matching the reveal
 -- flip's midair feel).
 function draw_anim_card(
-    surface: entity.Surface, anim: Anim, clock: f64, sheet: card_warp.Mesh
+    surface: ui.Surface, anim: Anim, clock: f64, sheet: card_warp.Mesh
 ): unit
     if clock < anim.appear or clock >= anim.vanish then return end
     local graphics = surface.graphics
@@ -696,7 +696,7 @@ function draw_anim_card(
 end
 
 function draw_anims(
-    surface: entity.Surface, anims: {Anim}, clock: f64, sheet: card_warp.Mesh
+    surface: ui.Surface, anims: {Anim}, clock: f64, sheet: card_warp.Mesh
 ): unit
     for anim in anims do draw_anim_card(surface, anim, clock, sheet) end
 end
@@ -774,7 +774,7 @@ end
 -- Like a card in flight it is drawn against the board's anchors rather than
 -- laid out: it is a visitor crossing the board, not a thing standing on it.
 function draw_divine_intervention(
-    surface: entity.Surface, clock: f64, active: bool, fan_parts: {f64}
+    surface: ui.Surface, clock: f64, active: bool, fan_parts: {f64}
 ): unit
     if not active or #fan_parts < 2 then return end
     local graphics = surface.graphics
@@ -812,7 +812,7 @@ end
 -- use keeps it airborne in between. ease 0 means the flight has not begun and
 -- the card still sits in its row, so nothing is drawn.
 function draw_winner_flight(
-    surface: entity.Surface, value: game.Card, start: Point, sangle: f64,
+    surface: ui.Surface, value: game.Card, start: Point, sangle: f64,
     dest: Point, ease: f64, colored: bool
 ): unit
     if ease <= 0.0 then return end
@@ -844,7 +844,7 @@ end
 -- to capture, only the last flakes falling — and they fall inside the card's
 -- own tilt, the way they did while it was still there.
 function draw_hand_disintegration(
-    surface: entity.Surface, viewport: layout.State, value: game.Card,
+    surface: ui.Surface, viewport: layout.State, value: game.Card,
     index: i32, part: f64, count: i32, progress: f64, seed: i32,
     ash: particles.ParticleSystem
 ): unit
@@ -907,7 +907,7 @@ function step_spell_particles(
 end
 
 function draw_spell_launch(
-    surface: entity.Surface, viewport: layout.State,
+    surface: ui.Surface, viewport: layout.State,
     kind: spells.SpellKind?, clock: f64, target: i32, middle_count: i32,
     sparks: spell_cast.Sparks
 ): unit
@@ -923,21 +923,21 @@ end
 -- The board, composed.
 -- ---------------------------------------------------------------------------
 
-function draw_backdrop(surface: entity.Surface, viewport: layout.State): unit
+function draw_backdrop(surface: ui.Surface, viewport: layout.State): unit
     backdrop.draw_at(surface, board_rect(viewport))
 end
 
 function draw_hud(
-    board: Board, surface: entity.Surface, viewport: layout.State
+    board: Board, surface: ui.Surface, viewport: layout.State
 ): unit
     board.view:paint_hud(header_band(
-        board.view:hud_height(surface:metrics()), viewport))
+        board.view:hud_height(surface.graphics), viewport))
 end
 
 function draw_footer(
-    board: Board, surface: entity.Surface, viewport: layout.State
+    board: Board, surface: ui.Surface, viewport: layout.State
 ): unit
-    local height: f64 = board.view:footer_height(surface:metrics())
+    local height: f64 = board.view:footer_height(surface.graphics)
     board.view:paint_footer(footer_band(height, viewport))
 end
 
@@ -961,19 +961,19 @@ end
 
 -- The one right-edge pile, drawn only once it holds cards.
 function draw_pile(
-    board: Board, surface: entity.Surface, viewport: layout.State,
+    board: Board, surface: ui.Surface, viewport: layout.State,
     cards: {game.Card}, count: i32
 ): unit
     local slot: Point = slot_pos(viewport, SLOT_ASIDE, 0)
     board.view:present_pile(cards, count)
-    board.view:paint_pile(entity.rect(slot.x, slot.y, card.width, card.height))
+    board.view:paint_pile(box.rect(slot.x, slot.y, card.width, card.height))
 end
 
 -- One slot of the middle row, powered or plain. A table_card at rest is face up for
 -- both sides to read, so it never carries an eye: the mark only says something
 -- about a hand.
 function draw_table_card_at(
-    surface: entity.Surface, frame: Frame, bounds: box.Rect,
+    surface: ui.Surface, frame: Frame, bounds: box.Rect,
     value: game.Card, index: i32, selected: bool, focused: bool, colored: bool
 ): unit
     local look: card.Look = card.look(value, selected, focused, false, colored, false)
@@ -1003,7 +1003,7 @@ end
 -- it. Both take the same band, so the field is always exactly as wide as the
 -- row it backs.
 function draw_table_card_band(
-    board: Board, surface: entity.Surface, frame: Frame
+    board: Board, surface: ui.Surface, frame: Frame
 ): unit
     local count: i32 = #frame.view.middle
     local band: box.Rect = table_card_band(frame.viewport, count)
@@ -1013,7 +1013,7 @@ function draw_table_card_band(
     end
 end
 
-function draw_resolution_board(board: Board, surface: entity.Surface, frame: Frame): unit
+function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame): unit
     local graphics = surface.graphics
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
@@ -1240,7 +1240,7 @@ end
 -- The Opponent's sealed row. Slots claimed by an in-flight card stay empty
 -- until it lands, so the already-updated game state cannot leak ahead of the
 -- animation.
-function draw_computer_row(board: Board, surface: entity.Surface, frame: Frame): unit
+function draw_computer_row(board: Board, surface: ui.Surface, frame: Frame): unit
     local state: game.View = frame.view
     local band: box.Rect = computer_band(frame.viewport)
     local pitch: f64 = card_row.pitch_in(
@@ -1252,7 +1252,7 @@ function draw_computer_row(board: Board, surface: entity.Surface, frame: Frame):
 end
 
 -- The player's fan, with the binds and the cursor the screen is holding.
-function draw_player_fan(board: Board, surface: entity.Surface, frame: Frame): unit
+function draw_player_fan(board: Board, surface: ui.Surface, frame: Frame): unit
     board.view:paint_player(fan_band(frame.viewport, #frame.view.player_hand))
 end
 
@@ -1263,7 +1263,7 @@ function draw_action(board: Board, text: string, active: bool, band: box.Rect): 
 end
 
 -- What the board is asking for, and the controls it is asking with.
-function draw_action_band(board: Board, surface: entity.Surface, frame: Frame): unit
+function draw_action_band(board: Board, surface: ui.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local interaction: Interaction = frame.interaction
@@ -1326,7 +1326,7 @@ function draw_action_band(board: Board, surface: entity.Surface, frame: Frame): 
         action_bar.prompt_size, "#fbbf24")
 end
 
-function draw_playfield(board: Board, surface: entity.Surface, frame: Frame): unit
+function draw_playfield(board: Board, surface: ui.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local anims: {Anim} = frame.motion.anims
@@ -1353,13 +1353,13 @@ function draw_playfield(board: Board, surface: entity.Surface, frame: Frame): un
         frame.spell.target, #state.middle, frame.spells.sparks)
 end
 
-local retained_help: entity.Node = help_card.node()
+local retained_help: ui.Node = help_card.node()
 
-function draw_help(surface: entity.Surface, viewport: layout.State): unit
+function draw_help(surface: ui.Surface, viewport: layout.State): unit
     modal.show(surface, board_rect(viewport), retained_help)
 end
 
-function draw_frame(board: Board, surface: entity.Surface, frame: Frame): unit
+function draw_frame(board: Board, surface: ui.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local modal_kind: "none" | "history" | "help" | "final" = frame.interaction.modal
@@ -1377,7 +1377,7 @@ function draw_frame(board: Board, surface: entity.Surface, frame: Frame): unit
     end
 end
 
-function Board:draw(surface: entity.Surface, frame: Frame): unit
+function Board:draw(surface: ui.Surface, frame: Frame): unit
     self:begin_frame(frame)
     self.view:measure_arrange(surface, frame.viewport.width, frame.viewport.height)
     draw_frame(self, surface, frame)

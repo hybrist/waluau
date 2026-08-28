@@ -9,7 +9,7 @@
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local modal = require("./modal")
 local label = require("./label")
 
@@ -68,7 +68,7 @@ end
 function figure(
     caption: string, caption_ink: string, value: string,
     figure_ink: string, caption_size: f64, figure_size: f64
-): entity.Node
+): ui.Node
     return modal.column({
         label.middle(caption, caption_size, caption_ink),
         label.middle(value, figure_size, figure_ink),
@@ -80,20 +80,20 @@ end
 -- read as an arbitrary death.
 function ledger(
     left_label: string, left_value: i32, right_label: string, right_value: i32
-): entity.Node
-    return entity.Node.flow({
+): ui.Node
+    return ui.Node.flow({
         figure(
             left_label, HEADLINE_INK, tostring(left_value), FIGURE_INK,
             LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
         figure(
             right_label, OWED_INK, tostring(right_value), OWED_INK,
             LEDGER_HEADLINE_SIZE, LEDGER_FIGURE_SIZE),
-    }, entity.row(LEDGER_GAP, "center", "start")):wide()
+    }, box.row(LEDGER_GAP, "center", "start")):wide()
 end
 
 -- What the run walks away with. A lost duel has only what it took; the other
 -- three are all comparisons against the target, so they are two figures.
-function tally(state: game.View, run: run_module.View): entity.Node
+function tally(state: game.View, run: run_module.View): ui.Node
     if run.outcome == "lost-health" or run.outcome == "lost-vault" then
         return figure(
             "DUELS WON", HEADLINE_INK, tostring(run.cleared), FIGURE_INK,
@@ -121,7 +121,7 @@ end
 -- The next duel is not dealt straight off the verdict: the shop stands
 -- between them, spending this pile of gold. A run that has walked off the end
 -- of the table has no shop ahead of it, only more city.
-function onward(run: run_module.View): {entity.LegacyNode}
+function onward(run: run_module.View): {ui.Node}
     if not walks_on(run) then
         return {
             label.middle(
@@ -139,24 +139,24 @@ function onward(run: run_module.View): {entity.LegacyNode}
     }
 end
 
-function body(state: game.View, run: run_module.View): entity.Node
-    local lines: {entity.LegacyNode} = {
+function body(state: game.View, run: run_module.View): ui.Node
+    local lines: {ui.Node} = {
         tally(state, run),
-        entity.Node.gap(0.0, BLOCK_GAP),
+        ui.Node.gap(0.0, BLOCK_GAP),
         label.middle(
             "ROUNDS WON " .. tostring(state.player_tricks) .. " / 5",
             NOTE_SIZE, NOTE_INK),
-        entity.Node.gap(0.0, BLOCK_GAP),
+        ui.Node.gap(0.0, BLOCK_GAP),
     }
     for line in onward(run) do table.insert(lines, line) end
-    table.insert(lines, entity.Node.gap(0.0, BLOCK_GAP))
+    table.insert(lines, ui.Node.gap(0.0, BLOCK_GAP))
     table.insert(lines, label.middle(
         "R RESTARTS THE RUN   M RETURNS TO MENU", KEYS_SIZE, QUIET_INK))
-    return entity.Node.flow(
-        lines, entity.column(BLOCK_GAP * 0.5, "start", "stretch"))
+    return ui.Node.flow(
+        lines, box.column(BLOCK_GAP * 0.5, "start", "stretch"))
 end
 
-function node(state: game.View, run: run_module.View): entity.Node
+function node(state: game.View, run: run_module.View): ui.Node
     return modal.node(title_of(run), subtitle_of(run), body(state, run))
 end
 

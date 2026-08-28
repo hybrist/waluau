@@ -3,7 +3,7 @@
 
 require("waluau:vitest")
 
-local entity = require("./adapter")
+local box = require("../ui/layout")
 local card = require("./card")
 local hand_fan = require("./hand_fan")
 
@@ -21,7 +21,7 @@ describe("hand fan", function(): unit
     end)
 
     it("hangs the closed fan symmetrically about the band's centre", function(): unit
-        local bounds = entity.rect(
+        local bounds = box.rect(
             0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
         local first = hand_fan.slot_rect(bounds, 0, 0.0, COUNT)
         local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)
@@ -58,7 +58,7 @@ describe("hand fan", function(): unit
     end)
 
     it("prefers the card drawn on top where two overlap", function(): unit
-        local bounds = entity.rect(
+        local bounds = box.rect(
             0.0, 0.0, 388.0, hand_fan.intrinsic(COUNT).preferred_height)
         local parts: {f64} = { 0.0, 0.0, 0.0, 0.0, 0.0 }
         local middle = hand_fan.slot_rect(bounds, 2, 0.0, COUNT)

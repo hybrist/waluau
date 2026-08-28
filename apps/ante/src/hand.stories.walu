@@ -3,15 +3,15 @@
 -- overlap, arc, tilt, parting, and stacking states.
 local storybook = require("waluau:engine/storybook")
 local game = require("./game")
-local entity = require("./entities/adapter")
-local entity_story = require("./entity_story")
+local ui = require("./ui/node")
+local ui_story = require("./ui/story")
 local card = require("./entities/card")
 local hand_fan = require("./entities/hand_fan")
 
 const WIDTH: u32 = 900
 const HEIGHT: u32 = 420
 const BACKGROUND: string = "#0b0b12"
-local book = entity_story.Book.new()
+local book = ui_story.Book.new()
 
 type Position = "none" | "first" | "left-middle" | "middle" | "right-middle" | "last"
 local hand_count = storybook.range("count", 5, 1, 11, 1)
@@ -93,7 +93,7 @@ local function present_hand(): unit
     hand_view:present(looks, parts, hidden)
 end
 
-local function hand(): entity.Node
+local function hand(): ui.Node
     return hand_view.root
 end
 

@@ -1,7 +1,7 @@
 -- Cards laid flat in a centred row on one pitch: the Opponent's sealed hand,
 -- the duel's growing community, and the seven-card pool a resolved round
 -- leaves standing. All three are the same object at different widths, so they
--- are the same entity.
+-- are the same ui.
 --
 -- The pitch is the row's one degree of freedom, and it is a box-layout gap: at
 -- the authored pitch neighbouring cards leave daylight, and a row too wide for
@@ -15,7 +15,7 @@
 -- this module the same question the paint does, so an animation can only land
 -- where a card is actually going to be.
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local card = require("./card")
 
 -- The pitch the row would keep given room, per row. The sealed row and the
@@ -39,7 +39,7 @@ function pitch_in(bounds: box.Rect, count: i32, preferred: f64): f64
 end
 
 function row_style(pitch: f64): box.Style
-    return entity.row(pitch - card.width, "center", "start")
+    return box.row(pitch - card.width, "center", "start")
 end
 
 function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
@@ -47,7 +47,7 @@ function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
     local width: f64 = 0.0
     if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
     for index = 0::i32, count - 1 do
-        table.insert(rects, entity.rect(
+        table.insert(rects, box.rect(
             bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
             bounds.y, card.width, card.height))
     end
@@ -57,7 +57,7 @@ end
 function slot_rect(count: i32, pitch: f64, bounds: box.Rect, index: i32): box.Rect
     local width: f64 = 0.0
     if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
-    return entity.rect(
+    return box.rect(
         bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
         bounds.y, card.width, card.height)
 end
@@ -75,19 +75,27 @@ end
 -- through its own entity, and the row does not need to know which slots those
 -- are. `preferred` is the pitch the row keeps when it has the room; a narrower
 -- rectangle tightens it.
-function node(children: {entity.LegacyNode}, preferred: f64): entity.Node
-    return entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return intrinsic(#children, preferred)
+function node(children: {ui.Node}, preferred: f64): ui.Node
+    return ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            local width: f64 = 0.0
+            local height: f64 = 0.0
+            if #children > 0 then
+                width = ((#children - 1)::f64) * preferred + card.width
+                height = card.height
+            end
+            box.set_fixed(into, width, height)
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
-            local rects: {box.Rect} = slot_rects(
-                #children,
-                pitch_in(bounds, #children, preferred),
-                bounds
-            )
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            local pitch: f64 = pitch_in(bounds, #children, preferred)
+            local width: f64 = 0.0
+            if #children > 0 then
+                width = card.width + ((#children - 1)::f64) * pitch
+            end
+            local left: f64 = bounds.x + (bounds.width - width) * 0.5
             for index = 0::i32, #children - 1 do
-                children[index].paint(surface, rects[index])
+                children[index]:draw(surface,
+                    left + (index::f64) * pitch, bounds.y, card.width, card.height)
             end
         end
     )

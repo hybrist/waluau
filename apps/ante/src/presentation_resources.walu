@@ -9,7 +9,7 @@ local audio = require("waluau:engine/audio")
 local assets = require("waluau:assets")
 local effect_shaders = require("./effect_shaders")
 local failure = require("./presentation/failure")
-local entity = require("./entities/adapter")
+local ui = require("./ui/node")
 local layout = require("./layout")
 
 export type State = {
@@ -171,7 +171,7 @@ end
 -- The surface every entity of the game draws on: the live graphics, the effect
 -- programs, and the packaged card back once it has arrived. This module owns
 -- all three, so it is where the three become one value.
-function State:surface(graphics: engine.Graphics): entity.Surface
+function State:surface(graphics: engine.Graphics): ui.Surface
     return {
         graphics = graphics,
         effects = self.effects,
@@ -181,7 +181,7 @@ function State:surface(graphics: engine.Graphics): entity.Surface
 end
 
 function State:draw_failure(graphics: engine.Graphics): bool
-    local board: entity.Surface = self:surface(graphics)
+    local board: ui.Surface = self:surface(graphics)
     local viewport: layout.State = layout.current()
     if #self.fatal_shader_error > 0 then
         failure.shader(board, viewport, self.fatal_shader_error)

@@ -3,14 +3,14 @@
 -- values before arranging those same boxes again.
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
-local layout = require("./ui/layout")
-local entity = require("./entities/adapter")
-local entity_story = require("./entity_story")
+local layout = require("./layout")
+local ui = require("./node")
+local ui_story = require("./story")
 
 const WIDTH: u32 = 820
 const HEIGHT: u32 = 500
 const BACKGROUND: string = "#09090b"
-local book = entity_story.Book.new()
+local book = ui_story.Book.new()
 
 local row_count = storybook.range("count", 5, 1, 8, 1)
 local row_width = storybook.range("width", 600, 180, 760, 10)
@@ -130,11 +130,11 @@ function row_flow(count: i32): Flow
     return { root = layout.Box.flow(leaves, layout.row(0.0, "start", "start")), leaves = leaves }
 end
 
-function intrinsic_row(): entity.Node
+function intrinsic_row(): ui.Node
     local flows: {Flow} = {}
     for count = 1::i32, 8::i32 do table.insert(flows, row_flow(count)) end
-    return entity.Node.sized(WIDTH::f64, HEIGHT::f64,
-        function(surface: entity.Surface, stage: layout.Rect): unit
+    return ui.Node.sized(WIDTH::f64, HEIGHT::f64,
+        function(surface: ui.Surface, stage: layout.Rect): unit
             local count: i32 = row_count.value()
             local flow: Flow = flows[count - 1]
             flow.root:present_style(layout.style(
@@ -165,11 +165,11 @@ function menu_flow(count: i32): Flow
     return { root = layout.Box.flow(leaves, layout.column(0.0, "start", "start")), leaves = leaves }
 end
 
-function nested_menu(): entity.Node
+function nested_menu(): ui.Node
     local flows: {Flow} = {}
     for count = 1::i32, 6::i32 do table.insert(flows, menu_flow(count)) end
-    return entity.Node.sized(WIDTH::f64, HEIGHT::f64,
-        function(surface: entity.Surface, stage: layout.Rect): unit
+    return ui.Node.sized(WIDTH::f64, HEIGHT::f64,
+        function(surface: ui.Surface, stage: layout.Rect): unit
             local flow: Flow = flows[menu_count.value() - 1]
             flow.root:present_style(layout.style(
                 "column", menu_gap.value()::f64,
@@ -189,7 +189,7 @@ function nested_menu(): entity.Node
         end)
 end
 
-function flex_pressure(): entity.Node
+function flex_pressure(): ui.Node
     local first: layout.Box = layout.Box.leaf(
         measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
     local second: layout.Box = layout.Box.leaf(
@@ -198,8 +198,8 @@ function flex_pressure(): entity.Node
         root = layout.Box.flow({ first, second }, layout.row(0.0, "center", "center")),
         leaves = { first, second },
     }
-    return entity.Node.sized(WIDTH::f64, HEIGHT::f64,
-        function(surface: entity.Surface, stage: layout.Rect): unit
+    return ui.Node.sized(WIDTH::f64, HEIGHT::f64,
+        function(surface: ui.Surface, stage: layout.Rect): unit
             first:flex(flex_grow_a.value()::f64, 1.0)
             second:flex(flex_grow_b.value()::f64, 1.0)
             flow.root:present_style(layout.style(
@@ -216,7 +216,7 @@ function flex_pressure(): entity.Node
         end)
 end
 
-function scene(node: () -> entity.Node): storybook.Scene
+function scene(node: () -> ui.Node): storybook.Scene
     return book:scene({
         node = node,
         width = WIDTH::f64,

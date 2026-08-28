@@ -11,7 +11,6 @@ local card_burn = require("../card_burn")
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local input_module = require("./interaction")
-local entity = require("../entities/adapter")
 local card = require("../entities/card")
 local hand_fan = require("../entities/hand_fan")
 local table_card_panel = require("../entities/table_card_panel")
@@ -50,7 +49,7 @@ export opaque type State = {
     player_view: hand_fan.Stateful,
     computer_views: {card.Stateful},
     table_views: {powered_card.Stateful},
-    panel_view: entity.Node,
+    panel_view: ui.Node,
     action_view: action_bar.Stateful,
     action_items: {action_bar.Action},
     player_looks: {card.Look},
@@ -58,7 +57,7 @@ export opaque type State = {
     computer_hidden: {bool},
     table_hidden: {bool},
     modal_kind: "none" | "history" | "help" | "final",
-    modal_content: entity.Node?,
+    modal_content: ui.Node?,
 }
 
 function new(state: game.View, run: run_module.View): State
@@ -79,35 +78,35 @@ function new(state: game.View, run: run_module.View): State
     local deck_view: deck.Stateful = deck.Stateful.new(state.deck_count)
     local pile_view: pile.Stateful = pile.Stateful.new({}, 0)
     local player_view: hand_fan.Stateful = hand_fan.Stateful.new({}, {}, {})
-    local panel_view: entity.Node = table_card_panel.node()
+    local panel_view: ui.Node = table_card_panel.node()
     local action_items: {action_bar.Action} = {
         action_bar.action("CONFIRM", false),
     }
     local action_view: action_bar.Stateful = action_bar.Stateful.new(action_items)
 
-    local hud_node: ui.Node = entity.retain(hud_view.root)
-    local footer_node: ui.Node = entity.retain(footer_view.root)
-    local deck_node: ui.Node = entity.retain(deck_view.root)
-    local pile_node: ui.Node = entity.retain(pile_view.root)
-    local player_node: ui.Node = entity.retain(player_view.root)
+    local hud_node: ui.Node = hud_view.root
+    local footer_node: ui.Node = footer_view.root
+    local deck_node: ui.Node = deck_view.root
+    local pile_node: ui.Node = pile_view.root
+    local player_node: ui.Node = player_view.root
     local visual_children: {ui.Node} = {
         hud_node, footer_node, deck_node, pile_node,
     }
     local computer_nodes: {ui.Node} = {}
     for view in computer_views do
-        local node: ui.Node = entity.retain(view.root)
+        local node: ui.Node = view.root
         table.insert(computer_nodes, node)
         table.insert(visual_children, node)
     end
-    local panel_node: ui.Node = entity.retain(panel_view)
+    local panel_node: ui.Node = panel_view
     table.insert(visual_children, panel_node)
     local table_nodes: {ui.Node} = {}
     for view in table_views do
-        local node: ui.Node = entity.retain(view.root)
+        local node: ui.Node = view.root
         table.insert(table_nodes, node)
         table.insert(visual_children, node)
     end
-    local commit_node: ui.Node = entity.retain(action_view.capsules[0].root)
+    local commit_node: ui.Node = action_view.capsules[0].root
     table.insert(visual_children, commit_node)
     table.insert(visual_children, player_node)
     local input: input_module.State = input_module.new(
@@ -198,7 +197,7 @@ function State:present_modal(
     else self.modal_content = nil end
 end
 
-function State:prepare_surface(surface: entity.Surface): unit
+function State:prepare_surface(surface: ui.Surface): unit
     local retained: ui.Surface? = self.surface
     if retained == nil then
         self.surface = {
@@ -215,7 +214,7 @@ function State:prepare_surface(surface: entity.Surface): unit
 end
 
 function State:measure_arrange(
-    surface: entity.Surface, width: f64, height: f64
+    surface: ui.Surface, width: f64, height: f64
 ): unit
     self:prepare_surface(surface)
     self.root:measure(surface.graphics)
@@ -229,12 +228,12 @@ function State:paint_node(node: ui.Node, bounds: box.Rect): unit
     node:draw(retained::ui.Surface, bounds.x, bounds.y, bounds.width, bounds.height)
 end
 
-function State:hud_height(metrics: entity.Metrics): f64
-    return self.hud_view.root.measure(metrics).preferred_height
+function State:hud_height(graphics: ui.Graphics?): f64
+    return self.hud_view.root:measure(graphics).preferred_height
 end
 
-function State:footer_height(metrics: entity.Metrics): f64
-    return self.footer_view.root.measure(metrics).preferred_height
+function State:footer_height(graphics: ui.Graphics?): f64
+    return self.footer_view.root:measure(graphics).preferred_height
 end
 
 function State:paint_hud(bounds: box.Rect): unit self:paint_node(self.hud_node, bounds) end
@@ -270,9 +269,9 @@ function State:paint_action(text: string, active: bool, band: box.Rect): unit
         band.y, width, capsule.height))
 end
 
-function State:paint_modal(surface: entity.Surface, bounds: box.Rect): unit
-    local content: entity.Node? = self.modal_content
-    if content ~= nil then modal.show(surface, bounds, content::entity.Node) end
+function State:paint_modal(surface: ui.Surface, bounds: box.Rect): unit
+    local content: ui.Node? = self.modal_content
+    if content ~= nil then modal.show(surface, bounds, content::ui.Node) end
 end
 
 function State:focus_hand(index: i32): bool return self.input:focus_hand(index) end

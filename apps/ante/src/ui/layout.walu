@@ -165,6 +165,12 @@ function fixed_into(target: Intrinsic, width: f64, height: f64): unit
     validate_intrinsic(target)
 end
 
+-- Leaf measurement callbacks write into retained storage. Keeping the fixed
+-- spelling here avoids allocating a throwaway Intrinsic on every frame.
+function set_fixed(target: Intrinsic, width: f64, height: f64): unit
+    fixed_into(target, width, height)
+end
+
 function Intrinsic.fixed(width: f64, height: f64): Intrinsic
     local value: Intrinsic = empty_intrinsic()
     fixed_into(value, width, height)
@@ -735,4 +741,5 @@ return {
     row = row,
     column = column,
     contains = contains,
+    set_fixed = set_fixed,
 }

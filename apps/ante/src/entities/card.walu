@@ -13,7 +13,7 @@
 local graphics_module = require("waluau:engine/graphics")
 local game = require("../game")
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local ink = require("../ink")
 
 -- The design space a card face is drawn in.
@@ -153,7 +153,7 @@ end
 -- the larger help sigils draw through this one seam, so their object, ink, and
 -- left-to-right shading cannot drift apart.
 function draw_suit_symbol(
-    surface: entity.Surface, suit: i32, x: f64, y: f64, diameter: f64
+    surface: ui.Surface, suit: i32, x: f64, y: f64, diameter: f64
 ): bool
     local maybe_texture: graphics_module.Texture? = surface.suit_symbols
     if maybe_texture == nil then return false end
@@ -171,12 +171,12 @@ end
 
 -- A small, unsealed suit sprite for the repeated rank constellations.
 function draw_school_mark(
-    surface: entity.Surface, suit: i32, x: f64, y: f64, size: f64
+    surface: ui.Surface, suit: i32, x: f64, y: f64, size: f64
 ): unit
     draw_suit_symbol(surface, suit, x, y, size * 6.0)
 end
 
-function draw_arcane_field(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
+function draw_arcane_field(surface: ui.Surface, suit: i32, x: f64, y: f64): unit
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
     local center_y: f64 = y + HEIGHT * 0.54
@@ -222,7 +222,7 @@ end
 -- crowned hierophant. Ace stands apart as one large school omen. These plates
 -- borrow tarot's frontal, emblematic figures without copying poker courts.
 function draw_high_arcana(
-    surface: entity.Surface, rank: i32, suit: i32, x: f64, y: f64
+    surface: ui.Surface, rank: i32, suit: i32, x: f64, y: f64
 ): unit
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
@@ -295,7 +295,7 @@ end
 -- looks like one thing on screen.
 --
 function use_color_field(
-    surface: entity.Surface, suit: i32, selected: bool, colored: bool, aspect: f64
+    surface: ui.Surface, suit: i32, selected: bool, colored: bool, aspect: f64
 ): bool
     local maybe_shader: graphics_module.Shader? = surface.effects.red_fire.shader
     if suit == 1 then maybe_shader = surface.effects.blue_caustics.shader
@@ -315,7 +315,7 @@ function use_color_field(
     return binding.ok
 end
 
-function draw_sigil(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
+function draw_sigil(surface: ui.Surface, suit: i32, x: f64, y: f64): unit
     draw_suit_symbol(surface, suit, x + 11.0, y + 3.0, 36.0)
 end
 
@@ -324,7 +324,7 @@ end
 -- reads over both a card's face and its seal. Both quadratic lids share one
 -- path and use control points twice their centre offset so the curve peaks at
 -- EYE_LID halfway across.
-function draw_eye(surface: entity.Surface, x: f64, y: f64): unit
+function draw_eye(surface: ui.Surface, x: f64, y: f64): unit
     local graphics = surface.graphics
     graphics:set_color(EYE_GROUND)
     graphics:fill_circle(x, y, 9.0)
@@ -341,7 +341,7 @@ end
 
 -- The packaged image is the card back. While it is unavailable, retain only a
 -- sealed dark silhouette rather than maintaining a second procedural design.
-function draw_back(surface: entity.Surface, x: f64, y: f64, veiled: bool): unit
+function draw_back(surface: ui.Surface, x: f64, y: f64, veiled: bool): unit
     local graphics = surface.graphics
     local maybe_texture: graphics_module.Texture? = surface.card_back
     if maybe_texture ~= nil then
@@ -359,7 +359,7 @@ function draw_back(surface: entity.Surface, x: f64, y: f64, veiled: bool): unit
     fill_silhouette(graphics, x, y, fill)
 end
 
-function draw_face(surface: entity.Surface, value: Look, x: f64, y: f64): unit
+function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     local graphics = surface.graphics
     local card: game.Card = value.card
     -- Selection activates the school's grayscale field; contributing cards
@@ -420,7 +420,7 @@ end
 -- either face. A sealed card that is also known is drawn face first and then
 -- veiled by its own seal, so the player reads the Opponent's card through the
 -- back instead of having to remember it.
-function draw_at(surface: entity.Surface, value: Look, x: f64, y: f64): unit
+function draw_at(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     local graphics = surface.graphics
     if value.selected then y -= SELECT_LIFT end
     -- A soft offset shadow gives the paper thickness without outlining it.
@@ -441,7 +441,7 @@ end
 -- the object instead of dissolving each drawing primitive — and letting a
 -- card be handed whole to an effect that has to treat it as a surface rather
 -- than as the dozen primitives it is drawn from.
-function capture(surface: entity.Surface, value: Look): graphics_module.RenderTarget?
+function capture(surface: ui.Surface, value: Look): graphics_module.RenderTarget?
     local graphics = surface.graphics
     ink.stop_effect(graphics)
     local result: graphics_module.RenderTargetResult = graphics:create_render_target(
@@ -478,7 +478,7 @@ function capture(surface: entity.Surface, value: Look): graphics_module.RenderTa
 end
 
 -- The face alone, which is what every burn in the game captures.
-function capture_face(surface: entity.Surface, value: Look): graphics_module.RenderTarget?
+function capture_face(surface: ui.Surface, value: Look): graphics_module.RenderTarget?
     return capture(surface, look(
         value.card, false, false, false, value.colored, value.known))
 end
@@ -487,15 +487,15 @@ end
 -- in, and a rectangle of any other size scales the whole printed object into
 -- it rather than reflowing the rank, constellation, and paper inside it.
 type CardPresentation = { value: Look }
-export type Stateful = { presentation: CardPresentation, root: entity.Node }
+export type Stateful = { presentation: CardPresentation, root: ui.Node }
 
 function Stateful.new(value: Look): Stateful
     local presentation: CardPresentation = { value = value }
-    local root: entity.Node = entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return intrinsic()
+    local root: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            box.set_fixed(into, WIDTH, HEIGHT)
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             if bounds.width == WIDTH and bounds.height == HEIGHT then
                 draw_at(surface, presentation.value, bounds.x, bounds.y)
                 return
@@ -514,7 +514,7 @@ function Stateful:present(value: Look): unit
     self.presentation.value = value
 end
 
-function node(value: Look): entity.Node
+function node(value: Look): ui.Node
     return Stateful.new(value).root
 end
 
