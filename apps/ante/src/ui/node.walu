@@ -1,0 +1,219 @@
+-- Retained UI nodes join Ante's layout storage to measurement and painting.
+-- Constructors run when a screen/entity is created; present methods update
+-- what that stable node shows; draw performs measure, arrange, and paint over
+-- the existing tree. Layout and hit testing therefore share the exact bounds
+-- most recently painted.
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local effect_shaders = require("../effect_shaders")
+local layout = require("./layout")
+
+export type Graphics = engine.Graphics
+
+export type Surface = {
+    graphics: Graphics,
+    effects: effect_shaders.EffectShaders,
+    card_back: graphics_module.Texture?,
+    suit_symbols: graphics_module.Texture?,
+}
+export type Measure = (Graphics?, layout.Intrinsic) -> unit
+export type Paint = (Surface, layout.Rect) -> unit
+export type Node = {
+    box: layout.Box,
+    children: {Node},
+    measure_content: (Graphics?, layout.Intrinsic) -> unit,
+    paint_content: (Surface, layout.Rect) -> unit,
+    pointer_key: i32,
+}
+export type FlowSpec = {
+    gap: f64?,
+    justify: layout.Justify?,
+    align: layout.Align?,
+    padding: layout.Edges?,
+}
+
+function empty_paint(surface: Surface, bounds: layout.Rect): unit end
+function empty_measure(graphics: Graphics?, into: layout.Intrinsic): unit end
+
+function own(children: {Node}): {Node}
+    local result: {Node} = {}
+    for child in children do table.insert(result, child) end
+    return result
+end
+
+function boxes(children: {Node}): {layout.Box}
+    local result: {layout.Box} = {}
+    for child in children do
+        local node: Node = child
+        table.insert(result, node.box)
+    end
+    return result
+end
+
+function make(
+    box: layout.Box,
+    children: {Node},
+    measure: (Graphics?, layout.Intrinsic) -> unit,
+    paint: (Surface, layout.Rect) -> unit
+): Node
+    return {
+        box = box,
+        children = own(children),
+        measure_content = measure,
+        paint_content = paint,
+        pointer_key = -1,
+    }
+end
+
+function Node.sized(
+    width: f64, height: f64, paint: (Surface, layout.Rect) -> unit
+): Node
+    return make(layout.Box.fixed(width, height), {}, empty_measure, paint)
+end
+
+-- The callback writes into the node's retained intrinsic record. Entity-local
+-- presentation state belongs beside this callback and is updated before draw;
+-- the callback itself is created only once.
+function Node.measured(
+    measure: (Graphics?, layout.Intrinsic) -> unit,
+    paint: (Surface, layout.Rect) -> unit
+): Node
+    return make(layout.Box.fixed(0.0, 0.0), {}, measure, paint)
+end
+
+function Node.gap(width: f64, height: f64): Node
+    return Node.sized(width, height, empty_paint)
+end
+
+function Node.flow(children: {Node}, flow_style: layout.Style): Node
+    return make(layout.Box.flow(boxes(children), flow_style), children, empty_measure, empty_paint)
+end
+
+function Node.layer(children: {Node}): Node
+    return make(layout.Box.layer(boxes(children)), children, empty_measure, empty_paint)
+end
+
+function Node:padding(insets: layout.Edges): Node
+    return make(layout.Box.padding(self.box, insets), { self }, empty_measure, empty_paint)
+end
+
+function Node:padded(horizontal: f64, vertical: f64): Node
+    return self:padding(layout.even_edges(horizontal, vertical))
+end
+
+function Node:min_width(width: f64): Node
+    return make(layout.Box.minimum(self.box, math.max(0.0, width), 0.0, false),
+        { self }, empty_measure, empty_paint)
+end
+
+function Node:min_height(height: f64): Node
+    return make(layout.Box.minimum(self.box, 0.0, math.max(0.0, height), false),
+        { self }, empty_measure, empty_paint)
+end
+
+function Node:wide(): Node
+    return make(
+        layout.Box.minimum(self.box, 0.0, 0.0, true), { self }, empty_measure, empty_paint)
+end
+
+function Node:widened(): Node
+    return self:wide()
+end
+
+function Node:flex(grow: f64, shrink: f64): Node
+    self.box:flex(grow, shrink)
+    return self
+end
+
+function spec_style(axis: layout.Axis, spec: FlowSpec): layout.Style
+    return layout.style(
+        axis,
+        spec.gap or 0.0,
+        spec.justify or "start",
+        spec.align or "start",
+        spec.padding or layout.edges(0.0, 0.0, 0.0, 0.0))
+end
+
+function Node.down(spec: FlowSpec, children: {Node}): Node
+    return Node.flow(children, spec_style("column", spec))
+end
+
+function Node.across(spec: FlowSpec, children: {Node}): Node
+    return Node.flow(children, spec_style("row", spec))
+end
+
+-- Controlled leaf presentation is the place a later invalidation version can
+-- distinguish layout-affecting changes from paint-only changes.
+function Node:present_fixed(width: f64, height: f64): unit
+    self.box:present_fixed(width, height)
+end
+
+function Node:present_style(value: layout.Style): unit
+    self.box:present_style(value)
+end
+
+function refresh(self: Node, graphics: Graphics?): unit
+    self.measure_content(graphics, self.box:measurement())
+    for child in self.children do refresh(child, graphics) end
+end
+
+function Node:measure(graphics: Graphics?): layout.Intrinsic
+    refresh(self, graphics)
+    return self.box:measure()
+end
+
+function Node:arrange(x: f64, y: f64, width: f64, height: f64): layout.Result
+    return self.box:arrange(x, y, width, height)
+end
+
+function paint_tree(self: Node, surface: Surface): unit
+    self.paint_content(surface, self.box:rectangle())
+    for child in self.children do paint_tree(child, surface) end
+end
+
+function Node:paint(surface: Surface): unit
+    paint_tree(self, surface)
+end
+
+function Node:draw(surface: Surface, x: f64, y: f64, width: f64, height: f64): unit
+    self:measure(surface.graphics)
+    self:arrange(x, y, width, height)
+    self:paint(surface)
+end
+
+function draw(
+    root: Node, surface: Surface, x: f64, y: f64, width: f64, height: f64
+): unit
+    root:draw(surface, x, y, width, height)
+end
+
+function Node:bounds(): layout.Rect
+    return self.box:rectangle()
+end
+
+function Node:baseline(): f64
+    return self.box:absolute_baseline()
+end
+
+function Node:accept_pointer(key: i32): Node
+    assert(key >= 0)
+    self.pointer_key = key
+    return self
+end
+
+-- Children paint after parents and later siblings paint over earlier ones, so
+-- reverse traversal gives pointer routing the same winner as drawing.
+function Node:hit(x: f64, y: f64): i32
+    if not layout.contains(self.box:rectangle(), x, y) then return -1 end
+    local index: i32 = #self.children - 1
+    while index >= 0 do
+        local found: i32 = self.children[index]:hit(x, y)
+        if found >= 0 then return found end
+        index -= 1
+    end
+    return self.pointer_key
+end
+
+return {
+    draw = draw,
+}
