@@ -17,7 +17,7 @@ fn table_literal_record(fields: &[waluau_ast::TableField]) -> Type {
     for field in fields {
         shape.insert(field.name.clone(), literal_value_type(&field.value));
     }
-    Type::Record(shape)
+    Type::record(shape)
 }
 
 fn literal_value_type(value: &Expr) -> Type {

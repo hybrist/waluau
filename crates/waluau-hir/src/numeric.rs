@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{Expr, NumberLiteral, NumberLiteralUnion, NumberUnionMember, NumericType, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
@@ -219,12 +220,12 @@ fn require_same_numeric(left: Type, right: Type) -> Result<(), Diagnostic> {
 pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic> {
     match expected {
         None => Ok(actual),
-        Some(expected) if actual == expected => Ok(expected),
         // Recursive aliases are represented by a finite opaque anchor at the
         // cycle edge. Arrays are mutable, so do not make their element types
         // generally covariant; only identify two arrays when their opaque
         // alias identities are the same all the way down.
         Some(expected) if same_opaque_array_identity(&actual, &expected) => Ok(expected),
+        Some(expected) if actual == expected => Ok(expected),
         // Pack to pack: elements are boxed at runtime either way, so the
         // packs unify whenever their element types coerce (an annotated
         // `f64...` returns through a `unknown...` signature, and a forwarded
@@ -233,13 +234,16 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             let Type::Variadic(actual_element) = actual else {
                 unreachable!()
             };
-            coerce_type(*actual_element.clone(), Some((*expected_element).clone()))
-                .map(|_| Type::Variadic(expected_element.clone()))
-                .map_err(|_| {
-                    Diagnostic::new(format!(
-                        "cannot implicitly convert {actual_element}... to {expected_element}..."
-                    ))
-                })
+            coerce_type(
+                actual_element.as_ref().clone(),
+                Some((*expected_element).clone()),
+            )
+            .map(|_| Type::Variadic(expected_element.clone()))
+            .map_err(|_| {
+                Diagnostic::new(format!(
+                    "cannot implicitly convert {actual_element}... to {expected_element}..."
+                ))
+            })
         }
         // A variadic pack in a scalar context contributes its first value.
         Some(expected)
@@ -248,7 +252,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             let Type::Variadic(element) = actual else {
                 unreachable!()
             };
-            coerce_type(*element, Some(expected))
+            coerce_type(Arc::unwrap_or_clone(element), Some(expected))
         }
         // A multi-value result in a single-value context collapses to its
         // first value, following Lua's adjustment rules.
@@ -313,7 +317,12 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 params: actual_params,
                 return_type: actual_return,
                 ..
-            } if *actual_params == expected_params && *actual_return == expected_return
+            } if same_function_signature_identity(
+                actual_params,
+                actual_return,
+                &expected_params,
+                &expected_return,
+            )
         ) =>
         {
             Ok(Type::Function {
@@ -407,7 +416,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 )?;
                 Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
                     tag: expected_variant.tag,
-                    payload: Box::new(payload),
+                    payload: Arc::new(payload),
                 }))
             }
             other => Err(Diagnostic::new(format!(
@@ -434,7 +443,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 )?;
                 Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
                     tag: expected_variant.tag.clone(),
-                    payload: Box::new(payload),
+                    payload: Arc::new(payload),
                 }))
             }
             Type::TaggedUnion(actual_variants)
@@ -555,7 +564,10 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 (Some(_), Some(_))
             ) =>
             {
-                let _ = coerce_type(*actual_ty.clone(), Some(*expected_ty.clone()))?;
+                let _ = coerce_type(
+                    actual_ty.as_ref().clone(),
+                    Some(expected_ty.as_ref().clone()),
+                )?;
                 Ok(Type::Opaque {
                     name: expected_name,
                     ty: expected_ty,
@@ -566,10 +578,10 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             // assigned to an Opaque alias whose inner type is a TaggedUnion or TaggedVariant.
             Type::TaggedVariant(ref actual_variant) => match expected_ty.as_ref() {
                 Type::TaggedUnion(_) | Type::TaggedVariant(_) => {
-                    let inner = coerce_type(actual, Some(*expected_ty))?;
+                    let inner = coerce_type(actual, Some(expected_ty.as_ref().clone()))?;
                     Ok(Type::Opaque {
                         name: expected_name,
-                        ty: Box::new(inner),
+                        ty: waluau_ast::OpaquePayload::new(inner),
                         generic_extern: expected_generic,
                     })
                 }
@@ -583,10 +595,10 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::TaggedUnion(ref actual_variants) => match expected_ty.as_ref() {
                 Type::TaggedUnion(_) => {
                     let actual_union = Type::TaggedUnion(actual_variants.clone());
-                    let inner = coerce_type(actual_union, Some(*expected_ty))?;
+                    let inner = coerce_type(actual_union, Some(expected_ty.as_ref().clone()))?;
                     Ok(Type::Opaque {
                         name: expected_name,
-                        ty: Box::new(inner),
+                        ty: waluau_ast::OpaquePayload::new(inner),
                         generic_extern: expected_generic,
                     })
                 }
@@ -597,7 +609,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 ))),
             },
             Type::Record(_) if matches!(expected_ty.as_ref(), Type::Record(_)) => {
-                let _ = coerce_type(actual, Some(*expected_ty.clone()))?;
+                let _ = coerce_type(actual, Some(expected_ty.as_ref().clone()))?;
                 Ok(Type::Opaque {
                     name: expected_name,
                     ty: expected_ty,
@@ -613,10 +625,10 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_)
                 ) =>
             {
-                let inner = coerce_type(actual, Some(*expected_ty))?;
+                let inner = coerce_type(actual, Some(expected_ty.as_ref().clone()))?;
                 Ok(Type::Opaque {
                     name: expected_name,
-                    ty: Box::new(inner),
+                    ty: waluau_ast::OpaquePayload::new(inner),
                     generic_extern: expected_generic,
                 })
             }
@@ -636,7 +648,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 )));
             };
 
-            for (name, expected_ty) in &expected_fields {
+            for (name, expected_ty) in expected_fields.iter() {
                 let Some(actual_ty) = actual_fields.get(name) else {
                     if expected_ty.accepts_nil() {
                         continue;
@@ -771,6 +783,46 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
 }
 
 fn same_opaque_array_identity(actual: &Type, expected: &Type) -> bool {
+    matches!(
+        (actual, expected),
+        (Type::Array(_), Type::Array(_)) | (Type::Opaque { .. }, Type::Opaque { .. })
+    ) && same_resolved_type_identity(actual, expected)
+}
+
+fn same_resolved_type_identity(actual: &Type, expected: &Type) -> bool {
+    same_resolved_type_identity_cached(actual, expected, &mut HashSet::new())
+}
+
+fn same_function_signature_identity(
+    actual_params: &[Type],
+    actual_return: &Type,
+    expected_params: &[Type],
+    expected_return: &Type,
+) -> bool {
+    if actual_params.len() != expected_params.len() {
+        return false;
+    }
+    let mut compared = HashSet::new();
+    actual_params
+        .iter()
+        .zip(expected_params)
+        .all(|(actual, expected)| {
+            same_resolved_type_identity_cached(actual, expected, &mut compared)
+        })
+        && same_resolved_type_identity_cached(actual_return, expected_return, &mut compared)
+}
+
+fn same_resolved_type_identity_cached(
+    actual: &Type,
+    expected: &Type,
+    compared: &mut HashSet<(*const Type, *const Type)>,
+) -> bool {
+    if std::ptr::eq(actual, expected) {
+        return true;
+    }
+    if !compared.insert((std::ptr::from_ref(actual), std::ptr::from_ref(expected))) {
+        return true;
+    }
     match (actual, expected) {
         (
             Type::Opaque {
@@ -789,10 +841,64 @@ fn same_opaque_array_identity(actual: &Type, expected: &Type) -> bool {
             expected_name,
             expected_generic.as_deref(),
         ),
-        (Type::Array(actual), Type::Array(expected)) => {
-            same_opaque_array_identity(actual, expected)
+        (Type::ExternSubtype(actual), Type::ExternSubtype(expected))
+        | (Type::Nullable(actual), Type::Nullable(expected))
+        | (Type::Array(actual), Type::Array(expected))
+        | (Type::Variadic(actual), Type::Variadic(expected)) => {
+            same_resolved_type_identity_cached(actual, expected, compared)
         }
-        _ => false,
+        (Type::Multi(actual), Type::Multi(expected)) => {
+            actual.len() == expected.len()
+                && actual.iter().zip(expected).all(|(actual, expected)| {
+                    same_resolved_type_identity_cached(actual, expected, compared)
+                })
+        }
+        (
+            Type::Function {
+                params: actual_params,
+                return_type: actual_return,
+                has_self: actual_self,
+            },
+            Type::Function {
+                params: expected_params,
+                return_type: expected_return,
+                has_self: expected_self,
+            },
+        ) => {
+            actual_self == expected_self
+                && actual_params.len() == expected_params.len()
+                && actual_params
+                    .iter()
+                    .zip(expected_params)
+                    .all(|(actual, expected)| {
+                        same_resolved_type_identity_cached(actual, expected, compared)
+                    })
+                && same_resolved_type_identity_cached(actual_return, expected_return, compared)
+        }
+        (Type::Record(actual), Type::Record(expected)) => {
+            actual.len() == expected.len()
+                && actual.iter().all(|(name, actual)| {
+                    expected.get(name).is_some_and(|expected| {
+                        same_resolved_type_identity_cached(actual, expected, compared)
+                    })
+                })
+        }
+        (Type::TaggedVariant(actual), Type::TaggedVariant(expected)) => {
+            actual.tag == expected.tag
+                && same_resolved_type_identity_cached(&actual.payload, &expected.payload, compared)
+        }
+        (Type::TaggedUnion(actual), Type::TaggedUnion(expected)) => {
+            actual.len() == expected.len()
+                && actual.iter().zip(expected).all(|(actual, expected)| {
+                    actual.tag == expected.tag
+                        && same_resolved_type_identity_cached(
+                            &actual.payload,
+                            &expected.payload,
+                            compared,
+                        )
+                })
+        }
+        _ => actual == expected,
     }
 }
 
@@ -942,11 +1048,11 @@ pub(super) fn resolve_number_literal(
             "numeric literal is not assignable to extern",
         )),
         Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),
-        Some(Type::Nullable(inner)) => match *inner {
-            Type::Numeric(numeric) => Ok(Type::Nullable(Box::new(Type::Numeric(numeric)))),
+        Some(Type::Nullable(inner)) => match Arc::unwrap_or_clone(inner) {
+            Type::Numeric(numeric) => Ok(Type::Nullable(Arc::new(Type::Numeric(numeric)))),
             Type::NumberLiteralUnion(union) => {
                 require_number_union_member(value, false, &union)?;
-                Ok(Type::Nullable(Box::new(Type::NumberLiteralUnion(union))))
+                Ok(Type::Nullable(Arc::new(Type::NumberLiteralUnion(union))))
             }
             other => Err(Diagnostic::new(format!(
                 "numeric literal is not assignable to {other}?",

@@ -527,6 +527,11 @@ fn write_build_report(path: &Path, outcome: &session::BuildOutcome) -> Result<()
                 .collect::<Vec<_>>())
             .unwrap_or_default(),
         "diagnostics": diagnostics,
+        "workload": {
+            "astNodes": outcome.ast_nodes,
+            "linkedSourceBytes": outcome.linked_source_bytes,
+            "sourceUnits": outcome.involved_files.len(),
+        },
     });
     let serialized = serde_json::to_string_pretty(&report)
         .map_err(|error| Diagnostic::new(format!("serialize build report: {error}")))?;
@@ -2912,6 +2917,97 @@ end
         let wasm = super::compile_file(&input_path)
             .expect("for-in should preserve an imported method's declared result field type");
         assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_preserves_recursive_structural_graphs_around_private_state() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("model.walu"),
+            r#"
+                export opaque type State = { value: i32 }
+                -- TODO(waluau-av9w): Add `update: (Node) -> Node` and invoke it from
+                -- the consumer once IR lowering canonicalizes recursive callback signatures.
+                export type Node = {
+                    state: State,
+                    children: {Node},
+                }
+
+                function new(): Node
+                    local state: State = { value = 42 }
+                    return { state = state, children = {} }
+                end
+
+                function value(node: Node): i32
+                    return node.state.value
+                end
+
+                return { new = new, value = value }
+            "#,
+        )
+        .expect("model module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local model = require("./model")
+
+                function preserve(node: model.Node): model.Node
+                    return node
+                end
+
+                local node: model.Node = model.new()
+                local children: {model.Node} = node.children
+                node.children = { preserve(node) }
+                assert(model.value(node) == 42)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path)
+            .expect("transparent recursive structure should preserve its private state handle");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_hides_state_nested_in_a_transparent_recursive_graph() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("model.walu"),
+            r#"
+                export opaque type State = { value: i32 }
+                export type Node = { state: State, children: {Node} }
+
+                function new(): Node
+                    return { state = { value = 42 }, children = {} }
+                end
+
+                return { new = new }
+            "#,
+        )
+        .expect("model module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local model = require("./model")
+
+                function expose(): i32
+                    local node: model.Node = model.new()
+                    return node.state.value
+                end
+            "#,
+        )
+        .expect("main module should write");
+
+        let error = super::compile_file(&input_path)
+            .expect_err("an importing module must not see the nested State representation");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot access private field 'value'"),
+            "unexpected privacy diagnostic: {error}"
+        );
     }
 
     #[test]

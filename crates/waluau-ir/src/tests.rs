@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::{
     BasicBlock, BlockId, BuildCache, Function, FunctionSourceMap, Instruction, Module,
@@ -3133,19 +3134,19 @@ fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
     // runtime value.
     let goods = Type::TaggedVariant(waluau_ast::TaggedVariant {
         tag: "Upgrade".into(),
-        payload: Box::new(Type::Record(BTreeMap::from([(
+        payload: Arc::new(Type::record(BTreeMap::from([(
             "kind".to_string(),
             Type::Numeric(NumericType::I32),
         )]))),
     });
-    let declared = Type::Record(BTreeMap::from([("goods".to_string(), goods)]));
-    let represented = Type::Record(BTreeMap::from([(
+    let declared = Type::record(BTreeMap::from([("goods".to_string(), goods)]));
+    let represented = Type::record(BTreeMap::from([(
         "goods".to_string(),
         Type::canonical_tagged_union_record(),
     )]));
     let function = Function {
         name: "entry".into(),
-        params: vec![("offer".into(), Type::Nullable(Box::new(represented)))],
+        params: vec![("offer".into(), Type::Nullable(Arc::new(represented)))],
         return_type: Type::Bool,
         entry: BlockId(0),
         next_value: 2,
@@ -3689,10 +3690,10 @@ fn preserves_trailing_vararg_packs_in_function_returns() {
 
     assert_eq!(
         module.functions[0].return_type,
-        Type::Variadic(Box::new(Type::Unknown))
+        Type::Variadic(Arc::new(Type::Unknown))
     );
     assert_eq!(
         module.functions[1].return_type,
-        Type::Multi(vec![Type::Unknown, Type::Variadic(Box::new(Type::Unknown)),])
+        Type::Multi(vec![Type::Unknown, Type::Variadic(Arc::new(Type::Unknown)),])
     );
 }

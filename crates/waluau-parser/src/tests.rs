@@ -1,4 +1,5 @@
 use super::{parse, parse_with_path};
+use std::sync::Arc;
 use waluau_ast::{
     AssignOp, BinaryOp, Expr, FunctionName, NumberLiteral, NumberLiteralUnion, NumberUnionMember,
     NumericType, Rebindability, Stmt, Type, UnaryOp,
@@ -332,7 +333,7 @@ fn parses_extern_inheritance_and_if_cast() {
     assert_eq!(program.type_declarations[1].name, "Element");
     assert_eq!(
         program.type_declarations[1].ty,
-        Type::ExternSubtype(Box::new(Type::Named {
+        Type::ExternSubtype(Arc::new(Type::Named {
             name: "Node".into(),
             type_args: vec![],
         }))
@@ -575,7 +576,7 @@ fn parses_nullable_extern_annotations_and_nil_checks() {
     let program = parse(source).expect("parse should succeed");
     assert_eq!(
         program.functions[0].params[0].ty,
-        Type::Nullable(Box::new(Type::Named {
+        Type::Nullable(Arc::new(Type::Named {
             name: "Element".into(),
             type_args: vec![],
         }))
@@ -608,18 +609,18 @@ fn parses_grouped_nullable_function_types() {
             name: "Event".into(),
             type_args: vec![],
         }],
-        return_type: Box::new(Type::Unit),
+        return_type: Arc::new(Type::Unit),
         has_self: false,
     };
     assert_eq!(
         program.functions[0].params[0].ty,
-        Type::Nullable(Box::new(event_callback.clone()))
+        Type::Nullable(Arc::new(event_callback.clone()))
     );
     assert_eq!(
         program.functions[0].params[1].ty,
-        Type::Nullable(Box::new(Type::Function {
+        Type::Nullable(Arc::new(Type::Function {
             params: vec![event_callback],
-            return_type: Box::new(Type::Unit),
+            return_type: Arc::new(Type::Unit),
             has_self: false,
         }))
     );
@@ -676,7 +677,7 @@ fn parses_paren_unit_type_alias() {
         program.functions[1].params[0].ty,
         Type::Function {
             params: vec![],
-            return_type: Box::new(Type::Numeric(NumericType::I32)),
+            return_type: Arc::new(Type::Numeric(NumericType::I32)),
             has_self: false,
         }
     );
@@ -695,7 +696,7 @@ fn parses_multi_value_return_type_in_function_type() {
         program.functions[0].params[0].ty,
         Type::Function {
             params: vec![],
-            return_type: Box::new(Type::Multi(vec![
+            return_type: Arc::new(Type::Multi(vec![
                 Type::Bool,
                 Type::Numeric(NumericType::I32),
             ])),
@@ -2839,7 +2840,7 @@ fn parses_named_parameters_in_function_types() {
                 Type::Numeric(NumericType::I32),
                 Type::Numeric(NumericType::I32),
             ],
-            return_type: Box::new(Type::Numeric(NumericType::I32)),
+            return_type: Arc::new(Type::Numeric(NumericType::I32)),
             has_self: false,
         }
     );
@@ -2851,7 +2852,7 @@ fn parses_named_parameters_in_function_types() {
         mixed.functions[0].params[0].ty,
         Type::Function {
             params: vec![Type::String, Type::Numeric(NumericType::I32)],
-            return_type: Box::new(Type::String),
+            return_type: Arc::new(Type::String),
             has_self: false,
         }
     );
@@ -2866,12 +2867,12 @@ fn parses_self_receiver_in_record_field_function_type() {
             Type::Numeric(NumericType::I32),
             Type::Numeric(NumericType::I32),
         ],
-        return_type: Box::new(Type::Numeric(NumericType::I32)),
+        return_type: Arc::new(Type::Numeric(NumericType::I32)),
         has_self: true,
     };
     assert_eq!(
         program.type_declarations[0].ty,
-        Type::Record([("exec".to_string(), expected_field)].into_iter().collect())
+        Type::record([("exec".to_string(), expected_field)].into_iter().collect())
     );
 
     // `self` alone is a zero-parameter method type.
@@ -2879,12 +2880,12 @@ fn parses_self_receiver_in_record_field_function_type() {
         parse("type Ticker = { tick: (self) -> unit }").expect("a lone self receiver should parse");
     assert_eq!(
         program.type_declarations[0].ty,
-        Type::Record(
+        Type::record(
             [(
                 "tick".to_string(),
                 Type::Function {
                     params: Vec::new(),
-                    return_type: Box::new(Type::Unit),
+                    return_type: Arc::new(Type::Unit),
                     has_self: true,
                 }
             )]
@@ -2951,7 +2952,7 @@ fn parses_conformance_declarations() {
     assert_eq!(declaration.conforms, vec!["Op".to_string()]);
     assert_eq!(
         declaration.ty,
-        Type::Record(std::collections::BTreeMap::new())
+        Type::record(std::collections::BTreeMap::new())
     );
 
     let program =
@@ -2960,7 +2961,7 @@ fn parses_conformance_declarations() {
     assert_eq!(declaration.conforms, vec!["Op".to_string()]);
     assert_eq!(
         declaration.ty,
-        Type::Record(
+        Type::record(
             [("count".to_string(), Type::Numeric(NumericType::I32))]
                 .into_iter()
                 .collect()

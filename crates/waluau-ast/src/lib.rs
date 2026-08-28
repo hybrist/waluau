@@ -1,6 +1,7 @@
 pub use waluau_span::Span;
 
 mod lua_pattern;
+pub mod metrics;
 mod module_constants;
 pub use lua_pattern::{
     LuaCaptureKind, lua_pattern_captures, lua_pattern_is_plain, string_find_result_types,
@@ -45,6 +46,7 @@ pub fn overload_base_name(name: &str) -> Option<&str> {
 }
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
@@ -250,7 +252,7 @@ pub struct Param {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TaggedVariant {
     pub tag: String,
-    pub payload: Box<Type>,
+    pub payload: Arc<Type>,
 }
 
 /// One value of a number literal union. Integer members keep their exact
@@ -401,6 +403,62 @@ impl TypedArrayKind {
     ];
 }
 
+/// Shared representation of a resolved opaque alias.
+///
+/// Named aliases form a graph: a large record can mention the same nested
+/// alias from many fields and signatures. Sharing the resolved payload keeps
+/// that graph a graph instead of cloning it into an exponentially larger
+/// tree. Equality remains structural across independently-created payloads,
+/// while the common shared case exits by identity.
+#[derive(Clone, Debug)]
+pub struct OpaquePayload(std::sync::Arc<Type>);
+
+impl OpaquePayload {
+    pub fn new(ty: Type) -> Self {
+        Self(std::sync::Arc::new(ty))
+    }
+
+    pub fn as_ptr(&self) -> *const Type {
+        std::sync::Arc::as_ptr(&self.0)
+    }
+
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    pub fn make_mut(&mut self) -> &mut Type {
+        std::sync::Arc::make_mut(&mut self.0)
+    }
+}
+
+impl std::ops::Deref for OpaquePayload {
+    type Target = Type;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<Type> for OpaquePayload {
+    fn as_ref(&self) -> &Type {
+        &self.0
+    }
+}
+
+impl PartialEq for OpaquePayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other) || self.0 == other.0
+    }
+}
+
+impl Eq for OpaquePayload {}
+
+impl std::hash::Hash for OpaquePayload {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.0, state);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Type {
     Numeric(NumericType),
@@ -409,9 +467,9 @@ pub enum Type {
     String,
     Bytes,
     Extern,
-    ExternSubtype(Box<Type>),
+    ExternSubtype(Arc<Type>),
     Nil,
-    Nullable(Box<Type>),
+    Nullable(Arc<Type>),
     TaggedVariant(TaggedVariant),
     TaggedUnion(Vec<TaggedVariant>),
     /// A closed set of string constants (`type CardColor = "red" | "black"`).
@@ -429,10 +487,10 @@ pub enum Type {
     },
     Opaque {
         name: String,
-        ty: Box<Type>,
-        generic_extern: Option<Box<GenericExternType>>,
+        ty: OpaquePayload,
+        generic_extern: Option<Arc<GenericExternType>>,
     },
-    Array(Box<Type>),
+    Array(Arc<Type>),
     /// A fixed-length numeric array in linear memory (`Float32Array` etc.).
     /// Runtime value: i32 pointer to the element data; see [`TypedArrayKind`].
     TypedArray(TypedArrayKind),
@@ -440,11 +498,11 @@ pub enum Type {
     ///
     /// Variadic packs use the same runtime representation as `Array`, but keep
     /// their expansion semantics across call and return boundaries.
-    Variadic(Box<Type>),
+    Variadic(Arc<Type>),
     Multi(Vec<Type>),
     Function {
         params: Vec<Type>,
-        return_type: Box<Type>,
+        return_type: Arc<Type>,
         /// Whether the function type opens with the contextual `self` receiver
         /// placeholder (`(self, a: i32) -> i32`). Only legal as the immediate
         /// type of a record field, where it marks an interface method whose
@@ -454,7 +512,12 @@ pub enum Type {
         has_self: bool,
     },
     /// A fixed-shape record used for module namespaces (`require` results).
-    Record(BTreeMap<String, Type>),
+    ///
+    /// The field map is shared: a record type describes an entire module or
+    /// record surface, and cloning `Type` values must stay O(1) rather than
+    /// O(exported surface). Use [`Type::record`] to build one and
+    /// `Arc::make_mut` to rewrite fields in place.
+    Record(Arc<BTreeMap<String, Type>>),
     /// Reference to an in-scope generic type parameter (e.g. `T` in `function f<T>(x: T)`).
     TypeParam(String),
     /// A coroutine handle. Yield/resume values are always `i32` (see design 0007).
@@ -465,6 +528,11 @@ pub enum Type {
 impl Type {
     pub const fn number() -> Self {
         Self::Numeric(NumericType::F64)
+    }
+
+    /// Build a record type from an owned field map.
+    pub fn record(fields: BTreeMap<String, Type>) -> Self {
+        Self::Record(Arc::new(fields))
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -511,9 +579,10 @@ impl Type {
 
     pub fn element_type(&self) -> Option<Type> {
         match self {
-            Self::Array(element) | Self::Variadic(element) => Some(*element.clone()),
+            Self::Array(element) | Self::Variadic(element) => Some((**element).clone()),
             Self::TypedArray(kind) => Some(Self::Numeric(kind.element_numeric_type())),
-            Self::Nullable(inner) | Self::Opaque { ty: inner, .. } => inner.element_type(),
+            Self::Nullable(inner) => inner.element_type(),
+            Self::Opaque { ty: inner, .. } => inner.element_type(),
             _ => None,
         }
     }
@@ -536,7 +605,7 @@ impl Type {
 
     pub fn nullable_inner(&self) -> Option<Type> {
         match self {
-            Self::Nullable(inner) => Some(*inner.clone()),
+            Self::Nullable(inner) => Some(inner.as_ref().clone()),
             _ => None,
         }
     }
@@ -610,7 +679,7 @@ impl Type {
         let mut fields = BTreeMap::new();
         fields.insert("tag".to_string(), Type::Numeric(NumericType::I32));
         fields.insert("value".to_string(), Type::Unknown);
-        Type::Record(fields)
+        Type::record(fields)
     }
 
     /// This type as the runtime represents it: every tagged union and variant,
@@ -623,20 +692,20 @@ impl Type {
     pub fn runtime_representation(&self) -> Type {
         match self {
             Self::TaggedUnion(_) | Self::TaggedVariant(_) => Self::canonical_tagged_union_record(),
-            Self::Record(fields) => Self::Record(
+            Self::Record(fields) => Self::record(
                 fields
                     .iter()
                     .map(|(name, field_ty)| (name.clone(), field_ty.runtime_representation()))
                     .collect(),
             ),
-            Self::Array(element_ty) => Self::Array(Box::new(element_ty.runtime_representation())),
+            Self::Array(element_ty) => Self::Array(Arc::new(element_ty.runtime_representation())),
             Self::Variadic(element_ty) => {
-                Self::Variadic(Box::new(element_ty.runtime_representation()))
+                Self::Variadic(Arc::new(element_ty.runtime_representation()))
             }
             Self::Multi(types) => {
                 Self::Multi(types.iter().map(Self::runtime_representation).collect())
             }
-            Self::Nullable(inner) => Self::Nullable(Box::new(inner.runtime_representation())),
+            Self::Nullable(inner) => Self::Nullable(Arc::new(inner.runtime_representation())),
             other => other.clone(),
         }
     }
@@ -664,7 +733,7 @@ impl Type {
                 generic_extern,
             } => ty.remove_tagged_variant(tag).map(|inner| Self::Opaque {
                 name: name.clone(),
-                ty: Box::new(inner),
+                ty: OpaquePayload::new(inner),
                 generic_extern: generic_extern.clone(),
             }),
             _ => None,
@@ -813,7 +882,7 @@ impl std::fmt::Display for Type {
             Self::Record(fields) => {
                 write!(f, "{{")?;
                 let mut first = true;
-                for (name, ty) in fields {
+                for (name, ty) in fields.iter() {
                     // `$` never appears in user-written field names; fields
                     // carrying it are compiler-internal (the conformance
                     // wrapper identity field) and stay out of display.
@@ -1867,31 +1936,33 @@ pub fn resolve_symbols(
 
 #[cfg(test)]
 mod type_tests {
-    use super::{NumericType, TaggedVariant, Type};
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    use super::{Arc, NumericType, OpaquePayload, TaggedVariant, Type};
 
     fn goods() -> Type {
         Type::TaggedUnion(vec![
             TaggedVariant {
                 tag: "Upgrade".to_string(),
-                payload: Box::new(Type::Numeric(NumericType::I32)),
+                payload: Arc::new(Type::Numeric(NumericType::I32)),
             },
             TaggedVariant {
                 tag: "Spell".to_string(),
-                payload: Box::new(Type::Numeric(NumericType::I32)),
+                payload: Arc::new(Type::Numeric(NumericType::I32)),
             },
         ])
     }
 
     #[test]
     fn tagged_variant_stops_at_a_nullable() {
-        let nullable = Type::Nullable(Box::new(goods()));
+        let nullable = Type::Nullable(Arc::new(goods()));
         assert!(nullable.tagged_variant("Upgrade").is_none());
         assert!(nullable.remove_tagged_variant("Upgrade").is_none());
     }
 
     #[test]
     fn constructed_tagged_variant_looks_through_a_nullable() {
-        let nullable = Type::Nullable(Box::new(goods()));
+        let nullable = Type::Nullable(Arc::new(goods()));
         let variant = nullable
             .constructed_tagged_variant("Upgrade")
             .expect("a nullable union constructs the same variants as the union");
@@ -1903,9 +1974,9 @@ mod type_tests {
     fn constructed_tagged_variant_looks_through_an_aliased_nullable() {
         let aliased = Type::Opaque {
             name: "MaybeGoods".to_string(),
-            ty: Box::new(Type::Nullable(Box::new(Type::Opaque {
+            ty: OpaquePayload::new(Type::Nullable(Arc::new(Type::Opaque {
                 name: "Goods".to_string(),
-                ty: Box::new(goods()),
+                ty: OpaquePayload::new(goods()),
                 generic_extern: None,
             }))),
             generic_extern: None,
@@ -1921,7 +1992,28 @@ mod type_tests {
 
     #[test]
     fn constructed_tagged_variant_rejects_an_unknown_tag() {
-        let nullable = Type::Nullable(Box::new(goods()));
+        let nullable = Type::Nullable(Arc::new(goods()));
         assert!(nullable.constructed_tagged_variant("Trinket").is_none());
+    }
+
+    #[test]
+    fn opaque_payload_identity_and_structural_hash_agree() {
+        let shared = OpaquePayload::new(Type::Numeric(NumericType::I32));
+        let shared_clone = shared.clone();
+        let independent = OpaquePayload::new(Type::Numeric(NumericType::I32));
+
+        assert!(shared.ptr_eq(&shared_clone));
+        assert!(!shared.ptr_eq(&independent));
+        assert_eq!(shared, independent);
+
+        let hash = |payload: &OpaquePayload| {
+            let mut hasher = DefaultHasher::new();
+            payload.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&shared), hash(&independent));
+
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<OpaquePayload>();
     }
 }

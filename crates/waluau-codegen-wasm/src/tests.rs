@@ -945,10 +945,11 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
     .collect::<std::collections::HashMap<_, _>>();
     let value_types = super::infer_value_types(function, &signatures).expect("types should infer");
     let array_types = super::collect_array_types(&ir);
-    let record_types = super::collect_record_types(&ir);
+    let (record_types, record_key_by_ptr) = super::collect_record_types(&ir);
     let array_registry = super::arrays::ArrayTypeRegistry::with_function_type_offset(
         &array_types,
         &record_types,
+        record_key_by_ptr,
         ir.functions.len() as u32 + u32::from(ir.start.is_some()),
         0, // record_type_offset placeholder (unused in this test)
         super::arrays::RuntimeGcTypes {

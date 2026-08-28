@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use waluau_ast::{NumericType, Type};
 use waluau_diagnostics::Diagnostic;
@@ -73,6 +74,12 @@ pub(crate) struct ArrayTypeRegistry {
     pub(crate) indices: HashMap<String, u32>,
     pub(crate) record_indices: HashMap<String, u32>,
     pub(crate) record_field_indices: HashMap<String, BTreeMap<String, u32>>,
+    /// Emit-time fast path: canonical string key per shared record payload
+    /// pointer, collected while walking the module, so per-instruction
+    /// lookups avoid rendering the type's Display form. Each entry keeps a
+    /// clone of the keyed type alive so the address cannot be reused by a
+    /// different record type.
+    pub(crate) record_key_by_ptr: HashMap<usize, (Type, String)>,
     pub(crate) coroutine_state_type: Option<u32>,
     /// Type indices of the `$nullable_box_K` structs backing nullable
     /// primitives (`i32?` etc.). Only the kinds the module actually uses are
@@ -118,6 +125,7 @@ impl ArrayTypeRegistry {
     pub(crate) fn with_function_type_offset(
         array_types: &[Type],
         record_types: &[Type],
+        record_key_by_ptr: HashMap<usize, (Type, String)>,
         function_type_count: u32,
         record_type_offset: u32,
         runtime_gc_types: RuntimeGcTypes,
@@ -177,6 +185,7 @@ impl ArrayTypeRegistry {
             indices,
             record_indices,
             record_field_indices,
+            record_key_by_ptr,
             coroutine_state_type: None,
             nullable_box_indices: BTreeMap::new(),
             anyref_array_type: runtime_gc_types.anyref_array_type,
@@ -202,10 +211,26 @@ impl ArrayTypeRegistry {
     }
 
     pub(crate) fn record_index(&self, record_ty: &Type) -> Result<u32, Diagnostic> {
+        if let Some(key) = self.record_key(record_ty) {
+            return self.record_indices.get(key).copied().ok_or_else(|| {
+                Diagnostic::new(format!("missing wasm record type for {record_ty}"))
+            });
+        }
         self.record_indices
             .get(&type_key(record_ty))
             .copied()
             .ok_or_else(|| Diagnostic::new(format!("missing wasm record type for {record_ty}")))
+    }
+
+    /// The pre-rendered registry key for a shared record payload, when this
+    /// exact shared instance was seen during type collection.
+    fn record_key(&self, record_ty: &Type) -> Option<&String> {
+        let Type::Record(fields) = record_ty else {
+            return None;
+        };
+        self.record_key_by_ptr
+            .get(&(Arc::as_ptr(fields) as usize))
+            .map(|(_, key)| key)
     }
 
     pub(crate) fn record_field_index(
@@ -213,9 +238,13 @@ impl ArrayTypeRegistry {
         record_ty: &Type,
         field: &str,
     ) -> Result<u32, Diagnostic> {
+        let key = match self.record_key(record_ty) {
+            Some(key) => key.clone(),
+            None => type_key(record_ty),
+        };
         let by_name = self
             .record_field_indices
-            .get(&type_key(record_ty))
+            .get(&key)
             .ok_or_else(|| Diagnostic::new(format!("missing field index map for {record_ty}")))?;
         by_name.get(field).copied().ok_or_else(|| {
             Diagnostic::new(format!(
@@ -266,8 +295,23 @@ fn type_key(ty: &Type) -> String {
     ty.to_string()
 }
 
+/// Dedup state for the type-collection walks. `keys` holds the canonical
+/// string key of every emitted type; `shared_records` short-circuits on the
+/// pointer identity of Arc-shared record field maps, so a record shared
+/// across thousands of instructions is keyed (and its subtree walked) once.
+#[derive(Default)]
+struct SeenTypes {
+    keys: BTreeSet<String>,
+    /// Canonical string key per distinct shared record payload pointer,
+    /// letting emit-time registry lookups skip re-rendering the type. The
+    /// map holds a clone of each keyed type so the pointer's allocation
+    /// stays alive — otherwise a dropped temporary's address could be
+    /// reused by a different record type.
+    record_ptr_keys: HashMap<usize, (Type, String)>,
+}
+
 pub(crate) fn collect_array_types(module: &Module) -> Vec<Type> {
-    let mut seen = BTreeSet::new();
+    let mut seen = SeenTypes::default();
     let mut types = Vec::new();
     for global in &module.globals {
         insert_array_type(&global.ty, &mut seen, &mut types);
@@ -287,8 +331,8 @@ pub(crate) fn collect_array_types(module: &Module) -> Vec<Type> {
     types
 }
 
-pub(crate) fn collect_record_types(module: &Module) -> Vec<Type> {
-    let mut seen = BTreeSet::new();
+pub(crate) fn collect_record_types(module: &Module) -> (Vec<Type>, HashMap<usize, (Type, String)>) {
+    let mut seen = SeenTypes::default();
     let mut types = Vec::new();
     for global in &module.globals {
         insert_record_type(&global.ty, &mut seen, &mut types);
@@ -304,7 +348,7 @@ pub(crate) fn collect_record_types(module: &Module) -> Vec<Type> {
             }
         }
     }
-    types
+    (types, seen.record_ptr_keys)
 }
 
 /// Collect the nullable-box kinds (`i32?` etc.) a module needs, scanning every
@@ -371,7 +415,8 @@ fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
                 insert_nullable_box_kinds(ty, out);
             }
         }
-        Type::Opaque { ty, .. } | Type::ExternSubtype(ty) => insert_nullable_box_kinds(ty, out),
+        Type::Opaque { ty, .. } => insert_nullable_box_kinds(ty, out),
+        Type::ExternSubtype(ty) => insert_nullable_box_kinds(ty, out),
         Type::TaggedVariant(variant) => insert_nullable_box_kinds(&variant.payload, out),
         Type::TaggedUnion(variants) => {
             for variant in variants {
@@ -463,12 +508,12 @@ fn array_type_depth(ty: &Type) -> usize {
     }
 }
 
-fn insert_array_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>) {
+fn insert_array_type(ty: &Type, seen: &mut SeenTypes, out: &mut Vec<Type>) {
     match ty {
         Type::Array(element) | Type::Variadic(element) => {
             insert_array_type(element, seen, out);
             let array_ty = Type::Array(element.clone());
-            if seen.insert(type_key(&array_ty)) {
+            if seen.keys.insert(type_key(&array_ty)) {
                 out.push(array_ty);
             }
         }
@@ -497,13 +542,22 @@ fn insert_array_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>
     }
 }
 
-fn insert_record_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>) {
+fn insert_record_type(ty: &Type, seen: &mut SeenTypes, out: &mut Vec<Type>) {
     match ty {
         Type::Record(fields) => {
+            // The pointer of the Arc-shared field map identifies this exact
+            // shared instance; the map entry keeps it alive, so an address
+            // in the map can never belong to a since-dropped other type.
+            let ptr = Arc::as_ptr(fields) as usize;
+            if seen.record_ptr_keys.contains_key(&ptr) {
+                return;
+            }
             for field_ty in fields.values() {
                 insert_record_type(field_ty, seen, out);
             }
-            if seen.insert(type_key(ty)) {
+            let key = type_key(ty);
+            seen.record_ptr_keys.insert(ptr, (ty.clone(), key.clone()));
+            if seen.keys.insert(key) {
                 out.push(ty.clone());
             }
         }
@@ -533,18 +587,18 @@ fn insert_record_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type
 
 fn collect_array_types_from_instruction(
     instruction: &IrInstruction,
-    seen: &mut BTreeSet<String>,
+    seen: &mut SeenTypes,
     out: &mut Vec<Type>,
 ) {
     match instruction {
         IrInstruction::ArrayNew { element_ty, .. } => {
-            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
+            insert_array_type(&Type::Array(Arc::new(element_ty.clone())), seen, out);
         }
         IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
         | IrInstruction::ArraySlice { element_ty, .. }
         | IrInstruction::ArrayPop { element_ty, .. } => {
-            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
+            insert_array_type(&Type::Array(Arc::new(element_ty.clone())), seen, out);
         }
         IrInstruction::ArrayLen { .. }
         | IrInstruction::Bytes(_)
@@ -556,7 +610,7 @@ fn collect_array_types_from_instruction(
 
 fn collect_record_types_from_instruction(
     instruction: &IrInstruction,
-    seen: &mut BTreeSet<String>,
+    seen: &mut SeenTypes,
     out: &mut Vec<Type>,
 ) {
     match instruction {

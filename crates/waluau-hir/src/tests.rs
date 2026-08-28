@@ -1,4 +1,7 @@
-use waluau_ast::{BinaryOp, Expr, FunctionName, NumericType, Stmt, Type, UnaryOp};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use waluau_ast::{BinaryOp, Expr, FunctionName, NumericType, OpaquePayload, Stmt, Type, UnaryOp};
 use waluau_diagnostics::DiagnosticCategory;
 use waluau_parser::parse;
 
@@ -29,10 +32,10 @@ fn diagnostic_type_display_retains_nested_module_identity_until_decoration() {
         has_self: false,
         params: vec![Type::Opaque {
             name: "__waluau_m12_Graphics".to_string(),
-            ty: Box::new(Type::Record(Default::default())),
+            ty: OpaquePayload::new(Type::record(Default::default())),
             generic_extern: None,
         }],
-        return_type: Box::new(Type::Unit),
+        return_type: Arc::new(Type::Unit),
     };
 
     let display = super::module_type_display(&ty);
@@ -1004,7 +1007,7 @@ fn generic_type_declarations_resolve_transparently() {
 
     let program = parse(source).expect("parse should succeed");
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
-    let expected = Type::Record(
+    let expected = Type::record(
         [
             ("first".to_string(), Type::Numeric(NumericType::I32)),
             ("second".to_string(), Type::Bool),
@@ -1344,6 +1347,165 @@ fn recursive_record_arrays_are_supported() {
 
     let program = parse(source).expect("parse should succeed");
     super::type_check_and_infer(&program).expect("recursive tree should type check");
+}
+
+fn retained_record_graph_source(helper_count: usize) -> String {
+    let mut source = String::from("type Leaf = {value: i32}\n");
+    source.push_str("type Layer0 = {a: Leaf, b: Leaf, c: Leaf, d: Leaf}\n");
+    for depth in 1..8 {
+        source.push_str(&format!(
+            "type Layer{depth} = {{a: Layer{}, b: Layer{}, c: Layer{}, d: Layer{}}}\n",
+            depth - 1,
+            depth - 1,
+            depth - 1,
+            depth - 1,
+        ));
+    }
+    source.push_str(
+        "type Node = {content: Layer7, children: {Node}, callback: (Node) -> Layer7}\n\
+         type Board = {a: Node, b: Node, c: Node, d: Node}\n",
+    );
+    for helper in 0..helper_count {
+        source.push_str(&format!(
+            "function helper{helper}(board: Board, node: Node): Board\n\
+                 return board\n\
+             end\n"
+        ));
+    }
+    source.push_str(&format!(
+        "function entry(board: Board, node: Node): Board\n\
+             return helper{}(board, node)\n\
+         end\n",
+        helper_count - 1,
+    ));
+    source
+}
+
+fn collect_unique_opaque_payloads(ty: &Type, payloads: &mut HashSet<*const Type>) {
+    match ty {
+        Type::Opaque { ty, .. } => {
+            if payloads.insert(ty.as_ptr()) {
+                collect_unique_opaque_payloads(ty, payloads);
+            }
+        }
+        Type::ExternSubtype(ty) | Type::Nullable(ty) | Type::Array(ty) | Type::Variadic(ty) => {
+            collect_unique_opaque_payloads(ty, payloads)
+        }
+        Type::Multi(types) => {
+            for ty in types {
+                collect_unique_opaque_payloads(ty, payloads);
+            }
+        }
+        Type::Function {
+            params,
+            return_type,
+            ..
+        } => {
+            for ty in params {
+                collect_unique_opaque_payloads(ty, payloads);
+            }
+            collect_unique_opaque_payloads(return_type, payloads);
+        }
+        Type::Record(fields) => {
+            for ty in fields.values() {
+                collect_unique_opaque_payloads(ty, payloads);
+            }
+        }
+        Type::TaggedVariant(variant) => collect_unique_opaque_payloads(&variant.payload, payloads),
+        Type::TaggedUnion(variants) => {
+            for variant in variants {
+                collect_unique_opaque_payloads(&variant.payload, payloads);
+            }
+        }
+        Type::Named { type_args, .. } => {
+            for ty in type_args {
+                collect_unique_opaque_payloads(ty, payloads);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn retained_record_graph_payloads(helper_count: usize) -> (usize, Vec<OpaquePayload>) {
+    let source = retained_record_graph_source(helper_count);
+    let program = parse(&source).expect("retained record graph should parse");
+    let typed = super::type_check_and_infer(&program).expect("retained record graph should check");
+    let mut payloads = HashSet::new();
+    let mut board_payloads = Vec::new();
+    for function in &typed.functions {
+        for param in &function.params {
+            collect_unique_opaque_payloads(&param.ty, &mut payloads);
+            if let Type::Opaque { name, ty, .. } = &param.ty
+                && name == "Board"
+            {
+                board_payloads.push(ty.clone());
+            }
+        }
+        if let Some(return_type) = &function.return_type {
+            collect_unique_opaque_payloads(return_type, &mut payloads);
+        }
+    }
+    (payloads.len(), board_payloads)
+}
+
+#[test]
+fn repeated_retained_record_signatures_share_resolved_payloads() {
+    let (single_count, _) = retained_record_graph_payloads(1);
+    let (repeated_count, board_payloads) = retained_record_graph_payloads(32);
+
+    assert_eq!(
+        repeated_count, single_count,
+        "adding receiver/helper signatures must not duplicate the resolved alias graph"
+    );
+    let first = board_payloads
+        .first()
+        .expect("helpers should have Board parameters");
+    assert!(
+        board_payloads.iter().all(|payload| payload.ptr_eq(first)),
+        "every Board parameter should share the cached resolved payload"
+    );
+}
+
+#[test]
+fn recursive_alias_callbacks_accept_the_same_nominal_identity() {
+    let source = r#"
+        type Node = {children: {Node}, update: (Node) -> Node}
+
+        function identity(node: Node): Node
+            return node
+        end
+
+        function new(): Node
+            return {children = {}, update = identity}
+        end
+    "#;
+    let program = parse(source).expect("recursive callback program should parse");
+    super::type_check_and_infer(&program)
+        .expect("the same recursive alias should match inside a callback signature");
+}
+
+#[test]
+fn recursive_alias_callbacks_reject_distinct_nominal_identities() {
+    let source = r#"
+        type Left = {children: {Left}}
+        type Right = {children: {Right}}
+        type Holder = {update: (Left) -> Left}
+
+        function update(right: Right): Right
+            return right
+        end
+
+        function new(): Holder
+            return {update = update}
+        end
+    "#;
+    let program = parse(source).expect("distinct recursive callback program should parse");
+    let error = super::type_check_and_infer(&program)
+        .expect_err("distinct recursive aliases must remain distinct in callback signatures");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert (Right) -> Right to (Left) -> Left"
+    );
 }
 
 #[test]
@@ -2368,7 +2530,7 @@ fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
     assert_eq!(function.params[0].name, "self");
     assert_eq!(
         function.params[0].ty,
-        Type::Record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
+        Type::record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
     );
 }
 
@@ -2412,7 +2574,7 @@ fn type_checks_generic_method_declaration() {
     assert_eq!(function.params[0].name, "self");
     assert_eq!(
         function.params[0].ty,
-        Type::Record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
+        Type::record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
     );
 }
 
@@ -4413,13 +4575,13 @@ fn infers_trailing_vararg_returns_as_variadic_packs() {
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
     assert_eq!(
         typed.functions[0].return_type,
-        Some(Type::Variadic(Box::new(Type::Unknown)))
+        Some(Type::Variadic(Arc::new(Type::Unknown)))
     );
     assert_eq!(
         typed.functions[1].return_type,
         Some(Type::Multi(vec![
             Type::Unknown,
-            Type::Variadic(Box::new(Type::Unknown)),
+            Type::Variadic(Arc::new(Type::Unknown)),
         ]))
     );
 }
@@ -5913,6 +6075,6 @@ fn typed_vararg_returns_still_widen_to_unknown_packs() {
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
     assert_eq!(
         typed.functions[0].return_type,
-        Some(Type::Variadic(Box::new(Type::Unknown)))
+        Some(Type::Variadic(Arc::new(Type::Unknown)))
     );
 }

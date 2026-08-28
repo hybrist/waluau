@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, SymbolId, Type};
 use waluau_diagnostics::Diagnostic;
@@ -789,7 +790,7 @@ fn emit_inner(
     let started = CompilerTimer::start();
     let declared_imports = used_declared_imports(module);
     let array_types = collect_array_types(module);
-    let record_types = collect_record_types(module);
+    let (record_types, record_key_by_ptr) = collect_record_types(module);
     let string_constants = host::collect_string_constants(module);
     let bytes_constants = host::collect_bytes_constants(module);
     let buffer_plan = BufferPlan::new(module);
@@ -879,6 +880,7 @@ fn emit_inner(
     let mut array_registry = ArrayTypeRegistry::with_function_type_offset(
         &array_types,
         &record_types,
+        record_key_by_ptr,
         array_type_base,
         record_types_base,
         RuntimeGcTypes {
@@ -1194,7 +1196,7 @@ fn emit_inner(
     let callback_event_unit_trampoline_type_idx = if callback_event_unit_trampoline {
         let callback_type = Type::Function {
             params: vec![Type::Extern],
-            return_type: Box::new(Type::Unit),
+            return_type: Arc::new(Type::Unit),
             has_self: false,
         };
         types.ty().function(
@@ -1213,7 +1215,7 @@ fn emit_inner(
     let callback_f64_unit_trampoline_type_idx = if callback_f64_unit_trampoline {
         let callback_type = Type::Function {
             params: vec![Type::Numeric(NumericType::F64)],
-            return_type: Box::new(Type::Unit),
+            return_type: Arc::new(Type::Unit),
             has_self: false,
         };
         types.ty().function(
@@ -1229,7 +1231,7 @@ fn emit_inner(
     let callback_unit_extern_trampoline_type_idx = if callback_unit_extern_trampoline {
         let callback_type = Type::Function {
             params: Vec::new(),
-            return_type: Box::new(Type::Extern),
+            return_type: Arc::new(Type::Extern),
             has_self: false,
         };
         types.ty().function(
@@ -1245,7 +1247,7 @@ fn emit_inner(
     let callback_unit_trampoline_type_idx = if callback_unit_trampoline {
         let callback_type = Type::Function {
             params: Vec::new(),
-            return_type: Box::new(Type::Unit),
+            return_type: Arc::new(Type::Unit),
             has_self: false,
         };
         types.ty().function(
@@ -5313,7 +5315,7 @@ fn emit_block_instructions_inner(
             } => {
                 // Create a growable array instead of a fixed array
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
-                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_array_ty = Type::Array(Arc::new(element_ty.clone()));
                 let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
 
                 if elements.is_empty() {
@@ -5370,7 +5372,7 @@ fn emit_block_instructions_inner(
                 });
                 out.instruction(&Instruction::LocalGet(index_local));
 
-                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_array_ty = Type::Array(Arc::new(element_ty.clone()));
                 let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
                 out.instruction(&Instruction::ArrayGet(storage_type_index));
 
@@ -5402,7 +5404,7 @@ fn emit_block_instructions_inner(
                 let index_local = local(local_plan, *index)?;
                 let stored_local = local(local_plan, *stored)?;
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
-                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_array_ty = Type::Array(Arc::new(element_ty.clone()));
                 let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
                 let scratch_local = array_scratch_local(local_plan, element_ty)?;
 
@@ -5577,7 +5579,7 @@ fn emit_block_instructions_inner(
                 let array_local = local(local_plan, *array)?;
                 let start_local = local(local_plan, *start)?;
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
-                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_array_ty = Type::Array(Arc::new(element_ty.clone()));
                 let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
                 let scratch_local = array_scratch_local(local_plan, element_ty)?;
 
@@ -6798,7 +6800,7 @@ fn emit_dyn_index(
         if nullable_kind.is_some_and(|kind| !dyn_nullable_payload_boxable(kind)) {
             continue;
         }
-        let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+        let storage_array_ty = Type::Array(Arc::new(element_ty.clone()));
         let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
 
         emit_dyn_array_kind_test(out, operand_local, *wrapper_idx);

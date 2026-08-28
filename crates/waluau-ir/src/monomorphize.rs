@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::collections::HashMap;
 use waluau_ast::{Function as AstFunction, Expr, Program, Stmt, SymbolId, Type, MethodCallOrigin, Binding};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
@@ -8,10 +9,10 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             .get(name)
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
-        Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
-        Type::ExternSubtype(parent) => Type::ExternSubtype(Box::new(substitute_type(parent, subst))),
-        Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
-        Type::Variadic(inner) => Type::Variadic(Box::new(substitute_type(inner, subst))),
+        Type::Nullable(inner) => Type::Nullable(Arc::new(substitute_type(inner, subst))),
+        Type::ExternSubtype(parent) => Type::ExternSubtype(Arc::new(substitute_type(parent, subst))),
+        Type::Array(inner) => Type::Array(Arc::new(substitute_type(inner, subst))),
+        Type::Variadic(inner) => Type::Variadic(Arc::new(substitute_type(inner, subst))),
         Type::Multi(types) => {
             Type::Multi(types.iter().map(|ty| substitute_type(ty, subst)).collect())
         }
@@ -21,10 +22,10 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             has_self,
         } => Type::Function {
             params: params.iter().map(|ty| substitute_type(ty, subst)).collect(),
-            return_type: Box::new(substitute_type(return_type, subst)),
+            return_type: Arc::new(substitute_type(return_type, subst)),
             has_self: *has_self,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
@@ -185,7 +186,7 @@ fn unify(
             unify(p_inner.as_ref(), a_inner.as_ref(), subst)
         }
         (Type::Record(p_fields), Type::Record(a_fields)) => {
-            for (name, p_ty) in p_fields {
+            for (name, p_ty) in p_fields.iter() {
                 if let Some(a_ty) = a_fields.get(name) {
                     unify(p_ty, a_ty, subst)?;
                 } else {
@@ -352,7 +353,7 @@ impl<'a> Monomorphizer<'a> {
             let return_type = function.return_type.clone().unwrap_or(Type::Unit);
             let fn_ty = Type::Function {
                 params: param_types,
-                return_type: Box::new(return_type),
+                return_type: Arc::new(return_type),
                 has_self: false,
             };
             if let Some(symbol_id) = function.symbol_id {
@@ -374,7 +375,7 @@ impl<'a> Monomorphizer<'a> {
             );
             let fn_ty = Type::Function {
                 params: param_types,
-                return_type: Box::new(return_type),
+                return_type: Arc::new(return_type),
                 has_self: false,
             };
             if let Some(symbol_id) = declared.symbol_id {
@@ -396,7 +397,7 @@ impl<'a> Monomorphizer<'a> {
                         let return_type = function.return_type.clone().unwrap_or(Type::Unit);
                         let fn_ty = Type::Function {
                             params: param_types,
-                            return_type: Box::new(return_type),
+                            return_type: Arc::new(return_type),
                             has_self: false,
                         };
                         method_signatures.insert((*table_symbol_id, name.clone()), fn_ty);
@@ -721,7 +722,7 @@ impl<'a> Monomorphizer<'a> {
                 let inferred_ty = if let Some(ty) = ty {
                     substitute_type(ty, subst)
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
-                    Type::Record(std::collections::BTreeMap::new())
+                    Type::record(std::collections::BTreeMap::new())
                 } else {
                     self.infer_expr_type(value, subst, types)?
                 };
@@ -766,7 +767,7 @@ impl<'a> Monomorphizer<'a> {
                     if let Some(Type::Record(mut fields)) = types.get(base_symbol_id).cloned() {
                         if !fields.contains_key(name) {
                             let inferred_val_ty = self.infer_expr_type(&rewritten_value, subst, types)?;
-                            fields.insert(name.clone(), inferred_val_ty);
+                            Arc::make_mut(&mut fields).insert(name.clone(), inferred_val_ty);
                             types.insert(*base_symbol_id, Type::Record(fields));
                         }
                     }
@@ -803,7 +804,7 @@ impl<'a> Monomorphizer<'a> {
                     let value_ty = self.infer_expr_type(value, subst, types)?;
                     let binding_ty = value_ty
                         .tagged_variant(target_name)
-                        .map(|variant| *variant.payload)
+                        .map(|variant| Arc::unwrap_or_clone(variant.payload))
                         .unwrap_or_else(|| substitute_type(target_ty, subst));
                     then_types.insert(*symbol_id, binding_ty);
                 }
@@ -897,7 +898,7 @@ impl<'a> Monomorphizer<'a> {
                 let mut value_types = Vec::new();
                 for expr in &rewritten_values {
                     if matches!(expr, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
-                        value_types.push(Type::Record(std::collections::BTreeMap::new()));
+                        value_types.push(Type::record(std::collections::BTreeMap::new()));
                     } else {
                         match self.infer_expr_type(expr, subst, types)? {
                             Type::Multi(tys) => value_types.extend(tys),
@@ -1006,11 +1007,11 @@ impl<'a> Monomorphizer<'a> {
             match self.infer_expr_type(iterator, subst, types)? {
                 Type::Array(element_ty) => {
                     if symbol_ids.len() == 1 {
-                        body_types.insert(symbol_ids[0], *element_ty);
+                        body_types.insert(symbol_ids[0], Arc::unwrap_or_clone(element_ty));
                     } else if symbol_ids.len() == 2 {
                         body_types
                             .insert(symbol_ids[0], Type::Numeric(waluau_ast::NumericType::I32));
-                        body_types.insert(symbol_ids[1], *element_ty);
+                        body_types.insert(symbol_ids[1], Arc::unwrap_or_clone(element_ty));
                     }
                 }
                 // One expression producing `(iterator, state[, control])`:
@@ -1791,7 +1792,7 @@ impl<'a> Monomorphizer<'a> {
 
                 let callee_ty = self.infer_expr_type(callee, subst, types)?;
                 match callee_ty {
-                    Type::Function { return_type, .. } => Ok(*return_type),
+                    Type::Function { return_type, .. } => Ok(Arc::unwrap_or_clone(return_type)),
                     _ => Ok(Type::Unknown),
                 }
             }
@@ -1865,7 +1866,7 @@ impl<'a> Monomorphizer<'a> {
                     receiver_ty.record_field(name).unwrap_or(Type::Unknown)
                 };
                 match field_ty {
-                    Type::Function { return_type, .. } => Ok(*return_type),
+                    Type::Function { return_type, .. } => Ok(Arc::unwrap_or_clone(return_type)),
                     _ => Ok(Type::Unknown),
                 }
             }
@@ -1882,7 +1883,7 @@ impl<'a> Monomorphizer<'a> {
                     .unwrap_or(Type::Unit);
                 Ok(Type::Function {
                     params,
-                    return_type: Box::new(return_type),
+                    return_type: Arc::new(return_type),
                     has_self: false,
                 })
             }
@@ -1892,7 +1893,7 @@ impl<'a> Monomorphizer<'a> {
                 } else {
                     Type::Unknown
                 };
-                Ok(Type::Array(Box::new(element_ty)))
+                Ok(Type::Array(Arc::new(element_ty)))
             }
             Expr::TableLiteral { fields, .. } => {
                 let mut record_fields = std::collections::BTreeMap::new();
@@ -1900,7 +1901,7 @@ impl<'a> Monomorphizer<'a> {
                     let field_ty = self.infer_expr_type(&field.value, subst, types)?;
                     record_fields.insert(field.name.clone(), field_ty);
                 }
-                Ok(Type::Record(record_fields))
+                Ok(Type::record(record_fields))
             }
             Expr::Field {
                 base,
@@ -1942,7 +1943,7 @@ impl<'a> Monomorphizer<'a> {
                     }
                 })
             }
-            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(Type::Unknown))),
+            Expr::Vararg(..) => Ok(Type::Variadic(Arc::new(Type::Unknown))),
         }
     }
 
@@ -1959,7 +1960,7 @@ impl<'a> Monomorphizer<'a> {
             if let Some((params, return_type)) = self.property_signatures.get(direct_name) {
                 return Some(Type::Function {
                     params: params.clone(),
-                    return_type: Box::new(return_type.clone()),
+                    return_type: Arc::new(return_type.clone()),
                     has_self: false,
                 });
             }
@@ -2073,7 +2074,7 @@ impl<'a> Monomorphizer<'a> {
                 let value = if target.accepts_nil() {
                     target
                 } else {
-                    Type::Nullable(Box::new(target))
+                    Type::Nullable(Arc::new(target))
                 };
                 return Ok(Some(Type::Multi(vec![value, Type::String])));
             }
@@ -2082,7 +2083,7 @@ impl<'a> Monomorphizer<'a> {
             crate::TABLE_REMOVE => {
                 let element_ty = match args.first() {
                     Some(array) => match self.infer_expr_type(array, subst, types)? {
-                        Type::Array(element) => *element,
+                        Type::Array(element) => Arc::unwrap_or_clone(element),
                         _ => Type::Unknown,
                     },
                     None => Type::Unknown,
@@ -2093,19 +2094,19 @@ impl<'a> Monomorphizer<'a> {
                 return Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)));
             }
             crate::TABLE_PACK => {
-                return Ok(Some(Type::Array(Box::new(Type::Unknown))));
+                return Ok(Some(Type::Array(Arc::new(Type::Unknown))));
             }
             crate::TABLE_CREATE => {
                 let element_ty = match args.get(1) {
                     Some(value) => self.infer_expr_type(value, subst, types)?,
                     None => Type::Unknown,
                 };
-                return Ok(Some(Type::Array(Box::new(element_ty))));
+                return Ok(Some(Type::Array(Arc::new(element_ty))));
             }
             crate::TABLE_UNPACK => {
                 let element_ty = match args.first() {
                     Some(array) => match self.infer_expr_type(array, subst, types)? {
-                        Type::Array(element) => *element,
+                        Type::Array(element) => Arc::unwrap_or_clone(element),
                         _ => Type::Unknown,
                     },
                     None => Type::Unknown,
@@ -2131,7 +2132,7 @@ impl<'a> Monomorphizer<'a> {
             "coroutine.close" => Ok(Some(Type::Bool)),
             "coroutine.await_promise" | crate::PROMISE_AWAIT => Ok(Some(Type::Unknown)),
             "string.len" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
-            "string.byte" if args.len() < 3 => Ok(Some(Type::Nullable(Box::new(Type::Numeric(
+            "string.byte" if args.len() < 3 => Ok(Some(Type::Nullable(Arc::new(Type::Numeric(
                 waluau_ast::NumericType::I32,
             ))))),
             "string.byte" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
@@ -2153,7 +2154,7 @@ impl<'a> Monomorphizer<'a> {
             ]))),
             "string.sub" | "string.rep" | "string.char" | "string.upper" | "string.lower"
             | "string.format" => Ok(Some(Type::String)),
-            "string.split" => Ok(Some(Type::Array(Box::new(Type::String)))),
+            "string.split" => Ok(Some(Type::Array(Arc::new(Type::String)))),
             _ => Ok(None),
         }
     }
