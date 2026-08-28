@@ -527,6 +527,11 @@ fn write_build_report(path: &Path, outcome: &session::BuildOutcome) -> Result<()
                 .collect::<Vec<_>>())
             .unwrap_or_default(),
         "diagnostics": diagnostics,
+        "workload": {
+            "astNodes": outcome.ast_nodes,
+            "linkedSourceBytes": outcome.linked_source_bytes,
+            "sourceUnits": outcome.involved_files.len(),
+        },
     });
     let serialized = serde_json::to_string_pretty(&report)
         .map_err(|error| Diagnostic::new(format!("serialize build report: {error}")))?;

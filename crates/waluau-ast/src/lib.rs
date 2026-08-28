@@ -1,6 +1,7 @@
 pub use waluau_span::Span;
 
 mod lua_pattern;
+pub mod metrics;
 mod module_constants;
 pub use lua_pattern::{
     LuaCaptureKind, lua_pattern_captures, lua_pattern_is_plain, string_find_result_types,

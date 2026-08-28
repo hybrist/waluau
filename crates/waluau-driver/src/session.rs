@@ -48,6 +48,12 @@ pub struct BuildOutcome {
     pub artifacts: Option<crate::CompileArtifacts>,
     pub diagnostics: Vec<Diagnostic>,
     pub involved_files: Vec<PathBuf>,
+    /// Post-link statement/expression node count of the compiled program
+    /// (see [`waluau_ast::metrics::node_count`]); `0` when linking failed.
+    pub ast_nodes: usize,
+    /// Total bytes of resolved module source in the linked program, including
+    /// builtins and externs; `0` when linking failed.
+    pub linked_source_bytes: usize,
 }
 
 impl CompilerSession {
@@ -151,6 +157,8 @@ impl CompilerSession {
                             artifacts: None,
                             diagnostics: vec![error],
                             involved_files: Vec::new(),
+                            ast_nodes: 0,
+                            linked_source_bytes: 0,
                         };
                     }
                 };
@@ -168,6 +176,8 @@ impl CompilerSession {
                     artifacts: None,
                     diagnostics: vec![error],
                     involved_files: Vec::new(),
+                    ast_nodes: 0,
+                    linked_source_bytes: 0,
                 };
             }
         };
@@ -176,8 +186,12 @@ impl CompilerSession {
                 artifacts: None,
                 diagnostics: outcome.diagnostics,
                 involved_files: outcome.involved_files,
+                ast_nodes: 0,
+                linked_source_bytes: 0,
             };
         }
+        let ast_nodes = waluau_ast::metrics::node_count(&outcome.program);
+        let linked_source_bytes = outcome.program.sources.values().map(String::len).sum();
         let cache_key = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let hir_cache = self.hir_caches.entry(cache_key.clone()).or_default();
         let ir_cache = self.ir_caches.entry(cache_key.clone()).or_default();
@@ -195,11 +209,15 @@ impl CompilerSession {
                 artifacts: Some(artifacts),
                 diagnostics: Vec::new(),
                 involved_files: outcome.involved_files,
+                ast_nodes,
+                linked_source_bytes,
             },
             Err(diagnostics) => BuildOutcome {
                 artifacts: None,
                 diagnostics,
                 involved_files: outcome.involved_files,
+                ast_nodes,
+                linked_source_bytes,
             },
         }
     }
