@@ -7,11 +7,11 @@ local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local box = require("./ui/layout")
 local game = require("./game")
-local render = require("./render")
 local entity = require("./entities/adapter")
 local entity_story = require("./entity_story")
 local ink = require("./ink")
 local card_entity = require("./entities/card")
+local card_flip = require("./entities/card_flip")
 local card_row = require("./entities/card_row")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
@@ -161,7 +161,7 @@ local function turning(): entity.Node
         card_entity.height,
         function(surface: entity.Surface, bounds: box.Rect): unit
             local clock: f64 = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
-            render.draw_flipping_card(surface, card(14, 0), bounds.x, bounds.y, clock, 0.35, false)
+            card_flip.draw(surface, card(14, 0), bounds.x, bounds.y, clock, 0.35, false)
         end
     )
 end

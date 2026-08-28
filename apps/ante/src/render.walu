@@ -28,6 +28,7 @@ local ink = require("./ink")
 local easing = require("./easing")
 local card_burn = require("./card_burn")
 local card = require("./entities/card")
+local card_flip = require("./entities/card_flip")
 local card_row = require("./entities/card_row")
 local hand_fan = require("./entities/hand_fan")
 local deck = require("./entities/deck")
@@ -58,8 +59,6 @@ end
 function top_left(rect: box.Rect): Point
     return point(rect.x, rect.y)
 end
-
-const FLIP_SECONDS: f64 = 0.55
 
 -- Where the board's own bands sit inside the live viewport. Each band says
 -- where an entity starts and how wide it may be; how tall it turns out to be
@@ -119,7 +118,7 @@ const THROW_RISE: f64 = 270.0
 -- Once both flips have landed, the winner's pair flies out of its row and
 -- joins the five community cards, so all seven candidates stand together in
 -- the middle of the board. FLY_START leaves a beat after the second flip
--- (which finishes at 0.2 + FLIP_SECONDS * 1.7), and the second card trails
+-- (which finishes at 0.2 + card_flip.seconds * 1.7), and the second card trails
 -- the first by FLY_STAGGER so the pair arrives as two beats rather than a
 -- block slide.
 const FLY_START: f64 = 1.3
@@ -593,39 +592,6 @@ function draw_result_field(
         bounds.x - SHIMMER_MARGIN, bounds.y - SHIMMER_MARGIN,
         quad_width, quad_height)
     ink.stop_effect(graphics)
-end
-
--- Fakes a card picked up off the table and turned over midair: cos
--- collapses the width (back, edge-on, then face) while sin lifts the card
--- toward the viewer — rising and growing around mid-flip — so the rotation
--- happens in the air instead of sweeping through the table surface. A
--- slight sin-driven skew tilts the silhouette for perspective. Everything
--- inherits the transform stack, so the regular card renderer draws both
--- halves of the flip.
-function draw_flipping_card(
-    surface: entity.Surface, value: game.Card, x: f64, y: f64,
-    clock: f64, delay: f64, colored: bool
-): unit
-    local graphics = surface.graphics
-    local progress: f64 = easing.clamp01((clock - delay) / FLIP_SECONDS)
-    local turn: f64 = easing.in_out_cubic(progress)
-    local angle: f64 = turn * math.pi
-    local flat: f64 = math.cos(angle)
-    local depth: f64 = math.sin(angle)
-    local hidden: bool = flat >= 0.0
-    local width_scale: f64 = flat
-    if not hidden then width_scale = -flat end
-    local lift: f64 = 1.0 + 0.14 * depth
-    graphics:push()
-    graphics:translate(x + card.width * 0.5, y + card.height * 0.5 - 10.0 * depth)
-    graphics:apply_transform(width_scale * lift, 0.18 * depth, 0.0, lift, 0.0, 0.0)
-    -- A card being turned over is on its way to public: whether the other side
-    -- knew it a moment ago stops mattering the instant it lands face up, so no
-    -- eye rides the flip.
-    card.draw_at(
-        surface, card.look(value, false, false, hidden, colored, false),
-        -(card.width * 0.5), -(card.height * 0.5))
-    graphics:pop()
 end
 
 -- A card thrown to a table_card slot: the deck draw the card stories rehearse,
@@ -1124,7 +1090,7 @@ function draw_resolution_board(board: Board, surface: entity.Surface, frame: Fra
                         surface, card.plain(trick.computer_cards[0]),
                         slot.x, slot.y, loss_progress, 11, frame.ash.reveal_first)
                 else
-                    draw_flipping_card(
+                    card_flip.draw(
                         surface, trick.computer_cards[0], slot.x, slot.y,
                         reveal_clock, 0.2, trick.winner < 0 and scoring[5])
                 end
@@ -1136,9 +1102,9 @@ function draw_resolution_board(board: Board, surface: entity.Surface, frame: Fra
                         surface, card.plain(trick.computer_cards[1]),
                         slot.x, slot.y, loss_progress, 29, frame.ash.reveal_second)
                 else
-                    draw_flipping_card(
+                    card_flip.draw(
                         surface, trick.computer_cards[1], slot.x, slot.y,
-                        reveal_clock, 0.2 + FLIP_SECONDS * 0.7,
+                        reveal_clock, 0.2 + card_flip.seconds * 0.7,
                         trick.winner < 0 and scoring[6])
                 end
             end
@@ -1417,50 +1383,14 @@ function Board:draw(surface: entity.Surface, frame: Frame): unit
     draw_frame(self, surface, frame)
 end
 
-function draw_shader_error(surface: entity.Surface, viewport: layout.State, detail: string): unit
-    draw_backdrop(surface, viewport)
-    local graphics = surface.graphics
-    local top: f64 = viewport.center_y - 130.0
-    ink.panel(graphics, 90.0, top, viewport.width - 180.0, 260.0, "#220016", "#ff00ff")
-    centered_line(
-        surface, viewport, "SHADER COMPILATION FAILED", top + 65.0, 21, "#ff66ff")
-    centered_line(
-        surface, viewport, "THE RESULT EFFECT IS REQUIRED", top + 112.0, 13, "#f8fafc")
-    ink.text(graphics, detail, 125.0, top + 170.0, 11, "#fecdd3")
-end
-
-function draw_audio_error(
-    surface: entity.Surface, viewport: layout.State,
-    path: string, code: string, detail: string
-): unit
-    draw_backdrop(surface, viewport)
-    local graphics = surface.graphics
-    local top: f64 = viewport.center_y - 165.0
-    ink.panel(graphics, 70.0, top, viewport.width - 140.0, 330.0, "#260b08", "#fb7185")
-    centered_line(
-        surface, viewport, "REQUIRED SOUND EFFECT FAILED", top + 70.0, 21, "#fb7185")
-    centered_line(
-        surface, viewport, "ANTE MAGIC HAS STOPPED", top + 113.0, 13, "#f8fafc")
-    ink.text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
-    ink.text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
-    ink.text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")
-    ink.text(
-        graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.",
-        105.0, top + 286.0, 10, "#fda4af")
-end
-
 function new_card_ash(): card_burn.CardAsh
     return card_burn.CardAsh.new()
 end
 
 return {
-    draw_shader_error = draw_shader_error,
-    draw_audio_error = draw_audio_error,
     draw_backdrop = draw_backdrop,
     draw_help = draw_help,
     draw_divine_intervention = draw_divine_intervention,
-    -- One card turning over, which is the board's own flip and the storybook's.
-    draw_flipping_card = draw_flipping_card,
     -- The band the player's hand is dealt into, so a story can run the real
     -- measure-then-arrange pipeline instead of a copy of it.
     fan_band = fan_band,

@@ -19,7 +19,10 @@ export type Surface = {
 export type Measure = (Graphics?, layout.Intrinsic) -> unit
 export type Paint = (Surface, layout.Rect) -> unit
 export type HitBehavior = "transparent" | "target" | "opaque"
-export type Node = {
+-- Keep the recursive retained graph behind its behavioral API. Besides
+-- enforcing controlled mutation, this prevents the structural expansion
+-- tracked by waluau-4ggh from leaking through every presenter signature.
+export opaque type Node = {
     box: layout.Box,
     children: {Node},
     measure_content: (Graphics?, layout.Intrinsic) -> unit,

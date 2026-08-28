@@ -1,0 +1,41 @@
+-- The shared visual for one card turning over in place. It lives beside the
+-- card presenter so stories can exercise the animation without importing the
+-- whole retained board composition.
+local game = require("../game")
+local easing = require("../easing")
+local entity = require("./adapter")
+local card = require("./card")
+
+const FLIP_SECONDS: f64 = 0.55
+
+-- Fakes a card picked up off the table and turned over midair: cos collapses
+-- the width (back, edge-on, then face) while sin lifts the card toward the
+-- viewer. Everything inherits the transform stack, so the regular card
+-- presenter draws both halves of the flip.
+function draw(
+    surface: entity.Surface, value: game.Card, x: f64, y: f64,
+    clock: f64, delay: f64, colored: bool
+): unit
+    local graphics = surface.graphics
+    local progress: f64 = easing.clamp01((clock - delay) / FLIP_SECONDS)
+    local turn: f64 = easing.in_out_cubic(progress)
+    local angle: f64 = turn * math.pi
+    local flat: f64 = math.cos(angle)
+    local depth: f64 = math.sin(angle)
+    local hidden: bool = flat >= 0.0
+    local width_scale: f64 = flat
+    if not hidden then width_scale = -flat end
+    local lift: f64 = 1.0 + 0.14 * depth
+    graphics:push()
+    graphics:translate(x + card.width * 0.5, y + card.height * 0.5 - 10.0 * depth)
+    graphics:apply_transform(width_scale * lift, 0.18 * depth, 0.0, lift, 0.0, 0.0)
+    -- A card being turned over is on its way to public: whether the other side
+    -- knew it a moment ago stops mattering the instant it lands face up, so no
+    -- eye rides the flip.
+    card.draw_at(
+        surface, card.look(value, false, false, hidden, colored, false),
+        -(card.width * 0.5), -(card.height * 0.5))
+    graphics:pop()
+end
+
+return { draw = draw, seconds = FLIP_SECONDS }

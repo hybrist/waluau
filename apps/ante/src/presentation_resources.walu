@@ -8,7 +8,7 @@ local resources = require("waluau:engine/resources")
 local audio = require("waluau:engine/audio")
 local assets = require("waluau:assets")
 local effect_shaders = require("./effect_shaders")
-local render = require("./render")
+local failure = require("./presentation/failure")
 local entity = require("./entities/adapter")
 local layout = require("./layout")
 
@@ -184,11 +184,11 @@ function State:draw_failure(graphics: engine.Graphics): bool
     local board: entity.Surface = self:surface(graphics)
     local viewport: layout.State = layout.current()
     if #self.fatal_shader_error > 0 then
-        render.draw_shader_error(board, viewport, self.fatal_shader_error)
+        failure.shader(board, viewport, self.fatal_shader_error)
         return true
     end
     if #self.fatal_audio_code > 0 then
-        render.draw_audio_error(
+        failure.audio(
             board, viewport, SOUND_PATH, self.fatal_audio_code,
             self.fatal_audio_message)
         return true
