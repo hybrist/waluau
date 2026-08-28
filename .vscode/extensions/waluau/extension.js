@@ -1,8 +1,7 @@
 // Repo-local VS Code client for the Waluau language server, installed as a
-// workspace extension from .vscode/extensions/waluau. Documents are matched
-// by the .walu pattern rather than a language id, so the repo's
-// files.associations mapping (*.walu -> lua) keeps VS Code's built-in Lua
-// grammar for highlighting while this client provides diagnostics.
+// workspace extension from .vscode/extensions/waluau. The extension registers
+// the waluau language and layers its TextMate grammar over VS Code's Lua
+// grammar; the language client provides semantic editor features.
 const fs = require('node:fs');
 const path = require('node:path');
 const { workspace, window } = require('vscode');
@@ -30,7 +29,7 @@ async function activate(context) {
     'Waluau Language Server',
     { command, args: [] },
     {
-      documentSelector: [{ pattern: '**/*.walu' }],
+      documentSelector: [{ language: 'waluau' }],
       outputChannel: window.createOutputChannel('Waluau Language Server'),
     },
   );
