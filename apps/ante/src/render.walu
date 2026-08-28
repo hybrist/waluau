@@ -22,27 +22,21 @@ local card_draw = require("./card_draw")
 local divine_intervention = require("./divine_intervention")
 local box = require("./ui/layout")
 local entity = require("./entities/adapter")
-local ui = require("./ui/node")
 local board_interaction = require("./board/interaction")
+local board_view = require("./board/view")
 local ink = require("./ink")
 local easing = require("./easing")
 local card_burn = require("./card_burn")
 local card = require("./entities/card")
 local card_row = require("./entities/card_row")
 local hand_fan = require("./entities/hand_fan")
-local table_card_panel = require("./entities/table_card_panel")
 local deck = require("./entities/deck")
-local pile = require("./entities/pile")
-local hud = require("./entities/hud")
-local footer = require("./entities/footer")
 local action_bar = require("./entities/action_bar")
 local capsule = require("./entities/capsule")
 local powered_card = require("./entities/powered_card")
 local backdrop = require("./entities/backdrop")
 local modal = require("./entities/modal")
 local help_card = require("./entities/help_card")
-local ledger = require("./entities/ledger")
-local verdict = require("./entities/verdict")
 
 -- A position on the logical canvas. Everything that travels — animation legs,
 -- slot anchors, gather points, pointer hits — moves through Points, so a
@@ -297,14 +291,12 @@ function board_rect(viewport: layout.State): box.Rect
     return entity.rect(0.0, 0.0, viewport.width, viewport.height)
 end
 
-function header_band(metrics: entity.Metrics, node: entity.Node, viewport: layout.State): box.Rect
-    local height: f64 = node.measure(metrics).preferred_height
+function header_band(height: f64, viewport: layout.State): box.Rect
     return entity.rect(
         BOARD_EDGE, HEADER_TOP, viewport.width - BOARD_EDGE * 2.0, height)
 end
 
-function footer_band(metrics: entity.Metrics, node: entity.Node, viewport: layout.State): box.Rect
-    local height: f64 = node.measure(metrics).preferred_height
+function footer_band(height: f64, viewport: layout.State): box.Rect
     return entity.rect(
         FOOTER_EDGE, viewport.height - FOOTER_BOTTOM - height,
         viewport.width - FOOTER_EDGE * 2.0, height)
@@ -417,39 +409,7 @@ function is_picked(picks: {i32}, value: i32): bool
     return false
 end
 
-const HAND_CAPACITY: i32 = 7
-const TABLE_CAPACITY: i32 = 5
-
-export type Board = {
-    root: ui.Node,
-    input: board_interaction.State,
-    surface: ui.Surface?,
-    table_nodes: {ui.Node},
-    commit_node: ui.Node,
-    hud_node: ui.Node,
-    footer_node: ui.Node,
-    deck_node: ui.Node,
-    pile_node: ui.Node,
-    player_node: ui.Node,
-    computer_nodes: {ui.Node},
-    panel_node: ui.Node,
-    hud_view: hud.Stateful,
-    footer_view: footer.Stateful,
-    deck_view: deck.Stateful,
-    pile_view: pile.Stateful,
-    player_view: hand_fan.Stateful,
-    computer_views: {card.Stateful},
-    table_views: {powered_card.Stateful},
-    panel_view: entity.Node,
-    action_view: action_bar.Stateful,
-    action_items: {action_bar.Action},
-    player_looks: {card.Look},
-    player_hidden: {bool},
-    computer_hidden: {bool},
-    table_hidden: {bool},
-    modal_kind: "none" | "history" | "help" | "final",
-    modal_content: entity.Node?,
-}
+export opaque type Board = { view: board_view.State }
 
 function settled_pile_count(frame: Frame): i32
     local pending: i32 = 0
@@ -462,140 +422,43 @@ function settled_pile_count(frame: Frame): i32
 end
 
 function Board.new(state: game.View, run: run_module.View): Board
-    -- Restoring while the city/shop is visible can legitimately have no live
-    -- table cards. Presenters still need an initial value before the next duel
-    -- presents real cards, so seed them with an inert placeholder.
-    local sample: game.Card = { rank = 2, suit = 0 }
-    if #state.middle > 0 then sample = state.middle[0] end
-    local computer_views: {card.Stateful} = {}
-    for index = 0::i32, HAND_CAPACITY - 1 do
-        table.insert(computer_views, card.Stateful.new(card.sealed(sample, false)))
-    end
-    local table_views: {powered_card.Stateful} = {}
-    for index = 0::i32, TABLE_CAPACITY - 1 do
-        table.insert(table_views, powered_card.Stateful.new(
-            card.plain(sample), nil, 0.0, card_burn.CardAsh.new(),
-            powered_card.new_grave_dust()))
-    end
-    local hud_view: hud.Stateful = hud.Stateful.new(state, run)
-    local footer_view: footer.Stateful = footer.Stateful.new(state, run)
-    local deck_view: deck.Stateful = deck.Stateful.new(state.deck_count)
-    local pile_view: pile.Stateful = pile.Stateful.new({}, 0)
-    local player_view: hand_fan.Stateful = hand_fan.Stateful.new({}, {}, {})
-    local panel_view: entity.Node = table_card_panel.node()
-    local action_items: {action_bar.Action} = {
-        action_bar.action("CONFIRM", false),
-    }
-    local action_view: action_bar.Stateful = action_bar.Stateful.new(action_items)
-
-    -- The router traverses the same retained visual nodes the board paints.
-    -- Only the fan gets parallel leaves because each rotated card needs a
-    -- custom hit shape while the fan itself is one visual presenter.
-    local hud_node: ui.Node = entity.retain(hud_view.root)
-    local footer_node: ui.Node = entity.retain(footer_view.root)
-    local deck_node: ui.Node = entity.retain(deck_view.root)
-    local pile_node: ui.Node = entity.retain(pile_view.root)
-    local player_node: ui.Node = entity.retain(player_view.root)
-    local visual_children: {ui.Node} = {
-        hud_node,
-        footer_node,
-        deck_node,
-        pile_node,
-    }
-    local computer_nodes: {ui.Node} = {}
-    for view in computer_views do
-        local node: ui.Node = entity.retain(view.root)
-        table.insert(computer_nodes, node)
-        table.insert(visual_children, node)
-    end
-    local panel_node: ui.Node = entity.retain(panel_view)
-    table.insert(visual_children, panel_node)
-    local table_nodes: {ui.Node} = {}
-    for view in table_views do
-        local root: ui.Node = entity.retain(view.root)
-        table.insert(table_nodes, root)
-        table.insert(visual_children, root)
-    end
-    local commit_node: ui.Node = entity.retain(action_view.capsules[0].root)
-    table.insert(visual_children, commit_node)
-    table.insert(visual_children, player_node)
-
-    local input: board_interaction.State = board_interaction.new(
-        visual_children, table_nodes, commit_node)
-    return {
-        root = input.root,
-        input = input,
-        surface = nil,
-        table_nodes = table_nodes,
-        commit_node = commit_node,
-        hud_node = hud_node,
-        footer_node = footer_node,
-        deck_node = deck_node,
-        pile_node = pile_node,
-        player_node = player_node,
-        computer_nodes = computer_nodes,
-        panel_node = panel_node,
-        hud_view = hud_view,
-        footer_view = footer_view,
-        deck_view = deck_view,
-        pile_view = pile_view,
-        player_view = player_view,
-        computer_views = computer_views,
-        table_views = table_views,
-        panel_view = panel_view,
-        action_view = action_view,
-        action_items = action_items,
-        player_looks = {},
-        player_hidden = {},
-        computer_hidden = {},
-        table_hidden = {},
-        modal_kind = "none",
-        modal_content = nil,
-    }
+    return { view = board_view.new(state, run) }
 end
 
 function Board:begin_frame(frame: Frame): unit
     local hand_count: i32 = #frame.view.player_hand
     local table_count: i32 = #frame.view.middle
-    self.hud_view:present(frame.view, frame.run)
-    self.footer_view:present(frame.view, frame.run)
-    self.deck_view:present(frame.view.deck_count)
-    self.pile_view:present(
-        frame.piles.discards, settled_pile_count(frame))
-
-    while #self.player_looks > 0 do table.remove(self.player_looks) end
-    while #self.player_hidden > 0 do table.remove(self.player_hidden) end
+    self.view:present_chrome(
+        frame.view, frame.run, frame.piles.discards, settled_pile_count(frame))
+    self.view:begin_player()
     for index = 0::i32, hand_count - 1 do
         local selected: bool = is_picked(frame.interaction.play_picks, index)
         if frame.view.swap_open then
             selected = is_picked(frame.interaction.swap_hand, index)
         end
-        table.insert(self.player_looks, card.look(
+        self.view:add_player(card.look(
             frame.view.player_hand[index].card,
             selected,
             index == frame.interaction.hand_focus,
             false,
             false,
-            frame.view.player_hand[index].known))
-        table.insert(self.player_hidden, slot_hidden(
-            frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, index))
+            frame.view.player_hand[index].known), slot_hidden(
+                frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, index))
     end
-    self.player_view:present(
-        self.player_looks, frame.motion.fan_parts, self.player_hidden)
+    self.view:end_player(frame.motion.fan_parts)
 
-    while #self.computer_hidden > 0 do table.remove(self.computer_hidden) end
+    self.view:begin_computer()
     for index = 0::i32, hand_count - 1 do
         local hidden: bool = slot_hidden(
             frame.motion.anims, frame.motion.anim_clock, SLOT_COMPUTER, index)
-        table.insert(self.computer_hidden, hidden)
-        self.computer_views[index]:present(card.sealed(
+        self.view:present_computer(index, card.sealed(
             frame.view.computer_hand[index].card,
-            frame.view.computer_hand[index].known))
+            frame.view.computer_hand[index].known), hidden)
     end
 
     local modal_open: bool = frame.interaction.modal ~= "none"
         or frame.interaction.revealing
-    self.input:present({
+    self.view:present_input({
         viewport_width = frame.viewport.width,
         viewport_height = frame.viewport.height,
         fan_bounds = fan_band(frame.viewport, hand_count),
@@ -609,116 +472,78 @@ function Board:begin_frame(frame: Frame): unit
         finished = frame.interaction.finished,
         play_pick_count = #frame.interaction.play_picks,
     })
-    if frame.interaction.modal ~= self.modal_kind then
-        self.modal_kind = frame.interaction.modal
-        if self.modal_kind == "help" then
-            self.modal_content = help_card.node()
-        elseif self.modal_kind == "history" then
-            self.modal_content = ledger.node(frame.view)
-        elseif self.modal_kind == "final" then
-            self.modal_content = verdict.node(frame.view, frame.run)
-        else
-            self.modal_content = nil
-        end
-    end
-    while #self.table_hidden > 0 do table.remove(self.table_hidden) end
+    self.view:present_modal(frame.interaction.modal, frame.view, frame.run)
+    self.view:begin_table()
     local table_focus: i32 = self:focused_table()
     for index = 0::i32, table_count - 1 do
         local hidden: bool = slot_hidden(
             frame.motion.anims, frame.motion.anim_clock, SLOT_MIDDLE, index)
-        table.insert(self.table_hidden, hidden)
         local selected: bool = frame.view.swap_open
             and is_picked(frame.interaction.swap_table_cards, index)
         local focused: bool = table_focus == index
             and (frame.view.swap_open or frame.interaction.casting)
         local power: spells.SpellKind? = nil
         if index == frame.spell.target then power = frame.spell.kind end
-        self.table_views[index]:present(
+        self.view:present_table(index,
             card.look(frame.view.middle[index], selected, focused, hidden, false, false),
-            power, frame.spell.clock, frame.ash, frame.spells.grave_dust)
+            power, frame.spell.clock, frame.ash, frame.spells.grave_dust, hidden)
     end
 end
 
 function Board:focus_hand(index: i32): bool
-    return self.input:focus_hand(index)
+    return self.view:focus_hand(index)
 end
 
 function Board:focus_table(index: i32): bool
-    return self.input:focus_table(index)
+    return self.view:focus_table(index)
 end
 
 function Board:focused_hand(): i32
-    return self.input:focused_hand()
+    return self.view:focused_hand()
 end
 
 function Board:focused_table(): i32
-    return self.input:focused_table()
+    return self.view:focused_table()
 end
 
 function Board:repair_table_focus(): bool
-    return self.input:repair_table_focus()
+    return self.view:repair_table_focus()
 end
 
 function Board:fan_focus(animating: bool): i32
-    return self.input:fan_focus(animating)
+    return self.view:fan_focus(animating)
 end
 
 function Board:apply_hand_order(order: {i32}): unit
-    self.input:apply_hand_order(order)
+    self.view:apply_hand_order(order)
 end
 
 function Board:pointer_move(x: f64, y: f64): i32
-    return self.input:pointer_move(x, y)
+    return self.view:pointer_move(x, y)
 end
 
 function Board:pointer_down(x: f64, y: f64, button: i32): i32
-    return self.input:pointer_down(x, y, button)
+    return self.view:pointer_down(x, y, button)
 end
 
 function Board:pointer_up(x: f64, y: f64, button: i32): BoardAction
-    return self.input:pointer_up(x, y, button)
+    return self.view:pointer_up(x, y, button)
 end
 
 function Board:pointer_leave(): unit
-    self.input:pointer_leave()
+    self.view:pointer_leave()
 end
 
 function Board:navigate(direction: "left" | "right" | "up" | "down"): bool
-    return self.input:navigate(direction)
+    return self.view:navigate(direction)
 end
 
 function Board:activate(): BoardAction
-    return self.input:activate()
+    return self.view:activate()
 end
 
 function Board:activate_modal(): BoardAction
-    return self.input:activate_modal()
-end
-
-function Board:prepare_surface(surface: entity.Surface): unit
-    local retained: ui.Surface? = self.surface
-    if retained == nil then
-        self.surface = {
-            graphics = surface.graphics,
-            effects = surface.effects,
-            card_back = surface.card_back,
-            suit_symbols = surface.suit_symbols,
-        }
-        return
-    end
-    local current: ui.Surface = retained::ui.Surface
-    current.graphics = surface.graphics
-    current.effects = surface.effects
-    current.card_back = surface.card_back
-    current.suit_symbols = surface.suit_symbols
-end
-
-function Board:paint(node: ui.Node, bounds: box.Rect): unit
-    local retained: ui.Surface? = self.surface
-    assert(retained ~= nil)
-    node:draw(
-        retained::ui.Surface,
-        bounds.x, bounds.y, bounds.width, bounds.height)
+    return self.view:activate_modal()
 end
 
 -- ---------------------------------------------------------------------------
@@ -1137,27 +962,23 @@ function draw_backdrop(surface: entity.Surface, viewport: layout.State): unit
 end
 
 function draw_hud(
-    board: Board, surface: entity.Surface, viewport: layout.State,
-    state: game.View, run: run_module.View
+    board: Board, surface: entity.Surface, viewport: layout.State
 ): unit
-    local band: entity.Node = board.hud_view.root
-    board:paint(board.hud_node, header_band(surface:metrics(), band, viewport))
+    board.view:paint_hud(header_band(
+        board.view:hud_height(surface:metrics()), viewport))
 end
 
 function draw_footer(
-    board: Board, surface: entity.Surface, viewport: layout.State,
-    state: game.View, run: run_module.View
+    board: Board, surface: entity.Surface, viewport: layout.State
 ): unit
-    local metrics: entity.Metrics = surface:metrics()
-    local strip: entity.Node = board.footer_view.root
-    local bounds: box.Rect = footer_band(metrics, strip, viewport)
-    board:paint(board.footer_node, bounds)
+    local height: f64 = board.view:footer_height(surface:metrics())
+    board.view:paint_footer(footer_band(height, viewport))
 end
 
 function draw_deck(
-    board: Board, surface: entity.Surface, viewport: layout.State, count: i32
+    board: Board, viewport: layout.State
 ): unit
-    board:paint(board.deck_node, deck_band(viewport))
+    board.view:paint_deck(deck_band(viewport))
 end
 
 -- How many of a pile's cards have actually arrived: the ledger's total minus
@@ -1178,10 +999,8 @@ function draw_pile(
     cards: {game.Card}, count: i32
 ): unit
     local slot: Point = slot_pos(viewport, SLOT_ASIDE, 0)
-    board.pile_view:present(cards, count)
-    board:paint(
-        board.pile_node,
-        entity.rect(slot.x, slot.y, card.width, card.height))
+    board.view:present_pile(cards, count)
+    board.view:paint_pile(entity.rect(slot.x, slot.y, card.width, card.height))
 end
 
 -- One slot of the middle row, powered or plain. A table_card at rest is face up for
@@ -1222,13 +1041,9 @@ function draw_table_card_band(
 ): unit
     local count: i32 = #frame.view.middle
     local band: box.Rect = table_card_band(frame.viewport, count)
-    board:paint(board.panel_node, band)
+    board.view:paint_panel(band)
     for index = 0::i32, count - 1 do
-        if not board.table_hidden[index] then
-            board:paint(
-                board.table_nodes[index],
-                row_slot(frame.viewport, count, index))
-        end
+        board.view:paint_table(index, row_slot(frame.viewport, count, index))
     end
 end
 
@@ -1244,8 +1059,8 @@ function draw_resolution_board(board: Board, surface: entity.Surface, frame: Fra
     -- trick's layout even though a boss battle's live hands have already
     -- shrunk underneath it.
     local hand_count: i32 = #trick.player_hand
-    draw_hud(board, surface, viewport, state, frame.run)
-    draw_deck(board, surface, viewport, state.deck_count)
+    draw_hud(board, surface, viewport)
+    draw_deck(board, viewport)
     local scoring: {bool} = trick_scoring(trick)
     -- Flight progress for the winner's two cards; a stalemate has no winner,
     -- so nothing takes off and both played pairs stay where they revealed.
@@ -1340,7 +1155,7 @@ function draw_resolution_board(board: Board, surface: entity.Surface, frame: Fra
     -- layer; once the hand is complete, they move into the foreground
     -- layer with the winning pair.
     local hand: box.Rect = table_card_band(viewport, FORMATION_SLOTS)
-    board:paint(board.panel_node, hand)
+    board.view:paint_panel(hand)
     if glow <= 0.0 then
         for i = 0::i32, 4::i32 do
             draw_table_card_at(
@@ -1397,7 +1212,7 @@ function draw_resolution_board(board: Board, surface: entity.Surface, frame: Fra
                 fan, i, fan_parts[i], hand_count)
         end
     end
-    draw_footer(board, surface, viewport, state, frame.run)
+    draw_footer(board, surface, viewport)
 
     -- Once complete, the entire winning hand becomes a foreground layer:
     -- it eases toward the viewer around its shared centre, rises slightly, and
@@ -1465,36 +1280,20 @@ function draw_computer_row(board: Board, surface: entity.Surface, frame: Frame):
     local pitch: f64 = card_row.pitch_in(
         band, #state.computer_hand, card_row.flat_pitch)
     for i = 0::i32, #state.computer_hand - 1 do
-        if not board.computer_hidden[i] then
-            board:paint(
-                board.computer_nodes[i],
-                card_row.slot_rect(#state.computer_hand, pitch, band, i))
-        end
+        board.view:paint_computer(
+            i, card_row.slot_rect(#state.computer_hand, pitch, band, i))
     end
 end
 
 -- The player's fan, with the binds and the cursor the screen is holding.
 function draw_player_fan(board: Board, surface: entity.Surface, frame: Frame): unit
-    board:paint(
-        board.player_node, fan_band(frame.viewport, #frame.view.player_hand))
+    board.view:paint_player(fan_band(frame.viewport, #frame.view.player_hand))
 end
 
 -- Draw the controls of the band and remember where they landed, in the order
 -- the band offers them: commit first, then pass.
-function draw_action(
-    board: Board, surface: entity.Surface,
-    text: string, active: bool, band: box.Rect
-): unit
-    board.action_items[0].text = text
-    board.action_items[0].active = active
-    board.action_view:present(board.action_items)
-    local retained: ui.Surface? = board.surface
-    assert(retained ~= nil)
-    local width: f64 = board.commit_node:measure(
-        (retained::ui.Surface).graphics).preferred_width
-    board:paint(board.commit_node, entity.rect(
-        band.x + (band.width - width) * 0.5,
-        band.y, width, capsule.height))
+function draw_action(board: Board, text: string, active: bool, band: box.Rect): unit
+    board.view:paint_action(text, active, band)
 end
 
 -- What the board is asking for, and the controls it is asking with.
@@ -1542,7 +1341,7 @@ function draw_action_band(board: Board, surface: entity.Surface, frame: Frame): 
             and #interaction.swap_hand == #interaction.swap_table_cards
             and #interaction.swap_hand <= state.player_points
             and (#interaction.swap_hand == 0 or #interaction.swap_hand >= minimum_swap)
-        draw_action(board, surface, "CONFIRM", balanced, band)
+        draw_action(board, "CONFIRM", balanced, band)
         return
     end
     if #interaction.play_picks == 2 then
@@ -1552,7 +1351,7 @@ function draw_action_band(board: Board, surface: entity.Surface, frame: Frame): 
         centered_line(
             surface, viewport, "HAND: " .. game.category_name(preview),
             viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE, PROMPT_INK)
-        draw_action(board, surface, "PLAY HAND", true, band)
+        draw_action(board, "PLAY HAND", true, band)
         return
     end
     centered_line(
@@ -1570,8 +1369,8 @@ function draw_playfield(board: Board, surface: entity.Surface, frame: Frame): un
         draw_resolution_board(board, surface, frame)
         return
     end
-    draw_hud(board, surface, viewport, state, frame.run)
-    draw_deck(board, surface, viewport, state.deck_count)
+    draw_hud(board, surface, viewport)
+    draw_deck(board, viewport)
     draw_pile(
         board, surface, viewport,
         frame.piles.discards,
@@ -1581,7 +1380,7 @@ function draw_playfield(board: Board, surface: entity.Surface, frame: Frame): un
 
     draw_action_band(board, surface, frame)
     draw_player_fan(board, surface, frame)
-    draw_footer(board, surface, viewport, state, frame.run)
+    draw_footer(board, surface, viewport)
     draw_anims(surface, anims, anim_clock, frame.sheet)
     draw_spell_launch(
         surface, viewport, frame.spell.kind, frame.spell.clock,
@@ -1605,25 +1404,17 @@ function draw_frame(board: Board, surface: entity.Surface, frame: Frame): unit
     if not frame.interaction.finished or frame.interaction.revealing then
         draw_playfield(board, surface, frame)
     else
-        draw_hud(board, surface, viewport, state, frame.run)
+        draw_hud(board, surface, viewport)
     end
     if modal_kind ~= "none" then
-        local maybe_content: entity.Node? = board.modal_content
-        if maybe_content ~= nil then
-            modal.show(
-                surface, board_rect(viewport), maybe_content::entity.Node)
-        end
+        board.view:paint_modal(surface, board_rect(viewport))
     end
 end
 
 function Board:draw(surface: entity.Surface, frame: Frame): unit
     self:begin_frame(frame)
-    self:prepare_surface(surface)
-    self.root:measure(surface.graphics)
-    self.root:arrange(
-        0.0, 0.0, frame.viewport.width, frame.viewport.height)
+    self.view:measure_arrange(surface, frame.viewport.width, frame.viewport.height)
     draw_frame(self, surface, frame)
-    self.input:arrange()
 end
 
 function draw_shader_error(surface: entity.Surface, viewport: layout.State, detail: string): unit

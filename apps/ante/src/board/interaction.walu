@@ -40,7 +40,7 @@ type Presentation = {
     pending: Action,
 }
 
-export type State = {
+export opaque type State = {
     presentation: Presentation,
     root: ui.Node,
     router: router_module.Router,
@@ -55,6 +55,40 @@ export type State = {
     modal_node: ui.Node,
     modal_target: router_module.Target,
 }
+
+function State:root_node(): ui.Node
+    return self.root
+end
+
+-- DOM-free layout seam for focused interaction tests without a WebGL canvas.
+function State:prepare_headless(frame: Frame): unit
+    self:present(frame)
+    self.root:measure(nil)
+    self.root:arrange(0.0, 0.0, frame.viewport_width, frame.viewport_height)
+    self:arrange()
+    self.commit_target:set_visible(false)
+end
+
+function State:hand_bounds(index: i32): box.Rect
+    return self.hand_nodes[index]:bounds()
+end
+
+function State:fan_parts(): {f64}
+    return self.presentation.fan_parts
+end
+
+function State:set_table_enabled(index: i32, enabled: bool): unit
+    self.table_targets[index]:set_enabled(enabled)
+end
+
+function State:set_hand_enabled(index: i32, enabled: bool): unit
+    self.hand_nodes[index]:set_enabled(enabled)
+end
+
+function State:hand_enabled(index: i32): bool
+    return self.hand_nodes[index]:is_enabled()
+end
+
 
 function empty_paint(surface: ui.Surface, bounds: box.Rect): unit end
 
