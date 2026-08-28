@@ -933,6 +933,7 @@ pub(super) fn check_function_collect(
             binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
+    super::bind_vararg(&mut vars, function.vararg.as_ref());
 
     let mut saw_return = false;
     let mut any_stmt_error = false;
@@ -995,6 +996,18 @@ fn bind_failed_stmt_names_as_unknown(stmt: &Stmt, vars: &mut HashMap<String, Bin
             }
         }
         _ => {}
+    }
+}
+
+/// A returned pack keeps the boxed runtime representation of `...` whatever
+/// the vararg annotation says, so a function's inferred return type widens
+/// `Variadic(T)` back to `Variadic(unknown)`. Callers re-narrow per use; the
+/// annotation still checks values at the vararg function's own call sites.
+fn widen_returned_pack(ty: Type) -> Type {
+    match ty {
+        Type::Variadic(_) => Type::Variadic(Box::new(Type::Unknown)),
+        Type::Multi(parts) => Type::Multi(parts.into_iter().map(widen_returned_pack).collect()),
+        other => other,
     }
 }
 
@@ -1369,25 +1382,24 @@ fn collect_return_types_with_scope(
             Stmt::Break | Stmt::Continue => {}
             Stmt::Return(expr) => {
                 seal_record_locals_in_expr(expr, &mut scope);
-                returns.push(infer_expr(
+                returns.push(widen_returned_pack(infer_expr(
                     expr,
                     &scope,
                     fn_signatures,
                     active_type_params,
                     None,
-                )?);
+                )?));
             }
             Stmt::ReturnMulti(values) => {
                 for value in values {
                     seal_record_locals_in_expr(value, &mut scope);
                 }
-                returns.push(Type::Multi(infer_expr_list(
-                    values,
-                    &scope,
-                    fn_signatures,
-                    active_type_params,
-                    None,
-                )?));
+                returns.push(Type::Multi(
+                    infer_expr_list(values, &scope, fn_signatures, active_type_params, None)?
+                        .into_iter()
+                        .map(widen_returned_pack)
+                        .collect(),
+                ));
             }
             Stmt::LetMulti { bindings, values } => {
                 let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
@@ -1940,7 +1952,7 @@ fn check_stmt_inner(
                             symbol_id: None,
                             type_params: function.type_params.clone(),
                             params: function.params.clone(),
-                            vararg: function.vararg,
+                            vararg: function.vararg.clone(),
                             return_type: function.return_type.clone(),
                             body: function.body.clone(),
                             file_path: function.file_path.clone(),

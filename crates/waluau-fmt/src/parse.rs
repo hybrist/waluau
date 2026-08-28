@@ -294,6 +294,9 @@ impl Parser {
             let mut p = Vec::new();
             if self.at(&TokenKind::TripleDot) {
                 self.bump(&mut p);
+                if self.eat(&TokenKind::Colon, &mut p) {
+                    p.push(self.parse_type()?);
+                }
             } else {
                 self.expect(&ident(), &mut p, "expected parameter name")?;
                 if self.eat(&TokenKind::Colon, &mut p) {

@@ -1,7 +1,7 @@
 {
   "name": "waluau-vscode",
-  "displayName": "Waluau Language Server (repo-local)",
-  "description": "Connects VS Code to the Waluau compiler's language server for .walu files",
+  "displayName": "Waluau Language Support (repo-local)",
+  "description": "Adds Waluau syntax highlighting and connects VS Code to the compiler's language server",
   "version": "0.1.0",
   "publisher": "waluau-dev",
   "private": true,
@@ -10,11 +10,34 @@
     "vscode": "^1.90.0"
   },
   "main": "./extension.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "activationEvents": [
     "workspaceContains:**/*.walu",
-    "onLanguage:lua"
+    "onLanguage:waluau"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "waluau",
+        "aliases": [
+          "Waluau",
+          "waluau"
+        ],
+        "extensions": [
+          ".walu"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "waluau",
+        "scopeName": "source.waluau",
+        "path": "./syntaxes/waluau.tmLanguage.json"
+      }
+    ],
     "configuration": {
       "title": "Waluau",
       "properties": {

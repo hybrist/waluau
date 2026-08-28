@@ -435,7 +435,7 @@ fn build_inner(
             .iter()
             .map(|param| param.ty.clone())
             .collect::<Vec<_>>();
-        if function.vararg {
+        if function.vararg.is_some() {
             param_types.push(Type::Variadic(Box::new(Type::Unknown)));
         }
         let sig = (param_types, return_type);
@@ -697,7 +697,7 @@ fn try_build_incremental(
             ))
         })?;
         let mut params = function.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>();
-        if function.vararg {
+        if function.vararg.is_some() {
             params.push(Type::Variadic(Box::new(Type::Unknown)));
         }
         let sig = (params, return_type);
@@ -1266,7 +1266,7 @@ fn erase_function_opaque_types(function: &AstFunction) -> AstFunction {
                 ty: erase_type_opaque_types(&param.ty),
             })
             .collect(),
-        vararg: function.vararg,
+        vararg: function.vararg.clone(),
         return_type: function
             .return_type
             .as_ref()
@@ -1522,7 +1522,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
                     ty: erase_type_opaque_types(&param.ty),
                 })
                 .collect(),
-            vararg: function.vararg,
+            vararg: function.vararg.clone(),
             return_type: function.return_type.as_ref().map(erase_type_opaque_types),
             body: function.body.iter().map(erase_stmt_opaque_types).collect(),
             file_path: function.file_path.clone(),
@@ -1708,7 +1708,7 @@ pub(crate) fn build_function(
                 .iter()
                 .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect::<Vec<_>>();
-            if function.vararg {
+            if function.vararg.is_some() {
                 params.push((
                     "...".to_string(),
                     Type::Variadic(Box::new(Type::Unknown)),
@@ -1775,7 +1775,7 @@ pub(crate) fn build_function(
         out.value_symbols.insert(value, symbol_id);
         type_env.insert(symbol_id, param.ty.clone());
     }
-    let vararg_value = if function.vararg {
+    let vararg_value = if function.vararg.is_some() {
         let value = out.next_value();
         block_mut(&mut out, entry)
             .instructions
@@ -1784,6 +1784,7 @@ pub(crate) fn build_function(
     } else {
         None
     };
+    let vararg_element = function.vararg.clone();
 
     let symbol_storage_types = type_env.clone();
     let mut builder = Builder {
@@ -1807,6 +1808,7 @@ pub(crate) fn build_function(
         current_span: None,
         tag_ids,
         vararg_value,
+        vararg_element,
         discriminants: HashMap::new(),
         symbol_storage_types,
     };
@@ -1889,6 +1891,11 @@ struct Builder<'a> {
     /// whole module so constructors and checks in different functions agree.
     tag_ids: &'a BTreeMap<String, i32>,
     vararg_value: Option<ValueId>,
+    /// The annotated element type of the enclosing function's `...` (from
+    /// `function f(...: T)`), when one was written. Static only: the pack
+    /// value itself always stays an `Array(unknown)` at runtime, and uses of
+    /// `...` unbox through expected-driven casts.
+    vararg_element: Option<Type>,
     /// For `local ok, v = pcall(...)`: maps the `ok` symbol to its payload
     /// symbol and the payload types on the success/failure paths, so branching
     /// on `ok` (or `assert(ok)`) narrows `v` and unboxes it from its anyref slot.
@@ -5855,7 +5862,15 @@ impl Builder<'_> {
                 let value = self
                     .vararg_value
                     .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
-                self.coerce_value(value, Type::Variadic(Box::new(Type::Unknown)), expected)?
+                match expected {
+                    // Pack context: hand the pack over unchanged. Any element
+                    // annotation is static-only, so the expectation's element
+                    // never rewrites the boxed runtime pack.
+                    Some(Type::Variadic(_)) => value,
+                    other => {
+                        self.coerce_value(value, Type::Variadic(Box::new(Type::Unknown)), other)?
+                    }
+                }
             }
             Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
@@ -7285,7 +7300,7 @@ impl Builder<'_> {
             symbol_id: function.symbol_id,
             type_params: function.type_params.clone(),
             params: function.params.clone(),
-            vararg: function.vararg,
+            vararg: function.vararg.clone(),
             return_type: Some(return_ty.clone()),
             body: function.body.clone(),
             file_path: function.file_path.clone(),
@@ -7347,6 +7362,7 @@ impl Builder<'_> {
             current_span: None,
             tag_ids: self.tag_ids,
             vararg_value: None,
+            vararg_element: None,
             discriminants: HashMap::new(),
             symbol_storage_types,
         };
@@ -7515,7 +7531,9 @@ impl Builder<'_> {
             Expr::Bool(..) => coerce_type(Type::Bool, expected),
             Expr::String(..) => coerce_type(Type::String, expected),
             Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
-            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(Type::Unknown))),
+            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(
+                self.vararg_element.clone().unwrap_or(Type::Unknown),
+            ))),
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
@@ -9380,6 +9398,7 @@ impl Builder<'_> {
             ))));
         };
 
+        let arg_is_pack = matches!(arg_ty, Type::Variadic(_));
         // Now lower the expression with the known array type
         let array = match self.lower_expr(&args[1], env, types, Some(arg_ty)) {
             Ok(value) => value,
@@ -9444,11 +9463,23 @@ impl Builder<'_> {
             (from_front, front_index),
             (from_back, back_index),
         ]));
+        // A variadic pack stores boxed elements whatever its static element
+        // annotation says, so the get runs at `unknown` and the result casts
+        // to the annotated element type.
+        let runtime_element = if arg_is_pack {
+            Type::Unknown
+        } else {
+            element_ty.clone()
+        };
         let value = self.emit(Instruction::ArrayGet {
             array,
             index,
-            element_ty: element_ty.clone(),
+            element_ty: runtime_element.clone(),
         });
+        let value = match self.coerce_value(value, runtime_element, Some(element_ty.clone())) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
         Some(self.coerce_value(value, element_ty, expected))
     }
 

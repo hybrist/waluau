@@ -5829,3 +5829,91 @@ fn json_rejects_function_values() {
             .contains("json.pack does not support values of type")
     );
 }
+
+#[test]
+fn checks_typed_vararg_call_arguments() {
+    let source = r#"
+        function sum(...: number): f64
+            return select('#', ...) + 0
+        end
+
+        function entry(): f64
+            return sum(1, "x")
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "cannot implicitly convert string to f64");
+}
+
+#[test]
+fn typed_vararg_gives_select_the_element_type() {
+    let source = r#"
+        function first(...: string): string
+            return select(1, ...)
+        end
+
+        function tail(...: number): f64
+            return select(-1, ...) * 2
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_typed_vararg_element_mismatch_in_body() {
+    let source = r#"
+        function first(...: number): string
+            return select(1, ...)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect_err("type check should fail");
+}
+
+#[test]
+fn rejects_mismatched_typed_vararg_forwarding() {
+    let source = r#"
+        function sum(...: number): f64
+            return 0
+        end
+
+        function join(...: string): f64
+            return sum(...)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "call expected f64..., got string...");
+}
+
+#[test]
+fn untyped_vararg_still_forwards_into_typed_vararg() {
+    let source = r#"
+        function sum(...: number): f64
+            return 0
+        end
+
+        function forward(...): f64
+            return sum(...)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn typed_vararg_returns_still_widen_to_unknown_packs() {
+    let source = r#"
+        function only(...: number)
+            return ...
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    assert_eq!(
+        typed.functions[0].return_type,
+        Some(Type::Variadic(Box::new(Type::Unknown)))
+    );
+}

@@ -225,6 +225,22 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
         // generally covariant; only identify two arrays when their opaque
         // alias identities are the same all the way down.
         Some(expected) if same_opaque_array_identity(&actual, &expected) => Ok(expected),
+        // Pack to pack: elements are boxed at runtime either way, so the
+        // packs unify whenever their element types coerce (an annotated
+        // `f64...` returns through a `unknown...` signature, and a forwarded
+        // `unknown...` re-narrows at a typed vararg boundary).
+        Some(Type::Variadic(expected_element)) if matches!(actual, Type::Variadic(_)) => {
+            let Type::Variadic(actual_element) = actual else {
+                unreachable!()
+            };
+            coerce_type(*actual_element.clone(), Some((*expected_element).clone()))
+                .map(|_| Type::Variadic(expected_element.clone()))
+                .map_err(|_| {
+                    Diagnostic::new(format!(
+                        "cannot implicitly convert {actual_element}... to {expected_element}..."
+                    ))
+                })
+        }
         // A variadic pack in a scalar context contributes its first value.
         Some(expected)
             if matches!(actual, Type::Variadic(_)) && !matches!(expected, Type::Variadic(_)) =>
