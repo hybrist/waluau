@@ -1,0 +1,30 @@
+-- Module-level locals stay visible when passed through a generic call:
+-- the argument's type is inferred inside another function body during
+-- monomorphization, where only params and function locals used to be known.
+
+type Box<T> = { value: T }
+
+function unwrap<T>(box: Box<T>): T
+    return box.value
+end
+
+local held: Box<i32> = { value = 7::i32 }
+
+function read(): i32
+    return unwrap(held)
+end
+
+assert(read() == 7)
+
+-- Same shape with an untyped module-level local: its type is inferred
+-- from the initializer before function bodies are rewritten.
+local plain = { value = 41::i32 }
+
+function read_plain(): i32
+    return unwrap(plain)
+end
+
+assert(read_plain() == 41)
+
+-- Direct top-level use still works alongside the in-function use.
+assert(unwrap(held) == 7)
