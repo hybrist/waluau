@@ -87,6 +87,31 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
     }
 }
 
+/// Scope key for the enclosing function's `...` pack. `...` is not a valid
+/// identifier, so the key can never collide with a source binding.
+const VARARG_BINDING: &str = "...";
+
+/// Publish (or clear) the enclosing function's `...` pack in a body scope.
+/// The binding carries `Variadic(element)` so `...` expressions surface the
+/// annotated element type; a non-vararg function clears any inherited
+/// binding so a nested body does not see its parent's pack type.
+fn bind_vararg(vars: &mut HashMap<String, Binding>, vararg: Option<&Type>) {
+    match vararg {
+        Some(element) => {
+            vars.insert(
+                VARARG_BINDING.to_string(),
+                binding_for(
+                    Type::Variadic(Box::new(element.clone())),
+                    Rebindability::Const,
+                ),
+            );
+        }
+        None => {
+            vars.remove(VARARG_BINDING);
+        }
+    }
+}
+
 fn module_type_display_name(name: &str) -> &str {
     let Some(rest) = name.strip_prefix("__waluau_m") else {
         return name;
@@ -576,7 +601,7 @@ fn top_level_functions_for_check(program: &Program, resolved_body: &[Stmt]) -> V
             symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),
-            vararg: false,
+            vararg: None,
             return_type: Some(Type::Unit),
             body: resolved_body[start..end].to_vec(),
             file_path: file_path.clone(),
@@ -605,7 +630,7 @@ fn signatures_visible_from_file(
                         .iter()
                         .map(|ty| type_visible_from_file(ty, file_path, opaque))
                         .collect(),
-                    vararg: *vararg,
+                    vararg: vararg.clone(),
                     return_type: type_visible_from_file(return_type, file_path, opaque),
                 },
                 FnSignature::Generic(scheme) => FnSignature::Generic(GenericScheme {
@@ -768,6 +793,7 @@ fn annotate_inferred_expr_locals(
                     binding_for(param.ty.clone(), Rebindability::Const),
                 );
             }
+            bind_vararg(&mut scope, function.vararg.as_ref());
             annotate_inferred_stmt_locals(
                 &mut function.body,
                 &mut scope,
@@ -2670,7 +2696,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                     symbol_id: None,
                     type_params: function.type_params.clone(),
                     params,
-                    vararg: function.vararg,
+                    vararg: function.vararg.clone(),
                     return_type: function.return_type.clone(),
                     body: function.body.clone(),
                     file_path: function.file_path.clone(),
@@ -2698,7 +2724,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                             implicit_self: Some(table.clone()),
                             type_params: function.type_params.clone(),
                             params,
-                            vararg: function.vararg,
+                            vararg: function.vararg.clone(),
                             return_type: function.return_type.clone(),
                             body: function.body.clone(),
                             file_path: function.file_path.clone(),
@@ -2922,7 +2948,7 @@ fn signature_from_function_expr(function: &FunctionExpr) -> Option<FnSignature> 
     Some(if function.type_params.is_empty() {
         FnSignature::Mono {
             params,
-            vararg: function.vararg,
+            vararg: function.vararg.clone(),
             return_type,
         }
     } else {
@@ -3260,6 +3286,7 @@ fn annotate_function_resolved_members(
             binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
+    bind_vararg(&mut vars, function.vararg.as_ref());
     annotate_stmts_resolved_members(
         &mut function.body,
         &mut vars,
@@ -3300,6 +3327,7 @@ fn annotate_function_expr_resolved_members(
             binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
+    bind_vararg(&mut vars, function.vararg.as_ref());
     annotate_stmts_resolved_members(
         &mut function.body,
         &mut vars,
@@ -4310,7 +4338,7 @@ fn type_check_and_infer_collect_inner(
             symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),
-            vararg: false,
+            vararg: None,
             return_type: Some(Type::Numeric(NumericType::I32)),
             body: {
                 let mut body = typed.top_level.clone();
@@ -4385,7 +4413,7 @@ fn type_check_and_infer_collect_inner(
                     .iter()
                     .map(|param| param.ty.clone())
                     .collect(),
-                vararg: false,
+                vararg: None,
                 return_type: declared.return_type.clone(),
             },
         );
@@ -4421,7 +4449,7 @@ fn type_check_and_infer_collect_inner(
                             .iter()
                             .map(|param| param.ty.clone())
                             .collect(),
-                        vararg: function.vararg,
+                        vararg: function.vararg.clone(),
                         return_type: ret.clone(),
                     },
                 );
@@ -4488,7 +4516,7 @@ fn type_check_and_infer_collect_inner(
                 &module_opaque,
             );
             let function_name = function.name.to_string();
-            let function_vararg = function.vararg;
+            let function_vararg = function.vararg.clone();
             let function_file_path = function.file_path.clone();
             let function_params: Vec<Type> = function
                 .params
@@ -4508,7 +4536,7 @@ fn type_check_and_infer_collect_inner(
                         function_name,
                         FnSignature::Mono {
                             params: function_params,
-                            vararg: function_vararg,
+                            vararg: function_vararg.clone(),
                             return_type: ret,
                         },
                     );
@@ -4523,7 +4551,7 @@ fn type_check_and_infer_collect_inner(
                         function_name,
                         FnSignature::Mono {
                             params: function_params,
-                            vararg: function_vararg,
+                            vararg: function_vararg.clone(),
                             return_type: Type::Unknown,
                         },
                     );
@@ -4767,6 +4795,7 @@ fn type_check_and_infer_collect_inner(
                     binding_for(param.ty.clone(), Rebindability::Const),
                 )
             }));
+            bind_vararg(&mut vars, function.vararg.as_ref());
             let active = active_type_param_set(&function.type_params);
             annotate_inferred_stmt_locals(&mut function.body, &mut vars, &fn_signatures, &active)
                 .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))
@@ -4797,6 +4826,7 @@ fn type_check_and_infer_collect_inner(
                                     binding_for(param.ty.clone(), Rebindability::Const),
                                 )
                             }));
+                            bind_vararg(&mut vars, function.vararg.as_ref());
                             let active = active_type_param_set(&function.type_params);
                             annotate_inferred_stmt_locals(
                                 &mut function.body,

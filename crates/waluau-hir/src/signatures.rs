@@ -42,7 +42,9 @@ impl OverloadVariant {
 pub(super) enum FnSignature {
     Mono {
         params: Vec<Type>,
-        vararg: bool,
+        /// `Some(element)` when the function takes `...`; the element type of
+        /// the pack (`Type::Unknown` for an unannotated `...`).
+        vararg: Option<Type>,
         return_type: Type,
     },
     Generic(GenericScheme),
@@ -646,16 +648,17 @@ pub(super) fn infer_top_level_function_return_type(
             binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
+    super::bind_vararg(&mut vars, function.vararg.as_ref());
 
     let mut local_signatures = fn_signatures.clone();
     if let Some(function_name) = function.name.simple_name() {
         if unresolved_names.iter().any(|name| name == function_name)
             && function_calls(function, function_name)
-            && !function.vararg
+            && function.vararg.is_none()
         {
             return Ok(None);
         }
-        if unresolved_names.iter().any(|name| name == function_name) && function.vararg {
+        if unresolved_names.iter().any(|name| name == function_name) && function.vararg.is_some() {
             local_signatures.insert(
                 function_name.to_string(),
                 FnSignature::Mono {
@@ -664,7 +667,7 @@ pub(super) fn infer_top_level_function_return_type(
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    vararg: function.vararg,
+                    vararg: function.vararg.clone(),
                     return_type: Type::String,
                 },
             );
@@ -719,6 +722,7 @@ pub(super) fn infer_function_expr_return_type(
             binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
+    super::bind_vararg(&mut local_vars, function.vararg.as_ref());
     if let Some(function_name) = &function.name {
         let function_ty = Type::Function {
             params: function

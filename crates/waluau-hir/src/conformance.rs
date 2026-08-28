@@ -186,7 +186,7 @@ fn check_conformance(
             match signature {
                 FnSignature::Mono {
                     params,
-                    vararg: false,
+                    vararg: None,
                     return_type,
                 } => {
                     let actual = Type::Function {
@@ -580,7 +580,7 @@ fn conformance_wrapper(
                             ty: ty.clone(),
                         })
                         .collect(),
-                    vararg: false,
+                    vararg: None,
                     return_type: Some((**return_type).clone()),
                     body,
                     file_path: decl.file_path.clone(),
@@ -612,7 +612,7 @@ fn conformance_wrapper(
                 type_args: Vec::new(),
             },
         }],
-        vararg: false,
+        vararg: None,
         return_type: Some(Type::Named {
             name: interface_name.to_string(),
             type_args: Vec::new(),
@@ -737,7 +737,7 @@ fn conformance_check_fn(decl: &TypeDeclaration, interface_name: &str, brand: i32
                 type_args: Vec::new(),
             },
         }],
-        vararg: false,
+        vararg: None,
         return_type: Some(Type::Nullable(Box::new(target_ty))),
         body,
         file_path: decl.file_path.clone(),
@@ -822,7 +822,7 @@ fn conformance_cast_fn(decl: &TypeDeclaration, interface_name: &str) -> Function
                 type_args: Vec::new(),
             },
         }],
-        vararg: false,
+        vararg: None,
         return_type: Some(target_ty),
         body,
         file_path: decl.file_path.clone(),
@@ -870,7 +870,7 @@ pub(crate) fn desugar_conformance_coercions(
     let fallback_params: HashMap<String, Vec<Type>> = program
         .functions
         .iter()
-        .filter(|function| function.type_params.is_empty() && !function.vararg)
+        .filter(|function| function.type_params.is_empty() && function.vararg.is_none())
         .map(|function| {
             (
                 function.name.to_string(),
@@ -898,6 +898,7 @@ pub(crate) fn desugar_conformance_coercions(
                 binding_for(param.ty.clone(), Rebindability::Rebindable),
             );
         }
+        crate::bind_vararg(&mut vars, function.vararg.as_ref());
         let active = active_type_param_set(&function.type_params);
         let expected_return = function.return_type.clone();
         rewriter.rewrite_stmts(
@@ -1058,7 +1059,7 @@ impl CoercionRewriter<'_> {
         match self.fn_signatures.get(&name) {
             Some(FnSignature::Mono {
                 params,
-                vararg: false,
+                vararg: None,
                 ..
             }) => Some(params.clone()),
             Some(_) => None,
@@ -1517,6 +1518,7 @@ impl CoercionRewriter<'_> {
                         binding_for(param.ty.clone(), Rebindability::Rebindable),
                     );
                 }
+                crate::bind_vararg(&mut inner_vars, function.vararg.as_ref());
                 let mut inner_active = active.clone();
                 inner_active.extend(active_type_param_set(&function.type_params));
                 // An unannotated lambda adopts the return type of a

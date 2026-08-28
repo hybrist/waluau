@@ -587,7 +587,13 @@ fn infer_expr_inner(
             coerce_type(Type::String, expected)
         }
         Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
-        Expr::Vararg(..) => coerce_type(Type::Variadic(Box::new(Type::Unknown)), expected),
+        Expr::Vararg(..) => {
+            let pack = vars
+                .get(super::VARARG_BINDING)
+                .map(|binding| binding.ty.clone())
+                .unwrap_or_else(|| Type::Variadic(Box::new(Type::Unknown)));
+            coerce_type(pack, expected)
+        }
         Expr::Require(path, _) => Err(Diagnostic::new(format!(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
@@ -618,11 +624,11 @@ fn infer_expr_inner(
             }) = fn_signatures.get(name)
             {
                 Type::Function {
-                    params: if *vararg {
+                    params: if let Some(vararg) = vararg {
                         params
                             .iter()
                             .cloned()
-                            .chain(std::iter::once(Type::Array(Box::new(Type::Unknown))))
+                            .chain(std::iter::once(Type::Array(Box::new(vararg.clone()))))
                             .collect()
                     } else {
                         params.clone()
@@ -1033,7 +1039,7 @@ fn infer_expr_inner(
             if let Expr::Name(name, _, _) = callee.as_ref() {
                 if let Some(FnSignature::Mono {
                     params,
-                    vararg: true,
+                    vararg: Some(vararg),
                     return_type,
                 }) = fn_signatures.get(name)
                 {
@@ -1088,22 +1094,44 @@ fn infer_expr_inner(
                         }
                     }
                     for arg in explicit.iter().skip(params.len()) {
-                        let _ = infer_expr(
+                        let actual = infer_expr(
                             arg,
                             vars,
                             fn_signatures,
                             active_type_params,
-                            Some(Type::Unknown),
+                            Some(vararg.clone()),
                         )?;
+                        if coerce_type(actual.clone(), Some(vararg.clone())).is_err() {
+                            return Err(Diagnostic::new(format!(
+                                "call expected {vararg}, got {actual}"
+                            )));
+                        }
+                    }
+                    if let Some(Type::Variadic(element)) = &trailing_ty {
+                        let actual = element.as_ref().clone();
+                        if coerce_type(actual.clone(), Some(vararg.clone())).is_err() {
+                            return Err(Diagnostic::new(format!(
+                                "call expected {vararg}..., got {actual}..."
+                            )));
+                        }
                     }
                     if let Some(Type::Multi(parts)) = trailing_ty {
+                        if let Some(Type::Variadic(element)) = parts.last() {
+                            let actual = element.as_ref().clone();
+                            if coerce_type(actual.clone(), Some(vararg.clone())).is_err() {
+                                return Err(Diagnostic::new(format!(
+                                    "call expected {vararg}..., got {actual}..."
+                                )));
+                            }
+                        }
                         for (offset, actual) in parts
                             .into_iter()
                             .take_while(|part| !matches!(part, Type::Variadic(_)))
                             .enumerate()
                         {
                             let index = explicit.len() + offset;
-                            let expected_arg = params.get(index).cloned().unwrap_or(Type::Unknown);
+                            let expected_arg =
+                                params.get(index).cloned().unwrap_or_else(|| vararg.clone());
                             coerce_type(actual.clone(), Some(expected_arg.clone())).map_err(
                                 |_| {
                                     Diagnostic::new(format!(
@@ -1184,7 +1212,7 @@ fn infer_expr_inner(
                             }
                             Some(FnSignature::Mono {
                                 params,
-                                vararg: false,
+                                vararg: None,
                                 return_type,
                             }) => {
                                 if !call_arity_matches(params, args.len()) {
@@ -2426,6 +2454,7 @@ fn infer_function_expr(
             super::binding_for(param.ty.clone(), waluau_ast::Rebindability::Rebindable),
         );
     }
+    super::bind_vararg(&mut local_scope, function.vararg.as_ref());
     if let Some(name) = &function.name {
         local_scope.insert(
             name.clone(),
