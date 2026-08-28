@@ -19,19 +19,30 @@ test('casts the chosen spell at a targeted ward for mana', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect.poll(() => frameSignature(canvas)).toBe(baseline);
 
-  // Aiming at the middle ward and confirming burns it. Once the burn finishes,
-  // the replacement visibly moves off the deck before the discard pile, deck
-  // count, ward, and spent mana settle to a new still frame.
+  // Aiming at the middle ward and confirming burns it. The burn-and-replace
+  // choreography visibly changes the frame, then the discard pile, deck
+  // count, ward, and spent mana settle to a new still frame. Motion and
+  // settling are polled rather than sampled at fixed instants: under CI's
+  // software rasterizer the frame rate is too low for two captures 100ms
+  // apart to be guaranteed to differ while a card is in flight.
   await page.keyboard.press('1');
   await page.keyboard.press('ArrowRight');
+  const midFlight = await frameSignature(canvas);
   await page.keyboard.press('Enter');
-  await page.waitForTimeout(2_300);
-  const drawing = await frameSignature(canvas);
-  await page.waitForTimeout(100);
-  expect(await frameSignature(canvas)).not.toBe(drawing);
-  await page.waitForTimeout(400);
-  const resolved = await frameSignature(canvas);
-  expect(resolved).not.toBe(baseline);
+  await expect.poll(() => frameSignature(canvas), { timeout: 10_000 }).not.toBe(midFlight);
+  let resolved = 0;
+  await expect
+    .poll(
+      async () => {
+        const before = await frameSignature(canvas);
+        await page.waitForTimeout(400);
+        const after = await frameSignature(canvas);
+        resolved = after;
+        return before === after && after !== baseline;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
   await page.waitForTimeout(300);
   expect(await frameSignature(canvas)).toBe(resolved);
   expect(pageErrors).toEqual([]);
