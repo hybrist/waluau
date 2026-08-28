@@ -8,6 +8,8 @@
 /target/
 node_modules/
 dist/
+!.vscode/extensions/waluau/dist/
+!.vscode/extensions/waluau/dist/extension.js
 .pnpm-debug.log
 .vercel
 apps/playground/public/*.wasm

@@ -12,10 +12,16 @@ manual build step is needed.
 
 ## Install
 
-1. `pnpm install` from the repo root (fetches `vscode-languageclient`).
+1. `pnpm install` from the repo root.
 2. Open the Extensions view — this extension appears under **Workspace
    Extensions** (VS Code >= 1.89 discovers unpacked extensions in
    `.vscode/extensions/`). Click **Install**, then reload when prompted.
+
+The extension runs the committed `dist/extension.js` bundle, so a checkout is
+ready to install without a separate build. Bundling keeps the language client
+inside the extension directory, which lets VS Code associate formatting and
+other language providers with `waluau-dev.waluau-vscode` even when pnpm stores
+the source dependency outside this directory.
 
 Opening any `.walu` file selects Waluau language mode and activates the client.
 Diagnostics appear as squiggles and in the Problems panel; server logs are in
@@ -26,5 +32,10 @@ To use a specific server binary instead of the launcher script, set
 
 ## Develop
 
+After changing `extension.js` or its dependencies, run `pnpm build` in this
+directory and commit the regenerated `dist/extension.js`. `pnpm test` checks
+that the committed bundle is current and that `vscode-languageclient` has no
+runtime import escaping the extension directory.
+
 Open this folder in VS Code and press F5 ("Run Extension") to launch an
-Extension Development Host with the client loaded.
+Extension Development Host with the bundled client loaded.
