@@ -179,7 +179,7 @@ end
 function draw_arcane_field(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
-    local center_y: f64 = y + HEIGHT * 0.54
+    local center_y: f64 = y + HEIGHT * 0.5
     -- Uneven washes, fibers, and rubbed patches keep the dark parchment from
     -- reading as a mathematically flat UI tile.
     graphics:set_color("#6f5b710d")
@@ -195,7 +195,7 @@ function draw_arcane_field(surface: entity.Surface, suit: i32, x: f64, y: f64): 
     graphics:line(x + 29.0, y + 17.0, x + 25.0, y + 115.0)
     graphics:set_color(ink.fade(ink.color_ink(suit), 0.12))
     graphics:set_line_width(0.75)
-    graphics:line(center_x, y + 26.0, center_x, y + HEIGHT - 18.0)
+    graphics:line(center_x, y + 22.0, center_x, y + HEIGHT - 22.0)
     -- Interior compass rays are ornament, never a perimeter outline.
     graphics:line(center_x - 31.0, center_y, center_x - 27.0, center_y)
     graphics:line(center_x + 27.0, center_y, center_x + 31.0, center_y)
@@ -226,7 +226,7 @@ function draw_high_arcana(
 ): unit
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
-    local center_y: f64 = y + HEIGHT * 0.54
+    local center_y: f64 = y + HEIGHT * 0.5
     local school: string = ink.fade(ink.color_ink(suit), 0.72)
     graphics:set_color(ink.fade(ink.color_ink(suit), 0.13))
     graphics:fill_circle(center_x, center_y, 31.0)
@@ -317,14 +317,18 @@ end
 
 -- The card stock itself: a shader that presses pulp mottling, fibers, edge
 -- wear, and a worn printed frame rule into the face, cut to the same rounded
--- silhouette as every field shader. Binding can fail while sources are still
--- loading, in which case the caller keeps the flat fill.
-function use_paper_field(surface: entity.Surface, aspect: f64): bool
+-- silhouette as every field shader. At press 0 it is the opaque board; at
+-- press 1 it is a sparse translucent pass of the same board, drawn over the
+-- printed content so the grain breaks through the ink. Binding can fail
+-- while sources are still loading, in which case the caller keeps the flat
+-- fill and the print stays clean.
+function use_paper_field(surface: entity.Surface, aspect: f64, press: f64): bool
     local maybe_shader: graphics_module.Shader? = surface.effects.card_paper.shader
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
     local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(shader, {
         graphics_module.float_parameter("u_aspect", aspect),
+        graphics_module.float_parameter("u_press", press),
     })
     return binding.ok
 end
@@ -388,7 +392,7 @@ function draw_face(surface: entity.Surface, value: Look, x: f64, y: f64): unit
         graphics:set_color("#211d24")
         graphics:fill_rectangle(x, y, WIDTH, HEIGHT)
         ink.stop_effect(graphics)
-    elseif use_paper_field(surface, WIDTH / HEIGHT) then
+    elseif use_paper_field(surface, WIDTH / HEIGHT, 0.0) then
         -- The resting face is card stock rather than a flat tile: the paper
         -- shader renders pressed board over the same quad-and-silhouette seam
         -- the animated fields use.
@@ -402,19 +406,22 @@ function draw_face(surface: entity.Surface, value: Look, x: f64, y: f64): unit
 
     -- Familiar rank labels preserve the deck's mechanics and instant reading;
     -- the artwork, surface, and court figures carry the tarot influence. The
-    -- small upper-left reading survives the hand-fan overlap.
+    -- small upper-left reading survives the hand-fan overlap, and the lower
+    -- reading is its exact half-turn mirror, as on a printed card — the paper
+    -- shader's symmetric frame makes any drift between the two corners read
+    -- as a misprint.
     local rank_label: string = game.rank_name(card.rank)
     ink.text(graphics, rank_label, x + 7.0, y + 17.0, 10.0, "#eee7d5")
     graphics:push()
-    graphics:translate(x + WIDTH - 7.0, y + HEIGHT - 11.0)
+    graphics:translate(x + WIDTH - 7.0, y + HEIGHT - 17.0)
     graphics:rotate(math.pi)
-    ink.text(graphics, rank_label, 0.0, 0.0, 8.0, "#bdb4a1")
+    ink.text(graphics, rank_label, 0.0, 0.0, 10.0, "#bdb4a1")
     graphics:pop()
 
     if card.rank <= 10 then
         local marks: {Mark} = rank_marks(card.rank)
         local center_x: f64 = x + WIDTH * 0.5
-        local center_y: f64 = y + HEIGHT * 0.54
+        local center_y: f64 = y + HEIGHT * 0.5
         for mark in marks do
             draw_school_mark(
                 surface, card.suit,
@@ -423,6 +430,17 @@ function draw_face(surface: entity.Surface, value: Look, x: f64, y: f64): unit
     else
         draw_high_arcana(surface, card.rank, card.suit, x, y)
     end
+
+    -- The press pass: the same paper drawn thinly back over everything just
+    -- printed, so pips, labels, and court plates carry the sheet's grain
+    -- instead of floating above it. Status marks stay on top — they are the
+    -- table talking about the card, not part of its printing.
+    if use_paper_field(surface, WIDTH / HEIGHT, 1.0) then
+        graphics:set_color("#ffffff")
+        graphics:fill_rectangle(x, y, WIDTH, HEIGHT)
+        ink.stop_effect(graphics)
+    end
+
     if value.selected then
         ink.text_centered(
             graphics, "BOUND", x + WIDTH * 0.5, y + 119.0, 8, SELECTION_HIGHLIGHT)

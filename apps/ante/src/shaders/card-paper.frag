@@ -4,6 +4,10 @@ varying vec2 v_uv;
 varying float v_textured;
 uniform sampler2D u_texture;
 uniform float u_aspect;
+// 0: opaque card stock. 1: the press pass — the same board, emitted as a
+// sparse translucent layer over whatever was printed, so ink breaks up on
+// the high tooth and wears thin toward the handled edges.
+uniform float u_press;
 
 float rounded_card_distance() {
     float radius = 0.0625;
@@ -79,7 +83,21 @@ void main() {
     vec3 rule_ink = vec3(0.760, 0.700, 0.570);
     board = mix(board, rule_ink, (outer_rule * 0.34 + inner_rule * 0.16) * worn);
 
-    vec4 output_color = vec4(board, v_color.a);
+    // The press pass shows the board through the ink instead of the board
+    // itself: mostly nothing, with the highest grain poking through and the
+    // worn rim letting more paper back in. Both passes derive from the same
+    // fields, so a break in the ink always lands on a visible ridge.
+    float ridge = (tooth + 0.5) * 0.55 + value_noise(p * 180.0 + vec2(8.7, 3.9)) * 0.45;
+    float break_through = smoothstep(0.60, 0.97, ridge) * 0.42
+        + max(fiber, 0.0) * 0.16
+        + 0.05;
+    break_through *= 1.0 + rim * 0.9;
+    float press_alpha = min(break_through, 0.8) * v_color.a;
+
+    vec4 output_color = mix(
+        vec4(board, v_color.a),
+        vec4(board, press_alpha),
+        u_press);
     if (v_textured > 0.5) output_color *= texture2D(u_texture, v_uv);
     gl_FragColor = output_color;
 }
