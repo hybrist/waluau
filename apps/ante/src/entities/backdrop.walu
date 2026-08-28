@@ -4,14 +4,14 @@
 -- gets more of them rather than a stretched few.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 
 const CLEAR: string = "#09090b"
 const FIELD: string = "#111114"
 const RULE: string = "#1e1e24"
 const RULE_PITCH: f64 = 48.0
 
-function draw_at(surface: entity.Surface, bounds: box.Rect): unit
+function draw_at(surface: ui.Surface, bounds: box.Rect): unit
     local graphics = surface.graphics
     graphics:clear(CLEAR)
     graphics:set_color(FIELD)
@@ -27,10 +27,10 @@ function draw_at(surface: entity.Surface, bounds: box.Rect): unit
     end
 end
 
-function node(): entity.Node
-    return entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return box.Intrinsic.fixed(0.0, 0.0)
+function node(): ui.Node
+    return ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            box.set_fixed(into, 0.0, 0.0)
         end,
         draw_at)
 end

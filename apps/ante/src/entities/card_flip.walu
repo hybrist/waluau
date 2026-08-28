@@ -3,7 +3,7 @@
 -- whole retained board composition.
 local game = require("../game")
 local easing = require("../easing")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local card = require("./card")
 
 const FLIP_SECONDS: f64 = 0.55
@@ -13,7 +13,7 @@ const FLIP_SECONDS: f64 = 0.55
 -- viewer. Everything inherits the transform stack, so the regular card
 -- presenter draws both halves of the flip.
 function draw(
-    surface: entity.Surface, value: game.Card, x: f64, y: f64,
+    surface: ui.Surface, value: game.Card, x: f64, y: f64,
     clock: f64, delay: f64, colored: bool
 ): unit
     local graphics = surface.graphics

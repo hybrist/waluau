@@ -3,22 +3,23 @@
 -- Keeping that seam independent lets diagnostics and stories load without the
 -- retained duel board.
 local layout = require("../layout")
-local entity = require("../entities/adapter")
+local box = require("../ui/layout")
+local ui = require("../ui/node")
 local backdrop = require("../entities/backdrop")
 local ink = require("../ink")
 
-function draw_backdrop(surface: entity.Surface, viewport: layout.State): unit
-    backdrop.draw_at(surface, entity.rect(0.0, 0.0, viewport.width, viewport.height))
+function draw_backdrop(surface: ui.Surface, viewport: layout.State): unit
+    backdrop.draw_at(surface, box.rect(0.0, 0.0, viewport.width, viewport.height))
 end
 
 function centered_line(
-    surface: entity.Surface, viewport: layout.State,
+    surface: ui.Surface, viewport: layout.State,
     text: string, baseline: f64, size: f64, color: string
 ): unit
     ink.text_centered(surface.graphics, text, viewport.center_x, baseline, size, color)
 end
 
-function shader(surface: entity.Surface, viewport: layout.State, detail: string): unit
+function shader(surface: ui.Surface, viewport: layout.State, detail: string): unit
     draw_backdrop(surface, viewport)
     local graphics = surface.graphics
     local top: f64 = viewport.center_y - 130.0
@@ -31,7 +32,7 @@ function shader(surface: entity.Surface, viewport: layout.State, detail: string)
 end
 
 function audio(
-    surface: entity.Surface, viewport: layout.State,
+    surface: ui.Surface, viewport: layout.State,
     path: string, code: string, detail: string
 ): unit
     draw_backdrop(surface, viewport)

@@ -4,7 +4,7 @@
 -- legend teaches the language the board actually speaks.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local ink = require("../ink")
 local card = require("./card")
 
@@ -19,13 +19,13 @@ const NAME_INK: string = "#b5b5bd"
 local NAMES: {string} = { "RED", "BLUE", "BLACK", "GREEN" }
 
 type TilePresentation = { suit: i32 }
-export type Stateful = { presentation: TilePresentation, root: entity.Node }
+export type Stateful = { presentation: TilePresentation, root: ui.Node }
 
 function Stateful.new(suit: i32): Stateful
     local presentation: TilePresentation = { suit = suit }
-    local root: entity.Node = entity.Node.sized(
+    local root: ui.Node = ui.Node.sized(
         WIDTH, HEIGHT,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             local suit: i32 = presentation.suit
             local graphics = surface.graphics
             local center: f64 = bounds.x + bounds.width * 0.5
@@ -49,7 +49,7 @@ function Stateful:present(suit: i32): unit
     self.presentation.suit = suit
 end
 
-function node(suit: i32): entity.Node
+function node(suit: i32): ui.Node
     return Stateful.new(suit).root
 end
 

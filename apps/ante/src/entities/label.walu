@@ -1,4 +1,4 @@
--- A line of type as an entity. It measures itself against the font that is
+-- A line of type as an ui. It measures itself against the font that is
 -- actually loaded — the packaged display face once that has arrived, the
 -- built-in bitmap font until then — so a row of labels reflows when the real
 -- face lands instead of holding a gap sized for a guess.
@@ -9,15 +9,15 @@
 -- lines up the way reading it says it should.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local ink = require("../ink")
 
 const ALIGN_LEFT: i32 = 0
 const ALIGN_CENTER: i32 = 1
 const ALIGN_RIGHT: i32 = 2
 
-function measure(metrics: entity.Metrics, value: string, size: f64): box.Intrinsic
-    local width: f64 = metrics:text_width(value, size)
+function measure(graphics: ui.Graphics?, value: string, size: f64): box.Intrinsic
+    local width: f64 = ui.text_width(graphics, value, size)
     return {
         min_width = width,
         preferred_width = width,
@@ -39,7 +39,7 @@ end
 type LabelPresentation = {
     value: string, size: f64, color: string, align: i32, filling: bool,
 }
-export type Stateful = { presentation: LabelPresentation, root: entity.Node }
+export type Stateful = { presentation: LabelPresentation, root: ui.Node }
 
 function Stateful.new(
     value: string, size: f64, color: string, align: i32, is_filling: bool
@@ -47,15 +47,21 @@ function Stateful.new(
     local presentation: LabelPresentation = {
         value = value, size = size, color = color, align = align, filling = is_filling,
     }
-    local root: entity.Node = entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            local measured: box.Intrinsic = measure(
-                metrics, presentation.value, presentation.size)
-            if presentation.filling then measured.max_width = box.unbounded end
-            return measured
+    local root: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            local width: f64 = ui.text_width(graphics,
+                presentation.value, presentation.size)
+            into.min_width = width
+            into.preferred_width = width
+            into.max_width = width
+            if presentation.filling then into.max_width = box.unbounded end
+            into.min_height = presentation.size
+            into.preferred_height = presentation.size
+            into.max_height = presentation.size
+            into.baseline = presentation.size
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
-            local width: f64 = surface:metrics():text_width(
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            local width: f64 = ui.text_width(surface.graphics,
                 presentation.value, presentation.size)
             ink.text(
                 surface.graphics, presentation.value,
@@ -72,30 +78,30 @@ function Stateful:present(value: string, size: f64, color: string, align: i32): 
     self.presentation.align = align
 end
 
-function node(value: string, size: f64, color: string, align: i32): entity.Node
+function node(value: string, size: f64, color: string, align: i32): ui.Node
     return Stateful.new(value, size, color, align, false).root
 end
 
 -- A line that takes whatever width the flow around it stretches it to, and
 -- aligns its type inside that. A centred caption needs a box to be centred in;
 -- this is how it gets one without a caller measuring the column for it.
-function filling(value: string, size: f64, color: string, align: i32): entity.Node
+function filling(value: string, size: f64, color: string, align: i32): ui.Node
     return Stateful.new(value, size, color, align, true).root
 end
 
-function left(value: string, size: f64, color: string): entity.Node
+function left(value: string, size: f64, color: string): ui.Node
     return node(value, size, color, ALIGN_LEFT)
 end
 
-function centered(value: string, size: f64, color: string): entity.Node
+function centered(value: string, size: f64, color: string): ui.Node
     return node(value, size, color, ALIGN_CENTER)
 end
 
-function right(value: string, size: f64, color: string): entity.Node
+function right(value: string, size: f64, color: string): ui.Node
     return node(value, size, color, ALIGN_RIGHT)
 end
 
-function middle(value: string, size: f64, color: string): entity.Node
+function middle(value: string, size: f64, color: string): ui.Node
     return filling(value, size, color, ALIGN_CENTER)
 end
 

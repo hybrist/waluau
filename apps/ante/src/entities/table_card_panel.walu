@@ -8,7 +8,7 @@
 -- objects on a surface instead of tiles in a box.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local ink = require("../ink")
 
 const PAD_X: f64 = 34.0
@@ -19,17 +19,17 @@ const FILL: string = "#101013"
 const EDGE: string = "#3f3f46"
 
 function field_of(bounds: box.Rect): box.Rect
-    return entity.rect(
+    return box.rect(
         bounds.x - PAD_X, bounds.y - RISE,
         bounds.width + PAD_X * 2.0, FIELD_HEIGHT)
 end
 
-function node(): entity.Node
-    return entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return box.Intrinsic.fixed(PAD_X * 2.0, FIELD_HEIGHT)
+function node(): ui.Node
+    return ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            box.set_fixed(into, PAD_X * 2.0, FIELD_HEIGHT)
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             local field: box.Rect = field_of(bounds)
             ink.panel(
                 surface.graphics, field.x, field.y, field.width, field.height,

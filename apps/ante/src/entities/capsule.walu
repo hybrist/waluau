@@ -8,7 +8,7 @@
 -- widths that have to be re-tuned whenever either word changes.
 
 local box = require("../ui/layout")
-local entity = require("./adapter")
+local ui = require("../ui/node")
 local ink = require("../ink")
 
 const HEIGHT: f64 = 26.0
@@ -20,12 +20,12 @@ const ACTIVE_EDGE: string = "#fbbf24"
 const QUIET_EDGE: string = "#52525b"
 const QUIET_INK: string = "#8a8a92"
 
-function width_of(metrics: entity.Metrics, text: string): f64
-    return metrics:text_width(text, LABEL_SIZE) + PAD_X * 2.0
+function width_of(graphics: ui.Graphics?, text: string): f64
+    return ui.text_width(graphics, text, LABEL_SIZE) + PAD_X * 2.0
 end
 
-function intrinsic(metrics: entity.Metrics, text: string): box.Intrinsic
-    local width: f64 = width_of(metrics, text)
+function intrinsic(graphics: ui.Graphics?, text: string): box.Intrinsic
+    local width: f64 = width_of(graphics, text)
     return {
         min_width = width,
         preferred_width = width,
@@ -40,7 +40,7 @@ function intrinsic(metrics: entity.Metrics, text: string): box.Intrinsic
 end
 
 function draw_at(
-    surface: entity.Surface, text: string, active: bool, bounds: box.Rect
+    surface: ui.Surface, text: string, active: bool, bounds: box.Rect
 ): unit
     local graphics = surface.graphics
     local edge: string = QUIET_EDGE
@@ -62,15 +62,22 @@ function draw_at(
 end
 
 type CapsulePresentation = { text: string, active: bool }
-export type Stateful = { presentation: CapsulePresentation, root: entity.Node }
+export type Stateful = { presentation: CapsulePresentation, root: ui.Node }
 
 function Stateful.new(text: string, active: bool): Stateful
     local presentation: CapsulePresentation = { text = text, active = active }
-    local root: entity.Node = entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            return intrinsic(metrics, presentation.text)
+    local root: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            local width: f64 = width_of(graphics, presentation.text)
+            into.min_width = width
+            into.preferred_width = width
+            into.max_width = width
+            into.min_height = HEIGHT
+            into.preferred_height = HEIGHT
+            into.max_height = HEIGHT
+            into.baseline = (HEIGHT + LABEL_SIZE) * 0.5
         end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
+        function(surface: ui.Surface, bounds: box.Rect): unit
             draw_at(surface, presentation.text, presentation.active, bounds)
         end)
     return { presentation = presentation, root = root }
@@ -81,7 +88,7 @@ function Stateful:present(text: string, active: bool): unit
     self.presentation.active = active
 end
 
-function node(text: string, active: bool): entity.Node
+function node(text: string, active: bool): ui.Node
     return Stateful.new(text, active).root
 end
 
