@@ -2,5 +2,8 @@
   // Select the language and grammar from the repo-local Waluau extension.
   "files.associations": {
     "*.walu": "waluau"
+  },
+  "[waluau]": {
+    "editor.defaultFormatter": "waluau-dev.waluau-vscode"
   }
 }
