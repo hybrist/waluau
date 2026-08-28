@@ -173,7 +173,7 @@ end
 function draw_school_mark(
     surface: entity.Surface, suit: i32, x: f64, y: f64, size: f64
 ): unit
-    draw_suit_symbol(surface, suit, x, y, size * 3.0)
+    draw_suit_symbol(surface, suit, x, y, size * 6.0)
 end
 
 function draw_arcane_field(surface: entity.Surface, suit: i32, x: f64, y: f64): unit
