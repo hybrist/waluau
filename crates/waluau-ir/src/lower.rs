@@ -1566,7 +1566,38 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
     erase_type_opaque_types_at(ty, false)
 }
 
+/// Whether erasure would change `ty` at all. Most types in a large program
+/// are already in runtime form; returning the same Arc-shared value for
+/// those keeps erasure allocation-free and preserves pointer identity for
+/// the codegen registries.
+fn type_needs_erasure(ty: &Type) -> bool {
+    match ty {
+        Type::Opaque { .. }
+        | Type::ExternSubtype(_)
+        | Type::StringLiteralUnion(_)
+        | Type::NumberLiteralUnion(_) => true,
+        Type::Nullable(inner) | Type::Array(inner) | Type::Variadic(inner) => {
+            type_needs_erasure(inner)
+        }
+        Type::Multi(types) => types.iter().any(type_needs_erasure),
+        Type::Function {
+            params,
+            return_type,
+            has_self,
+        } => *has_self || params.iter().any(type_needs_erasure) || type_needs_erasure(return_type),
+        Type::Record(fields) => fields.values().any(type_needs_erasure),
+        Type::TaggedVariant(variant) => type_needs_erasure(&variant.payload),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .any(|variant| type_needs_erasure(&variant.payload)),
+        _ => false,
+    }
+}
+
 fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
+    if !type_needs_erasure(ty) {
+        return ty.clone();
+    }
     match ty {
         Type::Opaque { name, ty, .. } if nested && type_contains_opaque_name(ty, name) => {
             Type::Unknown

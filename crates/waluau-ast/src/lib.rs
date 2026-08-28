@@ -689,7 +689,25 @@ impl Type {
     /// `{Goods}` against `{{tag, value}}` — so both sides normalize through this
     /// before being compared. Nothing but tagged types is rewritten, which is
     /// what makes agreement here mean "the same value, named differently".
+    /// Whether [`Self::runtime_representation`] would change this type.
+    fn has_tagged_types(&self) -> bool {
+        match self {
+            Self::TaggedUnion(_) | Self::TaggedVariant(_) => true,
+            Self::Record(fields) => fields.values().any(Self::has_tagged_types),
+            Self::Array(inner) | Self::Variadic(inner) | Self::Nullable(inner) => {
+                inner.has_tagged_types()
+            }
+            Self::Multi(types) => types.iter().any(Self::has_tagged_types),
+            _ => false,
+        }
+    }
+
     pub fn runtime_representation(&self) -> Type {
+        // Most types are already in runtime form; returning the same shared
+        // value keeps this allocation-free and pointer-stable for them.
+        if !self.has_tagged_types() {
+            return self.clone();
+        }
         match self {
             Self::TaggedUnion(_) | Self::TaggedVariant(_) => Self::canonical_tagged_union_record(),
             Self::Record(fields) => Self::record(

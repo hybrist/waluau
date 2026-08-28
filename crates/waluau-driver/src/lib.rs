@@ -6,27 +6,27 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use waluau_diagnostics::Diagnostic;
 
-struct CompilerTimer {
+pub(crate) struct CompilerTimer {
     #[cfg(not(target_family = "wasm"))]
     started: std::time::Instant,
 }
 
 impl CompilerTimer {
-    fn start() -> Self {
+    pub(crate) fn start() -> Self {
         Self {
             #[cfg(not(target_family = "wasm"))]
             started: std::time::Instant::now(),
         }
     }
 
-    fn elapsed(&self) -> std::time::Duration {
+    pub(crate) fn elapsed(&self) -> std::time::Duration {
         #[cfg(not(target_family = "wasm"))]
         return self.started.elapsed();
         #[cfg(target_family = "wasm")]
         return std::time::Duration::ZERO;
     }
 
-    fn enabled() -> bool {
+    pub(crate) fn enabled() -> bool {
         #[cfg(not(target_family = "wasm"))]
         return std::env::var_os("WALUAU_TIMINGS").is_some();
         #[cfg(target_family = "wasm")]
@@ -344,7 +344,13 @@ where
         return fmt::run_fmt(args);
     }
     let mut session = session::CompilerSession::new();
-    run_with_session_args(&mut session, args)
+    let result = run_with_session_args(&mut session, args);
+    // One-shot CLI: the process exits right after this returns, so freeing
+    // the session's parse/HIR/IR/emit caches (tens of milliseconds of
+    // whole-program teardown) is pure wall-clock waste. Leak them and let
+    // the OS reclaim the address space.
+    std::mem::forget(session);
+    result
 }
 
 fn run_with_session_args<I>(
