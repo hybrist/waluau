@@ -113,41 +113,88 @@ fn bind_vararg(vars: &mut HashMap<String, Binding>, vararg: Option<&Type>) {
 }
 
 fn module_type_display_name(name: &str) -> &str {
-    let Some(rest) = name.strip_prefix("__waluau_m") else {
-        return name;
-    };
-    let Some((module_id, display)) = rest.split_once('_') else {
-        return name;
-    };
-    if module_id.bytes().all(|byte| byte.is_ascii_digit()) && !display.is_empty() {
-        display
-    } else {
-        name
-    }
+    name
 }
 
 fn module_type_display(ty: &Type) -> String {
-    let rendered = ty.to_string();
-    let marker = "__waluau_m";
-    let mut remaining = rendered.as_str();
-    let mut display = String::with_capacity(rendered.len());
+    ty.to_string()
+}
 
-    while let Some(offset) = remaining.find(marker) {
-        display.push_str(&remaining[..offset]);
-        let after_marker = &remaining[offset + marker.len()..];
-        let digits = after_marker
-            .bytes()
-            .take_while(|byte| byte.is_ascii_digit())
-            .count();
-        if digits > 0 && after_marker.as_bytes().get(digits) == Some(&b'_') {
-            remaining = &after_marker[digits + 1..];
-        } else {
-            display.push_str(marker);
-            remaining = after_marker;
+fn module_source_qualifier(file_path: &str) -> String {
+    std::path::Path::new(file_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module")
+        .to_string()
+}
+
+/// Canonical linked type names carry a numeric module prefix so nominal
+/// identity survives merging. Keep that prefix until diagnostics are fully
+/// assembled, then replace it with source spelling. A source name that occurs
+/// in more than one module is qualified by the defining file so two distinct
+/// nominal types never render as an apparent self-conversion.
+fn diagnostic_type_names(program: &Program) -> Vec<(String, String)> {
+    let mut source_counts = HashMap::<&str, usize>::new();
+    for declaration in &program.type_declarations {
+        *source_counts.entry(&declaration.source_name).or_default() += 1;
+    }
+
+    let mut qualifier_counts = HashMap::<(&str, String), usize>::new();
+    for declaration in &program.type_declarations {
+        if source_counts[declaration.source_name.as_str()] > 1 {
+            *qualifier_counts
+                .entry((
+                    declaration.source_name.as_str(),
+                    module_source_qualifier(&declaration.file_path),
+                ))
+                .or_default() += 1;
         }
     }
-    display.push_str(remaining);
-    display
+
+    let mut names = program
+        .type_declarations
+        .iter()
+        .filter(|declaration| declaration.name.starts_with("__waluau_m"))
+        .map(|declaration| {
+            let duplicate = source_counts[declaration.source_name.as_str()] > 1;
+            let display = if duplicate {
+                let qualifier = module_source_qualifier(&declaration.file_path);
+                if qualifier_counts[&(declaration.source_name.as_str(), qualifier.clone())] > 1 {
+                    let module_id = declaration
+                        .name
+                        .strip_prefix("__waluau_m")
+                        .and_then(|rest| rest.split_once('_'))
+                        .map_or("?", |(id, _)| id);
+                    format!("{qualifier}[{module_id}].{}", declaration.source_name)
+                } else {
+                    format!("{qualifier}.{}", declaration.source_name)
+                }
+            } else {
+                declaration.source_name.clone()
+            };
+            (declaration.name.clone(), display)
+        })
+        .collect::<Vec<_>>();
+    names.sort_by_key(|(canonical, _)| std::cmp::Reverse(canonical.len()));
+    names
+}
+
+fn decorate_type_diagnostics(
+    errors: Vec<Diagnostic>,
+    display_names: &[(String, String)],
+) -> Vec<Diagnostic> {
+    errors
+        .into_iter()
+        .map(|error| {
+            error.map_message(|mut message| {
+                for (canonical, display) in display_names {
+                    message = message.replace(canonical, display);
+                }
+                message
+            })
+        })
+        .collect()
 }
 
 fn collect_module_bindings(
@@ -4315,6 +4362,15 @@ pub fn type_check_and_infer_collect_cached<'a>(
 }
 
 fn type_check_and_infer_collect_inner(
+    program: &Program,
+    cache: Option<&mut TypeCheckCache>,
+) -> Result<(Program, Option<Program>), Vec<Diagnostic>> {
+    let display_names = diagnostic_type_names(program);
+    type_check_and_infer_collect_raw(program, cache)
+        .map_err(|errors| decorate_type_diagnostics(errors, &display_names))
+}
+
+fn type_check_and_infer_collect_raw(
     program: &Program,
     mut cache: Option<&mut TypeCheckCache>,
 ) -> Result<(Program, Option<Program>), Vec<Diagnostic>> {

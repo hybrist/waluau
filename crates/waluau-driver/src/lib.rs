@@ -2968,6 +2968,148 @@ end
     }
 
     #[test]
+    fn compile_file_preserves_record_identity_through_exported_import_aliases() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("geometry.walu"),
+            r#"
+                export type Surface = { width: f64 }
+                export type Rect = { x: f64 }
+
+                function surface(): Surface
+                    return { width = 2.0 }
+                end
+
+                function rect(): Rect
+                    return { x = 1.0 }
+                end
+
+                return { surface = surface, rect = rect }
+            "#,
+        )
+        .expect("geometry module should write");
+        fs::write(
+            tempdir.path().join("ui.walu"),
+            r#"
+                local geometry = require("./geometry")
+
+                export type Surface = geometry.Surface
+                export type Rect = geometry.Rect
+                export type Node = { paint: (Surface, Rect) -> unit }
+
+                function paint(node: Node): unit
+                    node.paint(geometry.surface(), geometry.rect())
+                end
+
+                function nodes(value: {Node}): {Node}
+                    return value
+                end
+
+                return { paint = paint, nodes = nodes }
+            "#,
+        )
+        .expect("ui module should write");
+        fs::write(
+            tempdir.path().join("bridge.walu"),
+            r#"
+                local ui = require("./ui")
+
+                export type Surface = ui.Surface
+                export type Rect = ui.Rect
+                export type Node = ui.Node
+
+                function nodes(value: {Node}): {Node}
+                    return value
+                end
+
+                return { nodes = nodes }
+            "#,
+        )
+        .expect("bridge module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local geometry = require("./geometry")
+                local ui = require("./ui")
+                local bridge = require("./bridge")
+
+                local function draw(surface: geometry.Surface, rect: geometry.Rect): unit
+                    assert(surface.width + rect.x == 3.0)
+                end
+
+                local node: ui.Node = { paint = draw }
+                local input: {bridge.Node} = { node }
+                local output: {ui.Node} = bridge.nodes(input)
+                ui.paint(output[0])
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm =
+            super::compile_file(&input_path).expect("aliases should preserve record identity");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_distinguishes_unrelated_record_aliases_in_callback_diagnostics() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("left.walu"),
+            r#"
+                export type Surface = { width: f64 }
+                export type Hook = { paint: (Surface) -> unit }
+
+                function run(hook: Hook, surface: Surface): unit
+                    hook.paint(surface)
+                end
+
+                return { run = run }
+            "#,
+        )
+        .expect("left module should write");
+        fs::write(
+            tempdir.path().join("right.walu"),
+            r#"
+                export type Surface = { width: f64 }
+
+                function surface(): Surface
+                    return { width = 2.0 }
+                end
+
+                return { surface = surface }
+            "#,
+        )
+        .expect("right module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local left = require("./left")
+                local right = require("./right")
+
+                local function paint(surface: right.Surface): unit
+                    assert(surface.width == 2.0)
+                end
+
+                left.run({ paint = paint }, right.surface())
+            "#,
+        )
+        .expect("main module should write");
+
+        let error = super::compile_file(&input_path).expect_err("unrelated aliases should differ");
+        let message = error.to_string();
+        assert_eq!(
+            message,
+            "cannot implicitly convert (right.Surface) -> unit to (left.Surface) -> unit"
+        );
+        assert!(
+            !message.contains("__waluau_m"),
+            "diagnostic leaked an internal module name: {message}"
+        );
+    }
+
+    #[test]
     fn compile_file_hides_module_mangling_in_callback_conversion_diagnostics() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

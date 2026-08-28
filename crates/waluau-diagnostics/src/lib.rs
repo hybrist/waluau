@@ -123,6 +123,13 @@ impl Diagnostic {
         self
     }
 
+    /// Transform the human message while preserving its code, severity, span,
+    /// source location, and suggested action.
+    pub fn map_message(mut self, map: impl FnOnce(String) -> String) -> Self {
+        self.message = map(self.message);
+        self
+    }
+
     /// Read-only accessor for the optional diagnostic code.
     pub fn code(&self) -> Option<&'static str> {
         self.code
@@ -231,5 +238,20 @@ mod tests {
             diagnostic.render_for_playground(),
             "in module \"/lib.walu\": cannot convert string to i32 at 8..13"
         );
+    }
+
+    #[test]
+    fn maps_message_without_dropping_metadata() {
+        let diagnostic = Diagnostic::new_with_code("types/conflict", "raw")
+            .with_span(Span { start: 2, end: 5 })
+            .with_file_path("example.walu")
+            .with_action("change the annotation")
+            .map_message(|message| format!("decorated {message}"));
+
+        assert_eq!(diagnostic.to_string(), "decorated raw");
+        assert_eq!(diagnostic.code(), Some("types/conflict"));
+        assert_eq!(diagnostic.span(), Some(Span { start: 2, end: 5 }));
+        assert_eq!(diagnostic.file_path(), Some("example.walu"));
+        assert_eq!(diagnostic.action(), Some("change the annotation"));
     }
 }
