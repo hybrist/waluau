@@ -24,7 +24,7 @@ fn type_checks_valid_program() {
 }
 
 #[test]
-fn diagnostic_type_display_hides_nested_module_mangling() {
+fn diagnostic_type_display_retains_nested_module_identity_until_decoration() {
     let ty = Type::Function {
         has_self: false,
         params: vec![Type::Opaque {
@@ -36,8 +36,7 @@ fn diagnostic_type_display_hides_nested_module_mangling() {
     };
 
     let display = super::module_type_display(&ty);
-    assert!(display.contains("Graphics"));
-    assert!(!display.contains("__waluau_m"));
+    assert_eq!(display, "(__waluau_m12_Graphics) -> unit");
 }
 
 #[test]
