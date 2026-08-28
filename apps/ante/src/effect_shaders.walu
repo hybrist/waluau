@@ -9,6 +9,7 @@ local shader_program = require("./shader_program")
 type Graphics = engine.Graphics
 type Source = shader_sources.Source
 export type EffectShaders = {
+    card_paper: shader_program.State,
     gold_shimmer: shader_program.State,
     defeat_shroud: shader_program.State,
     card_burn: shader_program.State,
@@ -32,6 +33,11 @@ export type State = {
 export type Diagnostics = { fatal_error: string, warnings: string }
 
 function State.new(): State
+    local paper: shader_program.State = shader_program.State.new(
+        "ante.effects.card-paper",
+        "card paper",
+        false
+    )
     local gold: shader_program.State = shader_program.State.new(
         "ante.effects.gold-shimmer",
         "gold shimmer",
@@ -66,6 +72,7 @@ function State.new(): State
     local ice: shader_program.State = shader_program.State.new("ante.effects.ice-freeze", "ice", false)
     return {
         shaders = {
+            card_paper = paper,
             gold_shimmer = gold,
             defeat_shroud = defeat,
             card_burn = burn,
@@ -76,7 +83,7 @@ function State.new(): State
             ice_freeze = ice,
             noise_texture = nil
         },
-        programs = {gold, defeat, burn, red, blue, black, green, ice},
+        programs = {paper, gold, defeat, burn, red, blue, black, green, ice},
         vertex_source = shader_sources.open("ante.effects.vertex"),
         vertex_text = "",
         vertex_ready = false,
