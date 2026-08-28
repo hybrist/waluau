@@ -116,7 +116,7 @@ function install_ante_magic(): unit
                     city.cover, landmark)
             end
             if screen == "menu" then
-                menu_state:draw(canvas, graphics, assets.effects, assets.sound_finished)
+                menu_state:draw(canvas, assets:surface(graphics), assets.sound_finished)
             elseif duel:fence_open() then
                 duel:draw_fence(city, canvas, graphics)
             end
