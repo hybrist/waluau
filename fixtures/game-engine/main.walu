@@ -1,7 +1,6 @@
 -- A tiny game using only the engine-facing API: no DOM, canvas or animation
 -- frame calls appear in game code. The engine renders every Graphics call
 -- (shapes and text alike) through its GPU-backed WebGL2 renderer.
-
 local engine = require("../../engine/browser")
 local input_module = require("../../engine/input")
 local graphics_module = require("../../engine/graphics")
@@ -78,26 +77,29 @@ function install_game(): unit
     end
 
     local function keyreleased(key: string): unit
-        -- Required hook in the initial API; intentionally unused by this game.
+    -- Required hook in the initial API; intentionally unused by this game.
     end
 
-    engine.start({
-        title = "Walua 2D Engine (WebGL2)",
-        width = 320,
-        height = 200,
-        update_hz = 60.0,
-        max_frame_seconds = 0.25,
-        background = "#0f172a",
-    }, {
-        load = load,
-        update = update,
-        draw = draw,
-        keypressed = keypressed,
-        keyreleased = keyreleased,
-        mousepressed = nil,
-        mousereleased = nil,
-        mousemoved = nil,
-    })
+    engine.start(
+        {
+            title = "Walua 2D Engine (WebGL2)",
+            width = 320,
+            height = 200,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#0f172a"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
 end
 
 install_game()

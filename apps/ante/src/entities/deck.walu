@@ -5,7 +5,6 @@
 -- hang past the box — they are depth, not content, and giving them width would
 -- shove the whole board over by six units for a thick deck and not for a thin
 -- one.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local card = require("./card")
@@ -17,7 +16,9 @@ function intrinsic(): box.Intrinsic
 end
 
 function draw_at(surface: ui.Surface, count: i32, x: f64, y: f64): unit
-    if count <= 0 then return end
+    if count <= 0 then
+        return
+    end
     local graphics = surface.graphics
     if count > 18 then
         card.fill_silhouette(graphics, x + 6.0, y + 6.0, "#111118")
@@ -39,7 +40,8 @@ function Stateful.new(count: i32): Stateful
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
             draw_at(surface, presentation.count, bounds.x, bounds.y)
-        end)
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -51,8 +53,4 @@ function node(count: i32): ui.Node
     return Stateful.new(count).root
 end
 
-return {
-    node = node,
-    draw_at = draw_at,
-    caption_drop = CAPTION_DROP,
-}
+return { node = node, draw_at = draw_at, caption_drop = CAPTION_DROP }

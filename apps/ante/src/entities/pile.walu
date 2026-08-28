@@ -8,17 +8,16 @@
 -- the box for the same reason the deck's hangs right: depth is not content.
 -- The pile carries no count label — it belongs to no one, and the round orbs
 -- already tally the run.
-
 local game = require("../game")
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
 local card = require("./card")
 
-function draw_at(
-    surface: ui.Surface, cards: {game.Card}, count: i32, x: f64, y: f64
-): unit
-    if count <= 0 then return end
+function draw_at(surface: ui.Surface, cards: {game.Card}, count: i32, x: f64, y: f64): unit
+    if count <= 0 then
+        return
+    end
     local graphics = surface.graphics
     if count > 18 then
         card.fill_silhouette(graphics, x - 6.0, y + 6.0, "#111118")
@@ -40,7 +39,8 @@ function Stateful.new(cards: {game.Card}, count: i32): Stateful
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
             draw_at(surface, presentation.cards, presentation.count, bounds.x, bounds.y)
-        end)
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -53,7 +53,4 @@ function node(cards: {game.Card}, count: i32): ui.Node
     return Stateful.new(cards, count).root
 end
 
-return {
-    node = node,
-    draw_at = draw_at,
-}
+return { node = node, draw_at = draw_at }

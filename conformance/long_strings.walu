@@ -1,15 +1,16 @@
 -- Long-bracket string literals: `[[...]]` and the leveled `[=*[...]=*]` form.
 -- Long strings perform no escape processing and a newline immediately after
 -- the opening bracket is dropped.
-
 assert([[hello]] == "hello")
 
 -- No escape processing: `\t` stays two literal characters.
 assert([[a\tb]] == "a\\tb")
 
 -- A leading newline right after the opening bracket is discarded.
-assert([[
-line]] == "line")
+assert(
+    [[
+line]] == "line"
+)
 
 -- Leveled brackets let the content contain `]]`.
 assert([==[a]]b]==] == "a]]b")

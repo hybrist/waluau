@@ -36,4 +36,3 @@ function arithmetic_type_inference()
     assert(m == 13)
 end
 arithmetic_type_inference()
-

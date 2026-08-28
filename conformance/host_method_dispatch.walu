@@ -1,5 +1,4 @@
 -- Declared host methods on extern types dispatch through host imports.
-
 local window = require("dom:window")
 local document: Document = window.document
 

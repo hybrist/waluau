@@ -103,6 +103,22 @@ impl Parser {
         }
     }
 
+    /// Consume a property name. `not` is a keyword in expression position,
+    /// but is also the name of the expectation modifier exposed by
+    /// `declare property` and used in `value:not:matcher()` chains.
+    fn expect_property_name(
+        &mut self,
+        children: &mut Vec<Node>,
+        msg: &str,
+    ) -> Result<(), Diagnostic> {
+        if self.at(&ident()) || self.at(&TokenKind::Not) {
+            self.bump(children);
+            Ok(())
+        } else {
+            Err(self.error(msg))
+        }
+    }
+
     fn error(&self, msg: &str) -> Diagnostic {
         Diagnostic::new(format!(
             "formatter parse error: {msg} (at token {})",
@@ -327,7 +343,7 @@ impl Parser {
         self.bump(&mut c); // `property`
         self.expect(&ident(), &mut c, "expected property receiver")?;
         self.expect(&TokenKind::Colon, &mut c, "expected ':'")?;
-        self.expect(&ident(), &mut c, "expected property name")?;
+        self.expect_property_name(&mut c, "expected property name")?;
         self.expect(&TokenKind::Colon, &mut c, "expected ':' before type")?;
         c.push(self.parse_type()?);
         Ok(Self::tree(SyntaxKind::DeclareProperty, c))
@@ -784,6 +800,13 @@ impl Parser {
                 c.push(self.parse_expr()?);
                 self.expect(&TokenKind::RBracket, &mut c, "expected ']'")?;
                 expr = Self::tree(SyntaxKind::IndexExpr, c);
+                continue;
+            }
+            if self.at(&TokenKind::Colon) && self.at_n(1, &TokenKind::Not) {
+                let mut c = vec![expr];
+                self.bump(&mut c); // `:`
+                self.bump(&mut c); // `not`
+                expr = Self::tree(SyntaxKind::FieldExpr, c);
                 continue;
             }
             if self.at_method_call() {

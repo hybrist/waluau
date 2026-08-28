@@ -45,21 +45,34 @@ end
 function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
     local rects: {box.Rect} = {}
     local width: f64 = 0.0
-    if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
+    if count > 0 then
+        width = card.width + ((count - 1)::f64) * pitch
+    end
     for index = 0::i32, count - 1 do
-        table.insert(rects, box.rect(
-            bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
-            bounds.y, card.width, card.height))
+        table.insert(
+            rects,
+            box.rect(
+                bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
+                bounds.y,
+                card.width,
+                card.height
+            )
+        )
     end
     return rects
 end
 
 function slot_rect(count: i32, pitch: f64, bounds: box.Rect, index: i32): box.Rect
     local width: f64 = 0.0
-    if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
+    if count > 0 then
+        width = card.width + ((count - 1)::f64) * pitch
+    end
     return box.rect(
         bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
-        bounds.y, card.width, card.height)
+        bounds.y,
+        card.width,
+        card.height
+    )
 end
 
 -- The row's own size at the given pitch, which is what a band asks for before
@@ -94,8 +107,13 @@ function node(children: {ui.Node}, preferred: f64): ui.Node
             end
             local left: f64 = bounds.x + (bounds.width - width) * 0.5
             for index = 0::i32, #children - 1 do
-                children[index]:draw(surface,
-                    left + (index::f64) * pitch, bounds.y, card.width, card.height)
+                children[index]:draw(
+                    surface,
+                    left + (index::f64) * pitch,
+                    bounds.y,
+                    card.width,
+                    card.height
+                )
             end
         end
     )

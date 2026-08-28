@@ -1,5 +1,4 @@
 -- Coroutine suspension and resumption with `coroutine.yield`.
-
 function counter_job(): i32
     coroutine.yield(1::i32)
     coroutine.yield(2::i32)

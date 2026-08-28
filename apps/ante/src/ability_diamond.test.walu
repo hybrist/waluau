@@ -1,28 +1,39 @@
 -- DOM-free checks for the four fixed positions of the ready-ability HUD.
-
 require("waluau:vitest")
 
 local game = require("./game")
 local spells = require("./spells/spell")
 local ability_diamond = require("./entities/ability_diamond")
 
-describe("ability diamond", function(): unit
-    it("places loadout order at South, West, North, then East", function(): unit
-        expect(ability_diamond.slot_count):toBe(4)
+describe(
+    "ability diamond",
+    function(): unit
+        it(
+            "places loadout order at South, West, North, then East",
+            function(): unit
+                expect(ability_diamond.slot_count):toBe(4)
 
-        expect(ability_diamond.slot_x(0)):toBe(ability_diamond.slot_x(2))
-        expect(ability_diamond.slot_y(0)):toBeGreaterThan(ability_diamond.slot_y(2))
-        expect(ability_diamond.slot_y(1)):toBe(ability_diamond.slot_y(3))
-        expect(ability_diamond.slot_x(1)):toBeLessThan(ability_diamond.slot_x(3))
-    end)
+                expect(ability_diamond.slot_x(0)):toBe(ability_diamond.slot_x(2))
+                expect(ability_diamond.slot_y(0)):toBeGreaterThan(ability_diamond.slot_y(2))
+                expect(ability_diamond.slot_y(1)):toBe(ability_diamond.slot_y(3))
+                expect(ability_diamond.slot_x(1)):toBeLessThan(ability_diamond.slot_x(3))
+            end
+        )
 
-    it("keeps all four sockets in the HUD with one carried spell", function(): unit
-        local state: game.State = game.State.new(
-            false, { spells.Spell.new(spells.SpellKind.Firebolt) }, game.starting_gold)
-        local size = ability_diamond.node(state:view()):measure(nil)
+        it(
+            "keeps all four sockets in the HUD with one carried spell",
+            function(): unit
+                local state: game.State = game.State.new(
+                    false,
+                    {spells.Spell.new(spells.SpellKind.Firebolt)},
+                    game.starting_gold
+                )
+                local size = ability_diamond.node(state:view()):measure(nil)
 
-        expect(size.preferred_width):toBe(ability_diamond.width)
-        expect(size.preferred_height):toBe(ability_diamond.height)
-        expect(ability_diamond.short_name(spells.SpellKind.Firebolt)):toBe("FIRE")
-    end)
-end)
+                expect(size.preferred_width):toBe(ability_diamond.width)
+                expect(size.preferred_height):toBe(ability_diamond.height)
+                expect(ability_diamond.short_name(spells.SpellKind.Firebolt)):toBe("FIRE")
+            end
+        )
+    end
+)

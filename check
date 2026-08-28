@@ -7,7 +7,7 @@ run() {
   "$@"
 }
 
-run "Checking formatting" cargo fmt --all -- --check
+run "Checking formatting" pnpm format:check
 run "Checking compilation" cargo check --workspace --all-targets
 run "Running tests" cargo test --workspace
 run "Running clippy" cargo clippy --workspace --all-targets -- -D warnings

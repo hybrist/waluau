@@ -2,7 +2,6 @@
 -- Luau `t[#t+1] = x` idiom works in Waluau's 0-based indexing as `t[#t] = x`.
 -- Writes past the length still trap (there is no hash part), and `#` always
 -- reports the logical length, never the storage capacity.
-
 local t: {i32} = {10, 20}
 t[#t] = 30
 t[#t] = 40
@@ -60,15 +59,17 @@ local last_row: {i32} = rows[2]
 assert(last_row[3] == 34)
 
 -- Growth works on arrays captured by closures.
-assert((function(): i32
-    local log: {i32} = {}
-    local record = function(value: i32)
-        log[#log] = value
-    end
-    local i: i32 = 1
-    while i <= 10 do
-        record(i)
-        i += 1
-    end
-    return #log * 1000 + log[0] * 100 + log[9]
-end)() == 10110)
+assert(
+    (function(): i32
+        local log: {i32} = {}
+        local record = function(value: i32)
+            log[#log] = value
+        end
+        local i: i32 = 1
+        while i <= 10 do
+            record(i)
+            i += 1
+        end
+        return #log * 1000 + log[0] * 100 + log[9]
+    end)() == 10110
+)

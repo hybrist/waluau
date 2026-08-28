@@ -1,5 +1,4 @@
 -- string.len / string:len / #string use the same host-backed primitive.
-
 local message: string = "hello"
 
 assert(string.len(message) == 5)

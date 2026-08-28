@@ -1,5 +1,4 @@
 -- Bytes support: literals materialize as host-managed binary values.
-
 function entry(data: bytes): i32
     local prefix: bytes = b"AB"
     local merged: bytes = prefix .. data

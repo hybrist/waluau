@@ -2,7 +2,6 @@
 -- ordinary two-offer list plus exit and the modal trade-choice list. Presenting
 -- refreshes their row data and availability; geometry, focus, hover, and click
 -- routing remain owned here instead of being duplicated in the game screen.
-
 local game = require("./game")
 local ink = require("./ink")
 local spell_launch = require("./spell_launch")
@@ -32,7 +31,7 @@ type Presentation = {
     viewport: viewport_layout.State,
     rows: {shop.Row},
     alpha: f64,
-    pending_action: FenceAction,
+    pending_action: FenceAction
 }
 export type View = {
     presentation: Presentation,
@@ -41,7 +40,7 @@ export type View = {
     row_nodes: {ui.Node},
     router: interaction.Router,
     scope: i32,
-    targets: {interaction.Target},
+    targets: {interaction.Target}
 }
 
 function panel_top(viewport: viewport_layout.State): f64
@@ -50,39 +49,50 @@ end
 
 function list_style(viewport: viewport_layout.State): ui_layout.Style
     return ui_layout.style(
-        "column", ROW_PITCH - ROW_H, "start", "start",
-        ui_layout.edges(ROW_X, panel_top(viewport) + PANEL_HEADER_H, 0.0, 0.0))
+        "column",
+        ROW_PITCH - ROW_H,
+        "start",
+        "start",
+        ui_layout.edges(ROW_X, panel_top(viewport) + PANEL_HEADER_H, 0.0, 0.0)
+    )
 end
 
 function goods_label(goods: shop.Goods, sold: bool, run: run_module.State): string
     if Upgrade(upgrade) = goods then
         local name: string = spell_launch.name(upgrade.kind)
-        if sold then return "UPGRADED " .. name end
+        if sold then
+            return "UPGRADED " .. name
+        end
         local key: i32 = run:slot_of(upgrade.kind)
-        if key < 0 then return "UPGRADE " .. name .. "   TRADED AWAY" end
+        if key < 0 then
+            return "UPGRADE " .. name .. "   TRADED AWAY"
+        end
         if not run:can_sharpen(key) then
             return "UPGRADE " .. name .. "   AS CHEAP AS IT GETS"
         end
         local spell: game.Spell = run.spells[key]
-        return "UPGRADE " .. name
-            .. "   USE " .. tostring(spell.cost)
-            .. " TO " .. tostring(spell.cost - 1) .. " GOLD"
+        return "UPGRADE " .. name .. "   USE " .. tostring(
+            spell.cost
+        ) .. " TO " .. tostring(spell.cost - 1) .. " GOLD"
     end
     if Spell(offered) = goods then
         local name: string = spell_launch.name(offered.kind)
         if sold then
-            return "LEARNED " .. name
-                .. "   KEY " .. tostring(run:slot_of(offered.kind) + 1)
+            return "LEARNED " .. name .. "   KEY " .. tostring(run:slot_of(offered.kind) + 1)
         end
         local key: i32 = run:open_slot()
-        if key < 0 then return "LEARN " .. name .. "   TRADES A SPELL AWAY" end
+        if key < 0 then
+            return "LEARN " .. name .. "   TRADES A SPELL AWAY"
+        end
         return "LEARN " .. name .. "   KEY " .. tostring(key + 1)
     end
     return ""
 end
 
 function row_label(
-    state: shop.State, row: shop.Row, run: run_module.State,
+    state: shop.State,
+    row: shop.Row,
+    run: run_module.State,
     offered: spells.SpellKind?
 ): string
     if row.kind == "sale" then
@@ -91,22 +101,33 @@ function row_label(
     end
     if row.kind == "choice" then
         local carried: spells.SpellKind? = row.spell
-        if carried == nil then return "" end
-        if offered == nil then return "" end
+        if carried == nil then
+            return ""
+        end
+        if offered == nil then
+            return ""
+        end
         local old_kind: spells.SpellKind = carried::spells.SpellKind
         local new_kind: spells.SpellKind = offered::spells.SpellKind
-        return "TRADE " .. spell_launch.name(old_kind)
-            .. " FOR " .. spell_launch.name(new_kind)
+        return "TRADE " .. spell_launch.name(old_kind) .. " FOR " .. spell_launch.name(new_kind)
     end
-    if row.kind == "cancel" then return "KEEP BOTH SPELLS" end
+    if row.kind == "cancel" then
+        return "KEEP BOTH SPELLS"
+    end
     local duel: string = "ENTER DUEL " .. tostring(run.duel)
-    if run:boss() then duel ..= "   CHALLENGE" end
+    if run:boss() then
+        duel ..= "   CHALLENGE"
+    end
     return duel .. "   TARGET " .. tostring(run:target())
 end
 
 function row_ink(row: shop.Row): string
-    if not row.available then return "#52525b" end
-    if row.spell ~= nil then return spell_launch.color(row.spell::spells.SpellKind) end
+    if not row.available then
+        return "#52525b"
+    end
+    if row.spell ~= nil then
+        return spell_launch.color(row.spell::spells.SpellKind)
+    end
     return "#d4d4d8"
 end
 
@@ -116,44 +137,67 @@ function draw_row(
     bounds: ui_layout.Rect,
     index: i32
 ): unit
-    if presentation.alpha <= 0.0 or index >= #presentation.rows then return end
+    if presentation.alpha <= 0.0 or index >= #presentation.rows then
+        return
+    end
     local row: shop.Row = presentation.rows[index]
     local graphics = surface.graphics
     local alpha: f64 = presentation.alpha
     local edge: string = "#3f3f46"
     local tone: string = row_ink(row)
     local price_ink: string = "#52525b"
-    if row.available and row.price > 0 then price_ink = "#fbbf24" end
+    if row.available and row.price > 0 then
+        price_ink = "#fbbf24"
+    end
     if index == presentation.state.cursor then
         edge = "#fbbf24"
-        if row.available then tone = "#fbbf24" end
+        if row.available then
+            tone = "#fbbf24"
+        end
     end
     ink.panel(
-        graphics, bounds.x, bounds.y, bounds.width, bounds.height,
-        ink.fade("#17171c", alpha), ink.fade(edge, alpha))
+        graphics,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        ink.fade("#17171c", alpha),
+        ink.fade(edge, alpha)
+    )
     ink.text(
         graphics,
-        row_label(
-            presentation.state, row, presentation.run,
-            presentation.state:pending_spell()),
-        bounds.x + 22.0, bounds.y + 33.0, 13, ink.fade(tone, alpha))
+        row_label(presentation.state, row, presentation.run, presentation.state:pending_spell()),
+        bounds.x + 22.0,
+        bounds.y + 33.0,
+        13,
+        ink.fade(tone, alpha)
+    )
     if row.sold then
         ink.text_right(
-            graphics, "SOLD", bounds.x + bounds.width - 22.0, bounds.y + 33.0,
-            13, ink.fade("#52525b", alpha))
+            graphics,
+            "SOLD",
+            bounds.x + bounds.width - 22.0,
+            bounds.y + 33.0,
+            13,
+            ink.fade("#52525b", alpha)
+        )
     elseif row.price > 0 then
         ink.text_right(
-            graphics, tostring(row.price) .. " GOLD",
-            bounds.x + bounds.width - 22.0, bounds.y + 33.0,
-            13, ink.fade(price_ink, alpha))
+            graphics,
+            tostring(row.price) .. " GOLD",
+            bounds.x + bounds.width - 22.0,
+            bounds.y + 33.0,
+            13,
+            ink.fade(price_ink, alpha)
+        )
     end
 end
 
-function draw_chrome(
-    presentation: Presentation, surface: ui.Surface, bounds: ui_layout.Rect
-): unit
+function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui_layout.Rect): unit
     local alpha: f64 = presentation.alpha
-    if alpha <= 0.0 then return end
+    if alpha <= 0.0 then
+        return
+    end
     local viewport: viewport_layout.State = presentation.viewport
     local state: shop.State = presentation.state
     local run: run_module.State = presentation.run
@@ -162,36 +206,62 @@ function draw_chrome(
     local panel_h: f64 = viewport.height - panel_y - 56.0
     local choosing: bool = state:choosing()
     ink.panel(
-        graphics, PANEL_X, panel_y, PANEL_W, panel_h,
-        ink.fade("#09090b", alpha * 0.94), ink.fade("#a1a1aa", alpha))
+        graphics,
+        PANEL_X,
+        panel_y,
+        PANEL_W,
+        panel_h,
+        ink.fade("#09090b", alpha * 0.94),
+        ink.fade("#a1a1aa", alpha)
+    )
     ink.text(graphics, "THE SHOP", 78.0, panel_y + 49.0, 24, ink.fade("#fbbf24", alpha))
     local subtitle: string = "GOLD SPENT HERE WILL NOT ENTER DUEL " .. tostring(run.duel)
-    if choosing then subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?" end
+    if choosing then
+        subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
+    end
     ink.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, ink.fade("#a1a1aa", alpha))
     ink.text_right(
-        graphics, tostring(run.gold), 550.0, panel_y + 54.0, 24, ink.fade("#67e8f9", alpha))
+        graphics,
+        tostring(run.gold),
+        550.0,
+        panel_y + 54.0,
+        24,
+        ink.fade("#67e8f9", alpha)
+    )
+    ink.text_right(graphics, "GOLD ON HAND", 550.0, panel_y + 77.0, 9, ink.fade("#155e75", alpha))
     ink.text_right(
-        graphics, "GOLD ON HAND", 550.0, panel_y + 77.0, 9, ink.fade("#155e75", alpha))
-    ink.text_right(
-        graphics, "TARGET " .. tostring(run:target()) .. " TO CLEAR IT",
-        550.0, panel_y + 95.0, 9, ink.fade("#b45309", alpha))
+        graphics,
+        "TARGET " .. tostring(run:target()) .. " TO CLEAR IT",
+        550.0,
+        panel_y + 95.0,
+        9,
+        ink.fade("#b45309", alpha)
+    )
     if not choosing then
         ink.text_centered(
-            graphics, "TWO OFFERS PER VISIT. THE NEXT SHOP HAS ITS OWN",
+            graphics,
+            "TWO OFFERS PER VISIT. THE NEXT SHOP HAS ITS OWN",
             PANEL_CENTER,
             panel_y + PANEL_HEADER_H + (#presentation.rows::f64) * ROW_PITCH + 33.0,
-            11, ink.fade("#8a8a92", alpha))
+            11,
+            ink.fade("#8a8a92", alpha)
+        )
     end
     ink.text_centered(
-        graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE DUEL",
-        PANEL_CENTER, viewport.height - 34.0, 11, ink.fade("#a1a1aa", alpha))
+        graphics,
+        "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE DUEL",
+        PANEL_CENTER,
+        viewport.height - 34.0,
+        11,
+        ink.fade("#a1a1aa", alpha)
+    )
 end
 
-function row_handlers(
-    presentation: Presentation, index: i32
-): interaction.Handlers
+function row_handlers(presentation: Presentation, index: i32): interaction.Handlers
     local callbacks: interaction.Handlers = interaction.handlers()
-    callbacks.on_focus = function(): unit presentation.state.cursor = index end
+    callbacks.on_focus = function(): unit
+        presentation.state.cursor = index
+    end
     callbacks.on_activate = function(): unit
         presentation.state.cursor = index
         presentation.pending_action = presentation.state:activate(presentation.run)
@@ -206,28 +276,35 @@ function View.new(state: shop.State, run: run_module.State): View
         viewport = viewport_layout.current(),
         rows = {},
         alpha = 0.0,
-        pending_action = "stay",
+        pending_action = "stay"
     }
     local rows: {ui.Node} = {}
     for index = 0::i32, ROW_CAPACITY - 1 do
-        table.insert(rows, ui.Node.sized(ROW_W, ROW_H,
-            function(surface: ui.Surface, bounds: ui_layout.Rect): unit
-                draw_row(presentation, surface, bounds, index)
-            end))
+        table.insert(
+            rows,
+            ui.Node.sized(
+                ROW_W,
+                ROW_H,
+                function(surface: ui.Surface, bounds: ui_layout.Rect): unit
+                    draw_row(presentation, surface, bounds, index)
+                end
+            )
+        )
     end
     local chrome: ui.Node = ui.Node.measured(
-        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit end,
+        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit
+        end,
         function(surface: ui.Surface, bounds: ui_layout.Rect): unit
             draw_chrome(presentation, surface, bounds)
-        end)
+        end
+    )
     local list: ui.Node = ui.Node.flow(rows, list_style(presentation.viewport))
-    local root: ui.Node = ui.Node.layer({ chrome, list })
+    local root: ui.Node = ui.Node.layer({chrome, list})
     local router: interaction.Router = interaction.Router.new(root)
     local scope: i32 = router:add_scope("column", true)
     local targets: {interaction.Target} = {}
     for index, node in rows do
-        table.insert(targets,
-            router:add(node, scope, true, row_handlers(presentation, index)))
+        table.insert(targets, router:add(node, scope, true, row_handlers(presentation, index)))
     end
     router:activate_scope(scope)
     return {
@@ -237,7 +314,7 @@ function View.new(state: shop.State, run: run_module.State): View
         row_nodes = rows,
         router = router,
         scope = scope,
-        targets = targets,
+        targets = targets
     }
 end
 
@@ -283,8 +360,12 @@ function View:keypressed(key: string): FenceAction
         return "leave"
     end
     local routed: string = key
-    if key == "w" or key == "W" then routed = "ArrowUp" end
-    if key == "s" or key == "S" then routed = "ArrowDown" end
+    if key == "w" or key == "W" then
+        routed = "ArrowUp"
+    end
+    if key == "s" or key == "S" then
+        routed = "ArrowDown"
+    end
     self.router:key_pressed(routed)
     self:sync()
     return self:take_action()
@@ -292,16 +373,22 @@ end
 
 function View:mousemoved(x: f64, y: f64): unit
     local hit: i32 = self.router:pointer_move(x, y)
-    if hit >= 0 then self.router:focus(hit) end
+    if hit >= 0 then
+        self.router:focus(hit)
+    end
 end
 
 function View:mousepressed(x: f64, y: f64, button: i32): unit
-    if button ~= 1 then return end
+    if button ~= 1 then
+        return
+    end
     self.router:pointer_down(x, y, button)
 end
 
 function View:mousereleased(x: f64, y: f64, button: i32): FenceAction
-    if button ~= 1 then return "stay" end
+    if button ~= 1 then
+        return "stay"
+    end
     self.router:pointer_up(x, y, button)
     self:sync()
     return self:take_action()
@@ -311,7 +398,4 @@ function View:pointer_leave(): unit
     self.router:pointer_leave()
 end
 
-return {
-    row_label = row_label,
-    row_ink = row_ink,
-}
+return { row_label = row_label, row_ink = row_ink }

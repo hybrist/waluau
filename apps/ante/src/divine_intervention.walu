@@ -1,13 +1,7 @@
 -- DOM-free recognition and timing for Ante Magic's hidden divine intervention.
 -- Rendering owns what the fairy looks like; this module only says when it is
 -- flying and which of the five cards it has reached.
-
-export type State = {
-    matched: i32,
-    active: bool,
-    clock: f64,
-    converted: i32
-}
+export type State = { matched: i32, active: bool, clock: f64, converted: i32 }
 
 const TARGET_COUNT: i32 = 5
 const FIRST_CONTACT: f64 = 0.58
@@ -26,17 +20,31 @@ function State:reset(): unit
 end
 
 function sequence_key(index: i32): string
-    if index == 0 or index == 1 then return "ArrowUp" end
-    if index == 2 or index == 3 then return "ArrowDown" end
-    if index == 4 or index == 6 then return "ArrowLeft" end
-    if index == 5 or index == 7 then return "ArrowRight" end
-    if index == 8 then return "b" end
+    if index == 0 or index == 1 then
+        return "ArrowUp"
+    end
+    if index == 2 or index == 3 then
+        return "ArrowDown"
+    end
+    if index == 4 or index == 6 then
+        return "ArrowLeft"
+    end
+    if index == 5 or index == 7 then
+        return "ArrowRight"
+    end
+    if index == 8 then
+        return "b"
+    end
     return "a"
 end
 
 function normalized(key: string): string
-    if key == "A" then return "a" end
-    if key == "B" then return "b" end
+    if key == "A" then
+        return "a"
+    end
+    if key == "B" then
+        return "b"
+    end
     return key
 end
 
@@ -44,17 +52,25 @@ end
 -- restarts at one when it is itself the first Up, preserving the useful
 -- overlap in sequences such as Up, Up, Up, Down...
 function State:keypressed(key: string): bool
-    if self.active then return false end
+    if self.active then
+        return false
+    end
     local value: string = normalized(key)
     if value == sequence_key(self.matched) then
         self.matched += 1
     elseif value == sequence_key(0) then
         -- Up, Up, Up still ends in the opening Up, Up pair.
-        if self.matched == 2 then self.matched = 2 else self.matched = 1 end
+        if self.matched == 2 then
+            self.matched = 2
+        else
+            self.matched = 1
+        end
     else
         self.matched = 0
     end
-    if self.matched < 10 then return false end
+    if self.matched < 10 then
+        return false
+    end
     self.matched = 0
     self.active = true
     self.clock = 0.0
@@ -70,11 +86,11 @@ end
 -- long frame from dropping conversions if it crosses more than one landing.
 function State:update(dt: f64): {i32}
     local due: {i32} = {}
-    if not self.active then return due end
+    if not self.active then
+        return due
+    end
     self.clock += dt
-    while self.converted < TARGET_COUNT
-        and self.clock >= contact_time(self.converted)
-    do
+    while self.converted < TARGET_COUNT and self.clock >= contact_time(self.converted) do
         table.insert(due, self.converted)
         self.converted += 1
     end
@@ -85,8 +101,4 @@ function State:update(dt: f64): {i32}
     return due
 end
 
-return {
-    contact_time = contact_time,
-    target_count = TARGET_COUNT,
-    total_seconds = TOTAL_SECONDS,
-}
+return { contact_time = contact_time, target_count = TARGET_COUNT, total_seconds = TOTAL_SECONDS }

@@ -1,7 +1,6 @@
 -- DOM-free checks for the copy and ink of a shop line. What each kind of goods
 -- says is written next to the numbers it is about, so this is where the
 -- wording and the loadout it describes are held to each other.
-
 require("waluau:vitest")
 
 local game = require("./game")
@@ -19,148 +18,181 @@ local function shopping_run(spell: spells.SpellKind, gold: i32): run.State
     return state
 end
 
-local function stocked(
-    intermission: shop.State, state: run.State, goods: {shop.Goods}
-): unit
+local function stocked(intermission: shop.State, state: run.State, goods: {shop.Goods}): unit
     local slots: {shop.Slot} = {}
     for item in goods do
-        table.insert(slots, {
-            category = "spells",
-            goods = item,
-            item = item:item_for(),
-            price = item:price_of(state),
-            sold = false,
-        })
+        table.insert(
+            slots,
+            {
+                category = "spells",
+                goods = item,
+                item = item:item_for(),
+                price = item:price_of(state),
+                sold = false
+            }
+        )
     end
     intermission.slots = slots
     intermission.cursor = 0
 end
 
-describe("Ante Magic shop lines", function()
-    it("quotes the cast an upgrade would buy down", function()
-        local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.State.new()
-        stocked(intermission, state, { Upgrade({ kind = spells.SpellKind.Firebolt }) })
-        local rows: {shop.Row} = intermission:rows(state)
+describe(
+    "Ante Magic shop lines",
+    function()
+        it(
+            "quotes the cast an upgrade would buy down",
+            function()
+                local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
+                local intermission: shop.State = shop.State.new()
+                stocked(intermission, state, {Upgrade({ kind = spells.SpellKind.Firebolt })})
+                local rows: {shop.Row} = intermission:rows(state)
 
-        expect(shop_render.row_label(intermission, rows[0], state, nil))
-            :toBe("UPGRADE FIREBOLT   USE 5 TO 4 GOLD")
-        -- The line wears the spell's own ink while the purse can cover it.
-        expect(shop_render.row_ink(rows[0])):toBe("#ef4444")
+                expect(
+                    shop_render.row_label(intermission, rows[0], state, nil)
+                ):toBe("UPGRADE FIREBOLT   USE 5 TO 4 GOLD")
+                -- The line wears the spell's own ink while the purse can cover it.
+                expect(shop_render.row_ink(rows[0])):toBe("#ef4444")
 
-        -- Bought, it says what it did rather than what it would do: the numbers
-        -- it quoted are the ones it has already changed.
-        intermission:activate(state)
-        local spent: {shop.Row} = intermission:rows(state)
-        expect(shop_render.row_label(intermission, spent[0], state, nil))
-            :toBe("UPGRADED FIREBOLT")
-        expect(shop_render.row_ink(spent[0])):toBe("#52525b")
-    end)
+                -- Bought, it says what it did rather than what it would do: the numbers
+                -- it quoted are the ones it has already changed.
+                intermission:activate(state)
+                local spent: {shop.Row} = intermission:rows(state)
+                expect(
+                    shop_render.row_label(intermission, spent[0], state, nil)
+                ):toBe("UPGRADED FIREBOLT")
+                expect(shop_render.row_ink(spent[0])):toBe("#52525b")
+            end
+        )
 
-    it("says where a learned spell would land, and what it would cost the loadout", function()
-        local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.State.new()
-        stocked(intermission, state, { Spell({ kind = spells.SpellKind.Clone }) })
-        expect(shop_render.row_label(
-            intermission, intermission:rows(state)[0], state, nil))
-            :toBe("LEARN CLONE   KEY 2")
+        it(
+            "says where a learned spell would land, and what it would cost the loadout",
+            function()
+                local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
+                local intermission: shop.State = shop.State.new()
+                stocked(intermission, state, {Spell({ kind = spells.SpellKind.Clone })})
+                expect(
+                    shop_render.row_label(intermission, intermission:rows(state)[0], state, nil)
+                ):toBe("LEARN CLONE   KEY 2")
 
-        -- A full loadout has no key to name, so the line says what it would take
-        -- instead of where it would go.
-        expect(state:learn(spells.SpellKind.FreezeRay, 1)):toBe(true)
-        expect(shop_render.row_label(
-            intermission, intermission:rows(state)[0], state, nil))
-            :toBe("LEARN CLONE   TRADES A SPELL AWAY")
-    end)
+                -- A full loadout has no key to name, so the line says what it would take
+                -- instead of where it would go.
+                expect(state:learn(spells.SpellKind.FreezeRay, 1)):toBe(true)
+                expect(
+                    shop_render.row_label(intermission, intermission:rows(state)[0], state, nil)
+                ):toBe("LEARN CLONE   TRADES A SPELL AWAY")
+            end
+        )
 
-    it("closes the wording on a spell another slot traded away", function()
-        local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
-        local intermission: shop.State = shop.State.new()
-        stocked(intermission, state, { Upgrade({ kind = spells.SpellKind.Clone }) })
+        it(
+            "closes the wording on a spell another slot traded away",
+            function()
+                local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
+                expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
+                local intermission: shop.State = shop.State.new()
+                stocked(intermission, state, {Upgrade({ kind = spells.SpellKind.Clone })})
 
-        -- Trading the spell out from under the offer leaves the line standing
-        -- and saying so.
-        expect(state:learn(spells.SpellKind.RaiseCard, 1)):toBe(true)
-        expect(shop_render.row_label(
-            intermission, intermission:rows(state)[0], state, nil))
-            :toBe("UPGRADE CLONE   TRADED AWAY")
-    end)
+                -- Trading the spell out from under the offer leaves the line standing
+                -- and saying so.
+                expect(state:learn(spells.SpellKind.RaiseCard, 1)):toBe(true)
+                expect(
+                    shop_render.row_label(intermission, intermission:rows(state)[0], state, nil)
+                ):toBe("UPGRADE CLONE   TRADED AWAY")
+            end
+        )
 
-    it("names both sides of a trade, and the way out of the shop", function()
-        local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
-        local intermission: shop.State = shop.State.new()
-        stocked(intermission, state, { Spell({ kind = spells.SpellKind.FreezeRay }) })
-        intermission:activate(state)
-        expect(intermission:choosing()):toBe(true)
+        it(
+            "names both sides of a trade, and the way out of the shop",
+            function()
+                local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
+                expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
+                local intermission: shop.State = shop.State.new()
+                stocked(intermission, state, {Spell({ kind = spells.SpellKind.FreezeRay })})
+                intermission:activate(state)
+                expect(intermission:choosing()):toBe(true)
 
-        local rows: {shop.Row} = intermission:rows(state)
-        local offered: spells.SpellKind? = intermission:pending_spell()
-        expect(shop_render.row_label(intermission, rows[0], state, offered))
-            :toBe("TRADE FIREBOLT FOR FREEZE RAY")
-        expect(shop_render.row_label(intermission, rows[2], state, offered))
-            :toBe("KEEP BOTH SPELLS")
-    end)
+                local rows: {shop.Row} = intermission:rows(state)
+                local offered: spells.SpellKind? = intermission:pending_spell()
+                expect(
+                    shop_render.row_label(intermission, rows[0], state, offered)
+                ):toBe("TRADE FIREBOLT FOR FREEZE RAY")
+                expect(
+                    shop_render.row_label(intermission, rows[2], state, offered)
+                ):toBe("KEEP BOTH SPELLS")
+            end
+        )
 
-    it("says which duel the way out leads into and what clearing it costs", function()
-        local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.State.new()
-        stocked(intermission, state, {})
-        local rows: {shop.Row} = intermission:rows(state)
-        expect(shop_render.row_label(intermission, rows[0], state, nil))
-            :toBe("ENTER DUEL 2   TARGET " .. tostring(state:target()))
-        -- The way out is never for sale, so it never wears a spell's ink.
-        expect(shop_render.row_ink(rows[0])):toBe("#d4d4d8")
-    end)
-end)
+        it(
+            "says which duel the way out leads into and what clearing it costs",
+            function()
+                local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
+                local intermission: shop.State = shop.State.new()
+                stocked(intermission, state, {})
+                local rows: {shop.Row} = intermission:rows(state)
+                expect(
+                    shop_render.row_label(intermission, rows[0], state, nil)
+                ):toBe("ENTER DUEL 2   TARGET " .. tostring(state:target()))
+                -- The way out is never for sale, so it never wears a spell's ink.
+                expect(shop_render.row_ink(rows[0])):toBe("#d4d4d8")
+            end
+        )
+    end
+)
 
-describe("Ante Magic retained shop controls", function(): unit
-    it("retains nodes while focus wraps and activates through the router", function(): unit
-        local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.State.new()
-        stocked(intermission, state, { Upgrade({ kind = spells.SpellKind.Firebolt }) })
-        local view: shop_render.View = shop_render.View.new(intermission, state)
-        view:sync()
-        view.root:measure(nil)
-        local viewport: viewport_layout.State = viewport_layout.current()
-        view.root:arrange(0.0, 0.0, viewport.width, viewport.height)
-        local retained_bounds: ui_layout.Rect = view.targets[0].node:bounds()
-        local first_x: f64 = retained_bounds.x
+describe(
+    "Ante Magic retained shop controls",
+    function(): unit
+        it(
+            "retains nodes while focus wraps and activates through the router",
+            function(): unit
+                local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
+                local intermission: shop.State = shop.State.new()
+                stocked(intermission, state, {Upgrade({ kind = spells.SpellKind.Firebolt })})
+                local view: shop_render.View = shop_render.View.new(intermission, state)
+                view:sync()
+                view.root:measure(nil)
+                local viewport: viewport_layout.State = viewport_layout.current()
+                view.root:arrange(0.0, 0.0, viewport.width, viewport.height)
+                local retained_bounds: ui_layout.Rect = view.targets[0].node:bounds()
+                local first_x: f64 = retained_bounds.x
 
-        expect(tostring(view:keypressed("ArrowUp"))):toBe("stay")
-        expect(intermission.cursor):toBe(1)
-        expect(tostring(view:keypressed("Enter"))):toBe("leave")
-        view.root:arrange(12.0, 0.0, viewport.width, viewport.height)
-        expect(retained_bounds.x):toBe(first_x + 12.0)
-    end)
+                expect(tostring(view:keypressed("ArrowUp"))):toBe("stay")
+                expect(intermission.cursor):toBe(1)
+                expect(tostring(view:keypressed("Enter"))):toBe("leave")
+                view.root:arrange(12.0, 0.0, viewport.width, viewport.height)
+                expect(retained_bounds.x):toBe(first_x + 12.0)
+            end
+        )
 
-    it("routes hover and requires a matching press and release to buy", function(): unit
-        local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
-        local intermission: shop.State = shop.State.new()
-        stocked(intermission, state, { Upgrade({ kind = spells.SpellKind.Firebolt }) })
-        local view: shop_render.View = shop_render.View.new(intermission, state)
-        view:sync()
-        view.root:measure(nil)
-        local viewport: viewport_layout.State = viewport_layout.current()
-        view.root:arrange(0.0, 0.0, viewport.width, viewport.height)
-        local first: ui_layout.Rect = view.targets[0].node:bounds()
-        local second: ui_layout.Rect = view.targets[1].node:bounds()
-        local first_x: f64 = first.x + first.width * 0.5
-        local first_y: f64 = first.y + first.height * 0.5
-        local second_x: f64 = second.x + second.width * 0.5
-        local second_y: f64 = second.y + second.height * 0.5
+        it(
+            "routes hover and requires a matching press and release to buy",
+            function(): unit
+                local state: run.State = shopping_run(spells.SpellKind.Firebolt, 40)
+                local intermission: shop.State = shop.State.new()
+                stocked(intermission, state, {Upgrade({ kind = spells.SpellKind.Firebolt })})
+                local view: shop_render.View = shop_render.View.new(intermission, state)
+                view:sync()
+                view.root:measure(nil)
+                local viewport: viewport_layout.State = viewport_layout.current()
+                view.root:arrange(0.0, 0.0, viewport.width, viewport.height)
+                local first: ui_layout.Rect = view.targets[0].node:bounds()
+                local second: ui_layout.Rect = view.targets[1].node:bounds()
+                local first_x: f64 = first.x + first.width * 0.5
+                local first_y: f64 = first.y + first.height * 0.5
+                local second_x: f64 = second.x + second.width * 0.5
+                local second_y: f64 = second.y + second.height * 0.5
 
-        view:mousemoved(first_x, first_y)
-        expect(view.router:hovered()):toBe(view.targets[0].key)
-        view:mousemoved(second_x, second_y)
-        expect(view.router:hovered()):toBe(view.targets[1].key)
+                view:mousemoved(first_x, first_y)
+                expect(view.router:hovered()):toBe(view.targets[0].key)
+                view:mousemoved(second_x, second_y)
+                expect(view.router:hovered()):toBe(view.targets[1].key)
 
-        view:mousepressed(first_x, first_y, 1)
-        expect(tostring(view:mousereleased(second_x, second_y, 1))):toBe("stay")
-        expect(state.gold):toBe(40)
-        view:mousepressed(first_x, first_y, 1)
-        expect(tostring(view:mousereleased(first_x, first_y, 1))):toBe("stay")
-        expect(state.gold):toBe(36)
-    end)
-end)
+                view:mousepressed(first_x, first_y, 1)
+                expect(tostring(view:mousereleased(second_x, second_y, 1))):toBe("stay")
+                expect(state.gold):toBe(40)
+                view:mousepressed(first_x, first_y, 1)
+                expect(tostring(view:mousereleased(first_x, first_y, 1))):toBe("stay")
+                expect(state.gold):toBe(36)
+            end
+        )
+    end
+)

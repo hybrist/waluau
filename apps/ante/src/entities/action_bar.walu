@@ -5,7 +5,6 @@
 -- The bar owns stable capsule nodes. Pointer routing reads their retained
 -- arranged bounds through the board's interaction tree, so drawing and input
 -- share one geometry source.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local capsule = require("./capsule")
@@ -65,8 +64,9 @@ end
 -- of the band occupy the same place on the board.
 function prompt(text: string): ui.Node
     return ui.Node.flow(
-        { label.centered(text, PROMPT_SIZE, PROMPT_INK) },
-        box.row(0.0, "center", "center"))
+        {label.centered(text, PROMPT_SIZE, PROMPT_INK)},
+        box.row(0.0, "center", "center")
+    )
 end
 
 return {
@@ -75,5 +75,5 @@ return {
     capsules = capsules,
     bar_style = bar_style,
     prompt = prompt,
-    prompt_size = PROMPT_SIZE,
+    prompt_size = PROMPT_SIZE
 }

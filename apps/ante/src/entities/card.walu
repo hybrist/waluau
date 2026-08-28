@@ -9,7 +9,6 @@
 -- asks for that measurement rather than restating 92 by 128, and a rectangle
 -- of another size scales the whole face rather than reflowing its insides: a
 -- card is a printed object, so it gets larger, not roomier.
-
 local graphics_module = require("waluau:engine/graphics")
 local game = require("../game")
 local box = require("../ui/layout")
@@ -61,8 +60,12 @@ export type Look = {
 type Mark = { x: f64, y: f64, size: f64 }
 
 function look(
-    card: game.Card, selected: bool, focused: bool,
-    hidden: bool, colored: bool, known: bool
+    card: game.Card,
+    selected: bool,
+    focused: bool,
+    hidden: bool,
+    colored: bool,
+    known: bool
 ): Look
     return {
         card = card,
@@ -70,7 +73,7 @@ function look(
         focused = focused,
         hidden = hidden,
         colored = colored,
-        known = known,
+        known = known
     }
 end
 
@@ -91,7 +94,11 @@ end
 -- stroke: the cut paper edge is its silhouette, not an outline printed on it.
 function fill_shape(
     graphics: graphics_module.Graphics,
-    x: f64, y: f64, width: f64, height: f64, radius: f64
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    radius: f64
 ): unit
     graphics:fill_rectangle(x + radius, y, width - radius * 2.0, height)
     graphics:fill_rectangle(x, y + radius, width, height - radius * 2.0)
@@ -101,24 +108,25 @@ function fill_shape(
     graphics:fill_circle(x + width - radius, y + height - radius, radius)
 end
 
-function fill_silhouette(
-    graphics: graphics_module.Graphics, x: f64, y: f64, color: string
-): unit
+function fill_silhouette(graphics: graphics_module.Graphics, x: f64, y: f64, color: string): unit
     graphics:set_color(color)
     fill_shape(graphics, x, y, WIDTH, HEIGHT, CORNER_RADIUS)
 end
 
 function add_ring(
-    marks: {Mark}, count: i32, radius_x: f64, radius_y: f64,
-    phase: f64, size: f64
+    marks: {Mark},
+    count: i32,
+    radius_x: f64,
+    radius_y: f64,
+    phase: f64,
+    size: f64
 ): unit
     for index = 0::i32, count - 1 do
         local angle: f64 = phase + (index::f64) * math.pi * 2.0 / (count::f64)
-        table.insert(marks, {
-            x = math.cos(angle) * radius_x,
-            y = math.sin(angle) * radius_y,
-            size = size,
-        })
+        table.insert(
+            marks,
+            { x = math.cos(angle) * radius_x, y = math.sin(angle) * radius_y, size = size }
+        )
     end
 end
 
@@ -128,10 +136,14 @@ end
 function rank_marks(rank: i32): {Mark}
     local count: i32 = rank
     local marks: {Mark} = {}
-    if count < 2 or count > 10 then return marks end
+    if count < 2 or count > 10 then
+        return marks
+    end
     if count <= 6 then
         local phase: f64 = -math.pi * 0.5
-        if count == 2 then phase = math.pi * 0.5 end
+        if count == 2 then
+            phase = math.pi * 0.5
+        end
         add_ring(marks, count, 23.0, 38.0, phase, 5.0)
     elseif count == 7 then
         table.insert(marks, { x = 0.0, y = 0.0, size = 5.2 })
@@ -152,27 +164,34 @@ end
 -- red cup, blue bell, black sword, and green leaf. Both the repeated pips and
 -- the larger help sigils draw through this one seam, so their object, ink, and
 -- left-to-right shading cannot drift apart.
-function draw_suit_symbol(
-    surface: ui.Surface, suit: i32, x: f64, y: f64, diameter: f64
-): bool
+function draw_suit_symbol(surface: ui.Surface, suit: i32, x: f64, y: f64, diameter: f64): bool
     local maybe_texture: graphics_module.Texture? = surface.suit_symbols
-    if maybe_texture == nil then return false end
+    if maybe_texture == nil then
+        return false
+    end
     local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
     -- A horizontal atlas of square cells names its own cell size by its
     -- height. Reject a malformed upload rather than sampling an adjacent suit.
-    if texture.height <= 0 or texture.width < texture.height * 4 then return false end
+    if texture.height <= 0 or texture.width < texture.height * 4 then
+        return false
+    end
     local cell: f64 = texture.height::f64
     surface.graphics:set_color("#ffffffff")
     return surface.graphics:draw_sprite(
         texture,
-        x - diameter * 0.5, y - diameter * 0.5, diameter, diameter,
-        (suit::f64) * cell, 0.0, cell, cell)
+        x - diameter * 0.5,
+        y - diameter * 0.5,
+        diameter,
+        diameter,
+        (suit::f64) * cell,
+        0.0,
+        cell,
+        cell
+    )
 end
 
 -- A small, unsealed suit sprite for the repeated rank constellations.
-function draw_school_mark(
-    surface: ui.Surface, suit: i32, x: f64, y: f64, size: f64
-): unit
+function draw_school_mark(surface: ui.Surface, suit: i32, x: f64, y: f64, size: f64): unit
     draw_suit_symbol(surface, suit, x, y, size * 6.0)
 end
 
@@ -203,15 +222,17 @@ function draw_arcane_field(surface: ui.Surface, suit: i32, x: f64, y: f64): unit
     graphics:line(center_x, center_y + 42.0, center_x, center_y + 46.0)
 end
 
-function stroke_ring(
-    graphics: graphics_module.Graphics, x: f64, y: f64, radius: f64
-): unit
+function stroke_ring(graphics: graphics_module.Graphics, x: f64, y: f64, radius: f64): unit
     graphics:begin_path()
     for step = 0::i32, 24::i32 do
         local angle: f64 = (step::f64) * math.pi * 2.0 / 24.0
         local px: f64 = x + math.cos(angle) * radius
         local py: f64 = y + math.sin(angle) * radius
-        if step == 0 then graphics:move_to(px, py) else graphics:line_to(px, py) end
+        if step == 0 then
+            graphics:move_to(px, py)
+        else
+            graphics:line_to(px, py)
+        end
     end
     graphics:close_path()
     graphics:stroke()
@@ -221,9 +242,7 @@ end
 -- this world: Jack is a hooded adept, Queen an orb-bearing seer, King a
 -- crowned hierophant. Ace stands apart as one large school omen. These plates
 -- borrow tarot's frontal, emblematic figures without copying poker courts.
-function draw_high_arcana(
-    surface: ui.Surface, rank: i32, suit: i32, x: f64, y: f64
-): unit
+function draw_high_arcana(surface: ui.Surface, rank: i32, suit: i32, x: f64, y: f64): unit
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
     local center_y: f64 = y + HEIGHT * 0.5
@@ -251,10 +270,15 @@ function draw_high_arcana(
     -- A translucent robe gives the court figure a body without introducing
     -- the mirrored portrait box of a conventional deck.
     graphics:fill_quad(
-        center_x - 7.0, head_y + 5.0,
-        center_x + 7.0, head_y + 5.0,
-        center_x + 18.0, center_y + 28.0,
-        center_x - 18.0, center_y + 28.0)
+        center_x - 7.0,
+        head_y + 5.0,
+        center_x + 7.0,
+        head_y + 5.0,
+        center_x + 18.0,
+        center_y + 28.0,
+        center_x - 18.0,
+        center_y + 28.0
+    )
     graphics:set_color("#e9e0cc")
     graphics:set_line_width(1.15)
 
@@ -295,23 +319,40 @@ end
 -- looks like one thing on screen.
 --
 function use_color_field(
-    surface: ui.Surface, suit: i32, selected: bool, colored: bool, aspect: f64
+    surface: ui.Surface,
+    suit: i32,
+    selected: bool,
+    colored: bool,
+    aspect: f64
 ): bool
     local maybe_shader: graphics_module.Shader? = surface.effects.red_fire.shader
-    if suit == 1 then maybe_shader = surface.effects.blue_caustics.shader
-    elseif suit == 2 then maybe_shader = surface.effects.black_hole.shader
-    elseif suit == 3 then maybe_shader = surface.effects.green_growth.shader end
-    if maybe_shader == nil then return false end
+    if suit == 1 then
+        maybe_shader = surface.effects.blue_caustics.shader
+    elseif suit == 2 then
+        maybe_shader = surface.effects.black_hole.shader
+    elseif suit == 3 then
+        maybe_shader = surface.effects.green_growth.shader
+    end
+    if maybe_shader == nil then
+        return false
+    end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
     local selected_value: f64 = 0.0
-    if selected then selected_value = 1.0 end
+    if selected then
+        selected_value = 1.0
+    end
     local colored_value: f64 = 0.0
-    if colored then colored_value = 1.0 end
-    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(shader, {
-        graphics_module.float_parameter("u_aspect", aspect),
-        graphics_module.float_parameter("u_selected", selected_value),
-        graphics_module.float_parameter("u_colored", colored_value),
-    })
+    if colored then
+        colored_value = 1.0
+    end
+    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
+        shader,
+        {
+            graphics_module.float_parameter("u_aspect", aspect),
+            graphics_module.float_parameter("u_selected", selected_value),
+            graphics_module.float_parameter("u_colored", colored_value)
+        }
+    )
     return binding.ok
 end
 
@@ -324,12 +365,17 @@ end
 -- fill and the print stays clean.
 function use_paper_field(surface: ui.Surface, aspect: f64, press: f64): bool
     local maybe_shader: graphics_module.Shader? = surface.effects.card_paper.shader
-    if maybe_shader == nil then return false end
+    if maybe_shader == nil then
+        return false
+    end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(shader, {
-        graphics_module.float_parameter("u_aspect", aspect),
-        graphics_module.float_parameter("u_press", press),
-    })
+    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
+        shader,
+        {
+            graphics_module.float_parameter("u_aspect", aspect),
+            graphics_module.float_parameter("u_press", press)
+        }
+    )
     return binding.ok
 end
 
@@ -344,8 +390,12 @@ const PAPER_BAKE_SCALE: f64 = 2.0
 function bake_paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
     local graphics = surface.graphics
     local result: graphics_module.RenderTargetResult = graphics:create_render_target(
-        (WIDTH * PAPER_BAKE_SCALE)::i32, (HEIGHT * PAPER_BAKE_SCALE)::i32)
-    if not result.ok then return nil end
+        (WIDTH * PAPER_BAKE_SCALE)::i32,
+        (HEIGHT * PAPER_BAKE_SCALE)::i32
+    )
+    if not result.ok then
+        return nil
+    end
     local target: graphics_module.RenderTarget = result.target
     if not graphics:set_render_target(target) then
         graphics:release_render_target(target)
@@ -356,8 +406,7 @@ function bake_paper_pass(surface: ui.Surface, press: f64): graphics_module.Rende
     local bound: bool = use_paper_field(surface, WIDTH / HEIGHT, press)
     if bound then
         graphics:set_color("#ffffffff")
-        graphics:fill_rectangle(
-            0.0, 0.0, WIDTH * PAPER_BAKE_SCALE, HEIGHT * PAPER_BAKE_SCALE)
+        graphics:fill_rectangle(0.0, 0.0, WIDTH * PAPER_BAKE_SCALE, HEIGHT * PAPER_BAKE_SCALE)
         ink.stop_effect(graphics)
     end
     graphics:pop()
@@ -374,10 +423,18 @@ end
 -- capture would hand the rest of the capture to the wrong surface.
 function paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
     local baked: graphics_module.RenderTarget? = surface.effects.paper_board
-    if press > 0.5 then baked = surface.effects.paper_press end
-    if baked ~= nil then return baked end
-    if surface.effects.card_paper.shader == nil then return nil end
-    if surface.graphics.current_target ~= 0 then return nil end
+    if press > 0.5 then
+        baked = surface.effects.paper_press
+    end
+    if baked ~= nil then
+        return baked
+    end
+    if surface.effects.card_paper.shader == nil then
+        return nil
+    end
+    if surface.graphics.current_target ~= 0 then
+        return nil
+    end
     local fresh: graphics_module.RenderTarget? = bake_paper_pass(surface, press)
     if press > 0.5 then
         surface.effects.paper_press = fresh
@@ -418,16 +475,29 @@ function draw_back(surface: ui.Surface, x: f64, y: f64, veiled: bool): unit
     local maybe_texture: graphics_module.Texture? = surface.card_back
     if maybe_texture ~= nil then
         local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
-        if veiled then graphics:set_color("#ffffff80") else graphics:set_color("#ffffffff") end
+        if veiled then
+            graphics:set_color("#ffffff80")
+        else
+            graphics:set_color("#ffffffff")
+        end
         if graphics:draw_sprite(
-            texture, x, y, WIDTH, HEIGHT,
-            0.0, 0.0, texture.width::f64, texture.height::f64
+            texture,
+            x,
+            y,
+            WIDTH,
+            HEIGHT,
+            0.0,
+            0.0,
+            texture.width::f64,
+            texture.height::f64
         ) then
             return
         end
     end
     local fill: string = "#111118"
-    if veiled then fill = "#11111880" end
+    if veiled then
+        fill = "#11111880"
+    end
     fill_silhouette(graphics, x, y, fill)
 end
 
@@ -438,9 +508,7 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     -- use its coloured variant. The field is cut by the rounded silhouette,
     -- so even an animated surface remains a physical piece of paper.
     if value.colored or value.selected then
-        use_color_field(
-            surface, card.suit, value.selected, value.colored,
-            WIDTH / HEIGHT)
+        use_color_field(surface, card.suit, value.selected, value.colored, WIDTH / HEIGHT)
         -- One quad gives the animated field one continuous UV space; each
         -- field shader cuts this quad to the same rounded paper silhouette.
         graphics:set_color("#211d24")
@@ -453,8 +521,7 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
         local paper: graphics_module.RenderTarget? = paper_pass(surface, 0.0)
         if paper ~= nil then
             graphics:set_color("#ffffffff")
-            graphics:draw_render_target(
-                paper::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
+            graphics:draw_render_target(paper::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
         else
             fill_silhouette(graphics, x, y, "#211d24")
         end
@@ -480,9 +547,7 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
         local center_x: f64 = x + WIDTH * 0.5
         local center_y: f64 = y + HEIGHT * 0.5
         for mark in marks do
-            draw_school_mark(
-                surface, card.suit,
-                center_x + mark.x, center_y + mark.y, mark.size)
+            draw_school_mark(surface, card.suit, center_x + mark.x, center_y + mark.y, mark.size)
         end
     else
         draw_high_arcana(surface, card.rank, card.suit, x, y)
@@ -495,13 +560,11 @@ function draw_face(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     local pressed: graphics_module.RenderTarget? = paper_pass(surface, 1.0)
     if pressed ~= nil then
         graphics:set_color("#ffffffff")
-        graphics:draw_render_target(
-            pressed::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
+        graphics:draw_render_target(pressed::graphics_module.RenderTarget, x, y, WIDTH, HEIGHT)
     end
 
     if value.selected then
-        ink.text_centered(
-            graphics, "BOUND", x + WIDTH * 0.5, y + 119.0, 8, SELECTION_HIGHLIGHT)
+        ink.text_centered(graphics, "BOUND", x + WIDTH * 0.5, y + 119.0, 8, SELECTION_HIGHLIGHT)
     elseif value.focused then
         -- Focus is an interior divination mark, not a temporary border.
         graphics:set_color(SELECTION_HIGHLIGHT)
@@ -519,7 +582,9 @@ end
 -- back instead of having to remember it.
 function draw_at(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     local graphics = surface.graphics
-    if value.selected then y -= SELECT_LIFT end
+    if value.selected then
+        y -= SELECT_LIFT
+    end
     -- A soft offset shadow gives the paper thickness without outlining it.
     fill_silhouette(graphics, x + 2.0, y + 3.0, "#07060a")
     if value.hidden then
@@ -530,7 +595,9 @@ function draw_at(surface: ui.Surface, value: Look, x: f64, y: f64): unit
     else
         draw_face(surface, value, x, y)
     end
-    if value.known then draw_eye(surface, x + WIDTH * 0.5, y) end
+    if value.known then
+        draw_eye(surface, x + WIDTH * 0.5, y)
+    end
 end
 
 -- Capture the complete live card into one texture. The rank, school field,
@@ -542,8 +609,12 @@ function capture(surface: ui.Surface, value: Look): graphics_module.RenderTarget
     local graphics = surface.graphics
     ink.stop_effect(graphics)
     local result: graphics_module.RenderTargetResult = graphics:create_render_target(
-        WIDTH::i32, HEIGHT::i32)
-    if not result.ok then return nil end
+        WIDTH::i32,
+        HEIGHT::i32
+    )
+    if not result.ok then
+        return nil
+    end
     local target: graphics_module.RenderTarget = result.target
     if not graphics:set_render_target(target) then
         graphics:release_render_target(target)
@@ -555,20 +626,20 @@ function capture(surface: ui.Surface, value: Look): graphics_module.RenderTarget
     -- capture shows a zoomed crop of a face.
     graphics:push_identity()
     graphics:clear("#00000000")
-    local captured: Look = look(
-        value.card, false, false, value.hidden, value.colored, value.known)
+    local captured: Look = look(value.card, false, false, value.hidden, value.colored, value.known)
     -- Captures contain the paper itself, not the board-space drop shadow.
     -- That keeps rounded corners transparent for warps and burn effects.
     if captured.hidden then
         if captured.known then
-            draw_face(surface, look(
-                captured.card, false, false, false, false, false), 0.0, 0.0)
+            draw_face(surface, look(captured.card, false, false, false, false, false), 0.0, 0.0)
         end
         draw_back(surface, 0.0, 0.0, captured.known)
     else
         draw_face(surface, captured, 0.0, 0.0)
     end
-    if captured.known then draw_eye(surface, WIDTH * 0.5, 0.0) end
+    if captured.known then
+        draw_eye(surface, WIDTH * 0.5, 0.0)
+    end
     graphics:pop()
     graphics:set_screen_target()
     return target
@@ -576,8 +647,7 @@ end
 
 -- The face alone, which is what every burn in the game captures.
 function capture_face(surface: ui.Surface, value: Look): graphics_module.RenderTarget?
-    return capture(surface, look(
-        value.card, false, false, false, value.colored, value.known))
+    return capture(surface, look(value.card, false, false, false, value.colored, value.known))
 end
 
 -- The card as an entity: it measures as the design space its face is authored
@@ -603,7 +673,8 @@ function Stateful.new(value: Look): Stateful
             graphics:scale(bounds.width / WIDTH, bounds.height / HEIGHT)
             draw_at(surface, presentation.value, 0.0, 0.0)
             graphics:pop()
-        end)
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -639,5 +710,5 @@ return {
     height = HEIGHT,
     corner_radius = CORNER_RADIUS,
     select_lift = SELECT_LIFT,
-    selection_highlight = SELECTION_HIGHLIGHT,
+    selection_highlight = SELECTION_HIGHLIGHT
 }

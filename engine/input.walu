@@ -3,14 +3,8 @@
 -- ("ArrowLeft", "a", "Space", ...) without an engine change. Mouse buttons use
 -- the Love2D-style numbering browser.walu
 -- feeds in: 1 = left, 2 = right, 3 = middle.
-
 type Button = { key: string, down: bool, pressed: bool, released: bool }
-export type Input = {
-    buttons: {Button},
-    mouse_buttons: {Button},
-    mouse_x: f64,
-    mouse_y: f64
-}
+export type Input = { buttons: {Button}, mouse_buttons: {Button}, mouse_x: f64, mouse_y: f64 }
 
 function find_button(list: {Button}, key: string): i32
     for i, button in list do
@@ -109,6 +103,4 @@ function Input:end_step(): unit
     end
 end
 
-return {
-    new = Input.new,
-}
+return { new = Input.new }

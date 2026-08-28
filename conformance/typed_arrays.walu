@@ -2,7 +2,6 @@
 -- arrays allocated in the module's linear memory. Literals cast (or annotated)
 -- to a typed-array type allocate there; constant literals are stored in the
 -- wasm data section and copied out on every evaluation.
-
 -- Literal construction, length, and element access.
 local buf = {0, 1, 2, 3, 4}::Float32Array
 assert(#buf == 5)

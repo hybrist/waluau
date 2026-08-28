@@ -1,9 +1,7 @@
 -- conformance: error=the iterator function's first return value must be nullable
-
 -- The nil first result is what ends a protocol loop, so an iterator whose
 -- first return value can never be nil would loop forever; the checker
 -- rejects it.
-
 function bad(a: {i32}, i: i32): (i32, i32)
     return i, 0
 end

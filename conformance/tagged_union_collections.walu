@@ -2,11 +2,7 @@
 -- one, and an array of those records. All three are the canonical
 -- `{ tag, value }` record at runtime, so the value moves between an annotation
 -- naming the union and one naming the record without a conversion.
-
-type Goods =
-      Upgrade({ kind: i32 })
-    | Spell({ kind: i32 })
-    | Charm({ id: i32, charges: i32 })
+type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 }) | Charm({ id: i32, charges: i32 })
 
 type Offer = { goods: Goods, price: i32, sold: bool }
 
@@ -31,11 +27,7 @@ assert(single.goods is Spell)
 
 -- An array literal holds several different variants: the element type stays the
 -- union rather than narrowing to whichever variant came first.
-local direct: {Goods} = {
-    Upgrade({ kind = 1 }),
-    Spell({ kind = 2 }),
-    Charm({ id = 5, charges = 3 }),
-}
+local direct: {Goods} = {Upgrade({ kind = 1 }), Spell({ kind = 2 }), Charm({ id = 5, charges = 3 })}
 assert(#direct == 3)
 assert(price_of(direct[0]) == 5)
 assert(price_of(direct[1]) == 9)

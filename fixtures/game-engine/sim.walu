@@ -1,5 +1,4 @@
 -- DOM-free assertions for reusable engine state.
-
 local input_module = require("../../engine/input")
 local time_module = require("../../engine/time")
 

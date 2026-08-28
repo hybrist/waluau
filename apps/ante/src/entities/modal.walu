@@ -12,7 +12,6 @@
 -- own content and holds that as a floor, so every modal is the same page until
 -- one of them genuinely needs more room — which is how the help card grows tall
 -- without the ledger having been authored around its height.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local label = require("./label")
@@ -51,21 +50,27 @@ function shell(): ui.Node
             graphics:set_color(SHELL_EDGE)
             graphics:set_line_width(3.0)
             graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
-        end)
+        end
+    )
 end
 
 function node(title: string, subtitle: string, body: ui.Node): ui.Node
-    local content: ui.Node = ui.Node.flow({
-        label.left(title, TITLE_SIZE, TITLE_INK),
-        label.left(subtitle, SUBTITLE_SIZE, SUBTITLE_INK),
-        ui.Node.gap(0.0, HEAD_GAP - TITLE_GAP),
-        body,
-    }, box.style(
-        "column", TITLE_GAP, "start", "stretch",
-        box.edges(PAD_X, PAD_TOP, PAD_X, PAD_BOTTOM)))
-    return ui.Node.layer({
-        shell(), ui.Node.gap(FLOOR_WIDTH, FLOOR_HEIGHT), content,
-    })
+    local content: ui.Node = ui.Node.flow(
+        {
+            label.left(title, TITLE_SIZE, TITLE_INK),
+            label.left(subtitle, SUBTITLE_SIZE, SUBTITLE_INK),
+            ui.Node.gap(0.0, HEAD_GAP - TITLE_GAP),
+            body
+        },
+        box.style(
+            "column",
+            TITLE_GAP,
+            "start",
+            "stretch",
+            box.edges(PAD_X, PAD_TOP, PAD_X, PAD_BOTTOM)
+        )
+    )
+    return ui.Node.layer({shell(), ui.Node.gap(FLOOR_WIDTH, FLOOR_HEIGHT), content})
 end
 
 -- Park the modal on the canvas at the largest scale that still clears the
@@ -85,8 +90,7 @@ function show(surface: ui.Surface, viewport: box.Rect, content: ui.Node): unit
     end
     local graphics = surface.graphics
     graphics:push()
-    graphics:translate(
-        viewport.x + viewport.width * 0.5, viewport.y + viewport.height * 0.5)
+    graphics:translate(viewport.x + viewport.width * 0.5, viewport.y + viewport.height * 0.5)
     graphics:scale(fit, fit)
     graphics:translate(-width * 0.5, -height * 0.5)
     content:draw(surface, 0.0, 0.0, width, height)
@@ -113,8 +117,7 @@ function keys_line(text: string): ui.Node
 end
 
 function column(children: {ui.Node}, gap: f64): ui.Node
-    return ui.Node.flow(
-        children, box.column(gap, "start", "stretch"))
+    return ui.Node.flow(children, box.column(gap, "start", "stretch"))
 end
 
 return {
@@ -127,5 +130,5 @@ return {
     body_size = BODY_SIZE,
     body_ink = BODY_INK,
     heading_ink = HEADING_INK,
-    keys_ink = KEYS_INK,
+    keys_ink = KEYS_INK
 }

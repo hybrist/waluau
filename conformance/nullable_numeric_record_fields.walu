@@ -1,7 +1,6 @@
 -- Flow-narrowed nullable numeric record fields unbox from their record storage
 -- in both ordinary value positions and call arguments. Explicit casts use the
 -- same field-read lowering path.
-
 type Options = { gap: f64?, count: i32? }
 
 function accept_f64(value: f64): f64

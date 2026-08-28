@@ -1,6 +1,5 @@
 -- Tagged-union methods must use the same variant discriminants as constructors
 -- lowered in other functions.
-
 type Value = Num(i32) | Flag(i32)
 
 function Value:as_flag(): i32

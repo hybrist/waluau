@@ -78,19 +78,27 @@ function min_board_height(): f64
 end
 
 function calculate(canvas_width: f64, canvas_height: f64): State
-    if canvas_width < 1.0 then canvas_width = 1.0 end
-    if canvas_height < 1.0 then canvas_height = 1.0 end
+    if canvas_width < 1.0 then
+        canvas_width = 1.0
+    end
+    if canvas_height < 1.0 then
+        canvas_height = 1.0
+    end
 
     -- The largest unit size at which the packed board still fits both
     -- dimensions of the real canvas.
     local scale: f64 = canvas_width / min_board_width()
     local height_scale: f64 = canvas_height / min_board_height()
-    if height_scale < scale then scale = height_scale end
+    if height_scale < scale then
+        scale = height_scale
+    end
 
     local width: f64 = canvas_width / scale
     local height: f64 = canvas_height / scale
     local extra: f64 = height - min_board_height()
-    if extra < 0.0 then extra = 0.0 end
+    if extra < 0.0 then
+        extra = 0.0
+    end
 
     local computer_y: f64 = TOP_BAND + extra * EXTRA_ABOVE
     -- player_y is the fan's centre line: half a card plus the footer strip
@@ -101,7 +109,9 @@ function calculate(canvas_width: f64, canvas_height: f64): State
 
     local hand_span: f64 = width - (BOARD_MARGIN + CARD_WIDTH + HAND_SEAM) * 2.0
     local widest_span: f64 = CARD_WIDTH * 5.0
-    if hand_span > widest_span then hand_span = widest_span end
+    if hand_span > widest_span then
+        hand_span = widest_span
+    end
     return {
         canvas_width = canvas_width,
         canvas_height = canvas_height,
@@ -117,7 +127,7 @@ function calculate(canvas_width: f64, canvas_height: f64): State
         side_left = BOARD_MARGIN,
         side_right = width - BOARD_MARGIN - CARD_WIDTH,
         hand_span = hand_span,
-        footer_y = height - 18.0,
+        footer_y = height - 18.0
     }
 end
 
@@ -141,9 +151,4 @@ function canvas_y(value: f64): f64
     return value / current_state.scale
 end
 
-return {
-    update = update,
-    current = current,
-    canvas_x = canvas_x,
-    canvas_y = canvas_y,
-}
+return { update = update, current = current, canvas_x = canvas_x, canvas_y = canvas_y }

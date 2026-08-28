@@ -1,6 +1,5 @@
 -- Snake hosted by the 2D game engine. Game code owns only rules and drawing;
 -- the engine owns the DOM, WebGL canvas, input events, and fixed-step loop.
-
 local engine = require("../../engine/browser")
 local input_module = require("../../engine/input")
 local graphics_module = require("../../engine/graphics")
@@ -44,28 +43,31 @@ function install_snake(): unit
     end
 
     local function keyreleased(key: string): unit
-        -- Required by the initial engine API; Snake only uses key presses.
+    -- Required by the initial engine API; Snake only uses key presses.
     end
 
     -- TODO(waluau-chsb): Restore touch/on-screen controls when the engine
     -- exposes pointer and touch input without requiring DOM access here.
-    engine.start({
-        title = "Waluau Snake",
-        width = BOARD_SIZE,
-        height = BOARD_SIZE,
-        update_hz = 1000.0 / 140.0,
-        max_frame_seconds = 0.28,
-        background = "#0f172a",
-    }, {
-        load = load,
-        update = update,
-        draw = draw,
-        keypressed = keypressed,
-        keyreleased = keyreleased,
-        mousepressed = nil,
-        mousereleased = nil,
-        mousemoved = nil,
-    })
+    engine.start(
+        {
+            title = "Waluau Snake",
+            width = BOARD_SIZE,
+            height = BOARD_SIZE,
+            update_hz = 1000.0 / 140.0,
+            max_frame_seconds = 0.28,
+            background = "#0f172a"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
 end
 
 install_snake()

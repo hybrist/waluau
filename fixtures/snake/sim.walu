@@ -4,7 +4,6 @@
 -- placement is pinned by the math.randomseed(42) call below).
 --
 --     cargo run -p waluau-cli -- fixtures/snake/sim.walu -o sim.wasm
-
 local game = require("./game")
 
 -- Seed the host PRNG so food placement (the only randomness in the rules)

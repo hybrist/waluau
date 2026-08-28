@@ -29,41 +29,44 @@ local function keypressed(key: string): unit
     end
 end
 
-session = engine.start({
-    title = "Waluau Engine Package",
-    width = 320,
-    height = 180,
-    update_hz = 60.0,
-    max_frame_seconds = 0.25,
-    background = "#0f172a",
-}, {
-    load = load,
-    update = update,
-    draw = draw,
-    keypressed = keypressed,
-    keyreleased = nil,
-})
+session = engine.start(
+    {
+        title = "Waluau Engine Package",
+        width = 320,
+        height = 180,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#0f172a"
+    },
+    { load = load, update = update, draw = draw, keypressed = keypressed, keyreleased = nil }
+)
 
 -- The snapshot is deliberately a self-contained string with an
 -- application-owned schema marker; returning false asks Vite to fall back to
 -- a full reload.
-hot.register({
-    snapshot = function(): string
-        return "moving-square:v1:" .. tostring(x)
-    end,
-    restore = function(snapshot: string): bool
-        const prefix: string = "moving-square:v1:"
-        if string.sub(snapshot, 1, #prefix) ~= prefix then return false end
-        local restored: f64? = tonumber(string.sub(snapshot, #prefix + 1))
-        if restored == nil then return false end
-        x = restored::f64
-        return true
-    end,
-    dispose = function(): unit
-        local running: engine.Session? = session
-        if running ~= nil then
-            running.suspend()
-            session = nil
+hot.register(
+    {
+        snapshot = function(): string
+            return "moving-square:v1:" .. tostring(x)
+        end,
+        restore = function(snapshot: string): bool
+            const prefix: string = "moving-square:v1:"
+            if string.sub(snapshot, 1, #prefix) ~= prefix then
+                return false
+            end
+            local restored: f64? = tonumber(string.sub(snapshot, #prefix + 1))
+            if restored == nil then
+                return false
+            end
+            x = restored::f64
+            return true
+        end,
+        dispose = function(): unit
+            local running: engine.Session? = session
+            if running ~= nil then
+                running.suspend()
+                session = nil
+            end
         end
-    end,
-})
+    }
+)

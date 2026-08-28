@@ -18,7 +18,6 @@
 -- map they are drawn on dissolves into the duel that has already been dealt
 -- behind it — so that walking into a duel is one movement instead of a list
 -- vanishing and a board appearing.
-
 local game = require("./game")
 local spells = require("./spells/spell")
 local run_module = require("./run")
@@ -69,20 +68,48 @@ enum Key {
 }
 
 function decode_key(key: string): Key
-    if key == "m" or key == "M" then return Key.exit end
-    if key == "r" or key == "R" then return Key.restart end
-    if key == "h" or key == "H" then return Key.history end
-    if key == "?" or key == "/" then return Key.help end
-    if key == "Enter" then return Key.confirm end
-    if key == " " then return Key.select end
-    if key == "Escape" then return Key.cancel end
-    if key == "ArrowLeft" or key == "a" then return Key.left end
-    if key == "ArrowRight" or key == "d" then return Key.right end
-    if key == "ArrowUp" or key == "w" then return Key.up end
-    if key == "ArrowDown" or key == "s" then return Key.down end
-    if key == "c" or key == "C" then return Key.sort_ascending end
-    if key == "v" or key == "V" then return Key.sort_descending end
-    if key == "p" or key == "P" then return Key.pass end
+    if key == "m" or key == "M" then
+        return Key.exit
+    end
+    if key == "r" or key == "R" then
+        return Key.restart
+    end
+    if key == "h" or key == "H" then
+        return Key.history
+    end
+    if key == "?" or key == "/" then
+        return Key.help
+    end
+    if key == "Enter" then
+        return Key.confirm
+    end
+    if key == " " then
+        return Key.select
+    end
+    if key == "Escape" then
+        return Key.cancel
+    end
+    if key == "ArrowLeft" or key == "a" then
+        return Key.left
+    end
+    if key == "ArrowRight" or key == "d" then
+        return Key.right
+    end
+    if key == "ArrowUp" or key == "w" then
+        return Key.up
+    end
+    if key == "ArrowDown" or key == "s" then
+        return Key.down
+    end
+    if key == "c" or key == "C" then
+        return Key.sort_ascending
+    end
+    if key == "v" or key == "V" then
+        return Key.sort_descending
+    end
+    if key == "p" or key == "P" then
+        return Key.pass
+    end
     return Key.other
 end
 
@@ -100,7 +127,7 @@ function State.new(): State
         shop_ui = shop_render.View.new(intermission, run),
         intervention = divine_intervention.State.new(),
         leaving_fence = false,
-        fence_fade = 0.0,
+        fence_fade = 0.0
     }
 end
 
@@ -142,8 +169,7 @@ end
 -- Start a run at its first duel. `rush` is the boss-rush run and `spell` the
 -- starting spell every duel of it is fought with; the entry module passes the
 -- menu's choices, and an in-game restart replays the same pair from duel one.
-function State:reset(city: city_map.State, rush: bool, spell: spells.SpellKind
-): unit
+function State:reset(city: city_map.State, rush: bool, spell: spells.SpellKind): unit
     self.run:restart(spell, rush)
     self:close_fence()
     open_route(city)
@@ -161,8 +187,7 @@ end
 -- run has nothing to spend and no loadout to spend it on, so its fresh first
 -- duel is dealt straight away.
 function State:advance_run(city: city_map.State): unit
-    local outcome: run_module.Outcome = self.run:settle(
-        self.rules:is_victory(), self.rules:gold())
+    local outcome: run_module.Outcome = self.run:settle(self.rules:is_victory(), self.rules:gold())
     if run_module.outcome_walks_on(outcome) then
         self.shop:open_for(self.run)
         self.leaving_fence = false
@@ -192,7 +217,9 @@ end
 -- Which stop of the route the run stands on: the vendor before the live duel
 -- while the intermission is up, and the duel's own house otherwise.
 function State:city_stop(): i32
-    if self:on_map() then return city_map.shop_stop(self.run.duel) end
+    if self:on_map() then
+        return city_map.shop_stop(self.run.duel)
+    end
     return city_map.duel_stop(self.run.duel)
 end
 
@@ -205,11 +232,15 @@ const FENCE_FADE_SECONDS: f64 = 0.28
 function fade_toward(value: f64, goal: f64, step: f64): f64
     if value < goal then
         local next: f64 = value + step
-        if next > goal then return goal end
+        if next > goal then
+            return goal
+        end
         return next
     end
     local next: f64 = value - step
-    if next < goal then return goal end
+    if next < goal then
+        return goal
+    end
     return next
 end
 
@@ -225,8 +256,7 @@ function State:steer_city(city: city_map.State, dt: f64): unit
     else
         city:hide()
     end
-    self.fence_fade = fade_toward(
-        self.fence_fade, standing, dt / FENCE_FADE_SECONDS)
+    self.fence_fade = fade_toward(self.fence_fade, standing, dt / FENCE_FADE_SECONDS)
 end
 
 -- The same aim, with the travel and the dive already finished: for a run that
@@ -250,11 +280,17 @@ end
 -- from the same classifier the settle uses is what keeps the screen and the
 -- movement it announces in agreement. A live duel has no verdict yet.
 function State:run_outcome(): run_module.Outcome
-    if not self.rules:is_finished() and self.run.hearts > 0 then return "none" end
+    if not self.rules:is_finished() and self.run.hearts > 0 then
+        return "none"
+    end
     local run: run_module.State = self.run
     return run_module.outcome_of(
-        run.duel, run.rush, run.hearts,
-        self.rules:is_victory(), self.rules:gold())
+        run.duel,
+        run.rush,
+        run.hearts,
+        self.rules:is_victory(),
+        self.rules:gold()
+    )
 end
 
 -- Losing the last heart finishes the screen's live duel immediately even when
@@ -265,24 +301,38 @@ end
 
 function key_command(key: Key): flow.Command
     match key do
-    case Key.exit then return "none"
-    case Key.restart then return "restart"
-    case Key.history then return "history"
-    case Key.help then return "help"
-    case Key.confirm then return "advance"
-    case Key.select then return "advance"
-    case Key.cancel then return "advance"
-    case Key.left then return "none"
-    case Key.right then return "none"
-    case Key.up then return "none"
-    case Key.down then return "none"
-    case Key.sort_ascending then return "none"
-    case Key.sort_descending then return "none"
-    case Key.pass then return "none"
-    case Key.other then return "none"
+    case Key.exit then
+        return "none"
+    case Key.restart then
+        return "restart"
+    case Key.history then
+        return "history"
+    case Key.help then
+        return "help"
+    case Key.confirm then
+        return "advance"
+    case Key.select then
+        return "advance"
+    case Key.cancel then
+        return "advance"
+    case Key.left then
+        return "none"
+    case Key.right then
+        return "none"
+    case Key.up then
+        return "none"
+    case Key.down then
+        return "none"
+    case Key.sort_ascending then
+        return "none"
+    case Key.sort_descending then
+        return "none"
+    case Key.pass then
+        return "none"
+    case Key.other then
+        return "none"
     end
 end
-
 
 -- Returns how many card-flip sound cues this tick earned; the entry module
 -- owns audio resources and playback.
@@ -291,12 +341,18 @@ function State:update(city: city_map.State, dt: f64): i32
     -- it is already settled, so nothing advances while it is up. Once it has
     -- been left the duel is dealt and running, and the offers only wait for
     -- the map under them to finish dissolving before they are taken down.
-    if self:on_map() then return 0 end
-    if self.leaving_fence and not city:visible() then self:close_fence() end
+    if self:on_map() then
+        return 0
+    end
+    if self.leaving_fence and not city:visible() then
+        self:close_fence()
+    end
     if self.intervention.active then
         self.presentation:update_fan(self.board:fan_focus(true), dt)
         local touched: {i32} = self.intervention:update(dt)
-        for target in touched do self.rules:divine_intervention(target) end
+        for target in touched do
+            self.rules:divine_intervention(target)
+        end
         return 0
     end
     local ui: flow.State = self.ui
@@ -309,17 +365,21 @@ function State:update(city: city_map.State, dt: f64): i32
     -- effects anchored to that revealed board until the reveal is dismissed.
     if ui.revealing then
         local revealed: game.Trick? = self.rules:last_trick()
-        if revealed ~= nil then community_count = #(revealed::game.Trick).middle end
+        if revealed ~= nil then
+            community_count = #(revealed::game.Trick).middle
+        end
     end
     local burned_table_card: i32 = presentation:update_power(community_count, dt)
     if burned_table_card >= 0 then
         local discarded: game.Card? = self.rules:resolve_firebolt(burned_table_card)
         if discarded ~= nil then
             local rules_view: game.View = self.rules:view()
-            presentation:firebolt_resolved(discarded::game.Card,
+            presentation:firebolt_resolved(
+                discarded::game.Card,
                 rules_view.middle[burned_table_card],
                 burned_table_card,
-                #rules_view.middle)
+                #rules_view.middle
+            )
         end
     end
     if ui.revealing then
@@ -342,8 +402,7 @@ function State:draw_vault(surface: ui.Surface): unit
         self.rules:view(),
         self.run:view(self:run_outcome()),
         {
-            hand_focus = self.board:fan_focus(
-                self.presentation:is_animating()),
+            hand_focus = self.board:fan_focus(self.presentation:is_animating()),
             play_picks = ui.play_picks,
             swap_hand = ui.swap_hand,
             swap_table_cards = ui.swap_table_cards,
@@ -351,11 +410,15 @@ function State:draw_vault(surface: ui.Surface): unit
             revealing = ui.revealing,
             finished = self:vault_finished(),
             casting = aimed_slot ~= nil,
-            cast_slot = aimed_slot or 0,
-        })
+            cast_slot = aimed_slot or 0
+        }
+    )
     render.draw_divine_intervention(
-        surface, self.intervention.clock, self.intervention.active,
-        self.presentation.fan_parts)
+        surface,
+        self.intervention.clock,
+        self.intervention.active,
+        self.presentation.fan_parts
+    )
 end
 
 -- The shop's offers, at the opacity of the street they are laid out on: they
@@ -370,10 +433,7 @@ function State:submit_swap(): unit
     local outcome: game.SwapOutcome?
     if #ui.swap_hand == 0 and #ui.swap_table_cards == 0 then
         outcome = self.rules:resolve_swap({}, {})
-    elseif #ui.swap_hand ~= #ui.swap_table_cards
-        or #ui.swap_hand > self.rules:gold()
-        or #ui.swap_hand < self.rules:minimum_swap()
-    then
+    elseif #ui.swap_hand ~= #ui.swap_table_cards or #ui.swap_hand > self.rules:gold() or #ui.swap_hand < self.rules:minimum_swap() then
         return
     else
         outcome = self.rules:resolve_swap(ui.swap_hand, ui.swap_table_cards)
@@ -403,11 +463,17 @@ end
 
 function State:submit_round(): unit
     local ui: flow.State = self.ui
-    if #ui.play_picks ~= 2 then return end
+    if #ui.play_picks ~= 2 then
+        return
+    end
     local trick: game.Trick? = self.rules:play(ui.play_picks[0], ui.play_picks[1])
-    if trick == nil then return end
+    if trick == nil then
+        return
+    end
     local resolved: game.Trick = trick::game.Trick
-    if resolved.winner < 0 then self.run:lose_hand() end
+    if resolved.winner < 0 then
+        self.run:lose_hand()
+    end
     self.presentation:record_burned_losers(resolved)
     ui:begin_reveal()
     -- A stalemate leaves both pairs standing, so this reveal has no pair to
@@ -415,10 +481,10 @@ function State:submit_round(): unit
     self.presentation:begin_reveal(resolved.winner ~= 0)
 end
 
-function State:perform_board_action(
-    city: city_map.State, action: render.BoardAction
-): unit
-    if action.kind == "none" then return end
+function State:perform_board_action(city: city_map.State, action: render.BoardAction): unit
+    if action.kind == "none" then
+        return
+    end
     if action.kind == "modal" then
         self:consume_gate(city, "primary")
         return
@@ -439,7 +505,11 @@ function State:perform_board_action(
             flow.toggle(ui.swap_table_cards, action.index, rules:community_size())
         end
     elseif action.kind == "commit" then
-        if rules:swap_open() then self:submit_swap() else self:submit_round() end
+        if rules:swap_open() then
+            self:submit_swap()
+        else
+            self:submit_round()
+        end
     end
 end
 
@@ -447,8 +517,12 @@ function State:consume_gate(city: city_map.State, command: flow.Command): bool
     local result: flow.GateResult = self.ui:gate(
         self:vault_finished(),
         self.presentation:is_animating(),
-        self.presentation:reveal_finished(), command)
-    if result == "live" then return false end
+        self.presentation:reveal_finished(),
+        command
+    )
+    if result == "live" then
+        return false
+    end
     -- Restart is a run restart, not a redeal of the live duel: a duel the
     -- run already paid gold into cannot be fought a second time.
     if result == "reset" then
@@ -458,8 +532,7 @@ function State:consume_gate(city: city_map.State, command: flow.Command): bool
     elseif result == "refill" then
         local trick: game.Trick? = self.rules:last_trick()
         if trick ~= nil then
-            self.presentation:resolved_breach_cleanup(
-                self.rules:view(), trick::game.Trick)
+            self.presentation:resolved_breach_cleanup(self.rules:view(), trick::game.Trick)
         end
     elseif result == "skip" then
         self.presentation:skip()
@@ -473,7 +546,9 @@ end
 -- numbered the way the loadout is: the spell learned second answers to 2.
 function cast_slot_for(key: string, slots: i32): i32
     for slot = 0::i32, slots - 1 do
-        if key == tostring(slot + 1) then return slot end
+        if key == tostring(slot + 1) then
+            return slot
+        end
     end
     return -1
 end
@@ -483,7 +558,9 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     local rules: game.State = self.rules
     local presentation: choreography.State = self.presentation
     local control: Key = decode_key(key)
-    if control == Key.exit then return "exit" end
+    if control == Key.exit then
+        return "exit"
+    end
     -- The shop answers its own list; nothing on the settled board behind it is
     -- reachable until the next duel is dealt. Restarting the run is the one
     -- gesture that still works everywhere, the shop included. A shop already
@@ -500,13 +577,12 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     -- Recognition sits ahead of ordinary board controls so the completing A
     -- belongs to the invocation, not to one last cursor movement. Earlier
     -- arrows remain normal play until the full hidden sequence is known.
-    if self.intervention.active then return "none" end
-    if not self:vault_finished()
-        and not ui.revealing
-        and ui.modal == "none"
-        and not presentation:firebolt_pending()
-        and self.intervention:keypressed(key)
-    then
+    if self.intervention.active then
+        return "none"
+    end
+    if not self:vault_finished() and not ui.revealing and ui.modal == "none" and not presentation:firebolt_pending() and self.intervention:keypressed(
+        key
+    ) then
         presentation:skip()
         ui:clear_picks()
         ui.cast_slot = nil
@@ -516,7 +592,9 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     -- and replacement. Other spell conditions are persistent and do not lock
     -- the board, but advancing the turn during this one-shot effect could make
     -- its target name a newly dealt table_card instead of the card the bolt hit.
-    if presentation:firebolt_pending() then return "none" end
+    if presentation:firebolt_pending() then
+        return "none"
+    end
     local cast_slot: i32 = cast_slot_for(key, rules:spell_count())
     if cast_slot >= 0 then
         if ui.modal ~= "none" or ui.revealing or self:vault_finished() then
@@ -528,7 +606,9 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
             ui.cast_slot = nil
             return "none"
         end
-        if not rules:can_cast(cast_slot) then return "none" end
+        if not rules:can_cast(cast_slot) then
+            return "none"
+        end
         -- The cast should respond on the first gesture. If the opening deal
         -- is still running, settle it before targeting begins so the table cards
         -- are visibly present for the aim cursor.
@@ -545,11 +625,15 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
         case Key.cancel then
             ui.cast_slot = nil
             self.board:focus_hand(0)
-        case Key.left then self.board:navigate("left")
-        case Key.right then self.board:navigate("right")
+        case Key.left then
+            self.board:navigate("left")
+        case Key.right then
+            self.board:navigate("right")
         case Key.confirm then
             local target: i32 = self.board:focused_table()
-            if target < 0 then target = 0 end
+            if target < 0 then
+                target = 0
+            end
             self:confirm_cast(aimed_slot::i32, target)
         case Key.select then
             self:perform_board_action(city, self.board:activate())
@@ -566,19 +650,23 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
         end
         return "none"
     end
-    if (ui.modal ~= "none" or ui.revealing)
-        and (control == Key.confirm or control == Key.select)
-    then
+    if (ui.modal ~= "none" or ui.revealing) and (control == Key.confirm or control == Key.select) then
         self:perform_board_action(city, self.board:activate_modal())
         return "none"
     end
-    if self:consume_gate(city, key_command(control)) then return "none" end
+    if self:consume_gate(city, key_command(control)) then
+        return "none"
+    end
 
     match control do
-    case Key.left then self.board:navigate("left")
-    case Key.right then self.board:navigate("right")
-    case Key.up then self.board:navigate("up")
-    case Key.down then self.board:navigate("down")
+    case Key.left then
+        self.board:navigate("left")
+    case Key.right then
+        self.board:navigate("right")
+    case Key.up then
+        self.board:navigate("up")
+    case Key.down then
+        self.board:navigate("down")
     case Key.select then
         self:perform_board_action(city, self.board:activate())
     case Key.sort_ascending then
@@ -618,26 +706,37 @@ function State:mousemoved(x: f64, y: f64): unit
         self.shop_ui:mousemoved(x, y)
         return
     end
-    if self.intervention.active then return end
+    if self.intervention.active then
+        return
+    end
     local ui: flow.State = self.ui
     if ui:gate(
         self:vault_finished(),
         self.presentation:is_animating(),
-        self.presentation:reveal_finished(), "none"
-    ) ~= "live" then return end
+        self.presentation:reveal_finished(),
+        "none"
+    ) ~= "live" then
+        return
+    end
     self.board:pointer_move(x, y)
 end
 
 function State:mousepressed(city: city_map.State, x: f64, y: f64, button: i32): unit
-    if button ~= 1 then return end
+    if button ~= 1 then
+        return
+    end
     -- The retained shop starts a possible click here and commits it only when
     -- release lands on the same row.
     if self:on_map() then
         self.shop_ui:mousepressed(x, y, button)
         return
     end
-    if self.intervention.active then return end
-    if self.presentation:firebolt_pending() then return end
+    if self.intervention.active then
+        return
+    end
+    if self.presentation:firebolt_pending() then
+        return
+    end
     if self.presentation:is_animating() then
         self:consume_gate(city, "primary")
         return
@@ -647,14 +746,16 @@ end
 
 -- Both shop and board controls commit through the retained router only when
 -- release lands on the same target that received the press.
-function State:mousereleased(
-    city: city_map.State, x: f64, y: f64, button: i32
-): unit
+function State:mousereleased(city: city_map.State, x: f64, y: f64, button: i32): unit
     if self:on_map() then
-        if self.shop_ui:mousereleased(x, y, button) == "leave" then self:leave_shop() end
+        if self.shop_ui:mousereleased(x, y, button) == "leave" then
+            self:leave_shop()
+        end
         return
     end
-    if button ~= 1 then return end
+    if button ~= 1 then
+        return
+    end
     self:perform_board_action(city, self.board:pointer_up(x, y, button))
 end
 
@@ -666,7 +767,7 @@ function State:snapshot(): {string}
         self.rules:snapshot(),
         self.ui:snapshot(),
         self.presentation:snapshot(),
-        self.shop:snapshot(),
+        self.shop:snapshot()
     }
 end
 
@@ -682,11 +783,21 @@ function State.restore(
     local ui: flow.State? = flow.State.restore(ui_payload)
     local presentation: choreography.State? = choreography.State.restore(presentation_payload)
     local intermission: shop.State? = shop.State.restore(shop_payload)
-    if run == nil then return nil end
-    if rules == nil then return nil end
-    if ui == nil then return nil end
-    if presentation == nil then return nil end
-    if intermission == nil then return nil end
+    if run == nil then
+        return nil
+    end
+    if rules == nil then
+        return nil
+    end
+    if ui == nil then
+        return nil
+    end
+    if presentation == nil then
+        return nil
+    end
+    if intermission == nil then
+        return nil
+    end
     local restored_ui: flow.State = ui::flow.State
     local restored_rules: game.State = rules::game.State
     -- An aim is an in-flight gesture, and this is the one place that can see
@@ -694,9 +805,7 @@ function State.restore(
     -- nothing, so the aim settles as cancelled rather than coming back pointing
     -- at a spell that is not there.
     local restored_cast_slot: i32? = restored_ui.cast_slot
-    if restored_cast_slot ~= nil
-        and (restored_cast_slot or 0) >= restored_rules:spell_count()
-    then
+    if restored_cast_slot ~= nil and (restored_cast_slot or 0) >= restored_rules:spell_count() then
         restored_ui.cast_slot = nil
     end
     local restored_run: run_module.State = run::run_module.State
@@ -706,8 +815,7 @@ function State.restore(
         rules = restored_rules,
         ui = restored_ui,
         presentation = presentation::choreography.State,
-        board = render.Board.new(
-            restored_rules:view(), restored_run:view("none")),
+        board = render.Board.new(restored_rules:view(), restored_run:view("none")),
         shop = restored_shop,
         shop_ui = shop_render.View.new(restored_shop, restored_run),
         intervention = divine_intervention.State.new(),
@@ -716,6 +824,6 @@ function State.restore(
         -- and `place_city` puts the map and the offers where that leaves the
         -- run.
         leaving_fence = false,
-        fence_fade = 0.0,
+        fence_fade = 0.0
     }
 end

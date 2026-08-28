@@ -1,6 +1,5 @@
 -- string.sub / string:sub use Lua's 1-based inclusive indices; negative
 -- indices count back from the end of the string.
-
 local message: string = "abcdef"
 
 assert(string.sub(message, 2, 4) == "bcd")

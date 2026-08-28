@@ -2,6 +2,5 @@
 -- that does not exist, so type checking reports an "unknown type" diagnostic.
 -- The runner verifies the failure message contains the fragment(s) below.
 -- conformance: error=unknown type 'DefinitelyNotAType'
-
 local value: DefinitelyNotAType = 1
 assert(value == 1)

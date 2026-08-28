@@ -1,7 +1,6 @@
 -- DOM-free checks for the particle system: pooling, emission timing,
 -- forces, curves, spawn areas and emitter lifecycle. Nothing here draws, so
 -- the whole file runs without a canvas.
-
 local particles = require("../../engine/particles")
 
 type ParticleSystem = particles.ParticleSystem
@@ -175,7 +174,7 @@ assert(close(still:particle_x(0), 0.0, 0.000001))
 -- The size curve is sampled across a particle's life.
 local growing: ParticleSystem = plain_system(8)
 growing:set_particle_lifetime(2.0, 2.0)
-growing:set_sizes({ 1.0, 3.0 })
+growing:set_sizes({1.0, 3.0})
 growing:emit(1)
 assert(close(growing:particle_size(0), 1.0, 0.001))
 growing:update(1.0)
@@ -184,7 +183,7 @@ assert(close(growing:particle_size(0), 2.0, 0.01))
 -- So is the color curve, alpha included.
 local fading: ParticleSystem = plain_system(8)
 fading:set_particle_lifetime(2.0, 2.0)
-fading:set_colors_hex({ "#ff0000", "#0000ff00" })
+fading:set_colors_hex({"#ff0000", "#0000ff00"})
 fading:emit(1)
 assert(close(fading:particle_color_red(0), 1.0, 0.001))
 assert(close(fading:particle_color_alpha(0), 1.0, 0.001))
@@ -197,7 +196,7 @@ assert(close(fading:particle_color_alpha(0), 0.5, 0.02))
 -- particle emitted together draws exactly the same color.
 local uniform_ink: ParticleSystem = plain_system(16)
 uniform_ink:set_particle_lifetime(4.0, 4.0)
-uniform_ink:set_colors_hex({ "#000000", "#ffffff" })
+uniform_ink:set_colors_hex({"#000000", "#ffffff"})
 uniform_ink:emit(8)
 uniform_ink:update(0.5)
 for index = 0, uniform_ink:count() - 1 do
@@ -208,7 +207,7 @@ end
 -- variation already works, and stays inside the curve's own range.
 local inks: ParticleSystem = plain_system(64)
 inks:set_particle_lifetime(4.0, 4.0)
-inks:set_colors_hex({ "#000000", "#ffffff" })
+inks:set_colors_hex({"#000000", "#ffffff"})
 inks:set_color_variation(1.0)
 inks:emit(24)
 inks:update(0.5)
@@ -232,7 +231,7 @@ local function seeded_inks(seed: i32): f64
     local tinted: ParticleSystem = particles.new(16)
     tinted:set_seed(seed)
     tinted:set_particle_lifetime(4.0, 4.0)
-    tinted:set_colors_hex({ "#000000", "#ffffff" })
+    tinted:set_colors_hex({"#000000", "#ffffff"})
     tinted:set_color_variation(1.0)
     tinted:emit(8)
     tinted:update(0.5)
@@ -270,7 +269,7 @@ assert(seeded_sway(31) ~= seeded_sway(32))
 local varied: ParticleSystem = plain_system(16)
 varied:set_particle_lifetime(4.0, 4.0)
 varied:set_speed(0.0, 0.0)
-varied:set_colors_hex({ "#000000", "#ffffff" })
+varied:set_colors_hex({"#000000", "#ffffff"})
 varied:set_color_variation(1.0)
 varied:set_sway_amplitude(12.0, 12.0)
 varied:emit(6)

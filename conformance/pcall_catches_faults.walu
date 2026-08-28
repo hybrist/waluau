@@ -2,65 +2,87 @@
 -- error tag instead, so `pcall` catches them (waluau-uvfk): array indexing
 -- out of bounds, dynamic indexing of non-arrays, integer division/modulo by
 -- zero, and typed-array access out of bounds.
-
 -- A successful protected call still returns true plus its value.
-local ok, fine = pcall(function(): f64
-    return 7.5
-end)
+local ok, fine = pcall(
+    function(): f64
+        return 7.5
+    end
+)
 assert(ok)
 assert(fine == 7.5)
 
 -- Array reads out of bounds are caught with a Lua-style error message.
-local read_ok, read_err = pcall(function(index: i32): f64
-    local xs: {f64} = {1.5, 2.5}
-    return xs[index]
-end, 5)
+local read_ok, read_err = pcall(
+    function(index: i32): f64
+        local xs: {f64} = {1.5, 2.5}
+        return xs[index]
+    end,
+    5
+)
 assert(not read_ok)
 assert(read_err == "array index out of bounds")
 
 -- Negative indices are out of bounds too.
-local negative_ok, negative_err = pcall(function(index: i32): f64
-    local xs: {f64} = {1.5, 2.5}
-    return xs[index]
-end, -1)
+local negative_ok, negative_err = pcall(
+    function(index: i32): f64
+        local xs: {f64} = {1.5, 2.5}
+        return xs[index]
+    end,
+    -1
+)
 assert(not negative_ok)
 assert(negative_err == "array index out of bounds")
 
 -- Writes past the append position (index == #t) are caught.
-local write_ok, write_err = pcall(function(index: i32): unit
-    local xs: {i32} = {1, 2}
-    xs[index] = 9
-end, 7)
+local write_ok, write_err = pcall(
+    function(index: i32): unit
+        local xs: {i32} = {1, 2}
+        xs[index] = 9
+    end,
+    7
+)
 assert(not write_ok)
 assert(write_err == "array index out of bounds")
 
 -- Dynamically indexing an `unknown` that is not an array errors instead of
 -- trapping.
-local dyn_ok, dyn_err = pcall(function(value: unknown): unknown
-    return value[0]
-end, 5)
+local dyn_ok, dyn_err = pcall(
+    function(value: unknown): unknown
+        return value[0]
+    end,
+    5
+)
 assert(not dyn_ok)
 assert(dyn_err == "attempt to index a non-array value")
 
 -- Integer division by zero raises the Lua 5.4 message instead of trapping.
-local floor_ok, floor_err = pcall(function(d: i32): i32
-    return 10 // d
-end, 0)
+local floor_ok, floor_err = pcall(
+    function(d: i32): i32
+        return 10 // d
+    end,
+    0
+)
 assert(not floor_ok)
 assert(floor_err == "attempt to perform 'n//0'")
 
-local mod_ok, mod_err = pcall(function(d: i32): i32
-    return 10 % d
-end, 0)
+local mod_ok, mod_err = pcall(
+    function(d: i32): i32
+        return 10 % d
+    end,
+    0
+)
 assert(not mod_ok)
 assert(mod_err == "attempt to perform 'n%0'")
 
 -- 64-bit divisions are checked too (the callee returns unit because i64
 -- results cannot cross the pcall boundary yet).
-local mod64_ok, mod64_err = pcall(function(d: i64): unit
-    local remainder: i64 = 10 % d
-    assert(remainder == 0)
-end, 0)
+local mod64_ok, mod64_err = pcall(
+    function(d: i64): unit
+        local remainder: i64 = 10 % d
+        assert(remainder == 0)
+    end,
+    0
+)
 assert(not mod64_ok)
 assert(mod64_err == "attempt to perform 'n%0'")
 
@@ -73,18 +95,24 @@ assert(min // neg_one == min)
 assert(min % neg_one == 0)
 
 -- Float division by zero keeps Lua semantics: inf, not an error.
-local float_ok, quotient = pcall(function(d: f64): f64
-    return 1.0 / d
-end, 0.0)
+local float_ok, quotient = pcall(
+    function(d: f64): f64
+        return 1.0 / d
+    end,
+    0.0
+)
 assert(float_ok)
 assert(quotient > 0.0)
 assert(quotient == quotient * 2.0)
 
 -- Typed-array access out of bounds is caught with the Luau buffer message.
-local buffer_ok, buffer_err = pcall(function(index: i32): f64
-    local samples: Float64Array = Float64Array.create(4)
-    return samples[index]
-end, 4)
+local buffer_ok, buffer_err = pcall(
+    function(index: i32): f64
+        local samples: Float64Array = Float64Array.create(4)
+        return samples[index]
+    end,
+    4
+)
 assert(not buffer_ok)
 assert(buffer_err == "buffer access out of bounds")
 

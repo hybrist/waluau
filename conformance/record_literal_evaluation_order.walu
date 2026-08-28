@@ -9,10 +9,7 @@ local function next_i32(): i32
     return counter
 end
 
-local pair: Pair = {
-    kind = next_i32(),
-    cost = next_i32(),
-}
+local pair: Pair = { kind = next_i32(), cost = next_i32() }
 
 assert(pair.kind == 1)
 assert(pair.cost == 2)

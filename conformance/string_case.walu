@@ -1,5 +1,4 @@
 -- string.upper/string.lower and method-call sugar.
-
 local message: string = "Lua"
 
 assert(string.upper(message) == "LUA")

@@ -18,7 +18,6 @@
 --
 -- Nothing in here draws, so where the beats sit in time can be read off the
 -- source instead of inferred from a canvas.
-
 local card_warp = require("./card_warp")
 
 -- Beat boundaries, in seconds from the start of the draw.
@@ -89,8 +88,12 @@ type Beat = { index: BeatIndex, part: f64 }
 
 function span(clock: f64, from: f64, to: f64): f64
     local part: f64 = (clock - from) / (to - from)
-    if part < 0.0 then return 0.0 end
-    if part > 1.0 then return 1.0 end
+    if part < 0.0 then
+        return 0.0
+    end
+    if part > 1.0 then
+        return 1.0
+    end
     return part
 end
 
@@ -120,17 +123,14 @@ end
 -- coefficient decides how far past; zero of it is a plain cubic ease out.
 function ease_out_back(t: f64, back: f64): f64
     local past: f64 = t - 1.0
-    return 1.0
-        + (back + 1.0) * past * past * past
-        + back * past * past
+    return 1.0 + (back + 1.0) * past * past * past + back * past * past
 end
 
 -- How far past the mark a given coefficient carries the curve, at the top of
 -- its excursion. The curve's own turning point, evaluated.
 function back_excess(back: f64): f64
     local turning: f64 = -2.0 * back / (3.0 * (back + 1.0))
-    return (back + 1.0) * turning * turning * turning
-        + back * turning * turning
+    return (back + 1.0) * turning * turning * turning + back * turning * turning
 end
 
 -- The coefficient for a wanted excess. The dial the animation is tuned by is
@@ -140,7 +140,9 @@ end
 -- the coefficient, and two dozen halvings pin it far inside what a pixel can
 -- show.
 function back_coefficient(overshoot: f64): f64
-    if overshoot <= 0.0 then return 0.0 end
+    if overshoot <= 0.0 then
+        return 0.0
+    end
     local low: f64 = 0.0
     local high: f64 = 8.0
     for _ = 1, 24 do
@@ -191,8 +193,12 @@ export type Draw = {
 -- drop, which is where the slam lives. Early throws the card high at once
 -- and lets it drift down.
 function arc_warp(arc: Arc, part: f64): f64
-    if arc == "late" then return part * part end
-    if arc == "very-late" then return part * part * part end
+    if arc == "late" then
+        return part * part
+    end
+    if arc == "very-late" then
+        return part * part * part
+    end
     if arc == "early" then
         local inverse: f64 = 1.0 - part
         return 1.0 - inverse * inverse
@@ -205,8 +211,7 @@ type Point3 = { x: f64, y: f64, z: f64 }
 -- Where the card is at a moment of the flight, in all three dimensions:
 -- the sweep across the screen and the arc off the surface, one point.
 function Draw:flight_at(part: f64): Point3
-    local swept: f64 = ease_out_back(
-        part ^ FLIGHT_ATTACK, back_coefficient(self.overshoot))
+    local swept: f64 = ease_out_back(part ^ FLIGHT_ATTACK, back_coefficient(self.overshoot))
     return {
         x = self.from_x + (self.to_x - self.from_x) * swept,
         y = self.from_y + (self.to_y - self.from_y) * swept,
@@ -224,17 +229,19 @@ const SPEED_EPSILON: f64 = 0.01
 function Draw:velocity_at(part: f64): Point3
     local before: f64 = part - SPEED_EPSILON
     local after: f64 = part + SPEED_EPSILON
-    if before < 0.0 then before = 0.0 end
-    if after > 1.0 then after = 1.0 end
-    if after <= before then return { x = 0.0, y = 0.0, z = 0.0 } end
+    if before < 0.0 then
+        before = 0.0
+    end
+    if after > 1.0 then
+        after = 1.0
+    end
+    if after <= before then
+        return { x = 0.0, y = 0.0, z = 0.0 }
+    end
     local a: Point3 = self:flight_at(before)
     local b: Point3 = self:flight_at(after)
     local window: f64 = after - before
-    return {
-        x = (b.x - a.x) / window,
-        y = (b.y - a.y) / window,
-        z = (b.z - a.z) / window
-    }
+    return { x = (b.x - a.x) / window, y = (b.y - a.y) / window, z = (b.z - a.z) / window }
 end
 
 -- How far the sheet has caught up with the held corner, over the pull's own
@@ -250,8 +257,7 @@ end
 -- what the card does once there is nothing left to do to it.
 function Draw:pose_at(clock: f64): card_warp.Pose
     local beat: Beat = beat_at(clock)
-    local pose: card_warp.Pose = card_warp.Pose.rest(
-        self.width, self.height, self.to_x, self.to_y)
+    local pose: card_warp.Pose = card_warp.Pose.rest(self.width, self.height, self.to_x, self.to_y)
     pose.grab_u = GRAB_U
     pose.grab_v = GRAB_V
     pose.stretch_limit = self.stretch_limit
@@ -264,13 +270,14 @@ function Draw:pose_at(clock: f64): card_warp.Pose
         pose.flip = -math.pi * (beat.part ^ FLIP_ATTACK)
 
         local vel: Point3 = self:velocity_at(beat.part)
-        local speed: f64 = math.sqrt(
-            vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+        local speed: f64 = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
 
         -- The corner's lead, along the direction the card is actually going —
         -- off the surface included, which is most of the direction at first.
         local w: f64 = beat.part / PULL_SPAN
-        if w > 1.0 then w = 1.0 end
+        if w > 1.0 then
+            w = 1.0
+        end
         local reach: f64 = PULL_REACH * ease_arc(w)
         pose.follow = follow_at(w)
         if speed > 0.0 and reach > 0.0 then
@@ -290,7 +297,9 @@ function Draw:pose_at(clock: f64): card_warp.Pose
             pose.axis_x = vel.x
             pose.axis_y = vel.y
             local stretched: f64 = 1.0 + STRETCH_GAIN * flat / run
-            if stretched > STRETCH_LIMIT then stretched = STRETCH_LIMIT end
+            if stretched > STRETCH_LIMIT then
+                stretched = STRETCH_LIMIT
+            end
             pose.axial = stretched
         end
 
@@ -310,8 +319,7 @@ function Draw:pose_at(clock: f64): card_warp.Pose
         local held: f64 = beat.part
         pose.tilt = HOVER_TILT * math.sin(held * math.pi * 2.0 / HOVER_TILT_PERIOD)
         pose.flip = -math.pi + HOVER_FLIP * math.sin(held * math.pi * 2.0 / HOVER_FLIP_PERIOD)
-        pose.center_y = self.to_y
-            + HOVER_RISE * math.sin(held * math.pi * 2.0 / HOVER_RISE_PERIOD)
+        pose.center_y = self.to_y + HOVER_RISE * math.sin(held * math.pi * 2.0 / HOVER_RISE_PERIOD)
         -- A card held in the air is never quite still and never quite the same
         -- size, because whatever is holding it is not a hand.
         pose.scale = 1.0 + 0.012 * math.sin(held * math.pi * 2.0 / HOVER_FLIP_PERIOD)
@@ -330,7 +338,7 @@ end
 -- change: far enough back to read as speed, near enough that they are still
 -- the same card and not a second one left behind at the deck.
 function ghost_offsets(): {f64}
-    return { 0.032, 0.016 }
+    return {0.032, 0.016}
 end
 
 -- The window of the flight fast enough to leave anything behind it: after

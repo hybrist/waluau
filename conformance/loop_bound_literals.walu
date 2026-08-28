@@ -1,7 +1,6 @@
 -- Untyped literal loop bounds adopt the type of the typed bounds, so
 -- `for i = 0, #a - 1` iterates with an i32 loop variable that can index
 -- the array directly.
-
 function sum_forward(): i32
     local a: {i32} = {10, 20, 30}
     local sum: i32 = 0

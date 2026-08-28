@@ -17,37 +17,53 @@ local row_width = storybook.range("width", 600, 180, 760, 10)
 local row_gap = storybook.range("gap", 12, -30, 48, 2)
 local row_padding_x = storybook.range("padding_x", 20, 0, 64, 2)
 local row_padding_y = storybook.range("padding_y", 16, 0, 48, 2)
-local row_justify = storybook.select("justify", "center"::layout.Justify, {
-    storybook.choice("Start", "start"::layout.Justify),
-    storybook.choice("Center", "center"::layout.Justify),
-    storybook.choice("End", "end"::layout.Justify),
-    storybook.choice("Space between", "space-between"::layout.Justify),
-})
-local row_align = storybook.select("align", "center"::layout.Align, {
-    storybook.choice("Start", "start"::layout.Align),
-    storybook.choice("Center", "center"::layout.Align),
-    storybook.choice("End", "end"::layout.Align),
-    storybook.choice("Stretch", "stretch"::layout.Align),
-    storybook.choice("Baseline", "baseline"::layout.Align),
-})
+local row_justify = storybook.select(
+    "justify",
+    "center"::layout.Justify,
+    {
+        storybook.choice("Start", "start"::layout.Justify),
+        storybook.choice("Center", "center"::layout.Justify),
+        storybook.choice("End", "end"::layout.Justify),
+        storybook.choice("Space between", "space-between"::layout.Justify)
+    }
+)
+local row_align = storybook.select(
+    "align",
+    "center"::layout.Align,
+    {
+        storybook.choice("Start", "start"::layout.Align),
+        storybook.choice("Center", "center"::layout.Align),
+        storybook.choice("End", "end"::layout.Align),
+        storybook.choice("Stretch", "stretch"::layout.Align),
+        storybook.choice("Baseline", "baseline"::layout.Align)
+    }
+)
 
 local menu_count = storybook.range("count", 4, 1, 6, 1)
 local menu_width = storybook.range("width", 430, 180, 720, 10)
 local menu_gap = storybook.range("gap", 12, -12, 36, 2)
 local menu_padding_x = storybook.range("padding_x", 28, 0, 72, 2)
 local menu_padding_y = storybook.range("padding_y", 14, 0, 40, 2)
-local menu_justify = storybook.select("justify", "center"::layout.Justify, {
-    storybook.choice("Start", "start"::layout.Justify),
-    storybook.choice("Center", "center"::layout.Justify),
-    storybook.choice("End", "end"::layout.Justify),
-    storybook.choice("Space between", "space-between"::layout.Justify),
-})
-local menu_align = storybook.select("align", "center"::layout.Align, {
-    storybook.choice("Start", "start"::layout.Align),
-    storybook.choice("Center", "center"::layout.Align),
-    storybook.choice("End", "end"::layout.Align),
-    storybook.choice("Stretch", "stretch"::layout.Align),
-})
+local menu_justify = storybook.select(
+    "justify",
+    "center"::layout.Justify,
+    {
+        storybook.choice("Start", "start"::layout.Justify),
+        storybook.choice("Center", "center"::layout.Justify),
+        storybook.choice("End", "end"::layout.Justify),
+        storybook.choice("Space between", "space-between"::layout.Justify)
+    }
+)
+local menu_align = storybook.select(
+    "align",
+    "center"::layout.Align,
+    {
+        storybook.choice("Start", "start"::layout.Align),
+        storybook.choice("Center", "center"::layout.Align),
+        storybook.choice("End", "end"::layout.Align),
+        storybook.choice("Stretch", "stretch"::layout.Align)
+    }
+)
 
 local flex_width = storybook.range("width", 420, 100, 760, 10)
 local flex_gap = storybook.range("gap", 16, -40, 64, 2)
@@ -57,15 +73,26 @@ local flex_grow_a = storybook.range("grow_a", 1, 0, 5, 1)
 local flex_grow_b = storybook.range("grow_b", 2, 0, 5, 1)
 
 local COLORS: {string} = {
-    "#38bdf8", "#a78bfa", "#4ade80", "#fbbf24",
-    "#fb7185", "#22d3ee", "#c084fc", "#f97316",
+    "#38bdf8",
+    "#a78bfa",
+    "#4ade80",
+    "#fbbf24",
+    "#fb7185",
+    "#22d3ee",
+    "#c084fc",
+    "#f97316"
 }
 
 type Flow = { root: layout.Box, leaves: {layout.Box} }
 
 function measured(
-    min_width: f64, preferred_width: f64, max_width: f64,
-    min_height: f64, preferred_height: f64, max_height: f64, baseline: f64
+    min_width: f64,
+    preferred_width: f64,
+    max_width: f64,
+    min_height: f64,
+    preferred_height: f64,
+    max_height: f64,
+    baseline: f64
 ): layout.Intrinsic
     return {
         min_width = min_width,
@@ -74,12 +101,17 @@ function measured(
         min_height = min_height,
         preferred_height = preferred_height,
         max_height = max_height,
-        baseline = baseline,
+        baseline = baseline
     }
 end
 
 function draw_text(
-    graphics: engine.Graphics, value: string, x: f64, y: f64, size: i32, color: string
+    graphics: engine.Graphics,
+    value: string,
+    x: f64,
+    y: f64,
+    size: i32,
+    color: string
 ): unit
     graphics:set_font(tostring(size) .. "px monospace")
     graphics:set_color(color)
@@ -87,11 +119,13 @@ function draw_text(
 end
 
 function draw_flow(
-    graphics: engine.Graphics, flow: Flow, bounds: layout.Rect,
-    title: string, detail: string
+    graphics: engine.Graphics,
+    flow: Flow,
+    bounds: layout.Rect,
+    title: string,
+    detail: string
 ): unit
-    local result: layout.Result = flow.root:arrange(
-        bounds.x, bounds.y, bounds.width, bounds.height)
+    local result: layout.Result = flow.root:arrange(bounds.x, bounds.y, bounds.width, bounds.height)
     graphics:set_line_width(1.0)
     graphics:set_color("#52525b")
     graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
@@ -109,8 +143,9 @@ function draw_flow(
     local status: string = "FITS"
     local color: string = "#4ade80"
     if result.overflowed then
-        status = "OVERFLOW  X " .. tostring(result.overflow_x)
-            .. "  Y " .. tostring(result.overflow_y)
+        status = "OVERFLOW  X " .. tostring(
+            result.overflow_x
+        ) .. "  Y " .. tostring(result.overflow_y)
         color = "#fb7185"
     end
     draw_text(graphics, status, 34.0, 480.0, 11, color)
@@ -121,9 +156,17 @@ function row_flow(count: i32): Flow
     for index = 0::i32, count - 1 do
         local preferred_width: f64 = 52.0 + ((index % 3)::f64) * 18.0
         local preferred_height: f64 = 48.0 + ((index % 2)::f64) * 18.0
-        local leaf: layout.Box = layout.Box.leaf(measured(
-            34.0, preferred_width, 132.0,
-            preferred_height, preferred_height, 92.0, preferred_height - 10.0))
+        local leaf: layout.Box = layout.Box.leaf(
+            measured(
+                34.0,
+                preferred_width,
+                132.0,
+                preferred_height,
+                preferred_height,
+                92.0,
+                preferred_height - 10.0
+            )
+        )
         leaf:flex(1.0 + ((index % 3)::f64), 1.0)
         table.insert(leaves, leaf)
     end
@@ -132,114 +175,185 @@ end
 
 function intrinsic_row(): ui.Node
     local flows: {Flow} = {}
-    for count = 1::i32, 8::i32 do table.insert(flows, row_flow(count)) end
-    return ui.Node.sized(WIDTH::f64, HEIGHT::f64,
+    for count = 1::i32, 8::i32 do
+        table.insert(flows, row_flow(count))
+    end
+    return ui.Node.sized(
+        WIDTH::f64,
+        HEIGHT::f64,
         function(surface: ui.Surface, stage: layout.Rect): unit
             local count: i32 = row_count.value()
             local flow: Flow = flows[count - 1]
-            flow.root:present_style(layout.style(
-                "row", row_gap.value()::f64,
-                storybook.selected<layout.Justify>(row_justify),
-                storybook.selected<layout.Align>(row_align),
-                layout.even_edges(
-                    row_padding_x.value()::f64, row_padding_y.value()::f64)))
+            flow.root:present_style(
+                layout.style(
+                    "row",
+                    row_gap.value()::f64,
+                    storybook.selected<layout.Justify>(row_justify),
+                    storybook.selected<layout.Align>(row_align),
+                    layout.even_edges(row_padding_x.value()::f64, row_padding_y.value()::f64)
+                )
+            )
             local natural: layout.Intrinsic = flow.root:measure()
             local available: f64 = row_width.value()::f64
-            draw_flow(surface.graphics, flow, layout.rect(
-                stage.x + ((WIDTH::f64) - available) * 0.5,
-                stage.y + 112.0, available, 220.0),
+            draw_flow(
+                surface.graphics,
+                flow,
+                layout.rect(
+                    stage.x + ((WIDTH::f64) - available) * 0.5,
+                    stage.y + 112.0,
+                    available,
+                    220.0
+                ),
                 "INTRINSIC ROW",
-                "NATURAL " .. tostring(natural.preferred_width) .. " x "
-                    .. tostring(natural.preferred_height) .. "   AVAILABLE "
-                    .. tostring(available))
-        end)
+                "NATURAL " .. tostring(
+                    natural.preferred_width
+                ) .. " x " .. tostring(
+                    natural.preferred_height
+                ) .. "   AVAILABLE " .. tostring(available)
+            )
+        end
+    )
 end
 
 function menu_flow(count: i32): Flow
     local leaves: {layout.Box} = {}
     for index = 0::i32, count - 1 do
         local width: f64 = 92.0 + ((index % 3)::f64) * 38.0
-        table.insert(leaves, layout.Box.leaf(
-            measured(width, width, width, 46.0, 46.0, 46.0, 32.0)))
+        table.insert(leaves, layout.Box.leaf(measured(width, width, width, 46.0, 46.0, 46.0, 32.0)))
     end
     return { root = layout.Box.flow(leaves, layout.column(0.0, "start", "start")), leaves = leaves }
 end
 
 function nested_menu(): ui.Node
     local flows: {Flow} = {}
-    for count = 1::i32, 6::i32 do table.insert(flows, menu_flow(count)) end
-    return ui.Node.sized(WIDTH::f64, HEIGHT::f64,
+    for count = 1::i32, 6::i32 do
+        table.insert(flows, menu_flow(count))
+    end
+    return ui.Node.sized(
+        WIDTH::f64,
+        HEIGHT::f64,
         function(surface: ui.Surface, stage: layout.Rect): unit
             local flow: Flow = flows[menu_count.value() - 1]
-            flow.root:present_style(layout.style(
-                "column", menu_gap.value()::f64,
-                storybook.selected<layout.Justify>(menu_justify),
-                storybook.selected<layout.Align>(menu_align),
-                layout.even_edges(
-                    menu_padding_x.value()::f64, menu_padding_y.value()::f64)))
+            flow.root:present_style(
+                layout.style(
+                    "column",
+                    menu_gap.value()::f64,
+                    storybook.selected<layout.Justify>(menu_justify),
+                    storybook.selected<layout.Align>(menu_align),
+                    layout.even_edges(menu_padding_x.value()::f64, menu_padding_y.value()::f64)
+                )
+            )
             local natural: layout.Intrinsic = flow.root:measure()
             local available: f64 = menu_width.value()::f64
-            draw_flow(surface.graphics, flow, layout.rect(
-                stage.x + ((WIDTH::f64) - available) * 0.5,
-                stage.y + 92.0, available, 330.0),
+            draw_flow(
+                surface.graphics,
+                flow,
+                layout.rect(
+                    stage.x + ((WIDTH::f64) - available) * 0.5,
+                    stage.y + 92.0,
+                    available,
+                    330.0
+                ),
                 "NESTED MENU",
-                "RETAINED BUTTON COLUMN   NATURAL "
-                    .. tostring(natural.preferred_width) .. " x "
-                    .. tostring(natural.preferred_height))
-        end)
+                "RETAINED BUTTON COLUMN   NATURAL " .. tostring(
+                    natural.preferred_width
+                ) .. " x " .. tostring(natural.preferred_height)
+            )
+        end
+    )
 end
 
 function flex_pressure(): ui.Node
-    local first: layout.Box = layout.Box.leaf(
-        measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
-    local second: layout.Box = layout.Box.leaf(
-        measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
+    local first: layout.Box = layout.Box.leaf(measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
+    local second: layout.Box = layout.Box.leaf(measured(64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0))
     local flow: Flow = {
-        root = layout.Box.flow({ first, second }, layout.row(0.0, "center", "center")),
-        leaves = { first, second },
+        root = layout.Box.flow({first, second}, layout.row(0.0, "center", "center")),
+        leaves = {first, second}
     }
-    return ui.Node.sized(WIDTH::f64, HEIGHT::f64,
+    return ui.Node.sized(
+        WIDTH::f64,
+        HEIGHT::f64,
         function(surface: ui.Surface, stage: layout.Rect): unit
             first:flex(flex_grow_a.value()::f64, 1.0)
             second:flex(flex_grow_b.value()::f64, 1.0)
-            flow.root:present_style(layout.style(
-                "row", flex_gap.value()::f64, "center", "center",
-                layout.even_edges(
-                    flex_padding_x.value()::f64, flex_padding_y.value()::f64)))
+            flow.root:present_style(
+                layout.style(
+                    "row",
+                    flex_gap.value()::f64,
+                    "center",
+                    "center",
+                    layout.even_edges(flex_padding_x.value()::f64, flex_padding_y.value()::f64)
+                )
+            )
             flow.root:measure()
             local available: f64 = flex_width.value()::f64
-            draw_flow(surface.graphics, flow, layout.rect(
-                stage.x + ((WIDTH::f64) - available) * 0.5,
-                stage.y + 140.0, available, 180.0),
+            draw_flow(
+                surface.graphics,
+                flow,
+                layout.rect(
+                    stage.x + ((WIDTH::f64) - available) * 0.5,
+                    stage.y + 140.0,
+                    available,
+                    180.0
+                ),
                 "GROW / SHRINK / OVERFLOW",
-                "EACH LEAF: MIN 64   PREFERRED 150   MAX 320")
-        end)
+                "EACH LEAF: MIN 64   PREFERRED 150   MAX 320"
+            )
+        end
+    )
 end
 
 function scene(node: () -> ui.Node): storybook.Scene
-    return book:scene({
-        node = node,
-        width = WIDTH::f64,
-        height = HEIGHT::f64,
-        scale = 1.0,
-        background = BACKGROUND,
-    })
+    return book:scene(
+        {
+            node = node,
+            width = WIDTH::f64,
+            height = HEIGHT::f64,
+            scale = 1.0,
+            background = BACKGROUND
+        }
+    )
 end
 
-storybook.publish({
-    storybook.story("Intrinsic row", scene(intrinsic_row), {
-        row_count.declaration, row_width.declaration, row_gap.declaration,
-        row_padding_x.declaration, row_padding_y.declaration,
-        row_justify.declaration, row_align.declaration,
-    }),
-    storybook.story("Nested menu", scene(nested_menu), {
-        menu_count.declaration, menu_width.declaration, menu_gap.declaration,
-        menu_padding_x.declaration, menu_padding_y.declaration,
-        menu_justify.declaration, menu_align.declaration,
-    }),
-    storybook.story("Flex pressure", scene(flex_pressure), {
-        flex_width.declaration, flex_gap.declaration,
-        flex_padding_x.declaration, flex_padding_y.declaration,
-        flex_grow_a.declaration, flex_grow_b.declaration,
-    }),
-})
+storybook.publish(
+    {
+        storybook.story(
+            "Intrinsic row",
+            scene(intrinsic_row),
+            {
+                row_count.declaration,
+                row_width.declaration,
+                row_gap.declaration,
+                row_padding_x.declaration,
+                row_padding_y.declaration,
+                row_justify.declaration,
+                row_align.declaration
+            }
+        ),
+        storybook.story(
+            "Nested menu",
+            scene(nested_menu),
+            {
+                menu_count.declaration,
+                menu_width.declaration,
+                menu_gap.declaration,
+                menu_padding_x.declaration,
+                menu_padding_y.declaration,
+                menu_justify.declaration,
+                menu_align.declaration
+            }
+        ),
+        storybook.story(
+            "Flex pressure",
+            scene(flex_pressure),
+            {
+                flex_width.declaration,
+                flex_gap.declaration,
+                flex_padding_x.declaration,
+                flex_padding_y.declaration,
+                flex_grow_a.declaration,
+                flex_grow_b.declaration
+            }
+        )
+    }
+)

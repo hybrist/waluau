@@ -3,7 +3,6 @@
 -- primitives, not entities — they put ink at coordinates the caller already
 -- has, which is what an entity's paint uses once layout has told it where it
 -- is standing.
-
 local engine = require("waluau:engine")
 
 type Graphics = engine.Graphics
@@ -21,13 +20,27 @@ function text(graphics: Graphics, value: string, x: f64, y: f64, size: f64, colo
     graphics:print(value, x, y)
 end
 
-function text_centered(graphics: Graphics, value: string, center_x: f64, y: f64, size: f64, color: string): unit
+function text_centered(
+    graphics: Graphics,
+    value: string,
+    center_x: f64,
+    y: f64,
+    size: f64,
+    color: string
+): unit
     graphics:set_color(color)
     graphics:set_font(font_of(size))
     graphics:print_aligned(value, center_x, y, "center")
 end
 
-function text_right(graphics: Graphics, value: string, right_x: f64, y: f64, size: f64, color: string): unit
+function text_right(
+    graphics: Graphics,
+    value: string,
+    right_x: f64,
+    y: f64,
+    size: f64,
+    color: string
+): unit
     graphics:set_color(color)
     graphics:set_font(font_of(size))
     graphics:print_aligned(value, right_x, y, "right")
@@ -41,7 +54,15 @@ function text_width(graphics: Graphics, value: string, size: f64): f64
     return graphics:text_width(value)
 end
 
-function panel(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string, edge: string): unit
+function panel(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    fill: string,
+    edge: string
+): unit
     graphics:set_color(fill)
     graphics:fill_rectangle(x, y, width, height)
     graphics:set_color(edge)
@@ -57,9 +78,15 @@ function stop_effect(graphics: Graphics): unit
 end
 
 function color_ink(suit: i32): string
-    if suit == 0 then return "#ef4444" end
-    if suit == 1 then return "#38bdf8" end
-    if suit == 2 then return "#a855f7" end
+    if suit == 0 then
+        return "#ef4444"
+    end
+    if suit == 1 then
+        return "#38bdf8"
+    end
+    if suit == 2 then
+        return "#a855f7"
+    end
     return "#4ade80"
 end
 
@@ -72,14 +99,20 @@ end
 const FADE_DIGITS: string = "0123456789abcdef"
 
 function fade(color: string, alpha: f64): string
-    if alpha >= 1.0 then return color end
-    if alpha <= 0.0 then return color .. "00" end
+    if alpha >= 1.0 then
+        return color
+    end
+    if alpha <= 0.0 then
+        return color .. "00"
+    end
     local level: i32 = math.floor(alpha * 255.0 + 0.5)::i32
     local high: i32 = math.floor((level::f64) / 16.0)::i32
     local low: i32 = level - high * 16
-    return color
-        .. string.sub(FADE_DIGITS, high + 1, high + 1)
-        .. string.sub(FADE_DIGITS, low + 1, low + 1)
+    return color .. string.sub(
+        FADE_DIGITS,
+        high + 1,
+        high + 1
+    ) .. string.sub(FADE_DIGITS, low + 1, low + 1)
 end
 
 return {
@@ -91,5 +124,5 @@ return {
     panel = panel,
     stop_effect = stop_effect,
     color_ink = color_ink,
-    fade = fade,
+    fade = fade
 }

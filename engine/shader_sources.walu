@@ -2,7 +2,13 @@
 -- outside a configured plugin, so absent keys remain ordinary structured
 -- errors instead of preventing Wasm instantiation.
 type SourceError = { code: string, message: string }
-export type SourceUpdate = { changed: bool, ok: bool, source: string, revision: i32, error: SourceError }
+export type SourceUpdate = {
+    changed: bool,
+    ok: bool,
+    source: string,
+    revision: i32,
+    error: SourceError
+}
 export type Source = { name: string, revision: i32 }
 
 declare function __waluau_shader_source_revision(name: string): i32

@@ -113,7 +113,7 @@ function new_burst(seed: i32): particles.ParticleSystem
     system:set_linear_damping(2.6, 5.2)
     system:set_linear_acceleration(0.0, 90.0, 0.0, 340.0)
     system:set_emission_area("borderellipse", 7.0, 7.0, 0.0, false)
-    system:set_sizes({ 1.0, 0.72, 0.0 })
+    system:set_sizes({1.0, 0.72, 0.0})
     system:set_size_variation(0.7)
     system:set_relative_rotation(true)
     system:set_shape_size(34.0, 7.0)
@@ -137,7 +137,7 @@ function step_burst(
     if arriving then
         -- White at the strike, the caster's own ink through the throw, gone at
         -- the end. Each spark walks its own stretch of that band.
-        system:set_colors_hex({ "#ffffff", color, color .. "00" })
+        system:set_colors_hex({"#ffffff", color, color .. "00"})
         system:set_color_variation(0.55)
         system:set_position(x, y)
         system:emit(BURST_SPARKS)
@@ -158,8 +158,7 @@ function draw_burst(
     if system:count() == 0 then
         return
     end
-    local shader_ok: bool = burn_particles.use(
-        graphics, effects, BURST_SHADER_SEED, ember)
+    local shader_ok: bool = burn_particles.use(graphics, effects, BURST_SHADER_SEED, ember)
     if not shader_ok then
         burn_particles.stop(graphics)
     end

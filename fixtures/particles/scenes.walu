@@ -1,7 +1,6 @@
 -- The scenes behind the particle gallery. Each one is a small recipe for the
 -- same engine: what differs between fire, rain and a magic vortex is entirely
 -- in how the emitters are configured, not in the code that runs them.
-
 local particles = require("../../engine/particles")
 local graphics_module = require("../../engine/graphics")
 
@@ -58,9 +57,9 @@ function fire_scene(): Scene
     -- Hot gas keeps accelerating upward, and drifts a little sideways.
     flames:set_linear_acceleration(-24.0, -90.0, 24.0, -30.0)
     flames:set_emission_area("uniform", 26.0, 6.0, 0.0, false)
-    flames:set_sizes({ 0.55, 1.35, 0.9, 0.1 })
+    flames:set_sizes({0.55, 1.35, 0.9, 0.1})
     flames:set_size_variation(0.7)
-    flames:set_colors_hex({ "#fff6cc", "#ffc247", "#f4621e", "#8a1f0bcc", "#3b0a0400" })
+    flames:set_colors_hex({"#fff6cc", "#ffc247", "#f4621e", "#8a1f0bcc", "#3b0a0400"})
     flames:set_shape_size(18.0, 18.0)
     flames:set_draw_mode("circle")
     flames:set_blend_mode("add")
@@ -78,8 +77,8 @@ function fire_scene(): Scene
     embers:set_tangential_acceleration(-40.0, 40.0)
     embers:set_linear_damping(0.4, 0.9)
     embers:set_emission_area("uniform", 34.0, 8.0, 0.0, false)
-    embers:set_sizes({ 0.5, 0.35, 0.0 })
-    embers:set_colors_hex({ "#fff1b8", "#ff9d3c", "#ff4d0d00" })
+    embers:set_sizes({0.5, 0.35, 0.0})
+    embers:set_colors_hex({"#fff1b8", "#ff9d3c", "#ff4d0d00"})
     embers:set_shape_size(10.0, 10.0)
     embers:set_draw_mode("circle")
     embers:set_blend_mode("add")
@@ -89,7 +88,7 @@ function fire_scene(): Scene
         name = "Campfire",
         hint = "Additive blending, color and size curves over a particle life",
         background = "#120b16",
-        systems = { flames, embers },
+        systems = {flames, embers},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -97,7 +96,7 @@ function fire_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -114,9 +113,9 @@ function fountain_scene(): Scene
     water:set_linear_acceleration(0.0, 520.0, 0.0, 520.0)
     water:set_linear_damping(0.05, 0.25)
     water:set_emission_area("uniform", 5.0, 2.0, 0.0, false)
-    water:set_sizes({ 0.75, 0.5, 0.2 })
+    water:set_sizes({0.75, 0.5, 0.2})
     water:set_size_variation(0.5)
-    water:set_colors_hex({ "#eaf6ff", "#7dd3fc", "#2563ebcc", "#1e3a8a00" })
+    water:set_colors_hex({"#eaf6ff", "#7dd3fc", "#2563ebcc", "#1e3a8a00"})
     water:set_shape_size(9.0, 9.0)
     water:set_draw_mode("circle")
 
@@ -130,8 +129,8 @@ function fountain_scene(): Scene
     mist:set_spread(math.pi * 2.0)
     mist:set_linear_acceleration(0.0, 60.0, 0.0, 110.0)
     mist:set_emission_area("normal", 26.0, 16.0, 0.0, false)
-    mist:set_sizes({ 0.4, 1.1 })
-    mist:set_colors_hex({ "#e0f2ff00", "#bae6fd88", "#93c5fd00" })
+    mist:set_sizes({0.4, 1.1})
+    mist:set_colors_hex({"#e0f2ff00", "#bae6fd88", "#93c5fd00"})
     mist:set_shape_size(12.0, 12.0)
     mist:set_draw_mode("circle")
     mist:set_blend_mode("add")
@@ -141,7 +140,7 @@ function fountain_scene(): Scene
         name = "Fountain",
         hint = "Gravity, damping and a normal-distribution spawn area",
         background = "#071021",
-        systems = { water, mist },
+        systems = {water, mist},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -149,7 +148,7 @@ function fountain_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -164,8 +163,8 @@ function burst_scene(): Scene
     sparks:set_linear_acceleration(0.0, 240.0, 0.0, 420.0)
     sparks:set_linear_damping(1.2, 2.4)
     sparks:set_emission_area("borderellipse", 12.0, 12.0, 0.0, true)
-    sparks:set_sizes({ 1.0, 0.6, 0.0 })
-    sparks:set_colors_hex({ "#fffbe6", "#ffd166", "#ff6b3500" })
+    sparks:set_sizes({1.0, 0.6, 0.0})
+    sparks:set_colors_hex({"#fffbe6", "#ffd166", "#ff6b3500"})
     sparks:set_shape_size(16.0, 3.0)
     sparks:set_draw_mode("spark")
     sparks:set_blend_mode("add")
@@ -181,9 +180,9 @@ function burst_scene(): Scene
     debris:set_rotation(0.0, math.pi * 2.0)
     debris:set_spin(-9.0, 9.0)
     debris:set_spin_variation(1.0)
-    debris:set_sizes({ 0.9, 0.7, 0.4 })
+    debris:set_sizes({0.9, 0.7, 0.4})
     debris:set_size_variation(0.8)
-    debris:set_colors_hex({ "#f8fafc", "#94a3b8", "#47556900" })
+    debris:set_colors_hex({"#f8fafc", "#94a3b8", "#47556900"})
     debris:set_shape_size(8.0, 8.0)
     debris:set_draw_mode("square")
 
@@ -196,9 +195,9 @@ function burst_scene(): Scene
     smoke:set_spread(math.pi * 2.0)
     smoke:set_linear_acceleration(0.0, -50.0, 0.0, -14.0)
     smoke:set_emission_area("ellipse", 18.0, 18.0, 0.0, false)
-    smoke:set_sizes({ 0.6, 2.4 })
+    smoke:set_sizes({0.6, 2.4})
     smoke:set_size_variation(0.6)
-    smoke:set_colors_hex({ "#e2e8f0aa", "#64748b55", "#33415500" })
+    smoke:set_colors_hex({"#e2e8f0aa", "#64748b55", "#33415500"})
     smoke:set_shape_size(22.0, 22.0)
     smoke:set_draw_mode("circle")
 
@@ -207,7 +206,7 @@ function burst_scene(): Scene
         name = "Explosions",
         hint = "Click anywhere or press space - rim emission plus tumbling debris",
         background = "#0b0f1a",
-        systems = { smoke, debris, sparks },
+        systems = {smoke, debris, sparks},
         clock = 0.0,
         burst_timer = 1.0,
         pointer_x = WIDTH * 0.5,
@@ -215,7 +214,7 @@ function burst_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -231,13 +230,13 @@ function smoke_scene(): Scene
     plume:set_linear_acceleration(-14.0, -26.0, 30.0, -8.0)
     plume:set_linear_damping(0.3, 0.7)
     plume:set_emission_area("normal", 9.0, 5.0, 0.0, false)
-    plume:set_sizes({ 0.35, 1.4, 2.6 })
+    plume:set_sizes({0.35, 1.4, 2.6})
     plume:set_size_variation(0.65)
     plume:set_rotation(0.0, math.pi * 2.0)
     -- Spin starts brisk and settles, which reads as the plume slowing down.
     plume:set_spin(1.4, 0.15)
     plume:set_spin_variation(1.0)
-    plume:set_colors_hex({ "#5f6b7a00", "#8d99aa99", "#c3ccd955", "#e2e8f000" })
+    plume:set_colors_hex({"#5f6b7a00", "#8d99aa99", "#c3ccd955", "#e2e8f000"})
     plume:set_shape_size(26.0, 26.0)
     plume:set_draw_mode("square")
     plume:set_insert_mode("bottom")
@@ -247,7 +246,7 @@ function smoke_scene(): Scene
         name = "Smoke plume",
         hint = "Rotation and spin over life, size growth, bottom insert order",
         background = "#161a20",
-        systems = { plume },
+        systems = {plume},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -255,7 +254,7 @@ function smoke_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -272,9 +271,9 @@ function weather_scene(): Scene
     snow:set_linear_acceleration(-30.0, 20.0, 60.0, 45.0)
     snow:set_linear_damping(0.5, 1.4)
     snow:set_emission_area("uniform", WIDTH * 0.55, 6.0, 0.0, false)
-    snow:set_sizes({ 0.5, 0.5, 0.2 })
+    snow:set_sizes({0.5, 0.5, 0.2})
     snow:set_size_variation(0.9)
-    snow:set_colors_hex({ "#ffffff00", "#f8fafcff", "#e2e8f0ff", "#e2e8f000" })
+    snow:set_colors_hex({"#ffffff00", "#f8fafcff", "#e2e8f0ff", "#e2e8f000"})
     snow:set_shape_size(7.0, 7.0)
     snow:set_draw_mode("circle")
 
@@ -289,8 +288,8 @@ function weather_scene(): Scene
     rain:set_speed(520.0, 700.0)
     rain:set_linear_acceleration(0.0, 400.0, 0.0, 400.0)
     rain:set_emission_area("uniform", WIDTH * 0.6, 4.0, 0.0, false)
-    rain:set_sizes({ 1.0 })
-    rain:set_colors_hex({ "#93c5fd88", "#bfdbfe55" })
+    rain:set_sizes({1.0})
+    rain:set_colors_hex({"#93c5fd88", "#bfdbfe55"})
     rain:set_shape_size(26.0, 1.6)
     rain:set_draw_mode("spark")
 
@@ -299,7 +298,7 @@ function weather_scene(): Scene
         name = "Weather",
         hint = "Wide spawn strips, wind, and velocity aligned rain streaks",
         background = "#0e131c",
-        systems = { snow, rain },
+        systems = {snow, rain},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -307,7 +306,7 @@ function weather_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -325,9 +324,9 @@ function vortex_scene(): Scene
     swirl:set_tangential_acceleration(160.0, 320.0)
     swirl:set_linear_damping(0.2, 0.6)
     swirl:set_emission_area("borderellipse", 150.0, 150.0, 0.0, false)
-    swirl:set_sizes({ 0.2, 0.9, 0.1 })
+    swirl:set_sizes({0.2, 0.9, 0.1})
     swirl:set_size_variation(0.7)
-    swirl:set_colors_hex({ "#a855f700", "#e879f9", "#67e8f9", "#22d3ee00" })
+    swirl:set_colors_hex({"#a855f700", "#e879f9", "#67e8f9", "#22d3ee00"})
     swirl:set_shape_size(9.0, 9.0)
     swirl:set_draw_mode("circle")
     swirl:set_blend_mode("add")
@@ -344,8 +343,8 @@ function vortex_scene(): Scene
     halo:set_radial_acceleration(-30.0, 10.0)
     halo:set_tangential_acceleration(-150.0, -90.0)
     halo:set_emission_area("ellipse", 220.0, 220.0, 0.0, false)
-    halo:set_sizes({ 0.0, 1.0, 0.0 })
-    halo:set_colors_hex({ "#38bdf800", "#c7d2fe99", "#818cf800" })
+    halo:set_sizes({0.0, 1.0, 0.0})
+    halo:set_colors_hex({"#38bdf800", "#c7d2fe99", "#818cf800"})
     halo:set_shape_size(20.0, 2.4)
     halo:set_draw_mode("spark")
     halo:set_blend_mode("add")
@@ -355,7 +354,7 @@ function vortex_scene(): Scene
         name = "Vortex",
         hint = "Radial and tangential acceleration, random insert order",
         background = "#0a0713",
-        systems = { swirl, halo },
+        systems = {swirl, halo},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -363,7 +362,7 @@ function vortex_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -375,9 +374,9 @@ function trail_scene(): Scene
     comet:set_speed(10.0, 90.0)
     comet:set_spread(math.pi * 2.0)
     comet:set_linear_damping(2.0, 4.0)
-    comet:set_sizes({ 1.0, 0.4, 0.0 })
+    comet:set_sizes({1.0, 0.4, 0.0})
     comet:set_size_variation(0.5)
-    comet:set_colors_hex({ "#fef9c3", "#fb923c", "#db277700" })
+    comet:set_colors_hex({"#fef9c3", "#fb923c", "#db277700"})
     comet:set_shape_size(12.0, 12.0)
     comet:set_draw_mode("circle")
     comet:set_blend_mode("add")
@@ -390,8 +389,8 @@ function trail_scene(): Scene
     streaks:set_spread(math.pi * 2.0)
     streaks:set_linear_damping(1.0, 3.0)
     streaks:set_relative_rotation(true)
-    streaks:set_sizes({ 1.2, 0.2 })
-    streaks:set_colors_hex({ "#fde68a", "#f9731600" })
+    streaks:set_sizes({1.2, 0.2})
+    streaks:set_colors_hex({"#fde68a", "#f9731600"})
     streaks:set_shape_size(22.0, 2.0)
     streaks:set_draw_mode("spark")
     streaks:set_blend_mode("add")
@@ -401,7 +400,7 @@ function trail_scene(): Scene
         name = "Comet trail",
         hint = "Move the mouse: a moving emitter fills the gap between updates",
         background = "#05070f",
-        systems = { comet, streaks },
+        systems = {comet, streaks},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -409,7 +408,7 @@ function trail_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -425,12 +424,12 @@ function sprite_scene(): Scene
     sparkles:set_spread(math.pi * 2.0)
     sparkles:set_linear_damping(0.8, 1.6)
     sparkles:set_emission_area("ellipse", 120.0, 70.0, 0.0, false)
-    sparkles:set_sizes({ 0.5, 1.6, 0.7 })
+    sparkles:set_sizes({0.5, 1.6, 0.7})
     sparkles:set_size_variation(0.7)
     sparkles:set_rotation(0.0, math.pi * 2.0)
     sparkles:set_spin(-3.0, 3.0)
     sparkles:set_spin_variation(1.0)
-    sparkles:set_colors_hex({ "#ffffff", "#a5f3fc", "#c084fc", "#7c3aed00" })
+    sparkles:set_colors_hex({"#ffffff", "#a5f3fc", "#c084fc", "#7c3aed00"})
     sparkles:set_shape_size(SPRITE_CELL, SPRITE_CELL)
     sparkles:set_blend_mode("add")
 
@@ -439,7 +438,7 @@ function sprite_scene(): Scene
         name = "Sprite atlas",
         hint = "Textured particles animating through atlas frames, with spin",
         background = "#0b0a1c",
-        systems = { sparkles },
+        systems = {sparkles},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -447,7 +446,7 @@ function sprite_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -471,14 +470,14 @@ function ash_scene(): Scene
     -- Small flakes rock quickly, big ones swing wide and slow.
     flakes:set_sway_amplitude(6.0, 30.0)
     flakes:set_sway_frequency(0.2, 0.8)
-    flakes:set_sizes({ 0.9, 1.0, 0.7, 0.0 })
+    flakes:set_sizes({0.9, 1.0, 0.7, 0.0})
     flakes:set_size_variation(0.8)
     flakes:set_rotation(0.0, math.pi * 2.0)
     flakes:set_spin(-1.4, 1.4)
     flakes:set_spin_variation(1.0)
     -- Soot through to bright ash: with variation the fall is a crowd of
     -- different flakes, without it every flake at the same age is one tone.
-    flakes:set_colors_hex({ "#292524", "#57534e", "#a8a29e" })
+    flakes:set_colors_hex({"#292524", "#57534e", "#a8a29e"})
     flakes:set_color_variation(1.0)
     flakes:set_shape_size(7.0, 10.0)
     flakes:set_draw_mode("square")
@@ -498,9 +497,9 @@ function ash_scene(): Scene
     embers:set_emission_area("uniform", WIDTH * 0.4, 8.0, 0.0, false)
     embers:set_sway_amplitude(10.0, 34.0)
     embers:set_sway_frequency(0.5, 1.4)
-    embers:set_sizes({ 0.0, 0.9, 0.6, 0.0 })
+    embers:set_sizes({0.0, 0.9, 0.6, 0.0})
     embers:set_size_variation(0.5)
-    embers:set_colors_hex({ "#fde68a", "#fb923c", "#dc2626" })
+    embers:set_colors_hex({"#fde68a", "#fb923c", "#dc2626"})
     embers:set_color_variation(0.85)
     embers:set_shape_size(9.0, 9.0)
     embers:set_draw_mode("circle")
@@ -511,7 +510,7 @@ function ash_scene(): Scene
         name = "Ash fall",
         hint = "Sway with a phase per particle, and per-particle color variation",
         background = "#0d0b0a",
-        systems = { flakes, embers },
+        systems = {flakes, embers},
         clock = 0.0,
         burst_timer = 0.0,
         pointer_x = WIDTH * 0.5,
@@ -519,7 +518,7 @@ function ash_scene(): Scene
         pointer_seen = false,
         texture = nil,
         target = nil,
-        texture_failed = false,
+        texture_failed = false
     }
 end
 
@@ -643,8 +642,10 @@ end
 -- of the gallery uses.
 function Scene:build_atlas(graphics: Graphics): unit
     self.texture_failed = true
-    local result: graphics_module.RenderTargetResult =
-        graphics:create_render_target((SPRITE_CELL * (SPRITE_FRAMES::f64))::i32, SPRITE_CELL::i32)
+    local result: graphics_module.RenderTargetResult = graphics:create_render_target(
+        (SPRITE_CELL * (SPRITE_FRAMES::f64))::i32,
+        SPRITE_CELL::i32
+    )
     if not result.ok then
         return
     end
@@ -674,12 +675,24 @@ function Scene:build_atlas(graphics: Graphics): unit
         local spike: f64 = ring * 1.15
         graphics:set_color_rgba(1.0, 1.0, 1.0, 0.5 - (frame::f64) * 0.1)
         graphics:fill_quad(
-            center_x - spike, half, center_x, half - 1.4,
-            center_x + spike, half, center_x, half + 1.4
+            center_x - spike,
+            half,
+            center_x,
+            half - 1.4,
+            center_x + spike,
+            half,
+            center_x,
+            half + 1.4
         )
         graphics:fill_quad(
-            center_x, half - spike, center_x + 1.4, half,
-            center_x, half + spike, center_x - 1.4, half
+            center_x,
+            half - spike,
+            center_x + 1.4,
+            half,
+            center_x,
+            half + spike,
+            center_x - 1.4,
+            half
         )
     end
     graphics:set_blend_mode("alpha")
@@ -688,7 +701,10 @@ function Scene:build_atlas(graphics: Graphics): unit
     local texture: graphics_module.Texture = graphics:texture_from_render_target(target)
     local frames: {particles.Quad} = {}
     for frame = 0, SPRITE_FRAMES - 1 do
-        table.insert(frames, particles.quad((frame::f64) * SPRITE_CELL, 0.0, SPRITE_CELL, SPRITE_CELL))
+        table.insert(
+            frames,
+            particles.quad((frame::f64) * SPRITE_CELL, 0.0, SPRITE_CELL, SPRITE_CELL)
+        )
     end
     local sparkles: ParticleSystem = self.systems[0]
     sparkles:set_texture(texture)
@@ -740,5 +756,5 @@ return {
     scene_count = SCENE_COUNT,
     width = WIDTH,
     height = HEIGHT,
-    burst_kind = SCENE_BURST,
+    burst_kind = SCENE_BURST
 }

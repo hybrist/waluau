@@ -2,7 +2,6 @@
 -- the declarations they mean everywhere else, so a record literal handed to a
 -- constructor is checked against the payload the same way it would be checked
 -- against a plain record annotation.
-
 type Control = "leave" | "cancel"
 type Slot = { control: Control, note: Control? }
 

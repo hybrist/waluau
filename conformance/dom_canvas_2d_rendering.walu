@@ -1,5 +1,4 @@
 -- Browser canvas 2D rendering through generated DOM externs.
-
 local window = require("dom:window")
 local document: Document = window.document
 local body: HTMLElement = document.body

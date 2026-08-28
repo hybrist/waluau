@@ -1,7 +1,6 @@
 -- The engine's DOM host: owns canvas setup, keyboard events and the animation
 -- loop. This module and graphics.walu are the only ones that import DOM
 -- externs, which is what keeps game code free of them.
-
 local input_module = require("./input")
 local graphics_module = require("./graphics")
 local time_module = require("./time")
@@ -63,9 +62,15 @@ export type Session = {
 -- Browsers number mouse buttons 0/1/2 = left/middle/right; game code sees
 -- the Love2D-style 1/2/3 = left/right/middle numbering instead.
 function mouse_button_number(dom_button: i32): i32
-    if dom_button == 0 then return 1 end
-    if dom_button == 2 then return 2 end
-    if dom_button == 1 then return 3 end
+    if dom_button == 0 then
+        return 1
+    end
+    if dom_button == 2 then
+        return 2
+    end
+    if dom_button == 1 then
+        return 3
+    end
     return dom_button + 1
 end
 
@@ -81,19 +86,29 @@ function sync_canvas_size(
     fluid: bool
 ): bool
     local inset: i32 = 16
-    if fluid then inset = 0 end
+    if fluid then
+        inset = 0
+    end
     local available_width: f64 = (window.innerWidth - inset)::f64
     local available_height: f64 = (window.innerHeight - inset)::f64
-    if available_width < 1.0 then available_width = 1.0 end
-    if available_height < 1.0 then available_height = 1.0 end
+    if available_width < 1.0 then
+        available_width = 1.0
+    end
+    if available_height < 1.0 then
+        available_height = 1.0
+    end
     local display_width: i32 = math.floor(available_width + 0.5)::i32
     local display_height: i32 = math.floor(available_height + 0.5)::i32
     if not fluid then
         local display_scale: f64 = 1.0
         local width_scale: f64 = available_width / (fallback_width::f64)
         local height_scale: f64 = available_height / (fallback_height::f64)
-        if width_scale < display_scale then display_scale = width_scale end
-        if height_scale < display_scale then display_scale = height_scale end
+        if width_scale < display_scale then
+            display_scale = width_scale
+        end
+        if height_scale < display_scale then
+            display_scale = height_scale
+        end
         display_width = math.floor((fallback_width::f64) * display_scale + 0.5)::i32
         display_height = math.floor((fallback_height::f64) * display_scale + 0.5)::i32
     end
@@ -106,11 +121,17 @@ function sync_canvas_size(
         css_width = canvas.clientWidth
         css_height = canvas.clientHeight
     end
-    if css_width <= 0 then css_width = fallback_width::i32 end
-    if css_height <= 0 then css_height = fallback_height::i32 end
+    if css_width <= 0 then
+        css_width = fallback_width::i32
+    end
+    if css_height <= 0 then
+        css_height = fallback_height::i32
+    end
 
     local pixel_ratio: f64 = window.devicePixelRatio
-    if pixel_ratio <= 0.0 then pixel_ratio = 1.0 end
+    if pixel_ratio <= 0.0 then
+        pixel_ratio = 1.0
+    end
     local pixel_width: u32 = math.floor((css_width::f64) * pixel_ratio + 0.5)::u32
     local pixel_height: u32 = math.floor((css_height::f64) * pixel_ratio + 0.5)::u32
     local changed: bool = canvas.width ~= pixel_width or canvas.height ~= pixel_height
@@ -138,31 +159,51 @@ function start(config: Config, game: Game): Session
     -- a fluid game never has to invent a size just to satisfy the record.
     local page_width: u32 = 1
     local page_height: u32 = 1
-    if window.innerWidth > 0 then page_width = window.innerWidth::u32 end
-    if window.innerHeight > 0 then page_height = window.innerHeight::u32 end
+    if window.innerWidth > 0 then
+        page_width = window.innerWidth::u32
+    end
+    if window.innerHeight > 0 then
+        page_height = window.innerHeight::u32
+    end
     local config_width: u32 = config.width or page_width
     local config_height: u32 = config.height or page_height
     if owns_page then
-        body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
+        body:set_attribute(
+            "style",
+            "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";"
+        )
     end
     local previous_root: Element? = document:get_element_by_id("walua-game")
 
     local root: Element = document:create_element("main")
-    if previous_root == nil then root.id = "walua-game"
-    else root.id = "walua-game-pending" end
+    if previous_root == nil then
+        root.id = "walua-game"
+    else
+        root.id = "walua-game-pending"
+    end
     root.class_name = "flex min-h-screen w-full flex-col items-center justify-center gap-2 overflow-hidden bg-slate-950 p-2 text-slate-100"
     -- A game that owns the page paints its own backdrop around the canvas. A
     -- mounted game paints nothing outside the canvas: the host's page keeps
     -- its own background, and the canvas stays a measurable box on it.
     local root_box: string = "width:100vw;min-height:100vh;padding:8px;background:" .. config.background .. ";"
-    if fluid then root_box = "width:100vw;height:100vh;padding:0;background:" .. config.background .. ";" end
-    if not owns_page then root_box = "width:100%;min-height:100%;padding:0;" end
-    root:set_attribute("style", "box-sizing:border-box;display:flex;" .. root_box .. "align-items:center;justify-content:center;overflow:hidden;")
+    if fluid then
+        root_box = "width:100vw;height:100vh;padding:0;background:" .. config.background .. ";"
+    end
+    if not owns_page then
+        root_box = "width:100%;min-height:100%;padding:0;"
+    end
+    root:set_attribute(
+        "style",
+        "box-sizing:border-box;display:flex;" .. root_box .. "align-items:center;justify-content:center;overflow:hidden;"
+    )
     host:append_child(root)
 
     local heading: Element = document:create_element("h1")
     heading.class_name = "sr-only"
-    heading:set_attribute("style", "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;")
+    heading:set_attribute(
+        "style",
+        "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"
+    )
     heading.text_content = config.title
     root:append_child(heading)
 
@@ -180,7 +221,10 @@ function start(config: Config, game: Game): Session
         style:setProperty("width", tostring(config_width) .. "px")
         style:setProperty("height", tostring(config_height) .. "px")
         if not fluid then
-            style:setProperty("aspect-ratio", tostring(config_width) .. " / " .. tostring(config_height))
+            style:setProperty(
+                "aspect-ratio",
+                tostring(config_width) .. " / " .. tostring(config_height)
+            )
         end
         style:setProperty("display", "block")
         style:setProperty("background-color", config.background)
@@ -195,16 +239,19 @@ function start(config: Config, game: Game): Session
             viewport_width = game_canvas.clientWidth::u32
             viewport_height = game_canvas.clientHeight::u32
         end
-        local viewport: {width: u32, height: u32} = {
-            width = viewport_width,
-            height = viewport_height,
-        }
+        local viewport: {
+            width: u32,
+            height: u32
+        } = { width = viewport_width, height = viewport_height }
 
         local maybe_gl: WebGL2RenderingContext? = game_canvas:get_context_webgl2()
         assert(maybe_gl ~= nil)
         local gl: WebGL2RenderingContext = maybe_gl::WebGL2RenderingContext
         local graphics: graphics_module.Graphics = graphics_module.new(
-            gl, viewport.width::f64, viewport.height::f64)
+            gl,
+            viewport.width::f64,
+            viewport.height::f64
+        )
         local input: input_module.Input = input_module.new()
         local clock: time_module.Clock = time_module.new(config.update_hz, config.max_frame_seconds)
 
@@ -238,12 +285,16 @@ function start(config: Config, game: Game): Session
         -- no layout, so a zero clientWidth falls back to the unscaled offset.
         local function mouse_logical_x(mouse_event: MouseEvent): f64
             local css_width: f64 = game_canvas.clientWidth::f64
-            if css_width <= 0.0 then return mouse_event.offsetX end
+            if css_width <= 0.0 then
+                return mouse_event.offsetX
+            end
             return mouse_event.offsetX * (viewport.width::f64) / css_width
         end
         local function mouse_logical_y(mouse_event: MouseEvent): f64
             local css_height: f64 = game_canvas.clientHeight::f64
-            if css_height <= 0.0 then return mouse_event.offsetY end
+            if css_height <= 0.0 then
+                return mouse_event.offsetY
+            end
             return mouse_event.offsetY * (viewport.height::f64) / css_height
         end
 
@@ -296,9 +347,15 @@ function start(config: Config, game: Game): Session
         local stopped: bool = false
         local frame_handle: u32 = 0
         local function frame(timestamp_ms: f64): unit
-            if stopped then return end
+            if stopped then
+                return
+            end
             local canvas_changed: bool = sync_canvas_size(
-                game_canvas, viewport.width, viewport.height, fluid)
+                game_canvas,
+                viewport.width,
+                viewport.height,
+                fluid
+            )
             if fluid and game_canvas.clientWidth > 0 and game_canvas.clientHeight > 0 then
                 local next_width: u32 = game_canvas.clientWidth::u32
                 local next_height: u32 = game_canvas.clientHeight::u32
@@ -322,7 +379,9 @@ function start(config: Config, game: Game): Session
             graphics:present()
             if root.id == "walua-game-pending" then
                 local mounted_root: Element? = document:get_element_by_id("walua-game")
-                if mounted_root ~= nil then host:remove_child(mounted_root) end
+                if mounted_root ~= nil then
+                    host:remove_child(mounted_root)
+                end
                 root.id = "walua-game"
             end
             frame_handle = window:requestAnimationFrame(frame)
@@ -341,11 +400,15 @@ function start(config: Config, game: Game): Session
             end
             if remove_root then
                 local mounted_root: Element? = document:get_element_by_id(root.id)
-                if mounted_root == root then host:remove_child(root) end
+                if mounted_root == root then
+                    host:remove_child(root)
+                end
             end
         end
         local function resize_viewport(width: u32, height: u32): unit
-            if width == viewport.width and height == viewport.height then return end
+            if width == viewport.width and height == viewport.height then
+                return
+            end
             viewport.width = width
             viewport.height = height
             style:setProperty("width", tostring(width) .. "px")
@@ -357,9 +420,13 @@ function start(config: Config, game: Game): Session
         end
 
         return {
-            stop = function(): unit stop_session(true) end,
-            suspend = function(): unit stop_session(false) end,
-            resize = resize_viewport,
+            stop = function(): unit
+                stop_session(true)
+            end,
+            suspend = function(): unit
+                stop_session(false)
+            end,
+            resize = resize_viewport
         }
     else
         error("game engine could not create a WebGL2 canvas")
@@ -368,12 +435,13 @@ function start(config: Config, game: Game): Session
     -- `error` never returns at runtime; this unreachable value keeps the
     -- current static return checker aware that every path has a Session.
     return {
-        stop = function(): unit end,
-        suspend = function(): unit end,
-        resize = function(width: u32, height: u32): unit end,
+        stop = function(): unit
+        end,
+        suspend = function(): unit
+        end,
+        resize = function(width: u32, height: u32): unit
+        end
     }
 end
 
-return {
-    start = start,
-}
+return { start = start }

@@ -13,8 +13,13 @@ const FLIP_SECONDS: f64 = 0.55
 -- viewer. Everything inherits the transform stack, so the regular card
 -- presenter draws both halves of the flip.
 function draw(
-    surface: ui.Surface, value: game.Card, x: f64, y: f64,
-    clock: f64, delay: f64, colored: bool
+    surface: ui.Surface,
+    value: game.Card,
+    x: f64,
+    y: f64,
+    clock: f64,
+    delay: f64,
+    colored: bool
 ): unit
     local graphics = surface.graphics
     local progress: f64 = easing.clamp01((clock - delay) / FLIP_SECONDS)
@@ -24,7 +29,9 @@ function draw(
     local depth: f64 = math.sin(angle)
     local hidden: bool = flat >= 0.0
     local width_scale: f64 = flat
-    if not hidden then width_scale = -flat end
+    if not hidden then
+        width_scale = -flat
+    end
     local lift: f64 = 1.0 + 0.14 * depth
     graphics:push()
     graphics:translate(x + card.width * 0.5, y + card.height * 0.5 - 10.0 * depth)
@@ -33,8 +40,11 @@ function draw(
     -- knew it a moment ago stops mattering the instant it lands face up, so no
     -- eye rides the flip.
     card.draw_at(
-        surface, card.look(value, false, false, hidden, colored, false),
-        -(card.width * 0.5), -(card.height * 0.5))
+        surface,
+        card.look(value, false, false, hidden, colored, false),
+        -(card.width * 0.5),
+        -(card.height * 0.5)
+    )
     graphics:pop()
 end
 

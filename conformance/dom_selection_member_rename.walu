@@ -1,5 +1,5 @@
 declare function Selection:select_all_children(node: Node): unit
-declare property Selection:anchor_node: Node?
+declare property Selection: anchor_node: Node?
 
 local window = require("dom:window")
 local document: Document = window.document

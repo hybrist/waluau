@@ -1,13 +1,14 @@
 -- The four curves Ante Magic moves on. Shared because a card flying, a table_card
 -- climbing out of a grave, and a halo brightening should not each own a
 -- private copy of the same cubic.
-
 function in_cubic(t: f64): f64
     return t * t * t
 end
 
 function in_out_cubic(t: f64): f64
-    if t < 0.5 then return 4.0 * t * t * t end
+    if t < 0.5 then
+        return 4.0 * t * t * t
+    end
     local back: f64 = -2.0 * t + 2.0
     return 1.0 - back * back * back * 0.5
 end
@@ -27,8 +28,12 @@ function out_back(t: f64): f64
 end
 
 function clamp01(value: f64): f64
-    if value < 0.0 then return 0.0 end
-    if value > 1.0 then return 1.0 end
+    if value < 0.0 then
+        return 0.0
+    end
+    if value > 1.0 then
+        return 1.0
+    end
     return value
 end
 
@@ -37,5 +42,5 @@ return {
     in_out_cubic = in_out_cubic,
     out_quint = out_quint,
     out_back = out_back,
-    clamp01 = clamp01,
+    clamp01 = clamp01
 }

@@ -57,7 +57,8 @@ function rebuild(
     return graphics:replace_shader(state.shader::graphics_module.Shader, vertex_text, state.text)
 end
 
-function State:refresh(graphics: Graphics,
+function State:refresh(
+    graphics: Graphics,
     vertex_text: string,
     vertex_changed: bool,
     source_changed: bool
@@ -81,4 +82,3 @@ function State:release(graphics: Graphics): unit
     end
     self.shader = nil
 end
-

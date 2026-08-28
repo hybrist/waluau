@@ -1,6 +1,5 @@
 -- for..in over local iterator *values* (closures), which lower to indirect
 -- calls returning multiple values (`bool` + loop values). See waluau-e80.
-
 -- A non-capturing closure stored in a local. The loop never starts because the
 -- iterator immediately reports "done".
 function never_runs(): i32

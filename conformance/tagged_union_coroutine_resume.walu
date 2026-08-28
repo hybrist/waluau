@@ -1,7 +1,6 @@
 -- Tagged-union coroutine resume: coroutine.resume with a tagged-union result type
 -- produces a canonical { tag: i32, value: unknown } record.
 -- `is Variant` checks read the tag; `.value` unboxes the payload.
-
 function counter_job(): i32
     coroutine.yield(10)
     coroutine.yield(20)

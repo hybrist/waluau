@@ -31,12 +31,12 @@ function new_trail(): particles.ParticleSystem
     -- Hot air rises and the ember is losing its throw the whole way.
     system:set_linear_acceleration(-26.0, -150.0, 26.0, -34.0)
     system:set_linear_damping(2.6, 5.2)
-    system:set_sizes({ 1.0, 0.78, 0.34, 0.0 })
+    system:set_sizes({1.0, 0.78, 0.34, 0.0})
     system:set_size_variation(0.72)
     system:set_rotation(0.0, math.pi * 2.0)
     system:set_spin(-3.4, 3.4)
     system:set_spin_variation(1.0)
-    system:set_colors_hex({ "#fff3c4", "#f97316", "#7f1d1d00" })
+    system:set_colors_hex({"#fff3c4", "#f97316", "#7f1d1d00"})
     system:set_color_variation(0.85)
     system:set_shape_size(15.0, 9.0)
     system:set_blend_mode("add")
@@ -99,9 +99,4 @@ function draw(
     end
 end
 
-return {
-    not_flying = NOT_FLYING,
-    new_trail = new_trail,
-    step_trail = step_trail,
-    draw = draw
-}
+return { not_flying = NOT_FLYING, new_trail = new_trail, step_trail = step_trail, draw = draw }

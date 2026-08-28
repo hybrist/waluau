@@ -1,7 +1,6 @@
 -- anyref/boxing support (waluau-myp2): the `unknown` type lowers to wasm
 -- `anyref`. Primitives box into anyref (i32/bool via i31ref, f64 via a boxed
 -- struct) when coerced to `unknown`, and unbox with an explicit `::T` cast.
-
 -- Implicitly box an i32 into `unknown`, then unbox it back.
 function roundtrip_i32(x: i32): i32
     local boxed: unknown = x

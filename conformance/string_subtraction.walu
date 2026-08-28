@@ -6,6 +6,5 @@
 -- dedicated diagnostic lands, this test breaks, prompting removal of `pending`.
 -- conformance: pending
 -- conformance: error=cannot subtract strings
-
 local result: string = "a" - "b"
 assert(result == "")

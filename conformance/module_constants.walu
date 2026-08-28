@@ -1,7 +1,6 @@
 -- A top-level `local NAME <const> = <expression>` is a module constant: unlike
 -- plain top-level locals, it is also visible inside function bodies (the
 -- linker inlines the expression at each use).
-
 local CELL_SIZE <const>: f64 = 16.0
 local COLS <const>: i32 = 21
 local TITLE <const> = "snake"
@@ -26,8 +25,7 @@ function board_width(): f64
 end
 
 function computed_constants(): f64
-    return DOUBLE_COLS::f64 + OFFSET_COLS::f64 + HALF_CELL
-        + FLOORED::f64 + REMAINDER::f64 + SQUARED::f64 + NEGATED::f64
+    return DOUBLE_COLS::f64 + OFFSET_COLS::f64 + HALF_CELL + FLOORED::f64 + REMAINDER::f64 + SQUARED::f64 + NEGATED::f64
 end
 
 -- Lexical shadowing still applies: params and locals win over the constant.

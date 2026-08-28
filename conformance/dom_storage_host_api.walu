@@ -1,5 +1,4 @@
 -- Minimal browser DOM and localStorage host API fixture.
-
 local window = require("dom:window")
 local document: Document = window.document
 local storage: Storage = window.local_storage

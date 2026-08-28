@@ -1,5 +1,4 @@
 -- User-declared extern aliases are opaque source types backed by host externref values.
-
 type Element = extern
 
 function identity(value: Element): Element

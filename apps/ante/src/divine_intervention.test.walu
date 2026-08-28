@@ -7,78 +7,129 @@ local spells = require("./spells/spell")
 function enter_code(state: divine.State): bool
     local triggered: bool = false
     local keys: {string} = {
-        "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown",
-        "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a",
+        "ArrowUp",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowLeft",
+        "ArrowRight",
+        "b",
+        "a"
     }
-    for key in keys do triggered = state:keypressed(key) end
+    for key in keys do
+        triggered = state:keypressed(key)
+    end
     return triggered
 end
 
-describe("Konami divine intervention", function()
-    it("recognizes the classic sequence case-insensitively", function()
-        local state: divine.State = divine.State.new()
-        local keys: {string} = {
-            "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown",
-            "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "B", "A",
-        }
-        for index, key in keys do
-            expect(state:keypressed(key)):toBe(index == 9)
-        end
-        expect(state.active):toBe(true)
-    end)
+describe(
+    "Konami divine intervention",
+    function()
+        it(
+            "recognizes the classic sequence case-insensitively",
+            function()
+                local state: divine.State = divine.State.new()
+                local keys: {string} = {
+                    "ArrowUp",
+                    "ArrowUp",
+                    "ArrowDown",
+                    "ArrowDown",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "B",
+                    "A"
+                }
+                for index, key in keys do
+                    expect(state:keypressed(key)):toBe(index == 9)
+                end
+                expect(state.active):toBe(true)
+            end
+        )
 
-    it("recovers overlapping starts after a wrong key", function()
-        local state: divine.State = divine.State.new()
-        state:keypressed("ArrowUp")
-        state:keypressed("ArrowUp")
-        state:keypressed("ArrowUp")
-        local tail: {string} = {
-            "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight",
-            "ArrowLeft", "ArrowRight", "b", "a",
-        }
-        local triggered: bool = false
-        for key in tail do triggered = state:keypressed(key) end
-        expect(triggered):toBe(true)
-    end)
+        it(
+            "recovers overlapping starts after a wrong key",
+            function()
+                local state: divine.State = divine.State.new()
+                state:keypressed("ArrowUp")
+                state:keypressed("ArrowUp")
+                state:keypressed("ArrowUp")
+                local tail: {string} = {
+                    "ArrowDown",
+                    "ArrowDown",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "b",
+                    "a"
+                }
+                local triggered: bool = false
+                for key in tail do
+                    triggered = state:keypressed(key)
+                end
+                expect(triggered):toBe(true)
+            end
+        )
 
-    it("reports all five contacts even across long frames", function()
-        local state: divine.State = divine.State.new()
-        expect(enter_code(state)):toBe(true)
-        local touched: {i32} = state:update(divine.total_seconds)
-        expect(#touched):toBe(5)
-        for index, target in touched do expect(target):toBe(index) end
-        expect(state.active):toBe(false)
-    end)
+        it(
+            "reports all five contacts even across long frames",
+            function()
+                local state: divine.State = divine.State.new()
+                expect(enter_code(state)):toBe(true)
+                local touched: {i32} = state:update(divine.total_seconds)
+                expect(#touched):toBe(5)
+                for index, target in touched do
+                    expect(target):toBe(index)
+                end
+                expect(state.active):toBe(false)
+            end
+        )
 
-    it("turns the five touched cards into a red royal flush", function()
-        local rules: game.State = game.State.new(
-            false, { spells.Spell.new(spells.SpellKind.Firebolt) }, game.starting_gold)
-        for target = 0::i32, divine.target_count - 1 do
-            expect(rules:divine_intervention(target)):toBe(true)
-        end
-        expect(rules:view().middle[0].rank):toBe(10)
-        expect(rules:view().middle[1].rank):toBe(11)
-        expect(rules:view().middle[2].rank):toBe(12)
-        expect(rules:view().player_hand[0].card.rank):toBe(13)
-        expect(rules:view().player_hand[1].card.rank):toBe(14)
-        for card in rules:view().middle do
-            local suit: i32 = card.suit
-            expect(suit):toBe(0)
-        end
-        expect(rules:view().player_hand[0].card.suit):toBe(0)
-        expect(rules:view().player_hand[1].card.suit):toBe(0)
-        local pair: game.PairChoice = game.best_pair(
-            game.hand_cards(rules:view().player_hand), rules:view().middle)
-        expect(game.category_name(pair.value)):toBe("straight flush")
-        expect(pair.first):toBe(0)
-        expect(pair.second):toBe(1)
-    end)
+        it(
+            "turns the five touched cards into a red royal flush",
+            function()
+                local rules: game.State = game.State.new(
+                    false,
+                    {spells.Spell.new(spells.SpellKind.Firebolt)},
+                    game.starting_gold
+                )
+                for target = 0::i32, divine.target_count - 1 do
+                    expect(rules:divine_intervention(target)):toBe(true)
+                end
+                expect(rules:view().middle[0].rank):toBe(10)
+                expect(rules:view().middle[1].rank):toBe(11)
+                expect(rules:view().middle[2].rank):toBe(12)
+                expect(rules:view().player_hand[0].card.rank):toBe(13)
+                expect(rules:view().player_hand[1].card.rank):toBe(14)
+                for card in rules:view().middle do
+                    local suit: i32 = card.suit
+                    expect(suit):toBe(0)
+                end
+                expect(rules:view().player_hand[0].card.suit):toBe(0)
+                expect(rules:view().player_hand[1].card.suit):toBe(0)
+                local pair: game.PairChoice = game.best_pair(
+                    game.hand_cards(rules:view().player_hand),
+                    rules:view().middle
+                )
+                expect(game.category_name(pair.value)):toBe("straight flush")
+                expect(pair.first):toBe(0)
+                expect(pair.second):toBe(1)
+            end
+        )
 
-    it("ignores retriggers in flight and permits a later invocation", function()
-        local state: divine.State = divine.State.new()
-        expect(enter_code(state)):toBe(true)
-        expect(enter_code(state)):toBe(false)
-        state:update(divine.total_seconds)
-        expect(enter_code(state)):toBe(true)
-    end)
-end)
+        it(
+            "ignores retriggers in flight and permits a later invocation",
+            function()
+                local state: divine.State = divine.State.new()
+                expect(enter_code(state)):toBe(true)
+                expect(enter_code(state)):toBe(false)
+                state:update(divine.total_seconds)
+                expect(enter_code(state)):toBe(true)
+            end
+        )
+    end
+)

@@ -2,7 +2,6 @@
 -- '#'/'.' characters so the data stays reviewable in source; graphics.walu
 -- renders set pixels as colored quads. Text is uppercased before lookup, and
 -- characters outside the table advance the pen without drawing.
-
 local GLYPH_WIDTH <const>: i32 = 5
 local GLYPH_HEIGHT <const>: i32 = 7
 -- Every pixel row below is GLYPH_WIDTH characters plus its terminating
@@ -378,9 +377,4 @@ function height(): i32
     return GLYPH_HEIGHT
 end
 
-return {
-    width = width,
-    height = height,
-    glyph_index = glyph_index,
-    pixel = pixel,
-}
+return { width = width, height = height, glyph_index = glyph_index, pixel = pixel }

@@ -2,7 +2,6 @@
 -- selectionStart/selectionEnd are `unsigned long?` in Web IDL. Text inputs
 -- report concrete offsets; input types without selection (e.g. checkboxes)
 -- report null, which surfaces as nil.
-
 local window = require("dom:window")
 local document: Document = window.document
 local body: HTMLElement = document.body

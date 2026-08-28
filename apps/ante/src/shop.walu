@@ -17,7 +17,6 @@
 -- on. The loadout limits and the purse belong to the run module, which applies
 -- every purchase; where the lines are drawn on the screen belongs to
 -- shop_render, so a click arrives here as a row number.
-
 local game = require("./game")
 local run_module = require("./run")
 local shop_item = require("./shop_item")
@@ -26,9 +25,7 @@ local spells = require("./spells/spell")
 -- What a slot has for sale. Both of these name the spell they are about rather
 -- than a cast key, because a trade can move a spell off the key it was rolled
 -- against and an offer must not follow it.
-export type Goods =
-    Upgrade({ kind: spells.SpellKind })
-  | Spell({ kind: spells.SpellKind })
+export type Goods = Upgrade({ kind: spells.SpellKind }) | Spell({ kind: spells.SpellKind })
 
 -- What a slot draws from. A category can offer more than one kind of goods: the
 -- spell slots sell both sharpening a spell already carried and teaching a new
@@ -94,7 +91,7 @@ const SNAPSHOT_SCHEMA: string = "duel-shop-v4"
 -- categories it names. Two lines of stock, however many things the run could in
 -- principle be sold.
 function slot_layout(): {Category}
-    return { "spells", "spells" }
+    return {"spells", "spells"}
 end
 
 function State.new(): State
@@ -132,7 +129,9 @@ end
 function Goods:price_of(run: run_module.State): i32
     if Upgrade(upgrade) = self then
         local slot: i32 = run:slot_of(upgrade.kind)
-        if slot < 0 or slot >= #run.spells then return UPGRADE_PRICE end
+        if slot < 0 or slot >= #run.spells then
+            return UPGRADE_PRICE
+        end
         local taken: i32 = game.spell_cost - run.spells[slot].cost
         return UPGRADE_PRICE + taken * UPGRADE_PRICE_STEP
     end
@@ -155,7 +154,9 @@ end
 -- Where the goods would go if it were bought now: the loadout key a new spell
 -- takes by itself, and -1 once the loadout is full and something has to go.
 function Goods:destination(run: run_module.State): i32
-    if self is Spell then return run:open_slot() end
+    if self is Spell then
+        return run:open_slot()
+    end
     return 0
 end
 
@@ -164,7 +165,9 @@ end
 function Goods:choices_for(run: run_module.State): {i32}
     local keys: {i32} = {}
     if self is Spell then
-        for slot = 0::i32, #run.spells - 1 do table.insert(keys, slot) end
+        for slot = 0::i32, #run.spells - 1 do
+            table.insert(keys, slot)
+        end
     end
     return keys
 end
@@ -180,27 +183,34 @@ function Goods:item_for(): shop_item.Item
         return shop_item.Item.learn(spell.kind)
     end
     assert(false)
-    return shop_item.Item.new(function(state: shop_item.UseState): unit end)
+    return shop_item.Item.new(
+        function(state: shop_item.UseState): unit
+        end
+    )
 end
 
 -- Commit payment, then hand the mutation to the item. `key` is the loadout key
 -- a new spell takes, which is the open one unless a full loadout has named what
 -- it trades away; items that do not need a destination ignore it. Availability
 -- is checked before any mutation, so a refused purchase costs nothing.
-function Goods:buy(item: shop_item.Item,
-    run: run_module.State,
-    key: i32,
-    price: i32
-): bool
-    if not self:goods_available(run) then return false end
-    if not run:spend(price) then return false end
+function Goods:buy(item: shop_item.Item, run: run_module.State, key: i32, price: i32): bool
+    if not self:goods_available(run) then
+        return false
+    end
+    if not run:spend(price) then
+        return false
+    end
     item:use({ run = run, key = key })
     return true
 end
 
 function Goods:spell_kind(): spells.SpellKind?
-    if Upgrade(upgrade) = self then return upgrade.kind end
-    if Spell(spell) = self then return spell.kind end
+    if Upgrade(upgrade) = self then
+        return upgrade.kind
+    end
+    if Spell(spell) = self then
+        return spell.kind
+    end
     return nil
 end
 
@@ -215,13 +225,16 @@ function roll_slots(run: run_module.State): {Slot}
             local index: i32 = math.random(#spells) - 1
             local goods: Goods = spells[index]
             table.remove(spells, index)
-            table.insert(slots, {
-                category = category,
-                goods = goods,
-                item = goods:item_for(),
-                price = goods:price_of(run),
-                sold = false,
-            })
+            table.insert(
+                slots,
+                {
+                    category = category,
+                    goods = goods,
+                    item = goods:item_for(),
+                    price = goods:price_of(run),
+                    sold = false
+                }
+            )
         end
     end
     return slots
@@ -248,7 +261,9 @@ end
 -- The shop slot a pending question is about, or -1 when nothing is being asked.
 function State:pending_slot(): i32
     local pending: Pending? = self.pending
-    if pending ~= nil then return pending.slot end
+    if pending ~= nil then
+        return pending.slot
+    end
     return -1
 end
 
@@ -256,7 +271,9 @@ end
 -- asked. A screen naming the trade reads this.
 function State:pending_spell(): spells.SpellKind?
     local slot: i32 = self:pending_slot()
-    if slot < 0 or slot >= #self.slots then return nil end
+    if slot < 0 or slot >= #self.slots then
+        return nil
+    end
     return self.slots[slot].goods:spell_kind()
 end
 
@@ -270,9 +287,7 @@ function slot_row(index: i32, slot: Slot, run: run_module.State): Row
         spell = slot.goods:spell_kind(),
         price = slot.price,
         sold = slot.sold,
-        available = not slot.sold
-            and slot.goods:goods_available(run)
-            and run.gold >= slot.price,
+        available = not slot.sold and slot.goods:goods_available(run) and run.gold >= slot.price
     }
 end
 
@@ -284,25 +299,31 @@ function choice_rows(asking: Pending, state: State, run: run_module.State): {Row
     local slot: Slot = state.slots[asking.slot]
     local live: bool = slot.goods:goods_available(run)
     for key in asking.choices do
-        table.insert(list, {
-            kind = "choice",
-            slot = asking.slot,
-            key = key,
-            spell = run.spells[key].kind,
-            price = slot.price,
-            sold = false,
-            available = live and run.gold >= slot.price,
-        })
+        table.insert(
+            list,
+            {
+                kind = "choice",
+                slot = asking.slot,
+                key = key,
+                spell = run.spells[key].kind,
+                price = slot.price,
+                sold = false,
+                available = live and run.gold >= slot.price
+            }
+        )
     end
-    table.insert(list, {
-        kind = "cancel",
-        slot = -1,
-        key = -1,
-        spell = nil,
-        price = 0,
-        sold = false,
-        available = true,
-    })
+    table.insert(
+        list,
+        {
+            kind = "cancel",
+            slot = -1,
+            key = -1,
+            spell = nil,
+            price = 0,
+            sold = false,
+            available = true
+        }
+    )
     return list
 end
 
@@ -312,19 +333,24 @@ end
 function State:rows(run: run_module.State): {Row}
     local list: {Row} = {}
     local pending: Pending? = self.pending
-    if pending ~= nil then return choice_rows(pending, self, run) end
+    if pending ~= nil then
+        return choice_rows(pending, self, run)
+    end
     for index, slot in self.slots do
         table.insert(list, slot_row(index, slot, run))
     end
-    table.insert(list, {
-        kind = "leave",
-        slot = -1,
-        key = -1,
-        spell = nil,
-        price = 0,
-        sold = false,
-        available = true,
-    })
+    table.insert(
+        list,
+        {
+            kind = "leave",
+            slot = -1,
+            key = -1,
+            spell = nil,
+            price = 0,
+            sold = false,
+            available = true
+        }
+    )
     return list
 end
 
@@ -334,10 +360,16 @@ end
 -- their order and every one of them takes a line, so a slot number is a row
 -- number here.
 function State:commit(run: run_module.State, slot: i32, key: i32): unit
-    if slot < 0 or slot >= #self.slots then return end
+    if slot < 0 or slot >= #self.slots then
+        return
+    end
     local sale: Slot = self.slots[slot]
-    if sale.sold then return end
-    if not sale.goods:buy(sale.item, run, key, sale.price) then return end
+    if sale.sold then
+        return
+    end
+    if not sale.goods:buy(sale.item, run, key, sale.price) then
+        return
+    end
     sale.sold = true
     self.pending = nil
     self.cursor = slot
@@ -347,7 +379,9 @@ end
 -- cursor is back on it.
 function State:cancel(): unit
     local asked: i32 = self:pending_slot()
-    if asked < 0 then return end
+    if asked < 0 then
+        return
+    end
     self.pending = nil
     self.cursor = asked
 end
@@ -357,14 +391,20 @@ end
 -- stays on it rather than the press falling through to something else.
 function State:activate(run: run_module.State): ShopResult
     local list: {Row} = self:rows(run)
-    if self.cursor < 0 or self.cursor >= #list then return "stay" end
+    if self.cursor < 0 or self.cursor >= #list then
+        return "stay"
+    end
     local row: Row = list[self.cursor]
-    if row.kind == "leave" then return "leave" end
+    if row.kind == "leave" then
+        return "leave"
+    end
     if row.kind == "cancel" then
         self:cancel()
         return "stay"
     end
-    if not row.available then return "stay" end
+    if not row.available then
+        return "stay"
+    end
     if row.kind == "choice" then
         self:commit(run, row.slot, row.key)
         return "stay"
@@ -401,30 +441,36 @@ type Snapshot = {
 function State:snapshot(): string
     local slots: {SnapshotSlot} = {}
     for slot in self.slots do
-        table.insert(slots, {
-            category = slot.category,
-            goods = slot.goods,
-            price = slot.price,
-            sold = slot.sold,
-        })
+        table.insert(
+            slots,
+            { category = slot.category, goods = slot.goods, price = slot.price, sold = slot.sold }
+        )
     end
     local payload: Snapshot = {
         schema = SNAPSHOT_SCHEMA,
         open = self.open,
         slots = slots,
         cursor = self.cursor,
-        pending = self.pending,
+        pending = self.pending
     }
     return json.pack(payload)
 end
 
 function State.restore(snapshot_value: string): State?
     local decoded = json.unpack<Snapshot>(snapshot_value)
-    if decoded == nil then return nil end
-    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+    if decoded == nil then
+        return nil
+    end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then
+        return nil
+    end
     local decoded_slots: {SnapshotSlot} = decoded.slots
-    if #decoded_slots > #slot_layout() then return nil end
-    if decoded.cursor < 0 then return nil end
+    if #decoded_slots > #slot_layout() then
+        return nil
+    end
+    if decoded.cursor < 0 then
+        return nil
+    end
     local slots: {Slot} = {}
     for slot in decoded_slots do
         -- `Category` currently has a single member, which the compiler widens
@@ -432,39 +478,51 @@ function State.restore(snapshot_value: string): State?
         -- here rather than by the decoder.
         local category_known: bool = false
         for known in slot_layout() do
-            if known == slot.category then category_known = true end
+            if known == slot.category then
+                category_known = true
+            end
         end
-        if not category_known then return nil end
+        if not category_known then
+            return nil
+        end
         -- A spell kind is bounded by the spells that exist, which is not a
         -- bound the JSON shape carries; a quoted price is never negative.
         local kind: spells.SpellKind? = slot.goods:spell_kind()
-        if kind == nil then return nil end
-        if not spells.SpellKind.valid(kind::spells.SpellKind) then return nil end
-        if slot.price < 0 then return nil end
-        table.insert(slots, {
-            category = slot.category,
-            goods = slot.goods,
-            item = slot.goods:item_for(),
-            price = slot.price,
-            sold = slot.sold,
-        })
+        if kind == nil then
+            return nil
+        end
+        if not spells.SpellKind.valid(kind::spells.SpellKind) then
+            return nil
+        end
+        if slot.price < 0 then
+            return nil
+        end
+        table.insert(
+            slots,
+            {
+                category = slot.category,
+                goods = slot.goods,
+                item = slot.goods:item_for(),
+                price = slot.price,
+                sold = slot.sold
+            }
+        )
     end
     local pending: Pending? = decoded.pending
     if pending ~= nil then
         -- A pending question names one of this visit's slots, and the keys it
         -- offers to trade away are keys the loadout could hold.
         local question: Pending = pending::Pending
-        if question.slot < 0 or question.slot >= #slots then return nil end
+        if question.slot < 0 or question.slot >= #slots then
+            return nil
+        end
         for key in question.choices do
-            if key < 0 or key >= run_module.max_spells then return nil end
+            if key < 0 or key >= run_module.max_spells then
+                return nil
+            end
         end
     end
-    return {
-        open = decoded.open,
-        slots = slots,
-        cursor = decoded.cursor,
-        pending = pending,
-    }
+    return { open = decoded.open, slots = slots, cursor = decoded.cursor, pending = pending }
 end
 
 return {
@@ -472,5 +530,5 @@ return {
     spell_stock = spell_stock,
     category_stock = category_stock,
     roll_slots = roll_slots,
-    learn_price = LEARN_PRICE,
+    learn_price = LEARN_PRICE
 }

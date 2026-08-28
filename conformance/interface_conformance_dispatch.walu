@@ -8,7 +8,6 @@
 --   - non-function fields are copied snapshots taken at coercion time;
 --   - the coerced record is a distinct object, so it never compares
 --     identical to the original value.
-
 type Op = { exec: (self, a: i32, b: i32) -> i32 }
 type Add = Op & {}
 type Mul = Op & {}
@@ -45,7 +44,7 @@ function as_op(add: Add): Op
 end
 
 assert(as_op(add).exec(4, 4) == 8)
-assert((mul :: Op):exec(4, 4) == 16)
+assert((mul::Op):exec(4, 4) == 16)
 
 -- Mutation through the original receiver is visible through the interface:
 -- bound methods close over the receiver, not over a copy of its state.

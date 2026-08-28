@@ -1,6 +1,5 @@
 -- Engine Graphics rendering for Snake. This module never touches the DOM:
 -- rectangles, circles, and text are submitted to the engine's WebGL2 renderer.
-
 local graphics_module = require("../../engine/graphics")
 local game = require("./game")
 
@@ -56,6 +55,4 @@ function draw(graphics: Graphics, state: State): unit
     end
 end
 
-return {
-    draw = draw,
-}
+return { draw = draw }

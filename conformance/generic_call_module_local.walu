@@ -1,7 +1,6 @@
 -- Module-level locals stay visible when passed through a generic call:
 -- the argument's type is inferred inside another function body during
 -- monomorphization, where only params and function locals used to be known.
-
 type Box<T> = { value: T }
 
 function unwrap<T>(box: Box<T>): T

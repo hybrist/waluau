@@ -17,7 +17,6 @@
 --
 -- Bands, not values. Shuffles move these numbers around and a regression guard
 -- that has to be re-pinned every time the deal changes is a guard nobody keeps.
-
 require("waluau:vitest")
 
 local game = require("./game")
@@ -25,12 +24,7 @@ local run = require("./run")
 local spells = require("./spells/spell")
 
 -- One duel fought to a verdict.
-type Trial = {
-    cleared: bool,
-    exit_gold: i32,
-    income: i32,
-    rounds_won: i32
-}
+type Trial = { cleared: bool, exit_gold: i32, income: i32, rounds_won: i32 }
 
 -- What a batch of trials came to. `income` is exit gold less what the duel
 -- opened with, so it is what the duel paid the run rather than what the run
@@ -45,7 +39,7 @@ type Sample = {
 }
 
 local function starter_loadout(): {game.Spell}
-    return { spells.Spell.new(spells.SpellKind.Firebolt) }
+    return {spells.Spell.new(spells.SpellKind.Firebolt)}
 end
 
 -- The strongest swap this hand can propose, or nothing when the purse will not
@@ -53,8 +47,10 @@ end
 -- so `best_swap` sees the whole board.
 local function reference_swap(state: game.State): unit
     local choice: game.SwapChoice = game.best_swap_at_least(
-        game.hand_cards(state:view().player_hand), state:view().middle,
-        state:minimum_swap())
+        game.hand_cards(state:view().player_hand),
+        state:view().middle,
+        state:minimum_swap()
+    )
     if #choice.hand_indices > state:gold() then
         state:resolve_swap({}, {})
         return
@@ -70,10 +66,16 @@ end
 -- finished flag, so a trial cannot spin even if the rules refuse a move.
 local function autopilot(state: game.State): unit
     for _ = 1, 5 do
-        if state:is_finished() then return end
-        while state:swap_open() do reference_swap(state) end
+        if state:is_finished() then
+            return
+        end
+        while state:swap_open() do
+            reference_swap(state)
+        end
         local pair: game.PairChoice = game.best_pair(
-            game.hand_cards(state:view().player_hand), state:view().middle)
+            game.hand_cards(state:view().player_hand),
+            state:view().middle
+        )
         state:play(pair.first, pair.second)
     end
 end
@@ -86,7 +88,7 @@ local function play_duel(boss: bool, gold: i32, seed: i32): Trial
         cleared = state:is_victory(),
         exit_gold = state:view().player_points,
         income = state:view().player_points - gold,
-        rounds_won = state:view().player_tricks,
+        rounds_won = state:view().player_tricks
     }
 end
 
@@ -97,13 +99,17 @@ local function measure(boss: bool, gold: i32, trials: i32): Sample
         income_sum = 0,
         income_low = 9999,
         income_high = -9999,
-        cleared_income_sum = 0,
+        cleared_income_sum = 0
     }
     for seed = 1::i32, trials do
         local trial: Trial = play_duel(boss, gold, seed)
         sample.income_sum += trial.income
-        if trial.income < sample.income_low then sample.income_low = trial.income end
-        if trial.income > sample.income_high then sample.income_high = trial.income end
+        if trial.income < sample.income_low then
+            sample.income_low = trial.income
+        end
+        if trial.income > sample.income_high then
+            sample.income_high = trial.income
+        end
         if trial.cleared then
             sample.cleared += 1
             sample.cleared_income_sum += trial.income
@@ -142,68 +148,79 @@ const BOSS_TRIALS: i32 = 25
 -- wider swap search no longer outruns what never drawing replacements costs
 -- the later rounds. The target table still prices the boss cadence against
 -- the old, richer eleven-card pay (waluau-ms4i tracks re-pricing it).
-describe("Ante Magic duel economy", function()
-    it("makes a standard duel close to a coin flip and pays the winner", function()
-        local sample: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
-        -- A mirror match, so a band reaching 100 would mean the Opponent never
-        -- wins one and a band reaching 0 would mean the duel is not winnable.
-        expect(clear_percent(sample)):toBeGreaterThanOrEqual(40)
-        expect(clear_percent(sample)):toBeLessThanOrEqual(70)
-        -- The number the target table is tuned against.
-        expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(12)
-        expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(35)
-        expect(mean_income(sample)):toBeGreaterThanOrEqual(5)
-        expect(mean_income(sample)):toBeLessThanOrEqual(25)
-        -- A duel can be walked out of poorer than it was walked into: every
-        -- swap that a round loses is wagered gold that never comes back.
-        expect(sample.income_low):toBeLessThan(0)
-        expect(sample.income_low):toBeGreaterThanOrEqual(-15)
-    end)
+describe(
+    "Ante Magic duel economy",
+    function()
+        it(
+            "makes a standard duel close to a coin flip and pays the winner",
+            function()
+                local sample: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
+                -- A mirror match, so a band reaching 100 would mean the Opponent never
+                -- wins one and a band reaching 0 would mean the duel is not winnable.
+                expect(clear_percent(sample)):toBeGreaterThanOrEqual(40)
+                expect(clear_percent(sample)):toBeLessThanOrEqual(70)
+                -- The number the target table is tuned against.
+                expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(12)
+                expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(35)
+                expect(mean_income(sample)):toBeGreaterThanOrEqual(5)
+                expect(mean_income(sample)):toBeLessThanOrEqual(25)
+                -- A duel can be walked out of poorer than it was walked into: every
+                -- swap that a round loses is wagered gold that never comes back.
+                expect(sample.income_low):toBeLessThan(0)
+                expect(sample.income_low):toBeGreaterThanOrEqual(-15)
+            end
+        )
 
-    it("pays a boss duel on the same order as a standard one", function()
-        local sample: Sample = measure(true, game.starting_gold, BOSS_TRIALS)
-        expect(clear_percent(sample)):toBeGreaterThanOrEqual(30)
-        expect(clear_percent(sample)):toBeLessThanOrEqual(65)
-        expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(8)
-        expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(35)
-    end)
+        it(
+            "pays a boss duel on the same order as a standard one",
+            function()
+                local sample: Sample = measure(true, game.starting_gold, BOSS_TRIALS)
+                expect(clear_percent(sample)):toBeGreaterThanOrEqual(30)
+                expect(clear_percent(sample)):toBeLessThanOrEqual(65)
+                expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(8)
+                expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(35)
+            end
+        )
 
-    it("pays a duel the same however big the purse it opened with", function()
-        -- The load-bearing fact under the target. What a duel pays is fixed by
-        -- the rounds won, and the gold a swap wagers comes back inside the
-        -- pot that swap wins — so carrying more in buys nothing, and a run
-        -- cannot outrun a rising target by hoarding. The samples are identical
-        -- rather than merely close: same seeds, same deals, and a purse this
-        -- size covers every swap the policy wants. The extra reach can change
-        -- an occasional duel's verdict, but should not change aggregate pay.
-        local lean: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
-        local flush: Sample = measure(false, 40, STANDARD_TRIALS)
-        expect(mean_income(flush)):toBe(mean_income(lean))
-        expect(clear_percent(flush)):toBeGreaterThanOrEqual(clear_percent(lean) - 2)
-        expect(clear_percent(flush)):toBeLessThanOrEqual(clear_percent(lean) + 2)
-    end)
+        it(
+            "pays a duel the same however big the purse it opened with",
+            function()
+                -- The load-bearing fact under the target. What a duel pays is fixed by
+                -- the rounds won, and the gold a swap wagers comes back inside the
+                -- pot that swap wins — so carrying more in buys nothing, and a run
+                -- cannot outrun a rising target by hoarding. The samples are identical
+                -- rather than merely close: same seeds, same deals, and a purse this
+                -- size covers every swap the policy wants. The extra reach can change
+                -- an occasional duel's verdict, but should not change aggregate pay.
+                local lean: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
+                local flush: Sample = measure(false, 40, STANDARD_TRIALS)
+                expect(mean_income(flush)):toBe(mean_income(lean))
+                expect(clear_percent(flush)):toBeGreaterThanOrEqual(clear_percent(lean) - 2)
+                expect(clear_percent(flush)):toBeLessThanOrEqual(clear_percent(lean) + 2)
+            end
+        )
 
-    it("does not make contesting more profitable than passing", function()
-        -- A purse of nothing cannot raise, so the Opponent's swaps execute
-        -- unopposed. Multiple escalating proposals alter how often each stake
-        -- enters the pot, but they do not yet make the funded mirror policy
-        -- earn more than passing; that broader economy problem stays measured.
-        local broke: Sample = measure(false, 0, STANDARD_TRIALS)
-        local funded: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
-        expect(clear_percent(broke)):toBeGreaterThanOrEqual(clear_percent(funded) - 5)
-        expect(clear_percent(broke)):toBeLessThanOrEqual(clear_percent(funded) + 10)
-        expect(mean_income(broke)):toBeGreaterThanOrEqual(mean_income(funded))
-    end)
-end)
+        it(
+            "does not make contesting more profitable than passing",
+            function()
+                -- A purse of nothing cannot raise, so the Opponent's swaps execute
+                -- unopposed. Multiple escalating proposals alter how often each stake
+                -- enters the pot, but they do not yet make the funded mirror policy
+                -- earn more than passing; that broader economy problem stays measured.
+                local broke: Sample = measure(false, 0, STANDARD_TRIALS)
+                local funded: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
+                expect(clear_percent(broke)):toBeGreaterThanOrEqual(clear_percent(funded) - 5)
+                expect(clear_percent(broke)):toBeLessThanOrEqual(clear_percent(funded) + 10)
+                expect(mean_income(broke)):toBeGreaterThanOrEqual(mean_income(funded))
+            end
+        )
+    end
+)
 
 -- One whole run, duel after duel, until something ends it. The reference
 -- player never shops and never casts, so the only things gold moves for are
 -- swaps and targets — which is the comparison this is here to make.
-type RunTrial = {
-    duels: i32,
-    ended_by: run.Outcome,
-    purse: i32
-}
+type RunTrial = { duels: i32, ended_by: run.Outcome, purse: i32 }
 
 local function play_run(seed: i32): RunTrial
     local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
@@ -217,7 +234,9 @@ local function play_run(seed: i32): RunTrial
         -- runner plays the whole vault in one call, then applies those same
         -- losses before asking the run for its outcome.
         for trick in duel:view().history do
-            if trick.winner < 0 then state:lose_hand() end
+            if trick.winner < 0 then
+                state:lose_hand()
+            end
         end
         local reached: i32 = state.duel
         local outcome: run.Outcome = state:settle(duel:is_victory(), duel:gold())
@@ -247,85 +266,104 @@ const RUN_TRIALS: i32 = 150
 -- a swap is gold that has to be won back before the duel will let go of the
 -- player — and it changes it most in act three, where the table asks for more
 -- than any duel can pay.
-describe("Ante Magic run economy", function()
-    it("ends every run it plays", function()
-        local held: i32 = 0
-        local short: i32 = 0
-        local unfinished: i32 = 0
-        local deepest: i32 = 0
-        local total: i32 = 0
-        for seed = 1::i32, RUN_TRIALS do
-            local trial: RunTrial = play_run(seed)
-            if trial.ended_by == "lost-health"
-                or trial.ended_by == "lost-vault"
-            then held += 1
-            elseif trial.ended_by == "lost-target" then short += 1
-            else unfinished += 1 end
-            total += trial.duels
-            if trial.duels > deepest then deepest = trial.duels end
-        end
-        -- Nothing walks forever: past the table the target outruns what a duel
-        -- pays, so even a run that never loses a round is eventually stopped.
-        expect(unfinished):toBe(0)
-        -- The opponent stays the executioner by a wide margin. A target that
-        -- took a large share of these would have overtaken ordinary hand
-        -- rewards and turned the ramp into a second loss condition.
-        expect(held):toBeGreaterThan(RUN_TRIALS / 2)
-        expect(short * 10):toBeLessThan(held)
-        -- Runs get deep enough for the table's back half to be reachable, which
-        -- is the only reason writing a back half is worth anything.
-        expect(deepest):toBeGreaterThanOrEqual(4)
-        -- A run clears about one duel on average — the coin flip compounding,
-        -- p/(1-p) at a 54 percent clear rate. Hundredths, because a mean under
-        -- two does not survive integer division.
-        expect((total * 100) / RUN_TRIALS):toBeGreaterThanOrEqual(70)
-        expect((total * 100) / RUN_TRIALS):toBeLessThan(200)
-    end)
+describe(
+    "Ante Magic run economy",
+    function()
+        it(
+            "ends every run it plays",
+            function()
+                local held: i32 = 0
+                local short: i32 = 0
+                local unfinished: i32 = 0
+                local deepest: i32 = 0
+                local total: i32 = 0
+                for seed = 1::i32, RUN_TRIALS do
+                    local trial: RunTrial = play_run(seed)
+                    if trial.ended_by == "lost-health" or trial.ended_by == "lost-vault" then
+                        held += 1
+                    elseif trial.ended_by == "lost-target" then
+                        short += 1
+                    else
+                        unfinished += 1
+                    end
+                    total += trial.duels
+                    if trial.duels > deepest then
+                        deepest = trial.duels
+                    end
+                end
+                -- Nothing walks forever: past the table the target outruns what a duel
+                -- pays, so even a run that never loses a round is eventually stopped.
+                expect(unfinished):toBe(0)
+                -- The opponent stays the executioner by a wide margin. A target that
+                -- took a large share of these would have overtaken ordinary hand
+                -- rewards and turned the ramp into a second loss condition.
+                expect(held):toBeGreaterThan(RUN_TRIALS / 2)
+                expect(short * 10):toBeLessThan(held)
+                -- Runs get deep enough for the table's back half to be reachable, which
+                -- is the only reason writing a back half is worth anything.
+                expect(deepest):toBeGreaterThanOrEqual(4)
+                -- A run clears about one duel on average — the coin flip compounding,
+                -- p/(1-p) at a 54 percent clear rate. Hundredths, because a mean under
+                -- two does not survive integer division.
+                expect((total * 100) / RUN_TRIALS):toBeGreaterThanOrEqual(70)
+                expect((total * 100) / RUN_TRIALS):toBeLessThan(200)
+            end
+        )
 
-    it("spends act three out of the pile the first two acts banked", function()
-        -- The design claim, checked against the table directly rather than
-        -- through the shuffle: at a cleared duel's pay, the purse rises
-        -- through act one, holds through act two, and falls through act
-        -- three. A statistical version of this would need runs to reach duel
-        -- nine, and a coin-flip duel means almost none do.
-        --
-        -- The pays below are the five-round, eleven-card-boss era's measured
-        -- +25/+36 the table was priced against. Three-round duels pay +14
-        -- (measured above), which breaks this arc in play; the table has not
-        -- been re-priced yet, and waluau-ms4i tracks doing so and re-anchoring
-        -- these numbers.
-        local purse: i32 = game.starting_gold
-        local peak: i32 = purse
-        local peak_vault: i32 = 0
-        for duel = 1::i32, run.run_length(false) do
-            local income: i32 = 25
-            if run.boss_at(duel, false) then income = 36 end
-            purse = purse + income - run.target_at(duel, false)
-            if purse > peak then
-                peak = purse
-                peak_vault = duel
+        it(
+            "spends act three out of the pile the first two acts banked",
+            function()
+                -- The design claim, checked against the table directly rather than
+                -- through the shuffle: at a cleared duel's pay, the purse rises
+                -- through act one, holds through act two, and falls through act
+                -- three. A statistical version of this would need runs to reach duel
+                -- nine, and a coin-flip duel means almost none do.
+                --
+                -- The pays below are the five-round, eleven-card-boss era's measured
+                -- +25/+36 the table was priced against. Three-round duels pay +14
+                -- (measured above), which breaks this arc in play; the table has not
+                -- been re-priced yet, and waluau-ms4i tracks doing so and re-anchoring
+                -- these numbers.
+                local purse: i32 = game.starting_gold
+                local peak: i32 = purse
+                local peak_vault: i32 = 0
+                for duel = 1::i32, run.run_length(false) do
+                    local income: i32 = 25
+                    if run.boss_at(duel, false) then
+                        income = 36
+                    end
+                    purse = purse + income - run.target_at(duel, false)
+                    if purse > peak then
+                        peak = purse
+                        peak_vault = duel
+                    end
+                end
+                -- The pile peaks in the middle of the run, not at the end of it.
+                expect(peak_vault):toBeGreaterThanOrEqual(3)
+                expect(peak_vault):toBeLessThanOrEqual(6)
+                -- And the last duel is reached on fumes: cleared, but with nothing to
+                -- spare, so any duel along the way that paid less than average is a
+                -- run that does not get there at all.
+                expect(purse):toBeGreaterThanOrEqual(0)
+                expect(purse):toBeLessThan(25)
+                -- At the pay of an ordinary rather than a lucky run, the table wins.
+                local lean: i32 = game.starting_gold
+                local died_at: i32 = 0
+                for duel = 1::i32, run.run_length(false) do
+                    if died_at == 0 then
+                        local income: i32 = 20
+                        if run.boss_at(duel, false) then
+                            income = 30
+                        end
+                        lean = lean + income - run.target_at(duel, false)
+                        if lean < 0 then
+                            died_at = duel
+                        end
+                    end
+                end
+                expect(died_at):toBeGreaterThanOrEqual(6)
+                expect(died_at):toBeLessThanOrEqual(run.run_length(false))
             end
-        end
-        -- The pile peaks in the middle of the run, not at the end of it.
-        expect(peak_vault):toBeGreaterThanOrEqual(3)
-        expect(peak_vault):toBeLessThanOrEqual(6)
-        -- And the last duel is reached on fumes: cleared, but with nothing to
-        -- spare, so any duel along the way that paid less than average is a
-        -- run that does not get there at all.
-        expect(purse):toBeGreaterThanOrEqual(0)
-        expect(purse):toBeLessThan(25)
-        -- At the pay of an ordinary rather than a lucky run, the table wins.
-        local lean: i32 = game.starting_gold
-        local died_at: i32 = 0
-        for duel = 1::i32, run.run_length(false) do
-            if died_at == 0 then
-                local income: i32 = 20
-                if run.boss_at(duel, false) then income = 30 end
-                lean = lean + income - run.target_at(duel, false)
-                if lean < 0 then died_at = duel end
-            end
-        end
-        expect(died_at):toBeGreaterThanOrEqual(6)
-        expect(died_at):toBeLessThanOrEqual(run.run_length(false))
-    end)
-end)
+        )
+    end
+)

@@ -9,7 +9,4 @@ local function trap_inner(): unit
     assert(false, "DWARF compiler probe trap")
 end
 
-return {
-    inner = inner,
-    trap_inner = trap_inner,
-}
+return { inner = inner, trap_inner = trap_inner }

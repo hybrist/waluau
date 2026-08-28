@@ -10,7 +10,6 @@
 -- nothing here duplicates it. What the intermission between duels sells is the
 -- shop's answer; item effects use this module's mutable run state to apply the
 -- purchase.
-
 local game = require("./game")
 local spells = require("./spells/spell")
 
@@ -66,16 +65,18 @@ function State.new(spell: spells.SpellKind, rush: bool): State
         gold = game.starting_gold,
         hearts = MAX_HEARTS,
         cleared = 0,
-        spells = { spells.Spell.new(spell) },
+        spells = {spells.Spell.new(spell)},
         start_spell = spell,
-        rush = rush,
+        rush = rush
     }
 end
 
 -- Whether the numbered duel is fought as a boss battle. Duel numbers are
 -- 1-based, so the third, sixth, and ninth duels are the boss cadence.
 function boss_at(duel: i32, rush: bool): bool
-    if rush then return true end
+    if rush then
+        return true
+    end
     return duel % BOSS_EVERY == 0
 end
 
@@ -90,7 +91,9 @@ end
 -- How many duels the authored curve covers. The run does not stop there — what
 -- it marks is where the table ends and the endless formula takes over.
 function run_length(rush: bool): i32
-    if rush then return RUSH_LENGTH end
+    if rush then
+        return RUSH_LENGTH
+    end
     return RUN_LENGTH
 end
 
@@ -113,11 +116,17 @@ end
 -- The table is written out inside the function rather than held module-side so
 -- the values sit next to the reasoning about them.
 function target_at(duel: i32, rush: bool): i32
-    local table_values: {i32} = { 6, 10, 18, 21, 25, 35, 38, 43, 70 }
-    if rush then table_values = { 12, 24, 38, 55, 80 } end
+    local table_values: {i32} = {6, 10, 18, 21, 25, 35, 38, 43, 70}
+    if rush then
+        table_values = {12, 24, 38, 55, 80}
+    end
     local length: i32 = #table_values
-    if duel < 1 then return table_values[0] end
-    if duel <= length then return table_values[duel - 1] end
+    if duel < 1 then
+        return table_values[0]
+    end
+    if duel <= length then
+        return table_values[duel - 1]
+    end
     -- Past the table the demand climbs by a step that itself grows, so the gap
     -- between what a duel pays and what it costs to leave widens every time.
     local target: i32 = table_values[length - 1]
@@ -145,30 +154,33 @@ end
 -- "won" is a milestone rather than a stop: the last duel of the table
 -- is cleared exactly the way any other is, and the run walks on into the
 -- endless city.
-export type Outcome =
-    "none" | "lost-health" | "lost-vault" | "lost-target" | "advance" | "won"
+export type Outcome = "none" | "lost-health" | "lost-vault" | "lost-target" | "advance" | "won"
 
 function outcome_is_loss(outcome: Outcome): bool
-    return outcome == "lost-health"
-        or outcome == "lost-vault"
-        or outcome == "lost-target"
+    return outcome == "lost-health" or outcome == "lost-vault" or outcome == "lost-target"
 end
 
 function outcome_walks_on(outcome: Outcome): bool
     return outcome == "advance" or outcome == "won"
 end
 
-function outcome_of(
-    duel: i32, rush: bool, hearts: i32, cleared: bool, carried_gold: i32
-): Outcome
+function outcome_of(duel: i32, rush: bool, hearts: i32, cleared: bool, carried_gold: i32): Outcome
     -- Health can end the run during a duel before the rules report a verdict.
     -- It therefore outranks both that verdict and the purse.
-    if hearts <= 0 then return "lost-health" end
-    if not cleared then return "lost-vault" end
-    if carried_gold < target_at(duel, rush) then return "lost-target" end
+    if hearts <= 0 then
+        return "lost-health"
+    end
+    if not cleared then
+        return "lost-vault"
+    end
+    if carried_gold < target_at(duel, rush) then
+        return "lost-target"
+    end
     -- The finish line is a moment the run passes through once, not a state it
     -- stays in, so this is the duel the table ends on and no duel after it.
-    if duel == run_length(rush) then return "won" end
+    if duel == run_length(rush) then
+        return "won"
+    end
     return "advance"
 end
 
@@ -208,7 +220,7 @@ function State:view(outcome: Outcome): View
         target = self:target(),
         ante_ahead = target_at(self.duel + 1, self.rush),
         run_length = run_length(self.rush),
-        outcome = outcome,
+        outcome = outcome
     }
 end
 
@@ -221,8 +233,7 @@ end
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished duel decided is not this module's to decide again.
 function State:settle(cleared: bool, carried_gold: i32): Outcome
-    local outcome: Outcome = outcome_of(
-        self.duel, self.rush, self.hearts, cleared, carried_gold)
+    local outcome: Outcome = outcome_of(self.duel, self.rush, self.hearts, cleared, carried_gold)
     if outcome_is_loss(outcome) then
         self:restart(self.start_spell, self.rush)
         return outcome
@@ -250,7 +261,9 @@ end
 -- may call this before the run is settled, so zero is an observable state,
 -- while repeated calls cannot take health negative.
 function State:lose_hand(): bool
-    if self.hearts > 0 then self.hearts -= 1 end
+    if self.hearts > 0 then
+        self.hearts -= 1
+    end
     return self.hearts == 0
 end
 
@@ -258,7 +271,9 @@ end
 -- an intermission has anything new to offer in it.
 function State:carries(kind: spells.SpellKind): bool
     for spell in self.spells do
-        if spell.kind == kind then return true end
+        if spell.kind == kind then
+            return true
+        end
     end
     return false
 end
@@ -272,7 +287,9 @@ end
 -- that a trade moving spells between keys cannot silently redirect it.
 function State:slot_of(kind: spells.SpellKind): i32
     for slot, spell in self.spells do
-        if spell.kind == kind then return slot end
+        if spell.kind == kind then
+            return slot
+        end
     end
     return -1
 end
@@ -280,19 +297,25 @@ end
 -- Spend from the carried pool. Buying between duels comes out of the same gold
 -- the next duel opens with, so a purchase is always a smaller pool to fight in.
 function State:spend(gold: i32): bool
-    if gold < 0 or gold > self.gold then return false end
+    if gold < 0 or gold > self.gold then
+        return false
+    end
     self.gold -= gold
     return true
 end
 
 -- Whether the spell in that slot has room left to be upgraded.
 function State:can_sharpen(slot: i32): bool
-    if slot < 0 or slot >= #self.spells then return false end
+    if slot < 0 or slot >= #self.spells then
+        return false
+    end
     return self.spells[slot].cost > MIN_SPELL_COST
 end
 
 function State:upgrade(slot: i32): bool
-    if not self:can_sharpen(slot) then return false end
+    if not self:can_sharpen(slot) then
+        return false
+    end
     self.spells[slot].cost -= 1
     return true
 end
@@ -305,7 +328,9 @@ function State:learn(kind: spells.SpellKind, slot: i32): bool
     if self:carries(kind) then
         return false
     end
-    if slot < 0 or slot > #self.spells or slot >= MAX_SPELLS then return false end
+    if slot < 0 or slot > #self.spells or slot >= MAX_SPELLS then
+        return false
+    end
     if slot == #self.spells then
         table.insert(self.spells, spells.Spell.new(kind))
     else
@@ -317,7 +342,9 @@ end
 -- The slot a newly learned spell would take by itself: the next number up while
 -- the loadout has room, and -1 once it is full and something has to go.
 function State:open_slot(): i32
-    if #self.spells >= MAX_SPELLS then return -1 end
+    if #self.spells >= MAX_SPELLS then
+        return -1
+    end
     return #self.spells
 end
 
@@ -334,22 +361,36 @@ end
 
 function State.restore(snapshot_value: string): State?
     local decoded = json.unpack<Snapshot>(snapshot_value)
-    if decoded == nil then return nil end
-    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+    if decoded == nil then
+        return nil
+    end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then
+        return nil
+    end
     local restored: State = decoded.state
     -- No upper selected on the duel: a run past the end of its table is a run
     -- that won and kept walking, not a payload from another build.
-    if restored.duel < 1 then return nil end
+    if restored.duel < 1 then
+        return nil
+    end
     -- Zero is the terminal reveal before settle restarts the run; no run can
     -- have more health than it opened with or take damage below zero.
-    if restored.hearts < 0 or restored.hearts > MAX_HEARTS then return nil end
+    if restored.hearts < 0 or restored.hearts > MAX_HEARTS then
+        return nil
+    end
     -- A run always carries at least the spell it set out with, and never more
     -- than the two the player can hold ready.
-    if #restored.spells < 1 or #restored.spells > MAX_SPELLS then return nil end
-    for spell in restored.spells do
-        if not spells.SpellKind.valid(spell.kind) then return nil end
+    if #restored.spells < 1 or #restored.spells > MAX_SPELLS then
+        return nil
     end
-    if not spells.SpellKind.valid(restored.start_spell) then return nil end
+    for spell in restored.spells do
+        if not spells.SpellKind.valid(spell.kind) then
+            return nil
+        end
+    end
+    if not spells.SpellKind.valid(restored.start_spell) then
+        return nil
+    end
     return restored
 end
 
@@ -363,5 +404,5 @@ return {
     boss_every = BOSS_EVERY,
     max_spells = MAX_SPELLS,
     min_spell_cost = MIN_SPELL_COST,
-    max_hearts = MAX_HEARTS,
+    max_hearts = MAX_HEARTS
 }

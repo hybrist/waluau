@@ -1,7 +1,6 @@
 -- Tagged-union pattern-match-with-binding: `if Tag(name) = expr then ... end`
 -- checks the tag and binds `name` to the unboxed payload, scoped to the
 -- `then` branch. This complements `is Variant` (a plain boolean tag test).
-
 type Either = Left(i32) | Right(f64)
 
 function describe(value: Either): i32
@@ -9,7 +8,7 @@ function describe(value: Either): i32
         return n
     end
     if Right(n) = value then
-        return 1000 + (n :: i32)
+        return 1000 + (n::i32)
     end
     return 0
 end

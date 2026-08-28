@@ -1,6 +1,5 @@
 -- Tagged-union constructor expressions: Tag(expr) syntax produces a canonical
 -- { tag: i32, value: unknown } record with the appropriate discriminant and boxed payload.
-
 type Value = Num(i32) | Flag(f64)
 
 function process(v: Value): i32
@@ -8,7 +7,7 @@ function process(v: Value): i32
         return v.value
     end
     if v is Flag then
-        return 100 + (v.value :: i32)
+        return 100 + (v.value::i32)
     end
     return 0
 end

@@ -16,7 +16,6 @@
 -- returns a per-value-type expectation extern so the host bridge knows how
 -- each raw wasm value (numbers, strings, 0/1 booleans, extern refs) maps
 -- back onto a JS value before handing it to vitest's expect().
-
 type NumberExpectation = extern
 type StringExpectation = extern
 type BoolExpectation = extern
@@ -73,15 +72,15 @@ declare function expect(value: enum?): NullableEnumExpectation
 
 -- `:not` negates the matcher that follows (vitest's `.not` modifier):
 -- expect(actual):not:toBe(other). Chaining `:not:not:` toggles back.
-declare property NumberExpectation:not: NumberExpectation
-declare property StringExpectation:not: StringExpectation
-declare property BoolExpectation:not: BoolExpectation
-declare property ExternExpectation:not: ExternExpectation
-declare property EnumExpectation:not: EnumExpectation
-declare property NullableNumberExpectation:not: NullableNumberExpectation
-declare property NullableStringExpectation:not: NullableStringExpectation
-declare property NullableBoolExpectation:not: NullableBoolExpectation
-declare property NullableEnumExpectation:not: NullableEnumExpectation
+declare property NumberExpectation: not: NumberExpectation
+declare property StringExpectation: not: StringExpectation
+declare property BoolExpectation: not: BoolExpectation
+declare property ExternExpectation: not: ExternExpectation
+declare property EnumExpectation: not: EnumExpectation
+declare property NullableNumberExpectation: not: NullableNumberExpectation
+declare property NullableStringExpectation: not: NullableStringExpectation
+declare property NullableBoolExpectation: not: NullableBoolExpectation
+declare property NullableEnumExpectation: not: NullableEnumExpectation
 
 declare function NumberExpectation:toBe(expected: f64): unit
 declare function NumberExpectation:notToBe(expected: f64): unit
