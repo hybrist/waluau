@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use waluau_ast::{
     NumberLiteral, NumberLiteralUnion, NumberUnionMember, NumericType, TaggedVariant, Type,
     TypedArrayKind,
@@ -250,7 +251,7 @@ impl Parser {
         let mut ty = self.parse_type_atom()?;
         while self.check_simple(&TokenKind::Question) {
             self.advance();
-            ty = Type::Nullable(Box::new(ty));
+            ty = Type::Nullable(Arc::new(ty));
         }
         Ok(ty)
     }
@@ -261,7 +262,7 @@ impl Parser {
             // `{}` is the empty record type; `{T}` stays an array type.
             if self.check_simple(&TokenKind::RBrace) {
                 self.advance();
-                return Ok(Type::Record(std::collections::BTreeMap::new()));
+                return Ok(Type::record(std::collections::BTreeMap::new()));
             }
             let is_record_type = matches!(
                 (self.tokens.get(self.index), self.tokens.get(self.index + 1)),
@@ -299,12 +300,12 @@ impl Parser {
                     }
                 }
                 self.expect_simple(TokenKind::RBrace, "expected '}' after record type")?;
-                return Ok(Type::Record(fields));
+                return Ok(Type::record(fields));
             }
 
             let element = self.parse_type()?;
             self.expect_simple(TokenKind::RBrace, "expected '}' after array element type")?;
-            return Ok(Type::Array(Box::new(element)));
+            return Ok(Type::Array(Arc::new(element)));
         }
         if self.check_simple(&TokenKind::LParen) {
             let allow_self = std::mem::take(&mut self.self_allowed);
@@ -337,7 +338,7 @@ impl Parser {
             let return_type = self.parse_return_type()?;
             return Ok(Type::Function {
                 params: list.params,
-                return_type: Box::new(return_type),
+                return_type: Arc::new(return_type),
                 has_self: list.has_self,
             });
         }
@@ -384,7 +385,7 @@ impl Parser {
                 ) {
                     self.advance();
                     let parent = self.parse_type()?;
-                    Ok(Type::ExternSubtype(Box::new(parent)))
+                    Ok(Type::ExternSubtype(Arc::new(parent)))
                 } else {
                     Ok(Type::Extern)
                 }
@@ -397,7 +398,7 @@ impl Parser {
                 self.expect_simple(TokenKind::RParen, "expected ')' after tagged variant payload")?;
                 Ok(Type::TaggedVariant(TaggedVariant {
                     tag: name,
-                    payload: Box::new(payload),
+                    payload: Arc::new(payload),
                 }))
             }
             Some(TokenKind::Identifier(name)) if self.type_param_scope.contains(&name) => {
@@ -533,7 +534,7 @@ impl Parser {
             let nested_return = self.parse_return_type()?;
             return Ok(Type::Function {
                 params: list.params,
-                return_type: Box::new(nested_return),
+                return_type: Arc::new(nested_return),
                 has_self: false,
             });
         }

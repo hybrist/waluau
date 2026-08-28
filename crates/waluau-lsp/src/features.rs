@@ -11,6 +11,7 @@
 //! `require`d modules loaded through the caller-supplied file loader.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use waluau_ast::{Span, Type};
@@ -565,7 +566,7 @@ fn resolve_type_to_record(
     }
     match ty {
         Type::Record(fields) => Some(RecordInfo {
-            fields: fields.clone(),
+            fields: Arc::unwrap_or_clone(fields.clone()),
             declared_by: None,
         }),
         Type::Opaque { ty: inner, .. } | Type::Nullable(inner) => {
@@ -813,13 +814,16 @@ fn apply_access(standing: Standing, access: &Access, load: Loader, depth: u8) ->
             let Some(Type::Function { return_type, .. }) = definition.ty else {
                 return None;
             };
-            Some(Standing::Value(*return_type, definition_scope))
+            Some(Standing::Value(
+                Arc::unwrap_or_clone(return_type),
+                definition_scope,
+            ))
         }
         Access::Call => {
             let Standing::Value(Type::Function { return_type, .. }, scope) = standing else {
                 return None;
             };
-            Some(Standing::Value(*return_type, scope))
+            Some(Standing::Value(Arc::unwrap_or_clone(return_type), scope))
         }
         Access::Index => {
             let Standing::Value(ty, scope) = standing else {

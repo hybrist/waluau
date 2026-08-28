@@ -103,13 +103,19 @@ impl CompilerSession {
                 involved_files: outcome.involved_files,
             };
         }
-        let diagnostics = match waluau_hir::type_check_and_infer_collect(&outcome.program) {
-            Ok(_) => Vec::new(),
-            Err(errors) => errors
-                .into_iter()
-                .map(|error| crate::resolve_diagnostic_source(error, &outcome.program))
-                .collect(),
-        };
+        // Reuse the same per-root incremental type-check cache as builds:
+        // when only function bodies changed, unchanged functions are not
+        // re-checked, which is what keeps warm editor diagnostics fast.
+        let cache_key = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let hir_cache = self.hir_caches.entry(cache_key).or_default();
+        let diagnostics =
+            match waluau_hir::type_check_and_infer_collect_cached(&outcome.program, hir_cache) {
+                Ok(_) => Vec::new(),
+                Err(errors) => errors
+                    .into_iter()
+                    .map(|error| crate::resolve_diagnostic_source(error, &outcome.program))
+                    .collect(),
+            };
         Analysis {
             diagnostics,
             involved_files: outcome.involved_files,

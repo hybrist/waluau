@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{BinaryOp, Expr, FunctionExpr, NumericType, Type, UnaryOp};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
@@ -591,7 +592,7 @@ fn infer_expr_inner(
             let pack = vars
                 .get(super::VARARG_BINDING)
                 .map(|binding| binding.ty.clone())
-                .unwrap_or_else(|| Type::Variadic(Box::new(Type::Unknown)));
+                .unwrap_or_else(|| Type::Variadic(Arc::new(Type::Unknown)));
             coerce_type(pack, expected)
         }
         Expr::Require(path, _) => Err(Diagnostic::new(format!(
@@ -628,12 +629,12 @@ fn infer_expr_inner(
                         params
                             .iter()
                             .cloned()
-                            .chain(std::iter::once(Type::Array(Box::new(vararg.clone()))))
+                            .chain(std::iter::once(Type::Array(Arc::new(vararg.clone()))))
                             .collect()
                     } else {
                         params.clone()
                     },
-                    return_type: Box::new(return_type.clone()),
+                    return_type: Arc::new(return_type.clone()),
                     has_self: false,
                 }
             } else {
@@ -822,7 +823,7 @@ fn infer_expr_inner(
                         .as_ref()
                         .and_then(|e| e.constructed_tagged_variant(tag))
                     {
-                        let payload_ty = *variant.payload.clone();
+                        let payload_ty = variant.payload.as_ref().clone();
                         let arg_ty = infer_expr(
                             arg,
                             vars,
@@ -1256,7 +1257,7 @@ fn infer_expr_inner(
                     params,
                     return_type,
                     ..
-                } => (params, *return_type),
+                } => (params, Arc::unwrap_or_clone(return_type)),
                 other => {
                     return Err(Diagnostic::new(format!(
                         "attempt to call non-function value of type {other}",
@@ -1436,13 +1437,13 @@ fn infer_expr_inner(
                                 )));
                             }
                         }
-                        return coerce_type(*return_type, expected);
+                        return coerce_type(Arc::unwrap_or_clone(return_type), expected);
                     }
                     Type::Function {
                         params,
                         return_type,
                         has_self: false,
-                    } => (params, *return_type),
+                    } => (params, Arc::unwrap_or_clone(return_type)),
                     other => {
                         return Err(Diagnostic::new(format!(
                             "attempt to call non-function value of type {other}",
@@ -1509,7 +1510,7 @@ fn infer_expr_inner(
                 )?;
                 record_fields.insert(field.name.clone(), field_ty);
             }
-            coerce_type(Type::Record(record_fields), expected)
+            coerce_type(Type::record(record_fields), expected)
         }
         Expr::Field { base, name, .. } => {
             if let Expr::Name(base_name, _, _) = base.as_ref() {
@@ -1523,7 +1524,7 @@ fn infer_expr_inner(
                         } => coerce_type(
                             Type::Function {
                                 params: params.clone(),
-                                return_type: Box::new(return_type.clone()),
+                                return_type: Arc::new(return_type.clone()),
                                 has_self: false,
                             },
                             expected,
@@ -2275,14 +2276,14 @@ fn infer_array_literal(
             // `element_type` looks through a nullable, so coerce back into the
             // expectation rather than returning the bare array: `{i32}?` must
             // stay `{i32}?`.
-            return coerce_type(Type::Array(Box::new(element_ty)), expected);
+            return coerce_type(Type::Array(Arc::new(element_ty)), expected);
         }
         // `{}` with a record-like expectation is the empty record literal,
         // not an array literal; route it through the same coercion as a
         // fielded table literal so `local m: Marker = {}` checks when
         // `Marker` is the empty record type.
         if expected.as_ref().is_some_and(is_record_like) {
-            return coerce_type(Type::Record(BTreeMap::new()), expected);
+            return coerce_type(Type::record(BTreeMap::new()), expected);
         }
         return Err(super::signatures::inference_diagnostic(
             "inference/missing-context",
@@ -2330,7 +2331,7 @@ fn infer_array_literal(
                 Some(Type::Unknown),
             )?;
         }
-        return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
+        return coerce_type(Type::Array(Arc::new(Type::Unknown)), expected);
     }
     // Literal inference may report the inner type even when it accepts a
     // nullable expectation (notably `true` against `bool?`). Normalize
@@ -2359,7 +2360,7 @@ fn infer_array_literal(
                 Some(union_ty.clone()),
             )?;
         }
-        return coerce_type(Type::Array(Box::new(union_ty.clone())), expected);
+        return coerce_type(Type::Array(Arc::new(union_ty.clone())), expected);
     }
     let mut iter = elements.iter();
     let first = iter.next().expect("non-empty array literal");
@@ -2406,7 +2407,7 @@ fn infer_array_literal(
         )?;
     }
 
-    let array_ty = Type::Array(Box::new(element_ty));
+    let array_ty = Type::Array(Arc::new(element_ty));
     coerce_type(array_ty, expected)
 }
 
@@ -2444,7 +2445,7 @@ fn infer_function_expr(
             .iter()
             .map(|param| param.ty.clone())
             .collect(),
-        return_type: Box::new(return_ty.clone()),
+        return_type: Arc::new(return_ty.clone()),
         has_self: false,
     };
     let mut local_scope = vars.clone();

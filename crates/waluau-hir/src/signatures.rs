@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{Expr, Function, FunctionExpr, Rebindability, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
@@ -109,14 +110,14 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         },
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(substitute_type(variant.payload.as_ref(), subst)),
+            payload: Arc::new(substitute_type(variant.payload.as_ref(), subst)),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(substitute_type(variant.payload.as_ref(), subst)),
+                    payload: Arc::new(substitute_type(variant.payload.as_ref(), subst)),
                 })
                 .collect(),
         ),
@@ -131,18 +132,18 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         } => {
             let generic_extern = generic_extern
                 .as_ref()
-                .map(|generic| Box::new(generic.map_type_args(|ty| substitute_type(ty, subst))));
+                .map(|generic| Arc::new(generic.map_type_args(|ty| substitute_type(ty, subst))));
             Type::Opaque {
                 name: generic_extern
                     .as_ref()
                     .map_or_else(|| name.clone(), |generic| generic.canonical_name()),
-                ty: Box::new(substitute_type(ty, subst)),
+                ty: Arc::new(substitute_type(ty, subst)),
                 generic_extern,
             }
         }
-        Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
-        Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
-        Type::Record(fields) => Type::Record(
+        Type::Nullable(inner) => Type::Nullable(Arc::new(substitute_type(inner, subst))),
+        Type::Array(inner) => Type::Array(Arc::new(substitute_type(inner, subst))),
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
@@ -157,7 +158,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 .iter()
                 .map(|param| substitute_type(param, subst))
                 .collect(),
-            return_type: Box::new(substitute_type(return_type, subst)),
+            return_type: Arc::new(substitute_type(return_type, subst)),
             has_self: *has_self,
         },
         other => other.clone(),
@@ -446,7 +447,7 @@ fn unify(
             unify(p_inner.as_ref(), a_inner.as_ref(), subst)
         }
         (Type::Record(p_fields), Type::Record(a_fields)) => {
-            for (name, p_ty) in p_fields {
+            for (name, p_ty) in p_fields.iter() {
                 if let Some(a_ty) = a_fields.get(name) {
                     unify(p_ty, a_ty, subst)?;
                 } else {
@@ -704,7 +705,7 @@ pub(super) fn infer_top_level_function_return_type(
         Type::Unit | Type::Nullable(_) | Type::Nil | Type::Multi(_)
     ) && !super::statements::stmts_always_return(&function.body)
     {
-        merged = Type::Nullable(Box::new(merged));
+        merged = Type::Nullable(Arc::new(merged));
     }
     Ok(Some(merged))
 }
@@ -730,7 +731,7 @@ pub(super) fn infer_function_expr_return_type(
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect(),
-            return_type: Box::new(Type::Unit),
+            return_type: Arc::new(Type::Unit),
             has_self: false,
         };
         local_vars.insert(
@@ -759,7 +760,7 @@ pub(super) fn infer_function_expr_return_type(
         Type::Unit | Type::Nullable(_) | Type::Nil | Type::Multi(_)
     ) && !super::statements::stmts_always_return(&function.body)
     {
-        merged = Type::Nullable(Box::new(merged));
+        merged = Type::Nullable(Arc::new(merged));
     }
     Ok(merged)
 }

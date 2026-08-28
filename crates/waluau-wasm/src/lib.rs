@@ -350,6 +350,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{compile_source, compile_sources};
+    use std::sync::Arc;
 
     #[test]
     fn scalar_program_does_not_require_wasm_gc() {
@@ -1448,7 +1449,7 @@ mod tests {
     #[test]
     fn nullable_types_have_structured_signature_metadata() {
         let json = super::to_type_json(
-            &waluau_ast::Type::Nullable(Box::new(waluau_ast::Type::String)),
+            &waluau_ast::Type::Nullable(Arc::new(waluau_ast::Type::String)),
             &std::collections::HashMap::new(),
         );
         let super::TypeJson::Nullable { inner_type } = json else {

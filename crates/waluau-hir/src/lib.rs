@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{
     AssignOp, Expr, Function, FunctionExpr, FunctionName, GenericExternType, NumberLiteral,
@@ -101,7 +102,7 @@ fn bind_vararg(vars: &mut HashMap<String, Binding>, vararg: Option<&Type>) {
             vars.insert(
                 VARARG_BINDING.to_string(),
                 binding_for(
-                    Type::Variadic(Box::new(element.clone())),
+                    Type::Variadic(Arc::new(element.clone())),
                     Rebindability::Const,
                 ),
             );
@@ -273,7 +274,7 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
         {
             Type::Opaque {
                 name: name.clone(),
-                ty: Box::new(Type::Unknown),
+                ty: Arc::new(Type::Unknown),
                 generic_extern: None,
             }
         }
@@ -283,22 +284,22 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
             generic_extern,
         } => Type::Opaque {
             name: name.clone(),
-            ty: Box::new(type_visible_from_file(ty, file_path, opaque)),
+            ty: Arc::new(type_visible_from_file(ty, file_path, opaque)),
             generic_extern: generic_extern.as_ref().map(|generic| {
-                Box::new(generic.map_type_args(|ty| type_visible_from_file(ty, file_path, opaque)))
+                Arc::new(generic.map_type_args(|ty| type_visible_from_file(ty, file_path, opaque)))
             }),
         },
         Type::ExternSubtype(parent) => {
-            Type::ExternSubtype(Box::new(type_visible_from_file(parent, file_path, opaque)))
+            Type::ExternSubtype(Arc::new(type_visible_from_file(parent, file_path, opaque)))
         }
         Type::Nullable(inner) => {
-            Type::Nullable(Box::new(type_visible_from_file(inner, file_path, opaque)))
+            Type::Nullable(Arc::new(type_visible_from_file(inner, file_path, opaque)))
         }
         Type::Array(inner) => {
-            Type::Array(Box::new(type_visible_from_file(inner, file_path, opaque)))
+            Type::Array(Arc::new(type_visible_from_file(inner, file_path, opaque)))
         }
         Type::Variadic(inner) => {
-            Type::Variadic(Box::new(type_visible_from_file(inner, file_path, opaque)))
+            Type::Variadic(Arc::new(type_visible_from_file(inner, file_path, opaque)))
         }
         Type::Multi(types) => Type::Multi(
             types
@@ -315,10 +316,10 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
                 .iter()
                 .map(|ty| type_visible_from_file(ty, file_path, opaque))
                 .collect(),
-            return_type: Box::new(type_visible_from_file(return_type, file_path, opaque)),
+            return_type: Arc::new(type_visible_from_file(return_type, file_path, opaque)),
             has_self: *has_self,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), type_visible_from_file(ty, file_path, opaque)))
@@ -326,14 +327,14 @@ fn type_visible_from_file(ty: &Type, file_path: &str, opaque: &ModuleOpaqueTypes
         ),
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+            payload: Arc::new(type_visible_from_file(&variant.payload, file_path, opaque)),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(type_visible_from_file(&variant.payload, file_path, opaque)),
+                    payload: Arc::new(type_visible_from_file(&variant.payload, file_path, opaque)),
                 })
                 .collect(),
         ),
@@ -352,7 +353,7 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
     match ty {
         Type::Opaque { name, .. } if opaque.contains_key(name) => Type::Opaque {
             name: name.clone(),
-            ty: Box::new(opaque[name].1.clone()),
+            ty: Arc::new(opaque[name].1.clone()),
             generic_extern: None,
         },
         Type::Opaque {
@@ -361,20 +362,20 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
             generic_extern,
         } => Type::Opaque {
             name: name.clone(),
-            ty: Box::new(restore_module_opaque_type(ty, opaque)),
+            ty: Arc::new(restore_module_opaque_type(ty, opaque)),
             generic_extern: generic_extern.as_ref().map(|generic| {
-                Box::new(generic.map_type_args(|ty| restore_module_opaque_type(ty, opaque)))
+                Arc::new(generic.map_type_args(|ty| restore_module_opaque_type(ty, opaque)))
             }),
         },
         Type::ExternSubtype(parent) => {
-            Type::ExternSubtype(Box::new(restore_module_opaque_type(parent, opaque)))
+            Type::ExternSubtype(Arc::new(restore_module_opaque_type(parent, opaque)))
         }
         Type::Nullable(inner) => {
-            Type::Nullable(Box::new(restore_module_opaque_type(inner, opaque)))
+            Type::Nullable(Arc::new(restore_module_opaque_type(inner, opaque)))
         }
-        Type::Array(inner) => Type::Array(Box::new(restore_module_opaque_type(inner, opaque))),
+        Type::Array(inner) => Type::Array(Arc::new(restore_module_opaque_type(inner, opaque))),
         Type::Variadic(inner) => {
-            Type::Variadic(Box::new(restore_module_opaque_type(inner, opaque)))
+            Type::Variadic(Arc::new(restore_module_opaque_type(inner, opaque)))
         }
         Type::Multi(types) => Type::Multi(
             types
@@ -391,10 +392,10 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
                 .iter()
                 .map(|ty| restore_module_opaque_type(ty, opaque))
                 .collect(),
-            return_type: Box::new(restore_module_opaque_type(return_type, opaque)),
+            return_type: Arc::new(restore_module_opaque_type(return_type, opaque)),
             has_self: *has_self,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), restore_module_opaque_type(ty, opaque)))
@@ -402,14 +403,14 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
         ),
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(restore_module_opaque_type(&variant.payload, opaque)),
+            payload: Arc::new(restore_module_opaque_type(&variant.payload, opaque)),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(restore_module_opaque_type(&variant.payload, opaque)),
+                    payload: Arc::new(restore_module_opaque_type(&variant.payload, opaque)),
                 })
                 .collect(),
         ),
@@ -827,7 +828,7 @@ fn annotate_inferred_expr_locals(
                                 .iter()
                                 .map(|param| param.ty.clone())
                                 .collect(),
-                            return_type: Box::new(return_type.clone()),
+                            return_type: Arc::new(return_type.clone()),
                             has_self: false,
                         },
                         Rebindability::Const,
@@ -903,7 +904,7 @@ fn annotate_inferred_stmt_locals(
                     expected_ty
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty())
                 {
-                    Type::Record(BTreeMap::new())
+                    Type::record(BTreeMap::new())
                 } else {
                     // A single binding keeps only the first value of a
                     // multi-value initializer (Lua's adjustment rules), so the
@@ -1233,7 +1234,7 @@ pub(crate) const ANY_ENUM_TYPE_NAME: &str = "enum";
 pub(crate) fn any_enum_type() -> Type {
     Type::Opaque {
         name: ANY_ENUM_TYPE_NAME.to_string(),
-        ty: Box::new(Type::Numeric(NumericType::I32)),
+        ty: Arc::new(Type::Numeric(NumericType::I32)),
         generic_extern: None,
     }
 }
@@ -1268,14 +1269,14 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         },
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(substitute_type_params(variant.payload.as_ref(), subst)),
+            payload: Arc::new(substitute_type_params(variant.payload.as_ref(), subst)),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(substitute_type_params(variant.payload.as_ref(), subst)),
+                    payload: Arc::new(substitute_type_params(variant.payload.as_ref(), subst)),
                 })
                 .collect(),
         ),
@@ -1285,20 +1286,20 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             generic_extern,
         } => Type::Opaque {
             name: name.clone(),
-            ty: Box::new(substitute_type_params(ty, subst)),
+            ty: Arc::new(substitute_type_params(ty, subst)),
             generic_extern: generic_extern.as_ref().map(|generic| {
-                Box::new(generic.map_type_args(|ty| substitute_type_params(ty, subst)))
+                Arc::new(generic.map_type_args(|ty| substitute_type_params(ty, subst)))
             }),
         },
         Type::ExternSubtype(parent) => {
-            Type::ExternSubtype(Box::new(substitute_type_params(parent, subst)))
+            Type::ExternSubtype(Arc::new(substitute_type_params(parent, subst)))
         }
-        Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type_params(inner, subst))),
+        Type::Nullable(inner) => Type::Nullable(Arc::new(substitute_type_params(inner, subst))),
         Type::TypeParam(name) => subst
             .get(name)
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
-        Type::Array(inner) => Type::Array(Box::new(substitute_type_params(inner, subst))),
+        Type::Array(inner) => Type::Array(Arc::new(substitute_type_params(inner, subst))),
         Type::Multi(types) => Type::Multi(
             types
                 .iter()
@@ -1314,10 +1315,10 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 .iter()
                 .map(|param| substitute_type_params(param, subst))
                 .collect(),
-            return_type: Box::new(substitute_type_params(return_type, subst)),
+            return_type: Arc::new(substitute_type_params(return_type, subst)),
             has_self: *has_self,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), substitute_type_params(ty, subst)))
@@ -1349,8 +1350,8 @@ fn specialize_generic_extern_constructor(
     match resolved {
         Type::Extern | Type::ExternSubtype(_) => Type::Opaque {
             name: generic_instantiation_name(name, type_args),
-            ty: Box::new(resolved),
-            generic_extern: Some(Box::new(GenericExternType {
+            ty: Arc::new(resolved),
+            generic_extern: Some(Arc::new(GenericExternType {
                 constructor: name.to_string(),
                 source_name: decl.source_name.clone(),
                 type_args: type_args.to_vec(),
@@ -1399,7 +1400,7 @@ fn resolve_decl_type_allowing_forward_refs(
 
     let opaque = Type::Opaque {
         name: name.to_string(),
-        ty: Box::new(resolved_underlying),
+        ty: Arc::new(resolved_underlying),
         generic_extern: None,
     };
     Ok(opaque)
@@ -1499,7 +1500,7 @@ fn resolve_type_refs_allowing_forward_refs(
                     // erasure turns this edge into an anyref plus checked casts.
                     return Ok(Type::Opaque {
                         name: name.to_string(),
-                        ty: Box::new(Type::Unknown),
+                        ty: Arc::new(Type::Unknown),
                         generic_extern: None,
                     });
                 }
@@ -1539,7 +1540,7 @@ fn resolve_type_refs_allowing_forward_refs(
             generic_extern,
         } => Ok(Type::Opaque {
             name: name.clone(),
-            ty: Box::new(resolve_type_refs_allowing_forward_refs(
+            ty: Arc::new(resolve_type_refs_allowing_forward_refs(
                 ty,
                 active_type_params,
                 raw_opaque,
@@ -1563,7 +1564,7 @@ fn resolve_type_refs_allowing_forward_refs(
                                 guarded,
                             )
                         })
-                        .map(Box::new)
+                        .map(Arc::new)
                 })
                 .transpose()?,
         }),
@@ -1578,7 +1579,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 guarded,
             )?;
             require_nullable_host_ref_type(&parent)?;
-            Ok(Type::ExternSubtype(Box::new(parent)))
+            Ok(Type::ExternSubtype(Arc::new(parent)))
         }
         Type::Nullable(inner) => {
             let inner = resolve_type_refs_allowing_forward_refs(
@@ -1591,9 +1592,9 @@ fn resolve_type_refs_allowing_forward_refs(
                 guarded,
             )?;
             require_nullable_inner_type(&inner)?;
-            Ok(Type::Nullable(Box::new(inner)))
+            Ok(Type::Nullable(Arc::new(inner)))
         }
-        Type::Array(inner) => Ok(Type::Array(Box::new(
+        Type::Array(inner) => Ok(Type::Array(Arc::new(
             resolve_type_refs_allowing_forward_refs(
                 inner,
                 active_type_params,
@@ -1639,7 +1640,7 @@ fn resolve_type_refs_allowing_forward_refs(
                     )
                 })
                 .collect::<Result<_, _>>()?,
-            return_type: Box::new(resolve_type_refs_allowing_forward_refs(
+            return_type: Arc::new(resolve_type_refs_allowing_forward_refs(
                 return_type,
                 active_type_params,
                 raw_opaque,
@@ -1650,7 +1651,7 @@ fn resolve_type_refs_allowing_forward_refs(
             )?),
             has_self: *has_self,
         }),
-        Type::Record(fields) => Ok(Type::Record(
+        Type::Record(fields) => Ok(Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| {
@@ -1679,7 +1680,7 @@ fn resolve_type_refs_allowing_forward_refs(
         // resolution still describes a finite runtime value.
         Type::TaggedVariant(variant) => Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(resolve_type_refs_allowing_forward_refs(
+            payload: Arc::new(resolve_type_refs_allowing_forward_refs(
                 variant.payload.as_ref(),
                 active_type_params,
                 raw_opaque,
@@ -1695,7 +1696,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 .map(|variant| {
                     Ok(waluau_ast::TaggedVariant {
                         tag: variant.tag.clone(),
-                        payload: Box::new(resolve_type_refs_allowing_forward_refs(
+                        payload: Arc::new(resolve_type_refs_allowing_forward_refs(
                             variant.payload.as_ref(),
                             active_type_params,
                             raw_opaque,
@@ -1985,7 +1986,7 @@ fn resolve_type_refs_fixpoint(
                     .cloned()
                     .unwrap_or_else(|| Type::Opaque {
                         name: name.to_string(),
-                        ty: Box::new(Type::Unit),
+                        ty: Arc::new(Type::Unit),
                         generic_extern: None,
                     }))
             } else {
@@ -2005,7 +2006,7 @@ fn resolve_type_refs_fixpoint(
             generic_extern,
         } => Ok(Type::Opaque {
             name: name.clone(),
-            ty: Box::new(resolve_type_refs_fixpoint(
+            ty: Arc::new(resolve_type_refs_fixpoint(
                 ty,
                 active_type_params,
                 raw_opaque,
@@ -2029,7 +2030,7 @@ fn resolve_type_refs_fixpoint(
                                 fixpoint_mode,
                             )
                         })
-                        .map(Box::new)
+                        .map(Arc::new)
                 })
                 .transpose()?,
         }),
@@ -2044,7 +2045,7 @@ fn resolve_type_refs_fixpoint(
                 fixpoint_mode,
             )?;
             require_nullable_host_ref_type(&parent)?;
-            Ok(Type::ExternSubtype(Box::new(parent)))
+            Ok(Type::ExternSubtype(Arc::new(parent)))
         }
         Type::Nullable(inner) => {
             let inner = resolve_type_refs_fixpoint(
@@ -2057,9 +2058,9 @@ fn resolve_type_refs_fixpoint(
                 fixpoint_mode,
             )?;
             require_nullable_inner_type(&inner)?;
-            Ok(Type::Nullable(Box::new(inner)))
+            Ok(Type::Nullable(Arc::new(inner)))
         }
-        Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(
+        Type::Array(inner) => Ok(Type::Array(Arc::new(resolve_type_refs_fixpoint(
             inner,
             active_type_params,
             raw_opaque,
@@ -2103,7 +2104,7 @@ fn resolve_type_refs_fixpoint(
                     )
                 })
                 .collect::<Result<_, _>>()?,
-            return_type: Box::new(resolve_type_refs_fixpoint(
+            return_type: Arc::new(resolve_type_refs_fixpoint(
                 return_type,
                 active_type_params,
                 raw_opaque,
@@ -2114,7 +2115,7 @@ fn resolve_type_refs_fixpoint(
             )?),
             has_self: *has_self,
         }),
-        Type::Record(fields) => Ok(Type::Record(
+        Type::Record(fields) => Ok(Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| {
@@ -2138,7 +2139,7 @@ fn resolve_type_refs_fixpoint(
         // stranded inside variants.
         Type::TaggedVariant(variant) => Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(resolve_type_refs_fixpoint(
+            payload: Arc::new(resolve_type_refs_fixpoint(
                 variant.payload.as_ref(),
                 active_type_params,
                 raw_opaque,
@@ -2154,7 +2155,7 @@ fn resolve_type_refs_fixpoint(
                 .map(|variant| {
                     Ok(waluau_ast::TaggedVariant {
                         tag: variant.tag.clone(),
-                        payload: Box::new(resolve_type_refs_fixpoint(
+                        payload: Arc::new(resolve_type_refs_fixpoint(
                             variant.payload.as_ref(),
                             active_type_params,
                             raw_opaque,
@@ -2191,7 +2192,7 @@ fn resolve_decl_type_fixpoint(
                 .cloned()
                 .unwrap_or_else(|| Type::Opaque {
                     name: name.to_string(),
-                    ty: Box::new(Type::Unit),
+                    ty: Arc::new(Type::Unit),
                     generic_extern: None,
                 }));
         } else {
@@ -2223,7 +2224,7 @@ fn resolve_decl_type_fixpoint(
     stack.pop();
     let opaque = Type::Opaque {
         name: name.to_string(),
-        ty: Box::new(resolved_underlying),
+        ty: Arc::new(resolved_underlying),
         generic_extern: None,
     };
     opaque_cache.insert(name.to_string(), opaque.clone());
@@ -3361,7 +3362,7 @@ fn annotate_function_expr_resolved_members(
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    return_type: Box::new(return_type.clone()),
+                    return_type: Arc::new(return_type.clone()),
                     has_self: false,
                 },
                 Rebindability::Const,
@@ -3431,7 +3432,7 @@ fn annotate_stmt_resolved_members(
                 )
                 .unwrap_or_else(|_| expected_ty.clone())
             } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
-                Type::Record(BTreeMap::new())
+                Type::record(BTreeMap::new())
             } else {
                 infer_expr(value, vars, fn_signatures, active_type_params, None)
                     .unwrap_or(Type::Unknown)
@@ -3476,7 +3477,7 @@ fn annotate_stmt_resolved_members(
                         existing_field.clone(),
                     ) {
                         if existing_field.is_none() && binding.record_open {
-                            fields.insert(name.clone(), value_ty);
+                            Arc::make_mut(&mut fields).insert(name.clone(), value_ty);
                         }
                     }
                     let mut updated = binding_for(Type::Record(fields), binding.rebindability);

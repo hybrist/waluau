@@ -46,6 +46,7 @@ pub fn overload_base_name(name: &str) -> Option<&str> {
 }
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
@@ -251,7 +252,7 @@ pub struct Param {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TaggedVariant {
     pub tag: String,
-    pub payload: Box<Type>,
+    pub payload: Arc<Type>,
 }
 
 /// One value of a number literal union. Integer members keep their exact
@@ -410,9 +411,9 @@ pub enum Type {
     String,
     Bytes,
     Extern,
-    ExternSubtype(Box<Type>),
+    ExternSubtype(Arc<Type>),
     Nil,
-    Nullable(Box<Type>),
+    Nullable(Arc<Type>),
     TaggedVariant(TaggedVariant),
     TaggedUnion(Vec<TaggedVariant>),
     /// A closed set of string constants (`type CardColor = "red" | "black"`).
@@ -430,10 +431,10 @@ pub enum Type {
     },
     Opaque {
         name: String,
-        ty: Box<Type>,
-        generic_extern: Option<Box<GenericExternType>>,
+        ty: Arc<Type>,
+        generic_extern: Option<Arc<GenericExternType>>,
     },
-    Array(Box<Type>),
+    Array(Arc<Type>),
     /// A fixed-length numeric array in linear memory (`Float32Array` etc.).
     /// Runtime value: i32 pointer to the element data; see [`TypedArrayKind`].
     TypedArray(TypedArrayKind),
@@ -441,11 +442,11 @@ pub enum Type {
     ///
     /// Variadic packs use the same runtime representation as `Array`, but keep
     /// their expansion semantics across call and return boundaries.
-    Variadic(Box<Type>),
+    Variadic(Arc<Type>),
     Multi(Vec<Type>),
     Function {
         params: Vec<Type>,
-        return_type: Box<Type>,
+        return_type: Arc<Type>,
         /// Whether the function type opens with the contextual `self` receiver
         /// placeholder (`(self, a: i32) -> i32`). Only legal as the immediate
         /// type of a record field, where it marks an interface method whose
@@ -455,7 +456,12 @@ pub enum Type {
         has_self: bool,
     },
     /// A fixed-shape record used for module namespaces (`require` results).
-    Record(BTreeMap<String, Type>),
+    ///
+    /// The field map is shared: a record type describes an entire module or
+    /// record surface, and cloning `Type` values must stay O(1) rather than
+    /// O(exported surface). Use [`Type::record`] to build one and
+    /// `Arc::make_mut` to rewrite fields in place.
+    Record(Arc<BTreeMap<String, Type>>),
     /// Reference to an in-scope generic type parameter (e.g. `T` in `function f<T>(x: T)`).
     TypeParam(String),
     /// A coroutine handle. Yield/resume values are always `i32` (see design 0007).
@@ -466,6 +472,11 @@ pub enum Type {
 impl Type {
     pub const fn number() -> Self {
         Self::Numeric(NumericType::F64)
+    }
+
+    /// Build a record type from an owned field map.
+    pub fn record(fields: BTreeMap<String, Type>) -> Self {
+        Self::Record(Arc::new(fields))
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -512,7 +523,7 @@ impl Type {
 
     pub fn element_type(&self) -> Option<Type> {
         match self {
-            Self::Array(element) | Self::Variadic(element) => Some(*element.clone()),
+            Self::Array(element) | Self::Variadic(element) => Some((**element).clone()),
             Self::TypedArray(kind) => Some(Self::Numeric(kind.element_numeric_type())),
             Self::Nullable(inner) | Self::Opaque { ty: inner, .. } => inner.element_type(),
             _ => None,
@@ -537,7 +548,7 @@ impl Type {
 
     pub fn nullable_inner(&self) -> Option<Type> {
         match self {
-            Self::Nullable(inner) => Some(*inner.clone()),
+            Self::Nullable(inner) => Some(inner.as_ref().clone()),
             _ => None,
         }
     }
@@ -611,7 +622,7 @@ impl Type {
         let mut fields = BTreeMap::new();
         fields.insert("tag".to_string(), Type::Numeric(NumericType::I32));
         fields.insert("value".to_string(), Type::Unknown);
-        Type::Record(fields)
+        Type::record(fields)
     }
 
     /// This type as the runtime represents it: every tagged union and variant,
@@ -624,20 +635,20 @@ impl Type {
     pub fn runtime_representation(&self) -> Type {
         match self {
             Self::TaggedUnion(_) | Self::TaggedVariant(_) => Self::canonical_tagged_union_record(),
-            Self::Record(fields) => Self::Record(
+            Self::Record(fields) => Self::record(
                 fields
                     .iter()
                     .map(|(name, field_ty)| (name.clone(), field_ty.runtime_representation()))
                     .collect(),
             ),
-            Self::Array(element_ty) => Self::Array(Box::new(element_ty.runtime_representation())),
+            Self::Array(element_ty) => Self::Array(Arc::new(element_ty.runtime_representation())),
             Self::Variadic(element_ty) => {
-                Self::Variadic(Box::new(element_ty.runtime_representation()))
+                Self::Variadic(Arc::new(element_ty.runtime_representation()))
             }
             Self::Multi(types) => {
                 Self::Multi(types.iter().map(Self::runtime_representation).collect())
             }
-            Self::Nullable(inner) => Self::Nullable(Box::new(inner.runtime_representation())),
+            Self::Nullable(inner) => Self::Nullable(Arc::new(inner.runtime_representation())),
             other => other.clone(),
         }
     }
@@ -665,7 +676,7 @@ impl Type {
                 generic_extern,
             } => ty.remove_tagged_variant(tag).map(|inner| Self::Opaque {
                 name: name.clone(),
-                ty: Box::new(inner),
+                ty: Arc::new(inner),
                 generic_extern: generic_extern.clone(),
             }),
             _ => None,
@@ -814,7 +825,7 @@ impl std::fmt::Display for Type {
             Self::Record(fields) => {
                 write!(f, "{{")?;
                 let mut first = true;
-                for (name, ty) in fields {
+                for (name, ty) in fields.iter() {
                     // `$` never appears in user-written field names; fields
                     // carrying it are compiler-internal (the conformance
                     // wrapper identity field) and stay out of display.
@@ -1868,31 +1879,31 @@ pub fn resolve_symbols(
 
 #[cfg(test)]
 mod type_tests {
-    use super::{NumericType, TaggedVariant, Type};
+    use super::{Arc, NumericType, TaggedVariant, Type};
 
     fn goods() -> Type {
         Type::TaggedUnion(vec![
             TaggedVariant {
                 tag: "Upgrade".to_string(),
-                payload: Box::new(Type::Numeric(NumericType::I32)),
+                payload: Arc::new(Type::Numeric(NumericType::I32)),
             },
             TaggedVariant {
                 tag: "Spell".to_string(),
-                payload: Box::new(Type::Numeric(NumericType::I32)),
+                payload: Arc::new(Type::Numeric(NumericType::I32)),
             },
         ])
     }
 
     #[test]
     fn tagged_variant_stops_at_a_nullable() {
-        let nullable = Type::Nullable(Box::new(goods()));
+        let nullable = Type::Nullable(Arc::new(goods()));
         assert!(nullable.tagged_variant("Upgrade").is_none());
         assert!(nullable.remove_tagged_variant("Upgrade").is_none());
     }
 
     #[test]
     fn constructed_tagged_variant_looks_through_a_nullable() {
-        let nullable = Type::Nullable(Box::new(goods()));
+        let nullable = Type::Nullable(Arc::new(goods()));
         let variant = nullable
             .constructed_tagged_variant("Upgrade")
             .expect("a nullable union constructs the same variants as the union");
@@ -1904,9 +1915,9 @@ mod type_tests {
     fn constructed_tagged_variant_looks_through_an_aliased_nullable() {
         let aliased = Type::Opaque {
             name: "MaybeGoods".to_string(),
-            ty: Box::new(Type::Nullable(Box::new(Type::Opaque {
+            ty: Arc::new(Type::Nullable(Arc::new(Type::Opaque {
                 name: "Goods".to_string(),
-                ty: Box::new(goods()),
+                ty: Arc::new(goods()),
                 generic_extern: None,
             }))),
             generic_extern: None,
@@ -1922,7 +1933,7 @@ mod type_tests {
 
     #[test]
     fn constructed_tagged_variant_rejects_an_unknown_tag() {
-        let nullable = Type::Nullable(Box::new(goods()));
+        let nullable = Type::Nullable(Arc::new(goods()));
         assert!(nullable.constructed_tagged_variant("Trinket").is_none());
     }
 }

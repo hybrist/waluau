@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use waluau_ast::{
     DeclaredConstant, DeclaredImport, Function, FunctionExpr, FunctionName, Param, Program, Span,
     Stmt, Type, TypeDeclaration,
@@ -106,7 +107,7 @@ impl Parser {
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect(),
-            return_type: Box::new(return_type),
+            return_type: Arc::new(return_type),
             has_self: false,
         })
     }

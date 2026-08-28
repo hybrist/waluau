@@ -19,6 +19,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use waluau_ast::{
     DeclaredConstant, DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Span,
@@ -2333,17 +2334,17 @@ impl Rewriter<'_> {
                 if self.type_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
                 }
-                self.rewrite_type(ty);
+                self.rewrite_type(Arc::make_mut(ty));
             }
-            Type::ExternSubtype(parent) => self.rewrite_type(parent),
-            Type::Nullable(inner) => self.rewrite_type(inner),
-            Type::TaggedVariant(variant) => self.rewrite_type(variant.payload.as_mut()),
+            Type::ExternSubtype(parent) => self.rewrite_type(Arc::make_mut(parent)),
+            Type::Nullable(inner) => self.rewrite_type(Arc::make_mut(inner)),
+            Type::TaggedVariant(variant) => self.rewrite_type(Arc::make_mut(&mut variant.payload)),
             Type::TaggedUnion(variants) => {
                 for variant in variants {
-                    self.rewrite_type(variant.payload.as_mut());
+                    self.rewrite_type(Arc::make_mut(&mut variant.payload));
                 }
             }
-            Type::Array(inner) | Type::Variadic(inner) => self.rewrite_type(inner),
+            Type::Array(inner) | Type::Variadic(inner) => self.rewrite_type(Arc::make_mut(inner)),
             Type::Multi(types) => {
                 for ty in types {
                     self.rewrite_type(ty);
@@ -2357,10 +2358,10 @@ impl Rewriter<'_> {
                 for ty in params {
                     self.rewrite_type(ty);
                 }
-                self.rewrite_type(return_type);
+                self.rewrite_type(Arc::make_mut(return_type));
             }
             Type::Record(fields) => {
-                for ty in fields.values_mut() {
+                for ty in Arc::make_mut(fields).values_mut() {
                     self.rewrite_type(ty);
                 }
             }

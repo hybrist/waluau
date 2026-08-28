@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::Arc;
 
 use crate::{BinaryOp, Expr, Program, Rebindability, Span, Stmt, TableField, Type, UnaryOp};
 
@@ -358,12 +359,12 @@ fn resolve_constant_type(
             visiting.remove(name);
             resolved
         }
-        Type::Array(element) => Type::Array(Box::new(resolve_constant_type(
+        Type::Array(element) => Type::Array(Arc::new(resolve_constant_type(
             element,
             declarations,
             visiting,
         ))),
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| {

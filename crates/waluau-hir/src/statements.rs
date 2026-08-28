@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{AssignOp, BinaryOp, Expr, Function, NumericType, Rebindability, Stmt, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
@@ -72,8 +73,8 @@ fn property_setter_name(base: &str, property: &str) -> String {
 
 fn record_fields_from_type(ty: Type) -> Option<BTreeMap<String, Type>> {
     match ty {
-        Type::Record(fields) => Some(fields),
-        Type::Opaque { ty, .. } => record_fields_from_type(*ty),
+        Type::Record(fields) => Some(Arc::unwrap_or_clone(fields)),
+        Type::Opaque { ty, .. } => record_fields_from_type(Arc::unwrap_or_clone(ty)),
         _ => None,
     }
 }
@@ -504,7 +505,7 @@ pub(super) fn for_in_loop_value_types(
                         "for-in iterator function must not require parameters; pass explicit state with `for ... in f, state[, control]`",
                     ));
                 }
-                let return_values = match *return_type {
+                let return_values = match Arc::unwrap_or_clone(return_type) {
                     Type::Multi(values) => values,
                     other => vec![other],
                 };
@@ -613,7 +614,7 @@ pub(super) fn pcall_discriminant_types(
     let Type::Function { return_type, .. } = callee_ty else {
         return None;
     };
-    Some((*return_type, Type::String))
+    Some((Arc::unwrap_or_clone(return_type), Type::String))
 }
 
 /// Installs the bidirectional discriminant link for `local ok, v = pcall(...)`
@@ -782,7 +783,7 @@ fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
         Type::Record(fields) => {
             let inner = fields.get(field)?.nullable_inner()?;
             let mut narrowed = fields.clone();
-            narrowed.insert(field.to_string(), inner);
+            Arc::make_mut(&mut narrowed).insert(field.to_string(), inner);
             Some(Type::Record(narrowed))
         }
         Type::Opaque {
@@ -791,7 +792,7 @@ fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
             generic_extern,
         } => Some(Type::Opaque {
             name: name.clone(),
-            ty: Box::new(narrow_nullable_record_field(ty, field)?),
+            ty: Arc::new(narrow_nullable_record_field(ty, field)?),
             generic_extern: generic_extern.clone(),
         }),
         _ => None,
@@ -1005,7 +1006,7 @@ fn bind_failed_stmt_names_as_unknown(stmt: &Stmt, vars: &mut HashMap<String, Bin
 /// annotation still checks values at the vararg function's own call sites.
 fn widen_returned_pack(ty: Type) -> Type {
     match ty {
-        Type::Variadic(_) => Type::Variadic(Box::new(Type::Unknown)),
+        Type::Variadic(_) => Type::Variadic(Arc::new(Type::Unknown)),
         Type::Multi(parts) => Type::Multi(parts.into_iter().map(widen_returned_pack).collect()),
         other => other,
     }
@@ -1080,7 +1081,7 @@ fn collect_return_types_with_scope(
                     )?
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty())
                 {
-                    Type::Record(BTreeMap::new())
+                    Type::record(BTreeMap::new())
                 } else {
                     super::expressions::first_of_multi(infer_expr(
                         value,
@@ -1202,7 +1203,7 @@ fn collect_return_types_with_scope(
                         )));
                     }
                     seal_record_locals_in_expr(value, &mut scope);
-                    let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                    let mut updated = binding_for(Type::record(fields), binding.rebindability);
                     if !binding.record_open {
                         updated.record_open = false;
                     }
@@ -1589,7 +1590,7 @@ pub(super) fn common_return_type(left: Type, right: Type) -> Result<Type, Diagno
             Ok(Type::Nullable(inner))
         }
         (Type::Nil, other) | (other, Type::Nil) if other != Type::Unit => {
-            Ok(Type::Nullable(Box::new(other)))
+            Ok(Type::Nullable(Arc::new(other)))
         }
         (Type::Nullable(inner), other) | (other, Type::Nullable(inner)) if *inner == other => {
             Ok(Type::Nullable(inner))
@@ -1735,7 +1736,7 @@ fn check_stmt_inner(
                 }
                 expected_ty.clone()
             } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
-                Type::Record(BTreeMap::new())
+                Type::record(BTreeMap::new())
             } else {
                 super::expressions::first_of_multi(infer_expr(
                     value,
@@ -1960,7 +1961,7 @@ fn check_stmt_inner(
                         };
                         check_function(&synthetic, fn_signatures, active_type_params)?;
                         seal_record_locals_in_expr(value, vars);
-                        let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                        let mut updated = binding_for(Type::record(fields), binding.rebindability);
                         if !binding.record_open {
                             updated.record_open = false;
                         }
@@ -2010,7 +2011,7 @@ fn check_stmt_inner(
                     )));
                 }
                 seal_record_locals_in_expr(value, vars);
-                let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                let mut updated = binding_for(Type::record(fields), binding.rebindability);
                 if !binding.record_open {
                     updated.record_open = false;
                 }

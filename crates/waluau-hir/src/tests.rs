@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use waluau_ast::{BinaryOp, Expr, FunctionName, NumericType, Stmt, Type, UnaryOp};
 use waluau_diagnostics::DiagnosticCategory;
 use waluau_parser::parse;
@@ -29,10 +30,10 @@ fn diagnostic_type_display_retains_nested_module_identity_until_decoration() {
         has_self: false,
         params: vec![Type::Opaque {
             name: "__waluau_m12_Graphics".to_string(),
-            ty: Box::new(Type::Record(Default::default())),
+            ty: Arc::new(Type::record(Default::default())),
             generic_extern: None,
         }],
-        return_type: Box::new(Type::Unit),
+        return_type: Arc::new(Type::Unit),
     };
 
     let display = super::module_type_display(&ty);
@@ -1004,7 +1005,7 @@ fn generic_type_declarations_resolve_transparently() {
 
     let program = parse(source).expect("parse should succeed");
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
-    let expected = Type::Record(
+    let expected = Type::record(
         [
             ("first".to_string(), Type::Numeric(NumericType::I32)),
             ("second".to_string(), Type::Bool),
@@ -2368,7 +2369,7 @@ fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
     assert_eq!(function.params[0].name, "self");
     assert_eq!(
         function.params[0].ty,
-        Type::Record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
+        Type::record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
     );
 }
 
@@ -2412,7 +2413,7 @@ fn type_checks_generic_method_declaration() {
     assert_eq!(function.params[0].name, "self");
     assert_eq!(
         function.params[0].ty,
-        Type::Record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
+        Type::record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
     );
 }
 
@@ -4413,13 +4414,13 @@ fn infers_trailing_vararg_returns_as_variadic_packs() {
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
     assert_eq!(
         typed.functions[0].return_type,
-        Some(Type::Variadic(Box::new(Type::Unknown)))
+        Some(Type::Variadic(Arc::new(Type::Unknown)))
     );
     assert_eq!(
         typed.functions[1].return_type,
         Some(Type::Multi(vec![
             Type::Unknown,
-            Type::Variadic(Box::new(Type::Unknown)),
+            Type::Variadic(Arc::new(Type::Unknown)),
         ]))
     );
 }
@@ -5913,6 +5914,6 @@ fn typed_vararg_returns_still_widen_to_unknown_packs() {
     let typed = super::type_check_and_infer(&program).expect("type check should succeed");
     assert_eq!(
         typed.functions[0].return_type,
-        Some(Type::Variadic(Box::new(Type::Unknown)))
+        Some(Type::Variadic(Arc::new(Type::Unknown)))
     );
 }

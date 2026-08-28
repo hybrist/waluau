@@ -1,3 +1,4 @@
+use std::sync::Arc;
 struct CompilerTimer {
     #[cfg(not(target_family = "wasm"))]
     started: std::time::Instant,
@@ -436,7 +437,7 @@ fn build_inner(
             .map(|param| param.ty.clone())
             .collect::<Vec<_>>();
         if function.vararg.is_some() {
-            param_types.push(Type::Variadic(Box::new(Type::Unknown)));
+            param_types.push(Type::Variadic(Arc::new(Type::Unknown)));
         }
         let sig = (param_types, return_type);
         signatures.insert(symbol_id, sig.clone());
@@ -698,7 +699,7 @@ fn try_build_incremental(
         })?;
         let mut params = function.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>();
         if function.vararg.is_some() {
-            params.push(Type::Variadic(Box::new(Type::Unknown)));
+            params.push(Type::Variadic(Arc::new(Type::Unknown)));
         }
         let sig = (params, return_type);
         signatures.insert(symbol_id, sig.clone());
@@ -1577,9 +1578,9 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         // union value is its underlying numeric type.
         Type::StringLiteralUnion(_) => Type::String,
         Type::NumberLiteralUnion(union) => Type::Numeric(union.numeric),
-        Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types_at(inner, true))),
-        Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types_at(inner, true))),
-        Type::Variadic(inner) => Type::Variadic(Box::new(erase_type_opaque_types_at(inner, true))),
+        Type::Nullable(inner) => Type::Nullable(Arc::new(erase_type_opaque_types_at(inner, true))),
+        Type::Array(inner) => Type::Array(Arc::new(erase_type_opaque_types_at(inner, true))),
+        Type::Variadic(inner) => Type::Variadic(Arc::new(erase_type_opaque_types_at(inner, true))),
         Type::Multi(types) => Type::Multi(
             types
                 .iter()
@@ -1601,10 +1602,10 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
                 .iter()
                 .map(|ty| erase_type_opaque_types_at(ty, false))
                 .collect(),
-            return_type: Box::new(erase_type_opaque_types_at(return_type, false)),
+            return_type: Arc::new(erase_type_opaque_types_at(return_type, false)),
             has_self: false,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), erase_type_opaque_types_at(ty, true)))
@@ -1616,14 +1617,14 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         // variants long after every other type position had shed them.
         Type::TaggedVariant(variant) => Type::TaggedVariant(TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(erase_type_opaque_types_at(&variant.payload, true)),
+            payload: Arc::new(erase_type_opaque_types_at(&variant.payload, true)),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(erase_type_opaque_types_at(&variant.payload, true)),
+                    payload: Arc::new(erase_type_opaque_types_at(&variant.payload, true)),
                 })
                 .collect(),
         ),
@@ -1711,7 +1712,7 @@ pub(crate) fn build_function(
             if function.vararg.is_some() {
                 params.push((
                     "...".to_string(),
-                    Type::Variadic(Box::new(Type::Unknown)),
+                    Type::Variadic(Arc::new(Type::Unknown)),
                 ));
             }
             params
@@ -2043,14 +2044,14 @@ impl PmSlot {
     fn value_type(&self) -> Type {
         let i32_ty = Type::Numeric(NumericType::I32);
         match self {
-            PmSlot::Start => Type::Nullable(Box::new(i32_ty)),
+            PmSlot::Start => Type::Nullable(Arc::new(i32_ty)),
             PmSlot::End => i32_ty,
             PmSlot::Capture {
                 kind, nullable, ..
             } => {
                 let inner = kind.value_type();
                 if *nullable {
-                    Type::Nullable(Box::new(inner))
+                    Type::Nullable(Arc::new(inner))
                 } else {
                     inner
                 }
@@ -2117,7 +2118,7 @@ fn json_unpack_value_type(target: &Type) -> Type {
     if target.accepts_nil() {
         target.clone()
     } else {
-        Type::Nullable(Box::new(target.clone()))
+        Type::Nullable(Arc::new(target.clone()))
     }
 }
 
@@ -3001,7 +3002,7 @@ impl Builder<'_> {
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
                     // Keep parity with HIR inference: bare `{}` in local initialization starts
                     // as an empty record so subsequent `t.field = ...` can shape it.
-                    Type::Record(BTreeMap::new())
+                    Type::record(BTreeMap::new())
                 } else {
                     // A multi-value initializer collapses to its first value.
                     match self.infer_expr_type(value, types, None)? {
@@ -3296,7 +3297,7 @@ impl Builder<'_> {
                         None => {
                             let inferred = self.infer_expr_type(value, types, None)?;
                             let previous_ty = Type::Record(fields.clone());
-                            fields.insert(name.clone(), inferred.clone());
+                            Arc::make_mut(&mut fields).insert(name.clone(), inferred.clone());
                             let updated_ty = Type::Record(fields.clone());
                             let base_value =
                                 self.lower_expr(base, env, types, Some(previous_ty.clone()))?;
@@ -3304,7 +3305,7 @@ impl Builder<'_> {
                                 self.lower_expr(value, env, types, Some(inferred.clone()))?;
 
                             let mut lowered_fields = Vec::with_capacity(fields.len());
-                            for (field_name, field_ty) in &fields {
+                            for (field_name, field_ty) in fields.iter() {
                                 if field_name == name {
                                     lowered_fields.push(new_field_value);
                                 } else {
@@ -3938,7 +3939,7 @@ impl Builder<'_> {
             ok_symbol,
             DiscriminantLink {
                 payload: payload_symbol,
-                when_true: *return_type,
+                when_true: Arc::unwrap_or_clone(return_type),
                 when_false: Type::String,
             },
         );
@@ -4075,7 +4076,7 @@ impl Builder<'_> {
             Type::Record(fields) => {
                 let inner = fields.get(field)?.nullable_inner()?;
                 let mut narrowed = fields.clone();
-                narrowed.insert(field.to_string(), inner);
+                Arc::make_mut(&mut narrowed).insert(field.to_string(), inner);
                 Some(Type::Record(narrowed))
             }
             Type::Opaque {
@@ -4084,7 +4085,7 @@ impl Builder<'_> {
                 generic_extern,
             } => Some(Type::Opaque {
                 name: name.clone(),
-                ty: Box::new(Self::narrow_nullable_record_field(ty, field)?),
+                ty: Arc::new(Self::narrow_nullable_record_field(ty, field)?),
                 generic_extern: generic_extern.clone(),
             }),
             _ => None,
@@ -4970,7 +4971,7 @@ impl Builder<'_> {
                     "for-in iterator function must not require parameters",
                 ));
             }
-            return self.lower_for_in_function(*return_type, ids, iterator, body, env, types);
+            return self.lower_for_in_function(Arc::unwrap_or_clone(return_type), ids, iterator, body, env, types);
         }
         // `for k[, v] in next, t[, nil]`: the builtin `next` iterates a
         // record's fields like `pairs`, or an array with the index bound
@@ -5835,7 +5836,7 @@ impl Builder<'_> {
             Expr::Nil(_) => {
                 let ty = match expected.clone() {
                     Some(nullable @ Type::Nullable(_)) if nullable.is_boxed_nullable() => nullable,
-                    Some(Type::Nullable(inner)) => *inner,
+                    Some(Type::Nullable(inner)) => Arc::unwrap_or_clone(inner),
                     Some(Type::Extern) => Type::Extern,
                     // nil as an `unknown` value is a null anyref (e.g. nil
                     // passed through varargs or compared dynamically).
@@ -5868,7 +5869,7 @@ impl Builder<'_> {
                     // never rewrites the boxed runtime pack.
                     Some(Type::Variadic(_)) => value,
                     other => {
-                        self.coerce_value(value, Type::Variadic(Box::new(Type::Unknown)), other)?
+                        self.coerce_value(value, Type::Variadic(Arc::new(Type::Unknown)), other)?
                     }
                 }
             }
@@ -5907,7 +5908,7 @@ impl Builder<'_> {
                     });
                     let actual = Type::Function {
                         params,
-                        return_type: Box::new(return_type),
+                        return_type: Arc::new(return_type),
                         has_self: false,
                     };
                     self.coerce_value(value, actual, expected)?
@@ -5984,12 +5985,12 @@ impl Builder<'_> {
                 let (param_types, return_type) = if let Some((_, params, return_type)) =
                     type_method.clone()
                 {
-                    (params, Box::new(return_type))
+                    (params, Arc::new(return_type))
                 } else if let Some(signature) =
                     method_signature(receiver, name, self.field_call_signatures)
                 {
                     let (params, return_type) = signature;
-                    (params, Box::new(return_type))
+                    (params, Arc::new(return_type))
                 } else {
                     let field_ty = receiver_ty
                         .record_field(name)
@@ -6076,7 +6077,7 @@ impl Builder<'_> {
                         callee: callee_value,
                         args: lowered_args,
                         params: param_types.clone(),
-                        return_type: *return_type,
+                        return_type: Arc::unwrap_or_clone(return_type),
                     })
                 };
                 self.write_back_method_receiver_mutations(
@@ -6515,7 +6516,7 @@ impl Builder<'_> {
                             .as_ref()
                             .and_then(|e| e.constructed_tagged_variant(tag))
                         {
-                            let payload_ty = *variant.payload;
+                            let payload_ty = Arc::unwrap_or_clone(variant.payload);
                             if matches!(&payload_ty, Type::String | Type::Bytes) {
                                 return Err(Diagnostic::new(format!(
                                     "tagged union constructor {}({}) is not yet supported: \
@@ -6709,7 +6710,7 @@ impl Builder<'_> {
                     callee: callee_value,
                     args: args.clone(),
                     params: param_types.clone(),
-                    return_type: *return_type,
+                    return_type: Arc::unwrap_or_clone(return_type),
                 });
 
                 // Handle method call writeback if this call originated from a generic method
@@ -6762,7 +6763,7 @@ impl Builder<'_> {
                     // The struct is allocated as the bare record; the final
                     // coercion rewraps opaque aliases and nullable
                     // expectations (`local m: Marker = {}`, `Marker?`).
-                    let struct_ty = Type::Record(record_fields.clone());
+                    let struct_ty = Type::record(record_fields.clone());
                     let value = self.emit(Instruction::StructNew {
                         struct_ty: struct_ty.clone(),
                         fields: Vec::with_capacity(record_fields.len()),
@@ -6849,7 +6850,7 @@ impl Builder<'_> {
                     self.emit_array_append_all(value, pack);
                     return self.coerce_value(
                         value,
-                        Type::Array(Box::new(Type::Unknown)),
+                        Type::Array(Arc::new(Type::Unknown)),
                         expected,
                     );
                 }
@@ -6915,7 +6916,7 @@ impl Builder<'_> {
                         "table literal lowering requires a record type",
                     ));
                 };
-                let struct_ty = Type::Record(record_fields.clone());
+                let struct_ty = Type::record(record_fields.clone());
                 // Record storage is canonicalized by field name, but table
                 // constructor expressions evaluate left-to-right as written.
                 // Lower into named values first, then assemble StructNew's
@@ -7265,7 +7266,7 @@ impl Builder<'_> {
             // (lifted) functions so they can observe/mutate shared storage.
             lifted.params.push((
                 format!("capture_{}", symbol_id.0),
-                Type::Array(Box::new(to_runtime_type(ty))),
+                Type::Array(Arc::new(to_runtime_type(ty))),
             ));
         }
         for param in &function.params {
@@ -7399,7 +7400,7 @@ impl Builder<'_> {
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    return_type: Box::new(return_ty.clone()),
+                    return_type: Arc::new(return_ty.clone()),
                     has_self: false,
                 },
             );
@@ -7477,9 +7478,9 @@ impl Builder<'_> {
                 Some(Type::Nil) => Err(Diagnostic::new(
                     "numeric literal is not assignable to nil",
                 )),
-                Some(Type::Nullable(inner)) => match *inner {
+                Some(Type::Nullable(inner)) => match Arc::unwrap_or_clone(inner) {
                     Type::Numeric(numeric) => {
-                        Ok(Type::Nullable(Box::new(Type::Numeric(numeric))))
+                        Ok(Type::Nullable(Arc::new(Type::Numeric(numeric))))
                     }
                     other => Err(Diagnostic::new(format!(
                         "numeric literal is not assignable to {other}?",
@@ -7531,7 +7532,7 @@ impl Builder<'_> {
             Expr::Bool(..) => coerce_type(Type::Bool, expected),
             Expr::String(..) => coerce_type(Type::String, expected),
             Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
-            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(
+            Expr::Vararg(..) => Ok(Type::Variadic(Arc::new(
                 self.vararg_element.clone().unwrap_or(Type::Unknown),
             ))),
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
@@ -7552,7 +7553,7 @@ impl Builder<'_> {
                 } else if let Some((params, ret)) = self.signatures.get(&symbol_id) {
                     Ok(Type::Function {
                         params: params.clone(),
-                        return_type: Box::new(ret.clone()),
+                        return_type: Arc::new(ret.clone()),
                         has_self: false,
                     })
                 } else {
@@ -7613,12 +7614,12 @@ impl Builder<'_> {
                 let resolved_recursive_receiver =
                     resolved_name.is_some() && type_method.is_some() && receiver_ty == Type::Unknown;
                 let (params, return_type) = if let Some((_, params, return_type)) = type_method {
-                    (params, Box::new(return_type))
+                    (params, Arc::new(return_type))
                 } else if let Some(signature) =
                     method_signature(receiver, name, self.field_call_signatures)
                 {
                     let (params, return_type) = signature;
-                    (params, Box::new(return_type))
+                    (params, Arc::new(return_type))
                 } else {
                     let field_ty = receiver_ty
                         .record_field(name)
@@ -7667,7 +7668,7 @@ impl Builder<'_> {
                         )));
                     }
                 }
-                coerce_type(*return_type, expected)
+                coerce_type(Arc::unwrap_or_clone(return_type), expected)
             }
             Expr::Unary {
                 op,
@@ -7874,7 +7875,7 @@ impl Builder<'_> {
                     // call result adapts like any other expression (e.g. an
                     // extern result in an extern? argument position), matching
                     // the HIR inference path.
-                    Type::Function { return_type, .. } => coerce_type(*return_type, expected),
+                    Type::Function { return_type, .. } => coerce_type(Arc::unwrap_or_clone(return_type), expected),
                     other => Err(Diagnostic::new(format!(
                         "attempt to call non-function value of type {other}",
                     ))),
@@ -7882,7 +7883,7 @@ impl Builder<'_> {
             }
             Expr::Function(function) => Ok(Type::Function {
                 has_self: false,
-                return_type: Box::new(Self::function_expr_return_type(function)?),
+                return_type: Arc::new(Self::function_expr_return_type(function)?),
                 params: function
                     .params
                     .iter()
@@ -7902,7 +7903,7 @@ impl Builder<'_> {
                     let field_ty = self.infer_expr_type(&field.value, types, expected_field_ty)?;
                     record_fields.insert(field.name.clone(), field_ty);
                 }
-                coerce_type(Type::Record(record_fields), expected)
+                coerce_type(Type::record(record_fields), expected)
             }
             Expr::Field {
                 base,
@@ -8257,7 +8258,7 @@ impl Builder<'_> {
                     index: zero,
                     element_ty: (*element).clone(),
                 });
-                self.coerce_value(first, *element, Some(expected))
+                self.coerce_value(first, Arc::unwrap_or_clone(element), Some(expected))
             }
             // Multi-value adjustment: take the first value.
             Some(expected)
@@ -8380,7 +8381,7 @@ impl Builder<'_> {
                     .iter()
                     .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)) =>
             {
-                for (field, field_ty) in expected_fields {
+                for (field, field_ty) in expected_fields.iter() {
                     let updated = self.emit(Instruction::StructGet {
                         base: projected,
                         field: field.clone(),
@@ -8444,13 +8445,13 @@ impl Builder<'_> {
         }
         if elements.is_empty() {
             if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
-                return coerce_type(Type::Array(Box::new(element_ty)), expected);
+                return coerce_type(Type::Array(Arc::new(element_ty)), expected);
             }
             // `{}` with a record-like expectation is the empty record
             // literal, not an array literal (see infer_array_literal in
             // waluau-hir).
             if expected.as_ref().is_some_and(is_record_like) {
-                return coerce_type(Type::Record(BTreeMap::new()), expected);
+                return coerce_type(Type::record(BTreeMap::new()), expected);
             }
             return Err(inference_diagnostic(
                 "inference/missing-context",
@@ -8486,7 +8487,7 @@ impl Builder<'_> {
         // and an expected `{unknown}` boxes every element, so both force the
         // element type to unknown.
         if trailing_pack || expected_element == Some(Type::Unknown) {
-            return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
+            return coerce_type(Type::Array(Arc::new(Type::Unknown)), expected);
         }
         // A tagged union stays the element type of the whole literal rather than
         // narrowing to the first element's variant (see infer_array_literal in
@@ -8496,7 +8497,7 @@ impl Builder<'_> {
             matches!(ty, Type::TaggedUnion(_))
                 || matches!(ty, Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::TaggedUnion(_)))
         }) {
-            return coerce_type(Type::Array(Box::new(union_ty.clone())), expected);
+            return coerce_type(Type::Array(Arc::new(union_ty.clone())), expected);
         }
         let mut iter = elements.iter();
         let first = iter.next().expect("non-empty array literal");
@@ -8522,7 +8523,7 @@ impl Builder<'_> {
             }
         }
 
-        coerce_type(Type::Array(Box::new(element_ty)), expected)
+        coerce_type(Type::Array(Arc::new(element_ty)), expected)
     }
 
     fn lower_coroutine_builtin_call(
@@ -8544,7 +8545,7 @@ impl Builder<'_> {
                 }
                 let callee_ty = Type::Function {
                     params: Vec::new(),
-                    return_type: Box::new(i32_ty.clone()),
+                    return_type: Arc::new(i32_ty.clone()),
                     has_self: false,
                 };
                 let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
@@ -8783,7 +8784,7 @@ impl Builder<'_> {
             callee,
             args: lowered_args,
             params,
-            return_type: *return_type,
+            return_type: Arc::unwrap_or_clone(return_type),
         });
         Some(self.coerce_value(
             value,
@@ -9365,7 +9366,7 @@ impl Builder<'_> {
         // Runtime parses can fail, so the result is `f64?` (nil on failure).
         // A numeric expected type keeps the plain f64 result (the unbox traps
         // on nil, matching Lua's arithmetic-on-nil error).
-        let nullable_ty = Type::Nullable(Box::new(result_ty.clone()));
+        let nullable_ty = Type::Nullable(Arc::new(result_ty.clone()));
         let value = self.emit(Instruction::ToNumber {
             value: lowered,
             from: arg_ty,
@@ -9925,7 +9926,7 @@ impl Builder<'_> {
             .ok_or_else(|| Diagnostic::new(format!("{name} expects an array argument")))?;
         let list_ty = self.infer_expr_type(arg, types, None)?;
         match list_ty {
-            Type::Array(element) => Ok(*element),
+            Type::Array(element) => Ok(Arc::unwrap_or_clone(element)),
             other => Err(Diagnostic::new(format!(
                 "{name} expects an array as its first argument, got {other}"
             ))),
@@ -9957,7 +9958,7 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let array_ty = Type::Array(Box::new(Type::String));
+        let array_ty = Type::Array(Arc::new(Type::String));
         let list_ty = match self
             .infer_expr_type(&args[0], types, Some(array_ty.clone()))
             .or_else(|_| self.infer_expr_type(&args[0], types, None))
@@ -10104,7 +10105,7 @@ impl Builder<'_> {
             )));
         }
         let element_ty = self.table_array_element_type(TABLE_GETN, args, types)?;
-        let array_ty = Type::Array(Box::new(element_ty));
+        let array_ty = Type::Array(Arc::new(element_ty));
         let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
         let len = self.emit(Instruction::ArrayLen { array });
         self.coerce_value(len, Type::Numeric(NumericType::I32), expected)
@@ -10128,7 +10129,7 @@ impl Builder<'_> {
                 }
             }
         }
-        let array_ty = Type::Array(Box::new(Type::Unknown));
+        let array_ty = Type::Array(Arc::new(Type::Unknown));
         let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
         let explicit = if trailing_vararg {
             &args[..args.len() - 1]
@@ -10271,7 +10272,7 @@ impl Builder<'_> {
             );
             self.current_block = exit;
         }
-        self.coerce_value(array, Type::Array(Box::new(element_ty)), expected)
+        self.coerce_value(array, Type::Array(Arc::new(element_ty)), expected)
     }
 
     /// `table.unpack(a [, first [, last]])` with statically-knowable bounds
@@ -10297,7 +10298,7 @@ impl Builder<'_> {
             &args[0],
             env,
             types,
-            Some(Type::Array(Box::new(element_ty.clone()))),
+            Some(Type::Array(Arc::new(element_ty.clone()))),
         )?;
         // The bound arguments are compile-time literals (checked above), so
         // they need no lowering of their own.
@@ -10336,7 +10337,7 @@ impl Builder<'_> {
         // constructor still resolves against the variants the element declares;
         // the cells it is stored into are annotated with what they actually hold.
         let stored_ty = to_runtime_type(&element_ty);
-        let array_ty = Type::Array(Box::new(stored_ty.clone()));
+        let array_ty = Type::Array(Arc::new(stored_ty.clone()));
         let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
         let i32_ty = Type::Numeric(NumericType::I32);
 
@@ -10460,7 +10461,7 @@ impl Builder<'_> {
             )));
         }
         let element_ty = self.table_array_element_type(TABLE_REMOVE, args, types)?;
-        let array_ty = Type::Array(Box::new(element_ty.clone()));
+        let array_ty = Type::Array(Arc::new(element_ty.clone()));
         let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
         let i32_ty = Type::Numeric(NumericType::I32);
 
@@ -10579,14 +10580,14 @@ impl Builder<'_> {
             )));
         }
         let element_ty = self.table_array_element_type(TABLE_SORT, args, types)?;
-        let array_ty = Type::Array(Box::new(element_ty.clone()));
+        let array_ty = Type::Array(Arc::new(element_ty.clone()));
         let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
         let i32_ty = Type::Numeric(NumericType::I32);
 
         let comparator = if let Some(comparator_arg) = args.get(1) {
             let comparator_ty = Type::Function {
                 params: vec![element_ty.clone(), element_ty.clone()],
-                return_type: Box::new(Type::Bool),
+                return_type: Arc::new(Type::Bool),
                 has_self: false,
             };
             Some(self.lower_expr(comparator_arg, env, types, Some(comparator_ty))?)
@@ -10935,7 +10936,7 @@ impl Builder<'_> {
         if string_byte_requires_numeric_value(expected.as_ref()) {
             Some(coerce_type(f64_ty, expected))
         } else {
-            Some(coerce_type(Type::Nullable(Box::new(f64_ty)), expected))
+            Some(coerce_type(Type::Nullable(Arc::new(f64_ty)), expected))
         }
     }
 
@@ -10996,7 +10997,7 @@ impl Builder<'_> {
             return None;
         };
         match name {
-            TABLE_PACK => return Some(Ok(Type::Array(Box::new(Type::Unknown)))),
+            TABLE_PACK => return Some(Ok(Type::Array(Arc::new(Type::Unknown)))),
             TABLE_CREATE => {
                 let expected_element = match &expected {
                     Some(Type::Array(element)) => Some((**element).clone()),
@@ -11009,7 +11010,7 @@ impl Builder<'_> {
                     },
                     None => expected_element.unwrap_or(Type::Unknown),
                 };
-                return Some(Ok(Type::Array(Box::new(element_ty))));
+                return Some(Ok(Type::Array(Arc::new(element_ty))));
             }
             TABLE_UNPACK => {
                 let element_ty = match self.table_array_element_type(TABLE_UNPACK, args, types) {
@@ -11038,13 +11039,13 @@ impl Builder<'_> {
             ))));
         }
         let list_ty = match self
-            .infer_expr_type(&args[0], types, Some(Type::Array(Box::new(Type::String))))
+            .infer_expr_type(&args[0], types, Some(Type::Array(Arc::new(Type::String))))
             .or_else(|_| self.infer_expr_type(&args[0], types, None))
         {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if list_ty != Type::Array(Box::new(Type::String)) {
+        if list_ty != Type::Array(Arc::new(Type::String)) {
             return Some(Err(Diagnostic::new(format!(
                 "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
             ))));
@@ -11415,7 +11416,7 @@ impl Builder<'_> {
                     Vec::new(),
                     i32_ty.clone(),
                 )?;
-                for (name, field_ty) in fields {
+                for (name, field_ty) in fields.iter() {
                     let field = self.emit(Instruction::StructGet {
                         base: value,
                         field: name.clone(),
@@ -11692,7 +11693,7 @@ impl Builder<'_> {
             }
             Type::Record(fields) => {
                 let mut values = Vec::with_capacity(fields.len());
-                for (name, field_ty) in fields {
+                for (name, field_ty) in fields.iter() {
                     let key = self.emit(Instruction::String(name.clone()));
                     let child = self.emit_json_host_call(
                         JSON_UNPACK_OBJECT_GET_HOST,
@@ -12011,7 +12012,7 @@ impl Builder<'_> {
                     {
                         Ok(self.emit(Instruction::Cast {
                             value: nullable,
-                            from: Type::Nullable(Box::new(i32_ty.clone())),
+                            from: Type::Nullable(Arc::new(i32_ty.clone())),
                             to: i32_ty.clone(),
                         }))
                     } else {
@@ -12202,8 +12203,8 @@ impl Builder<'_> {
                     {
                         i32_ty
                     }
-                    STRING_BYTE => Type::Nullable(Box::new(i32_ty)),
-                    STRING_SPLIT => Type::Array(Box::new(Type::String)),
+                    STRING_BYTE => Type::Nullable(Arc::new(i32_ty)),
+                    STRING_SPLIT => Type::Array(Arc::new(Type::String)),
                     _ => Type::String,
                 };
                 (value, result_ty)
@@ -12812,7 +12813,7 @@ impl Builder<'_> {
                 Ok(self.emit(Instruction::Cast {
                     value: raw,
                     from: i32_ty.clone(),
-                    to: Type::Nullable(Box::new(i32_ty)),
+                    to: Type::Nullable(Arc::new(i32_ty)),
                 }))
             }
             PmSlot::End => self.emit_string_host_call(PM_MATCH_END_HOST, vec![], i32_ty),
@@ -12833,7 +12834,7 @@ impl Builder<'_> {
                     Ok(self.emit(Instruction::Cast {
                         value: raw,
                         from: raw_ty.clone(),
-                        to: Type::Nullable(Box::new(raw_ty)),
+                        to: Type::Nullable(Arc::new(raw_ty)),
                     }))
                 } else {
                     Ok(raw)
@@ -12894,7 +12895,7 @@ impl Builder<'_> {
         let (out, count) = if let Some((param_tys, return_ty)) = repl_fn_ty {
             let repl_ty = Type::Function {
                 params: param_tys.clone(),
-                return_type: Box::new(return_ty.clone()),
+                return_type: Arc::new(return_ty.clone()),
                 has_self: false,
             };
             let repl = self.lower_expr(&args[2], env, types, Some(repl_ty))?;
@@ -12946,7 +12947,7 @@ impl Builder<'_> {
                     params,
                     return_type,
                     ..
-                } => Ok(Some((params, *return_type))),
+                } => Ok(Some((params, Arc::unwrap_or_clone(return_type)))),
                 _ => Ok(None),
             };
         }
@@ -12955,7 +12956,7 @@ impl Builder<'_> {
         for return_ty in [Type::String, Type::Unit] {
             let candidate = Type::Function {
                 params: expected_params.clone(),
-                return_type: Box::new(return_ty.clone()),
+                return_type: Arc::new(return_ty.clone()),
                 has_self: false,
             };
             if self
@@ -13305,7 +13306,7 @@ impl Builder<'_> {
                         return Some(Err(error));
                     }
                 }
-                Some(Ok(Type::Array(Box::new(Type::String))))
+                Some(Ok(Type::Array(Arc::new(Type::String))))
             }
             STRING_BYTE => {
                 if args.is_empty() || args.len() > 3 {
@@ -13355,7 +13356,7 @@ impl Builder<'_> {
                 {
                     Some(Ok(i32_ty))
                 } else {
-                    Some(Ok(Type::Nullable(Box::new(i32_ty))))
+                    Some(Ok(Type::Nullable(Arc::new(i32_ty))))
                 }
             }
             STRING_CHAR => {
@@ -13463,7 +13464,7 @@ impl Builder<'_> {
 
     fn lower_nullable_i32_sentinel(&mut self, raw: ValueId, sentinel: i32) -> ValueId {
         let i32_ty = Type::Numeric(NumericType::I32);
-        let nullable_i32 = Type::Nullable(Box::new(i32_ty.clone()));
+        let nullable_i32 = Type::Nullable(Arc::new(i32_ty.clone()));
         let sentinel = self.emit_i32_const(sentinel);
         let is_nil = self.emit(Instruction::Binary {
             op: BinaryOp::Eq,
@@ -13905,7 +13906,7 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
                     Type::Record(expected_fields)
                 )));
             };
-            for (name, expected_ty) in &expected_fields {
+            for (name, expected_ty) in expected_fields.iter() {
                 let Some(actual_ty) = actual_fields.get(name) else {
                     if expected_ty.accepts_nil() {
                         continue;

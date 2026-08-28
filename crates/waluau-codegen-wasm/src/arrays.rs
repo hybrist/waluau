@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use waluau_ast::{NumericType, Type};
 use waluau_diagnostics::Diagnostic;
@@ -538,13 +539,13 @@ fn collect_array_types_from_instruction(
 ) {
     match instruction {
         IrInstruction::ArrayNew { element_ty, .. } => {
-            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
+            insert_array_type(&Type::Array(Arc::new(element_ty.clone())), seen, out);
         }
         IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
         | IrInstruction::ArraySlice { element_ty, .. }
         | IrInstruction::ArrayPop { element_ty, .. } => {
-            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
+            insert_array_type(&Type::Array(Arc::new(element_ty.clone())), seen, out);
         }
         IrInstruction::ArrayLen { .. }
         | IrInstruction::Bytes(_)
