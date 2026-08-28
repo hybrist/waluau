@@ -18,12 +18,17 @@ export type Surface = {
 }
 export type Measure = (Graphics?, layout.Intrinsic) -> unit
 export type Paint = (Surface, layout.Rect) -> unit
+export type HitBehavior = "transparent" | "target" | "opaque"
 export type Node = {
     box: layout.Box,
     children: {Node},
     measure_content: (Graphics?, layout.Intrinsic) -> unit,
     paint_content: (Surface, layout.Rect) -> unit,
     pointer_key: i32,
+    hit_behavior: HitBehavior,
+    hit_test: (layout.Rect, f64, f64) -> bool,
+    visible: bool,
+    enabled: bool,
 }
 export type FlowSpec = {
     gap: f64?,
@@ -34,6 +39,10 @@ export type FlowSpec = {
 
 function empty_paint(surface: Surface, bounds: layout.Rect): unit end
 function empty_measure(graphics: Graphics?, into: layout.Intrinsic): unit end
+
+function rectangular_hit(bounds: layout.Rect, x: f64, y: f64): bool
+    return layout.contains(bounds, x, y)
+end
 
 function own(children: {Node}): {Node}
     local result: {Node} = {}
@@ -62,6 +71,10 @@ function make(
         measure_content = measure,
         paint_content = paint,
         pointer_key = -1,
+        hit_behavior = "transparent",
+        hit_test = rectangular_hit,
+        visible = true,
+        enabled = true,
     }
 end
 
@@ -198,20 +211,106 @@ end
 function Node:accept_pointer(key: i32): Node
     assert(key >= 0)
     self.pointer_key = key
+    self.hit_behavior = "target"
     return self
+end
+
+-- Pointer-transparent nodes still allow their children to respond. Opaque
+-- nodes stop traversal at their painted shape without becoming a target; this
+-- is useful for modal shields and other overlays that intentionally eat input.
+function Node:pointer_transparent(): Node
+    self.pointer_key = -1
+    self.hit_behavior = "transparent"
+    return self
+end
+
+function Node:pointer_opaque(): Node
+    self.pointer_key = -1
+    self.hit_behavior = "opaque"
+    return self
+end
+
+
+function Node:set_hit_test(test: (layout.Rect, f64, f64) -> bool): Node
+    self.hit_test = test
+    return self
+end
+
+
+function Node:set_visible(value: bool): Node
+    self.visible = value
+    return self
+end
+
+
+function Node:set_enabled(value: bool): Node
+    self.enabled = value
+    return self
+end
+
+
+function Node:is_visible(): bool
+    return self.visible
+end
+
+
+function Node:is_enabled(): bool
+    return self.enabled
+end
+
+
+const HIT_MISS: i32 = -1
+const HIT_BLOCKED: i32 = -2
+
+function clear_path(path: {i32}): unit
+    while #path > 0 do table.remove(path) end
+end
+
+-- The path is retained by the caller and filled leaf-to-root. Keeping only
+-- integer responder identities avoids the compiler's nullable recursive-record
+-- lowering bug (waluau-lk1l) while preserving stable node identity.
+function hit_path_from(self: Node, x: f64, y: f64, path: {i32}): i32
+    if not self.visible then return HIT_MISS end
+
+    local index: i32 = #self.children - 1
+    while index >= 0 do
+        local found: i32 = hit_path_from(self.children[index], x, y, path)
+        if found == HIT_BLOCKED then return HIT_BLOCKED end
+        if found >= 0 then
+            if self.hit_behavior == "target" and self.enabled then
+                table.insert(path, self.pointer_key)
+            end
+            return found
+        end
+        index -= 1
+    end
+
+    if not self.hit_test(self.box:rectangle(), x, y) then return HIT_MISS end
+    if self.hit_behavior == "opaque" then return HIT_BLOCKED end
+    if self.hit_behavior == "target" then
+        if not self.enabled then return HIT_BLOCKED end
+        table.insert(path, self.pointer_key)
+        return self.pointer_key
+    end
+    return HIT_MISS
+end
+
+
+function Node:hit_path(x: f64, y: f64, path: {i32}): i32
+    clear_path(path)
+    local found: i32 = hit_path_from(self, x, y, path)
+    if found == HIT_BLOCKED then
+        clear_path(path)
+        return HIT_MISS
+    end
+    return found
 end
 
 -- Children paint after parents and later siblings paint over earlier ones, so
 -- reverse traversal gives pointer routing the same winner as drawing.
 function Node:hit(x: f64, y: f64): i32
-    if not layout.contains(self.box:rectangle(), x, y) then return -1 end
-    local index: i32 = #self.children - 1
-    while index >= 0 do
-        local found: i32 = self.children[index]:hit(x, y)
-        if found >= 0 then return found end
-        index -= 1
-    end
-    return self.pointer_key
+    local path: {i32} = {}
+    return self:hit_path(x, y, path)
 end
 
 return {
