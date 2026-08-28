@@ -6,8 +6,8 @@
 
 local game = require("../game")
 local run_module = require("../run")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local label = require("./label")
 local ability_diamond = require("./ability_diamond")
 
@@ -40,21 +40,51 @@ function stats(state: game.View, run: run_module.View): entity.Node
     }))
 end
 
-function node(state: game.View, run: run_module.View): entity.Node
-    return entity.Node.layer({
+export type Stateful = {
+    hearts: label.Stateful,
+    gold: label.Stateful,
+    abilities: ability_diamond.Stateful,
+    root: entity.Node,
+}
+
+function Stateful.new(state: game.View, run: run_module.View): Stateful
+    local hearts: label.Stateful = label.Stateful.new(
+        "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
+        HINT_SIZE, HEART_INK, label.align_left, false)
+    local gold: label.Stateful = label.Stateful.new(
+        "GOLD " .. tostring(state.player_points),
+        HINT_SIZE, GOLD_INK, label.align_left, false)
+    local abilities: ability_diamond.Stateful = ability_diamond.Stateful.new(state)
+    local stat_root: entity.Node = padded_caption(entity.Node.down(
+        { gap = 4.0, align = "start" }, { hearts.root, gold.root }))
+    local root: entity.Node = entity.Node.layer({
         entity.Node.across(
             { justify = "start", align = "end" },
-            { stats(state, run) }),
+            { stat_root }),
         entity.Node.across(
             { justify = "center", align = "end" },
             { menu() }),
         entity.Node.across(
             { justify = "end", align = "end" },
-            { ability_diamond.node(state) }),
+            { abilities.root }),
     })
+    return { hearts = hearts, gold = gold, abilities = abilities, root = root }
+end
+
+function Stateful:present(state: game.View, run: run_module.View): unit
+    self.hearts:present(
+        "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
+        HINT_SIZE, HEART_INK, label.align_left)
+    self.gold:present(
+        "GOLD " .. tostring(state.player_points),
+        HINT_SIZE, GOLD_INK, label.align_left)
+    self.abilities:present(state)
+end
+
+function node(state: game.View, run: run_module.View): entity.Node
+    return Stateful.new(state, run).root
 end
 
 return {
     node = node,
 }
-

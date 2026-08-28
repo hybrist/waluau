@@ -10,8 +10,8 @@
 -- already tally the run.
 
 local game = require("../game")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local ink = require("../ink")
 local card = require("./card")
 
@@ -29,14 +29,28 @@ function draw_at(
     card.draw_face(surface, card.plain(cards[count - 1]), x, y)
 end
 
-function node(cards: {game.Card}, count: i32): entity.Node
-    return entity.Node.measured(
+type PilePresentation = { cards: {game.Card}, count: i32 }
+export type Stateful = { presentation: PilePresentation, root: entity.Node }
+
+function Stateful.new(cards: {game.Card}, count: i32): Stateful
+    local presentation: PilePresentation = { cards = cards, count = count }
+    local root: entity.Node = entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return card.intrinsic()
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
-            draw_at(surface, cards, count, bounds.x, bounds.y)
+            draw_at(surface, presentation.cards, presentation.count, bounds.x, bounds.y)
         end)
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(cards: {game.Card}, count: i32): unit
+    self.presentation.cards = cards
+    self.presentation.count = count
+end
+
+function node(cards: {game.Card}, count: i32): entity.Node
+    return Stateful.new(cards, count).root
 end
 
 return {

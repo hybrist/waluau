@@ -1,0 +1,47 @@
+require("waluau:vitest")
+
+local capsule = require("./capsule")
+local card = require("./card")
+local hand_fan = require("./hand_fan")
+
+describe("retained entity presentation", function(): unit
+    it("updates layout-affecting capsule text without replacing the node", function(): unit
+        local view: capsule.Stateful = capsule.Stateful.new("PASS", false)
+        local root = view.root
+        local before = root.measure({ graphics = nil })
+
+        view:present("COMMIT THE FORMATION", true)
+        local after = root.measure({ graphics = nil })
+
+        expect(after.preferred_width):toBeGreaterThan(before.preferred_width)
+    end)
+
+    it("updates a card's paint presentation without replacing its node", function(): unit
+        local first = card.look(
+            { rank = 7, suit = 0 }, false, false, false, false, false)
+        local second = card.look(
+            { rank = 14, suit = 3 }, true, true, false, true, false)
+        local view: card.Stateful = card.Stateful.new(first)
+        local root = view.root
+
+        view:present(second)
+
+        expect(view.presentation.value.card.rank):toBe(14)
+        expect(view.presentation.value.selected):toBe(true)
+    end)
+
+    it("remeasures a stable fan when its presented slot count changes", function(): unit
+        local look = card.look(
+            { rank = 9, suit = 1 }, false, false, false, false, false)
+        local view: hand_fan.Stateful = hand_fan.Stateful.new(
+            { look }, { 0.0 }, { false })
+        local root = view.root
+        local before = root.measure({ graphics = nil })
+
+        view:present(
+            { look, look, look }, { 0.0, 0.0, 0.0 }, { false, false, false })
+        local after = root.measure({ graphics = nil })
+
+        expect(after.preferred_width):toBeGreaterThan(before.preferred_width)
+    end)
+end)

@@ -5,8 +5,8 @@
 -- ever means one thing on screen.
 
 local game = require("../game")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 
 -- The live round's ring is the widest thing an orb ever draws, so it is what
 -- an orb's box measures.
@@ -43,7 +43,9 @@ end
 
 -- One round's orb, keyed off the winner recorded for it. A stalemate is not a
 -- table-card hold, so it does not wear the lost colour.
-function orb(state: game.View, round: i32): entity.Node
+type TrackPresentation = { state: game.View }
+
+function orb_presented(presentation: TrackPresentation, round: i32): entity.Node
     return entity.Node.sized(
         ORB_SIZE, ORB_SIZE,
         function(surface: entity.Surface, bounds: box.Rect): unit
@@ -51,6 +53,7 @@ function orb(state: game.View, round: i32): entity.Node
             local y: f64 = bounds.y + bounds.height * 0.5
             local edge: string = ORB_UNPLAYED_EDGE
             local fill: string = ORB_UNPLAYED_FILL
+            local state: game.View = presentation.state
             local played: bool = round < #state.history
             if played then
                 local winner: i32 = state.history[round].winner
@@ -73,15 +76,33 @@ function orb(state: game.View, round: i32): entity.Node
         end)
 end
 
-function node(state: game.View): entity.Node
-    local orbs: {entity.Node} = {}
+function orb(state: game.View, round: i32): entity.Node
+    return orb_presented({ state = state }, round)
+end
+
+export type Stateful = { presentation: TrackPresentation, root: entity.Node }
+
+function Stateful.new(state: game.View): Stateful
+    local presentation: TrackPresentation = { state = state }
+    local orbs: {entity.LegacyNode} = {}
     local round_count: i32 = 1
     if state.boss then round_count = game.max_rounds end
     for round = 0::i32, round_count - 1 do
-        table.insert(orbs, orb(state, round))
+        table.insert(orbs, orb_presented(presentation, round))
     end
-    return entity.Node.flow(
-        orbs, entity.row(ORB_GAP, "center", "center"))
+    return {
+        presentation = presentation,
+        root = entity.Node.flow(orbs, entity.row(ORB_GAP, "center", "center")),
+    }
+end
+
+function Stateful:present(state: game.View): unit
+    assert(state.boss == self.presentation.state.boss)
+    self.presentation.state = state
+end
+
+function node(state: game.View): entity.Node
+    return Stateful.new(state).root
 end
 
 return {

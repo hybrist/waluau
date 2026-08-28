@@ -1,0 +1,368 @@
+-- Entity-local bridge from Ante's retained UI nodes to the measure/paint shape
+-- still consumed by screens that migrate in later PRs. Entity modules build
+-- one retained ui.Node tree; this wrapper only keeps the old call convention
+-- at the seam and can disappear when the last screen moves to ui.Node.
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local ui = require("../ui/node")
+local layout = require("../ui/layout")
+local ink = require("../ink")
+local effect_shaders = require("../effect_shaders")
+local legacy = require("../entity")
+local legacy_layout = require("../box_layout")
+
+-- TODO(waluau-1x1i): Replace the duplicated Surface/Metrics records, explicit
+-- record-copy helpers, and LegacyNode/LegacyStyle aliases below with direct
+-- imported type aliases once module-qualified record aliases unify in callback
+-- and array positions. The final screen migration can then delete this bridge.
+export type Graphics = engine.Graphics
+export type Surface = {
+    graphics: Graphics,
+    effects: effect_shaders.EffectShaders,
+    card_back: graphics_module.Texture?,
+    suit_symbols: graphics_module.Texture?,
+}
+export type Metrics = { graphics: Graphics? }
+export type Node = {
+    measure: (legacy.Metrics) -> legacy_layout.Intrinsic,
+    paint: (legacy.Surface, legacy_layout.Rect) -> unit,
+    grow: f64,
+    shrink: f64,
+}
+export type LegacyNode = legacy.Node
+export type LegacyStyle = legacy_layout.Style
+export type FlowSpec = {
+    gap: f64?,
+    justify: layout.Justify?,
+    align: layout.Align?,
+    padding: layout.Edges?,
+}
+
+function Surface:metrics(): Metrics
+    return { graphics = self.graphics }
+end
+
+function Metrics.headless(): Metrics
+    return { graphics = nil }
+end
+
+const FALLBACK_ADVANCE: f64 = 0.75
+
+function Metrics:text_width(value: string, size: f64): f64
+    local maybe: Graphics? = self.graphics
+    if maybe == nil then return (#value::f64) * size * FALLBACK_ADVANCE end
+    return ink.text_width(maybe::Graphics, value, size)
+end
+
+function ui_surface(surface: Surface): ui.Surface
+    return {
+        graphics = surface.graphics,
+        effects = surface.effects,
+        card_back = surface.card_back,
+        suit_symbols = surface.suit_symbols,
+    }
+end
+
+function entity_surface(surface: ui.Surface): Surface
+    return {
+        graphics = surface.graphics,
+        effects = surface.effects,
+        card_back = surface.card_back,
+        suit_symbols = surface.suit_symbols,
+    }
+end
+
+function surface_from_legacy(surface: legacy.Surface): Surface
+    return {
+        graphics = surface.graphics,
+        effects = surface.effects,
+        card_back = surface.card_back,
+        suit_symbols = surface.suit_symbols,
+    }
+end
+
+function legacy_intrinsic(value: layout.Intrinsic): legacy_layout.Intrinsic
+    return {
+        min_width = value.min_width,
+        preferred_width = value.preferred_width,
+        max_width = value.max_width,
+        min_height = value.min_height,
+        preferred_height = value.preferred_height,
+        max_height = value.max_height,
+        baseline = value.baseline,
+    }
+end
+
+function retained_intrinsic(value: legacy_layout.Intrinsic): layout.Intrinsic
+    return {
+        min_width = value.min_width,
+        preferred_width = value.preferred_width,
+        max_width = value.max_width,
+        min_height = value.min_height,
+        preferred_height = value.preferred_height,
+        max_height = value.max_height,
+        baseline = value.baseline,
+    }
+end
+
+function legacy_surface(surface: ui.Surface): legacy.Surface
+    return {
+        graphics = surface.graphics,
+        effects = surface.effects,
+        card_back = surface.card_back,
+        suit_symbols = surface.suit_symbols,
+    }
+end
+
+function wrap(root: ui.Node): Node
+    return {
+        measure = function(metrics: legacy.Metrics): legacy_layout.Intrinsic
+            return legacy_intrinsic(root:measure(metrics.graphics))
+        end,
+        paint = function(surface: legacy.Surface, bounds: legacy_layout.Rect): unit
+            root:draw(ui_surface(surface_from_legacy(surface)),
+                bounds.x, bounds.y, bounds.width, bounds.height)
+        end,
+        grow = 0.0,
+        shrink = 1.0,
+    }
+end
+
+function retain(node: legacy.Node): ui.Node
+    return ui.Node.measured(
+        function(graphics: Graphics?, into: layout.Intrinsic): unit
+            local metrics: legacy.Metrics = { graphics = graphics }
+            copy_intrinsic(into, retained_intrinsic(node.measure(metrics)))
+        end,
+        function(surface: ui.Surface, bounds: layout.Rect): unit
+            local legacy_bounds: legacy_layout.Rect = {
+                x = bounds.x,
+                y = bounds.y,
+                width = bounds.width,
+                height = bounds.height,
+            }
+            node.paint(legacy_surface(surface), legacy_bounds)
+        end)
+end
+
+function copy_intrinsic(into: layout.Intrinsic, value: layout.Intrinsic): unit
+    into.min_width = value.min_width
+    into.preferred_width = value.preferred_width
+    into.max_width = value.max_width
+    into.min_height = value.min_height
+    into.preferred_height = value.preferred_height
+    into.max_height = value.max_height
+    into.baseline = value.baseline
+end
+
+function Node.sized(
+    width: f64, height: f64, paint: (Surface, layout.Rect) -> unit
+): Node
+    return wrap(ui.Node.sized(
+        width,
+        height,
+        function(surface: ui.Surface, bounds: layout.Rect): unit
+            paint(entity_surface(surface), bounds)
+        end))
+end
+
+function Node.measured(
+    measure: (Metrics) -> layout.Intrinsic,
+    paint: (Surface, layout.Rect) -> unit
+): Node
+    return wrap(ui.Node.measured(
+        function(graphics: Graphics?, into: layout.Intrinsic): unit
+            copy_intrinsic(into, measure({ graphics = graphics }))
+        end,
+        function(surface: ui.Surface, bounds: layout.Rect): unit
+            paint(entity_surface(surface), bounds)
+        end))
+end
+
+function Node.gap(width: f64, height: f64): Node
+    return wrap(ui.Node.gap(width, height))
+end
+
+function roots(children: {legacy.Node}): {ui.Node}
+    local result: {ui.Node} = {}
+    for child in children do
+        local root: ui.Node = retain(child)
+        root:flex(child.grow, child.shrink)
+        table.insert(result, root)
+    end
+    return result
+end
+
+function Node.flow(children: {legacy.Node}, flow_style: layout.Style): Node
+    return wrap(ui.Node.flow(roots(children), flow_style))
+end
+
+function retained_style(value: legacy_layout.Style): layout.Style
+    local axis: layout.Axis = "row"
+    if value.axis == "column" then axis = "column" end
+    local justify: layout.Justify = "start"
+    if value.justify == "center" then
+        justify = "center"
+    elseif value.justify == "end" then
+        justify = "end"
+    elseif value.justify == "space-between" then
+        justify = "space-between"
+    end
+    local align: layout.Align = "start"
+    if value.align == "center" then
+        align = "center"
+    elseif value.align == "end" then
+        align = "end"
+    elseif value.align == "stretch" then
+        align = "stretch"
+    elseif value.align == "baseline" then
+        align = "baseline"
+    end
+    return layout.style(
+        axis,
+        value.gap,
+        justify,
+        align,
+        layout.edges(
+            value.padding.left,
+            value.padding.top,
+            value.padding.right,
+            value.padding.bottom))
+end
+
+function flow_legacy(children: {legacy.Node}, flow_style: legacy_layout.Style): Node
+    return Node.flow(children, retained_style(flow_style))
+end
+
+function Node.layer(children: {legacy.Node}): Node
+    return wrap(ui.Node.layer(roots(children)))
+end
+
+function Node:padding(insets: layout.Edges): Node
+    local result: Node = wrap(retain(self):padding(insets))
+    result.grow = self.grow
+    result.shrink = self.shrink
+    return result
+end
+
+function Node:padded(horizontal: f64, vertical: f64): Node
+    return self:padding(layout.even_edges(horizontal, vertical))
+end
+
+function Node:min_width(width: f64): Node
+    local result: Node = wrap(retain(self):min_width(width))
+    result.grow = self.grow
+    result.shrink = self.shrink
+    return result
+end
+
+function Node:min_height(height: f64): Node
+    local result: Node = wrap(retain(self):min_height(height))
+    result.grow = self.grow
+    result.shrink = self.shrink
+    return result
+end
+
+function Node:wide(): Node
+    local result: Node = wrap(retain(self):wide())
+    result.grow = self.grow
+    result.shrink = self.shrink
+    return result
+end
+
+function Node:widened(): Node
+    return self:wide()
+end
+
+function Node:flex(grow: f64, shrink: f64): Node
+    self.grow = grow
+    self.shrink = shrink
+    return self
+end
+
+function Node.down(spec: FlowSpec, children: {legacy.Node}): Node
+    return wrap(ui.Node.down(spec, roots(children)))
+end
+
+function Node.across(spec: FlowSpec, children: {legacy.Node}): Node
+    return wrap(ui.Node.across(spec, roots(children)))
+end
+
+function rect(x: f64, y: f64, width: f64, height: f64): layout.Rect
+    return layout.rect(x, y, width, height)
+end
+
+function edges(left: f64, top: f64, right: f64, bottom: f64): layout.Edges
+    return layout.edges(left, top, right, bottom)
+end
+
+function even_padding(horizontal: f64, vertical: f64): layout.Edges
+    return layout.even_edges(horizontal, vertical)
+end
+
+function no_padding(): layout.Edges
+    return layout.edges(0.0, 0.0, 0.0, 0.0)
+end
+
+function style(
+    axis: layout.Axis,
+    gap: f64,
+    justify: layout.Justify,
+    align: layout.Align,
+    padding: layout.Edges
+): layout.Style
+    return layout.style(axis, gap, justify, align, padding)
+end
+
+function row(gap: f64, justify: layout.Justify, align: layout.Align): layout.Style
+    return layout.row(gap, justify, align)
+end
+
+function legacy_row(
+    gap: f64,
+    justify: legacy_layout.Justify,
+    align: legacy_layout.Align
+): legacy_layout.Style
+    return legacy.row(gap, justify, align)
+end
+
+function column(gap: f64, justify: layout.Justify, align: layout.Align): layout.Style
+    return layout.column(gap, justify, align)
+end
+
+function contains(bounds: layout.Rect, x: f64, y: f64): bool
+    return layout.contains(bounds, x, y)
+end
+
+function place(
+    metrics: Metrics,
+    children: {legacy.Node},
+    flow_style: layout.Style,
+    bounds: layout.Rect
+): {layout.Rect}
+    local retained_children: {ui.Node} = roots(children)
+    local root: ui.Node = ui.Node.flow(retained_children, flow_style)
+    root:measure(metrics.graphics)
+    root:arrange(bounds.x, bounds.y, bounds.width, bounds.height)
+    local result: {layout.Rect} = {}
+    for child in retained_children do
+        local value: layout.Rect = child:bounds()
+        table.insert(result, layout.rect(value.x, value.y, value.width, value.height))
+    end
+    return result
+end
+
+return {
+    wrap = wrap,
+    rect = rect,
+    edges = edges,
+    even_padding = even_padding,
+    no_padding = no_padding,
+    style = style,
+    row = row,
+    legacy_row = legacy_row,
+    flow_legacy = flow_legacy,
+    column = column,
+    contains = contains,
+    place = place,
+}
