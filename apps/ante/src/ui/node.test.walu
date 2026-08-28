@@ -1,0 +1,169 @@
+require("waluau:vitest")
+
+local layout = require("./layout")
+local ui = require("./node")
+
+function fixed(width: f64, height: f64): ui.Node
+    return ui.Node.sized(
+        width, height, function(surface: ui.Surface, bounds: layout.Rect): unit end)
+end
+
+function ranged(
+    min_width: f64,
+    preferred_width: f64,
+    max_width: f64,
+    min_height: f64,
+    preferred_height: f64,
+    max_height: f64,
+    baseline: f64
+): ui.Node
+    return ui.Node.measured(
+        function(graphics: ui.Graphics?, into: layout.Intrinsic): unit
+            into.min_width = min_width
+            into.preferred_width = preferred_width
+            into.max_width = max_width
+            into.min_height = min_height
+            into.preferred_height = preferred_height
+            into.max_height = max_height
+            into.baseline = baseline
+        end,
+        function(surface: ui.Surface, bounds: layout.Rect): unit end)
+end
+
+describe("retained UI nodes", function(): unit
+    it("retains intrinsic and bounds records across frames", function(): unit
+        local child: ui.Node = fixed(40.0, 20.0)
+        local root: ui.Node = ui.Node.across({ gap = 10.0 }, { child, fixed(60.0, 30.0) })
+        local intrinsic: layout.Intrinsic = root:measure(nil)
+        local bounds: layout.Rect = child:bounds()
+        local result: layout.Result = root:arrange(0.0, 0.0, 120.0, 30.0)
+
+        child:present_fixed(50.0, 20.0)
+        root:measure(nil)
+        root:arrange(5.0, 0.0, 130.0, 30.0)
+        -- Held references observe the next frame's in-place updates.
+        expect(intrinsic.preferred_width):toBe(120.0)
+        expect(bounds.x):toBe(5.0)
+        expect(bounds.width):toBe(50.0)
+        expect(result.content.x):toBe(5.0)
+    end)
+
+    it("derives rows, columns, gaps, and padding", function(): unit
+        local row: ui.Node = ui.Node.across(
+            { gap = 10.0, padding = layout.even_edges(8.0, 8.0) },
+            { fixed(40.0, 20.0), fixed(60.0, 30.0), fixed(50.0, 24.0) })
+        local column: ui.Node = ui.Node.down({ gap = 6.0 }, { row, fixed(70.0, 10.0) })
+        local measured: layout.Intrinsic = column:measure(nil)
+
+        expect(measured.preferred_width):toBe(186.0)
+        expect(measured.preferred_height):toBe(62.0)
+    end)
+
+    it("centers intrinsic children without changing their sizes", function(): unit
+        local first: ui.Node = fixed(40.0, 20.0)
+        local second: ui.Node = fixed(40.0, 20.0)
+        local row: ui.Node = ui.Node.across(
+            { gap = 10.0, justify = "center", align = "center" }, { first, second })
+        row:measure(nil)
+        row:arrange(0.0, 0.0, 150.0, 60.0)
+
+        expect(first:bounds().x):toBe(30.0)
+        expect(first:bounds().y):toBe(20.0)
+        expect(second:bounds().x):toBe(80.0)
+        expect(second:bounds().width):toBe(40.0)
+    end)
+
+    it("distributes grow and shrink using retained solve scratch", function(): unit
+        local first: ui.Node = ranged(20.0, 40.0, 100.0, 20.0, 20.0, 20.0, 0.0 - 1.0)
+            :flex(1.0, 1.0)
+        local second: ui.Node = ranged(20.0, 40.0, 100.0, 20.0, 20.0, 20.0, 0.0 - 1.0)
+            :flex(2.0, 1.0)
+        local row: ui.Node = ui.Node.across({ gap = 0.0 }, { first, second })
+
+        row:measure(nil)
+        row:arrange(0.0, 0.0, 140.0, 20.0)
+        expect(first:bounds().width):toBe(60.0)
+        expect(second:bounds().width):toBe(80.0)
+
+        row:arrange(0.0, 0.0, 50.0, 20.0)
+        expect(first:bounds().width):toBe(25.0)
+        expect(second:bounds().width):toBe(25.0)
+    end)
+
+    it("retains overflow results when minima cannot fit", function(): unit
+        local first: ui.Node = ranged(40.0, 80.0, 120.0, 20.0, 20.0, 20.0, 0.0 - 1.0)
+        local second: ui.Node = ranged(40.0, 80.0, 120.0, 20.0, 20.0, 20.0, 0.0 - 1.0)
+        local row: ui.Node = ui.Node.across({ gap = 0.0 }, { first, second })
+        row:measure(nil)
+        local result: layout.Result = row:arrange(0.0, 0.0, 60.0, 20.0)
+
+        expect(first:bounds().width):toBe(40.0)
+        expect(second:bounds().width):toBe(40.0)
+        expect(result.overflow_x):toBe(20.0)
+        expect(result.overflowed):toBe(true)
+    end)
+
+    it("aligns baselines and includes ascent and descent in measurement", function(): unit
+        local high: ui.Node = ranged(30.0, 30.0, 30.0, 20.0, 20.0, 20.0, 18.0)
+        local low: ui.Node = ranged(30.0, 30.0, 30.0, 20.0, 20.0, 20.0, 2.0)
+        local row: ui.Node = ui.Node.across({ align = "baseline" }, { high, low })
+        local measured: layout.Intrinsic = row:measure(nil)
+        row:arrange(0.0, 0.0, 60.0, 36.0)
+
+        expect(measured.preferred_height):toBe(36.0)
+        expect(high:baseline()):toBe(18.0)
+        expect(low:baseline()):toBe(18.0)
+        expect(low:bounds().y):toBe(16.0)
+    end)
+
+    it("pads content while handing it the remaining arranged rectangle", function(): unit
+        local child: ui.Node = fixed(40.0, 20.0)
+        local padded: ui.Node = child:padding(layout.edges(2.0, 3.0, 4.0, 5.0))
+        local measured: layout.Intrinsic = padded:measure(nil)
+        padded:arrange(10.0, 20.0, 70.0, 50.0)
+
+        expect(measured.preferred_width):toBe(46.0)
+        expect(measured.preferred_height):toBe(28.0)
+        expect(child:bounds().x):toBe(12.0)
+        expect(child:bounds().y):toBe(23.0)
+        expect(child:bounds().width):toBe(64.0)
+        expect(child:bounds().height):toBe(42.0)
+    end)
+
+    it("measures layers by their largest child and arranges one shared rectangle", function(): unit
+        local back: ui.Node = fixed(40.0, 60.0)
+        local front: ui.Node = fixed(90.0, 20.0)
+        local stack: ui.Node = ui.Node.layer({ back, front })
+        local measured: layout.Intrinsic = stack:measure(nil)
+        stack:arrange(5.0, 7.0, 100.0, 80.0)
+
+        expect(measured.preferred_width):toBe(90.0)
+        expect(measured.preferred_height):toBe(60.0)
+        expect(back:bounds().x):toBe(5.0)
+        expect(front:bounds().height):toBe(80.0)
+    end)
+
+    it("uses reverse paint order to find the responding node", function(): unit
+        local first: ui.Node = fixed(50.0, 30.0):accept_pointer(1)
+        local second: ui.Node = fixed(50.0, 30.0):accept_pointer(2)
+        local row: ui.Node = ui.Node.across({ gap = 0.0 - 20.0 }, { first, second })
+        row:measure(nil)
+        row:arrange(0.0, 0.0, 80.0, 30.0)
+
+        expect(row:hit(10.0, 10.0)):toBe(1)
+        expect(row:hit(35.0, 10.0)):toBe(2)
+        expect(row:hit(90.0, 10.0)):toBe(-1)
+    end)
+
+    it("updates a stable leaf through controlled presentation", function(): unit
+        local leaf: ui.Node = fixed(20.0, 10.0)
+        local identity: layout.Rect = leaf:bounds()
+        leaf:present_fixed(50.0, 30.0)
+        local measured: layout.Intrinsic = leaf:measure(nil)
+
+        expect(measured.preferred_width):toBe(50.0)
+        expect(measured.preferred_height):toBe(30.0)
+        leaf:arrange(7.0, 0.0, 50.0, 30.0)
+        expect(identity.x):toBe(7.0)
+    end)
+end)

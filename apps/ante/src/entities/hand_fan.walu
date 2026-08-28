@@ -10,8 +10,8 @@
 -- inside whatever rectangle it is handed, tightening its pitch when that
 -- rectangle is narrower than the hand would like.
 
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local card = require("./card")
 local card_row = require("./card_row")
 
@@ -159,19 +159,35 @@ end
 -- `hidden` marks slots a card is currently flying into, which stay empty until
 -- the animation lands so state that has already changed is not revealed ahead
 -- of it.
-function node(looks: {card.Look}, parts: {f64}, hidden: {bool}): entity.Node
-    return entity.Node.measured(
+type FanPresentation = { looks: {card.Look}, parts: {f64}, hidden: {bool} }
+export type Stateful = { presentation: FanPresentation, root: entity.Node }
+
+function Stateful.new(looks: {card.Look}, parts: {f64}, hidden: {bool}): Stateful
+    local presentation: FanPresentation = { looks = looks, parts = parts, hidden = hidden }
+    local root: entity.Node = entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
-            return intrinsic(#looks)
+            return intrinsic(#presentation.looks)
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
-            for index = 0::i32, #looks - 1 do
-                if not hidden[index] then
+            for index = 0::i32, #presentation.looks - 1 do
+                if not presentation.hidden[index] then
                     draw_slot(
-                        surface, looks[index], bounds, index, parts[index], #looks)
+                        surface, presentation.looks[index], bounds, index,
+                        presentation.parts[index], #presentation.looks)
                 end
             end
         end)
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(looks: {card.Look}, parts: {f64}, hidden: {bool}): unit
+    self.presentation.looks = looks
+    self.presentation.parts = parts
+    self.presentation.hidden = hidden
+end
+
+function node(looks: {card.Look}, parts: {f64}, hidden: {bool}): entity.Node
+    return Stateful.new(looks, parts, hidden).root
 end
 
 return {

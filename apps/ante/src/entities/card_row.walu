@@ -14,8 +14,8 @@
 -- choreography builds a deal months of frames before it is drawn, and it asks
 -- this module the same question the paint does, so an animation can only land
 -- where a card is actually going to be.
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local card = require("./card")
 
 -- The pitch the row would keep given room, per row. The sealed row and the
@@ -43,26 +43,23 @@ function row_style(pitch: f64): box.Style
 end
 
 function slot_rects(count: i32, pitch: f64, bounds: box.Rect): {box.Rect}
-    local children: {box.Tree} = {}
-    for index = 0::i32, count - 1 do
-        table.insert(children, box.Tree.leaf(index, card.intrinsic()))
-    end
-    local root: box.Tree = box.Tree.flow(-1, children, row_style(pitch))
-    local result: box.Result = root:solve(bounds)
     local rects: {box.Rect} = {}
+    local width: f64 = 0.0
+    if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
     for index = 0::i32, count - 1 do
-        local frame: box.Frame? = result:frame(index)
-        if frame == nil then
-            table.insert(rects, entity.rect(bounds.x, bounds.y, card.width, card.height))
-        else
-            table.insert(rects, (frame::box.Frame).rect)
-        end
+        table.insert(rects, entity.rect(
+            bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
+            bounds.y, card.width, card.height))
     end
     return rects
 end
 
 function slot_rect(count: i32, pitch: f64, bounds: box.Rect, index: i32): box.Rect
-    return slot_rects(count, pitch, bounds)[index]
+    local width: f64 = 0.0
+    if count > 0 then width = card.width + ((count - 1)::f64) * pitch end
+    return entity.rect(
+        bounds.x + (bounds.width - width) * 0.5 + (index::f64) * pitch,
+        bounds.y, card.width, card.height)
 end
 
 -- The row's own size at the given pitch, which is what a band asks for before
@@ -78,7 +75,7 @@ end
 -- through its own entity, and the row does not need to know which slots those
 -- are. `preferred` is the pitch the row keeps when it has the room; a narrower
 -- rectangle tightens it.
-function node(children: {entity.Node}, preferred: f64): entity.Node
+function node(children: {entity.LegacyNode}, preferred: f64): entity.Node
     return entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic(#children, preferred)

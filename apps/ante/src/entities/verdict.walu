@@ -8,8 +8,8 @@
 
 local game = require("../game")
 local run_module = require("../run")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local modal = require("./modal")
 local label = require("./label")
 
@@ -121,7 +121,7 @@ end
 -- The next duel is not dealt straight off the verdict: the shop stands
 -- between them, spending this pile of gold. A run that has walked off the end
 -- of the table has no shop ahead of it, only more city.
-function onward(run: run_module.View): {entity.Node}
+function onward(run: run_module.View): {entity.LegacyNode}
     if not walks_on(run) then
         return {
             label.middle(
@@ -140,7 +140,7 @@ function onward(run: run_module.View): {entity.Node}
 end
 
 function body(state: game.View, run: run_module.View): entity.Node
-    local lines: {entity.Node} = {
+    local lines: {entity.LegacyNode} = {
         tally(state, run),
         entity.Node.gap(0.0, BLOCK_GAP),
         label.middle(

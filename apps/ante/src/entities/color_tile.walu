@@ -3,8 +3,8 @@
 -- them through the card's own field binding rather than a copy of it, so the
 -- legend teaches the language the board actually speaks.
 
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local ink = require("../ink")
 local card = require("./card")
 
@@ -18,10 +18,15 @@ const NAME_INK: string = "#b5b5bd"
 
 local NAMES: {string} = { "RED", "BLUE", "BLACK", "GREEN" }
 
-function node(suit: i32): entity.Node
-    return entity.Node.sized(
+type TilePresentation = { suit: i32 }
+export type Stateful = { presentation: TilePresentation, root: entity.Node }
+
+function Stateful.new(suit: i32): Stateful
+    local presentation: TilePresentation = { suit = suit }
+    local root: entity.Node = entity.Node.sized(
         WIDTH, HEIGHT,
         function(surface: entity.Surface, bounds: box.Rect): unit
+            local suit: i32 = presentation.suit
             local graphics = surface.graphics
             local center: f64 = bounds.x + bounds.width * 0.5
             card.use_color_field(
@@ -37,6 +42,15 @@ function node(suit: i32): entity.Node
                 graphics, NAMES[suit], center, bounds.y + NAME_DROP,
                 NAME_SIZE, NAME_INK)
         end)
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(suit: i32): unit
+    self.presentation.suit = suit
+end
+
+function node(suit: i32): entity.Node
+    return Stateful.new(suit).root
 end
 
 return {

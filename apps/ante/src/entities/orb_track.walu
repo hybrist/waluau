@@ -5,8 +5,8 @@
 -- ever means one thing on screen.
 
 local game = require("../game")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 
 -- The live round's ring is the widest thing an orb ever draws, so it is what
 -- an orb's box measures.
@@ -43,45 +43,87 @@ end
 
 -- One round's orb, keyed off the winner recorded for it. A stalemate is not a
 -- table-card hold, so it does not wear the lost colour.
-function orb(state: game.View, round: i32): entity.Node
+type TrackPresentation = { state: game.View }
+
+function draw_round(
+    presentation: TrackPresentation,
+    surface: entity.Surface, bounds: box.Rect, round: i32
+): unit
+    local x: f64 = bounds.x + bounds.width * 0.5
+    local y: f64 = bounds.y + bounds.height * 0.5
+    local edge: string = ORB_UNPLAYED_EDGE
+    local fill: string = ORB_UNPLAYED_FILL
+    local state: game.View = presentation.state
+    local played: bool = round < #state.history
+    if played then
+        local winner: i32 = state.history[round].winner
+        if winner > 0 then
+            edge = ORB_ROBBERS_EDGE
+            fill = ORB_ROBBERS_FILL
+        elseif winner < 0 then
+            edge = ORB_ARCH_MAGE_EDGE
+            fill = ORB_ARCH_MAGE_FILL
+        else
+            edge = ORB_STALEMATE_EDGE
+            fill = ORB_STALEMATE_FILL
+        end
+    end
+    if round == state.round - 1 then
+        surface.graphics:set_color(LIVE_RING)
+        surface.graphics:fill_circle(x, y, LIVE_RADIUS)
+    end
+    draw_orb(surface, x, y, edge, fill, played)
+end
+
+function orb_presented(presentation: TrackPresentation, round: i32): entity.Node
     return entity.Node.sized(
         ORB_SIZE, ORB_SIZE,
         function(surface: entity.Surface, bounds: box.Rect): unit
-            local x: f64 = bounds.x + bounds.width * 0.5
-            local y: f64 = bounds.y + bounds.height * 0.5
-            local edge: string = ORB_UNPLAYED_EDGE
-            local fill: string = ORB_UNPLAYED_FILL
-            local played: bool = round < #state.history
-            if played then
-                local winner: i32 = state.history[round].winner
-                if winner > 0 then
-                    edge = ORB_ROBBERS_EDGE
-                    fill = ORB_ROBBERS_FILL
-                elseif winner < 0 then
-                    edge = ORB_ARCH_MAGE_EDGE
-                    fill = ORB_ARCH_MAGE_FILL
-                else
-                    edge = ORB_STALEMATE_EDGE
-                    fill = ORB_STALEMATE_FILL
-                end
-            end
-            if round == state.round - 1 then
-                surface.graphics:set_color(LIVE_RING)
-                surface.graphics:fill_circle(x, y, LIVE_RADIUS)
-            end
-            draw_orb(surface, x, y, edge, fill, played)
+            draw_round(presentation, surface, bounds, round)
         end)
 end
 
+function orb(state: game.View, round: i32): entity.Node
+    return orb_presented({ state = state }, round)
+end
+
+export type Stateful = { presentation: TrackPresentation, root: entity.Node }
+
+function Stateful.new(state: game.View): Stateful
+    local presentation: TrackPresentation = { state = state }
+    local root: entity.Node = entity.Node.measured(
+        function(metrics: entity.Metrics): box.Intrinsic
+            local count: i32 = 1
+            if presentation.state.boss then count = game.max_rounds end
+            return box.Intrinsic.fixed(
+                (count::f64) * ORB_SIZE + ((count - 1)::f64) * ORB_GAP,
+                ORB_SIZE)
+        end,
+        function(surface: entity.Surface, bounds: box.Rect): unit
+            local count: i32 = 1
+            if presentation.state.boss then count = game.max_rounds end
+            local width: f64 = (count::f64) * ORB_SIZE
+                + ((count - 1)::f64) * ORB_GAP
+            local left: f64 = bounds.x + (bounds.width - width) * 0.5
+            for round = 0::i32, count - 1 do
+                local slot: box.Rect = entity.rect(
+                    left + (round::f64) * (ORB_SIZE + ORB_GAP),
+                    bounds.y, ORB_SIZE, ORB_SIZE)
+                draw_round(presentation, surface, slot, round)
+            end
+        end)
+    return {
+        presentation = presentation,
+        root = root,
+    }
+end
+
+function Stateful:present(state: game.View): unit
+    self.presentation.state = state
+end
+
 function node(state: game.View): entity.Node
-    local orbs: {entity.Node} = {}
-    local round_count: i32 = 1
-    if state.boss then round_count = game.max_rounds end
-    for round = 0::i32, round_count - 1 do
-        table.insert(orbs, orb(state, round))
-    end
-    return entity.Node.flow(
-        orbs, entity.row(ORB_GAP, "center", "center"))
+    return Stateful.new(state).root
 end
 
 return {

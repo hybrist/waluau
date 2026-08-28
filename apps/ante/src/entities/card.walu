@@ -12,8 +12,8 @@
 
 local graphics_module = require("waluau:engine/graphics")
 local game = require("../game")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local ink = require("../ink")
 
 -- The design space a card face is drawn in.
@@ -486,23 +486,36 @@ end
 -- The card as an entity: it measures as the design space its face is authored
 -- in, and a rectangle of any other size scales the whole printed object into
 -- it rather than reflowing the rank, constellation, and paper inside it.
-function node(value: Look): entity.Node
-    return entity.Node.measured(
+type CardPresentation = { value: Look }
+export type Stateful = { presentation: CardPresentation, root: entity.Node }
+
+function Stateful.new(value: Look): Stateful
+    local presentation: CardPresentation = { value = value }
+    local root: entity.Node = entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return intrinsic()
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
             if bounds.width == WIDTH and bounds.height == HEIGHT then
-                draw_at(surface, value, bounds.x, bounds.y)
+                draw_at(surface, presentation.value, bounds.x, bounds.y)
                 return
             end
             local graphics = surface.graphics
             graphics:push()
             graphics:translate(bounds.x, bounds.y)
             graphics:scale(bounds.width / WIDTH, bounds.height / HEIGHT)
-            draw_at(surface, value, 0.0, 0.0)
+            draw_at(surface, presentation.value, 0.0, 0.0)
             graphics:pop()
         end)
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(value: Look): unit
+    self.presentation.value = value
+end
+
+function node(value: Look): entity.Node
+    return Stateful.new(value).root
 end
 
 return {

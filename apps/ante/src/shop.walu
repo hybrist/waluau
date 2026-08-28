@@ -58,7 +58,7 @@ type Pending = { slot: i32, choices: {i32} }
 
 export type State = { open: bool, slots: {Slot}, cursor: i32, pending: Pending? }
 
-type ShopResult = "stay" | "leave"
+export type ShopResult = "stay" | "leave"
 
 -- What one line of the shop would do. Controls are not things for sale, so they
 -- are not `Goods`: the two used to share one union, which is what made every new
@@ -328,22 +328,6 @@ function State:rows(run: run_module.State): {Row}
     return list
 end
 
-function State:row_count(run: run_module.State): i32
-    return #self:rows(run)
-end
-
-function State:move(run: run_module.State, delta: i32): unit
-    local count: i32 = self:row_count(run)
-    self.cursor = (self.cursor + delta + count) % count
-end
-
--- Point the cursor at the row the pointer is over. Dead space between lines
--- leaves the cursor where it was, the way hovering the board does.
-function State:focus(run: run_module.State, row: i32): unit
-    if row < 0 or row >= self:row_count(run) then return end
-    self.cursor = row
-end
-
 -- Buy what the named slot is selling into `key`. The slot is marked sold rather
 -- than removed, and the cursor comes back to its line: that is also how a
 -- purchase which had to ask a question returns to where it started. Slots keep
@@ -395,28 +379,6 @@ function State:activate(run: run_module.State): ShopResult
         return "stay"
     end
     self:commit(run, row.slot, key)
-    return "stay"
-end
-
-function State:keypressed(run: run_module.State, key: string): ShopResult
-    if key == "ArrowUp" or key == "w" or key == "W" then
-        self:move(run, -1)
-        return "stay"
-    end
-    if key == "ArrowDown" or key == "s" or key == "S" then
-        self:move(run, 1)
-        return "stay"
-    end
-    if key == "Enter" or key == " " then return self:activate(run) end
-    -- Escape backs out of a pending question, and otherwise out of the shop: the
-    -- next duel is always one press away.
-    if key == "Escape" then
-        if self:choosing() then
-            self:cancel()
-            return "stay"
-        end
-        return "leave"
-    end
     return "stay"
 end
 

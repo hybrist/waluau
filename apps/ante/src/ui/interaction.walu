@@ -1,0 +1,387 @@
+-- DOM-free interaction routing for Ante's retained UI tree. Browser callbacks
+-- translate their events into these plain pointer/key methods; this module owns
+-- traversal, hover transitions, press/click synthesis, focus, and navigation.
+local ui = require("./node")
+
+export type Direction = "left" | "right" | "up" | "down"
+export type Navigation = "row" | "column" | "spatial" | "explicit"
+export type Handlers = {
+    on_enter: () -> unit,
+    on_leave: () -> unit,
+    on_down: (i32) -> unit,
+    on_up: (i32) -> unit,
+    on_click: (i32) -> unit,
+    on_activate: () -> unit,
+    on_focus: () -> unit,
+    on_blur: () -> unit,
+}
+export type Scope = { key: i32, navigation: Navigation, wrap: bool }
+export type Target = {
+    key: i32,
+    node: ui.Node,
+    scope: i32,
+    focusable: bool,
+    handlers: Handlers,
+    left: i32,
+    right: i32,
+    up: i32,
+    down: i32,
+}
+-- Routing state has one mutation owner. Opacity also prevents the recursive
+-- retained graph expansion tracked by waluau-4ggh.
+export opaque type Router = {
+    root: ui.Node,
+    targets: {Target},
+    scopes: {Scope},
+    hover_path: {i32},
+    next_path: {i32},
+    hit_path: {i32},
+    focused_key: i32,
+    pressed_key: i32,
+    pressed_button: i32,
+    active_scope: i32,
+}
+
+function noop(): unit end
+function noop_button(button: i32): unit end
+
+function handlers(): Handlers
+    return {
+        on_enter = noop,
+        on_leave = noop,
+        on_down = noop_button,
+        on_up = noop_button,
+        on_click = noop_button,
+        on_activate = noop,
+        on_focus = noop,
+        on_blur = noop,
+    }
+end
+
+function clear(values: {i32}): unit
+    while #values > 0 do table.remove(values) end
+end
+
+function target_at(self: Router, key: i32): Target
+    assert(key >= 0 and key < #self.targets)
+    return self.targets[key]
+end
+
+function target_active(self: Router, target: Target): bool
+    return target.scope == self.active_scope
+        and target.node:is_visible()
+        and target.node:is_enabled()
+end
+
+function focus_candidate(self: Router, key: i32): bool
+    if key < 0 or key >= #self.targets then return false end
+    local target: Target = self.targets[key]
+    return target.focusable and target_active(self, target)
+end
+
+function Router.new(root: ui.Node): Router
+    return {
+        root = root,
+        targets = {},
+        scopes = { { key = 0, navigation = "spatial", wrap = false } },
+        hover_path = {},
+        next_path = {},
+        hit_path = {},
+        focused_key = -1,
+        pressed_key = -1,
+        pressed_button = -1,
+        active_scope = 0,
+    }
+end
+
+function Router:add_scope(navigation: Navigation, wrap: bool): i32
+    local key: i32 = #self.scopes
+    table.insert(self.scopes, { key = key, navigation = navigation, wrap = wrap })
+    return key
+end
+
+function Router:add(
+    node: ui.Node, scope: i32, focusable: bool, callbacks: Handlers
+): Target
+    assert(scope >= 0 and scope < #self.scopes)
+    local key: i32 = #self.targets
+    local target: Target = {
+        key = key,
+        node = node,
+        scope = scope,
+        focusable = focusable,
+        handlers = callbacks,
+        left = -1,
+        right = -1,
+        up = -1,
+        down = -1,
+    }
+    table.insert(self.targets, target)
+    node:accept_pointer(key)
+    return target
+end
+
+function Target:link(direction: Direction, destination: Target): Target
+    if direction == "left" then
+        self.left = destination.key
+    elseif direction == "right" then
+        self.right = destination.key
+    elseif direction == "up" then
+        self.up = destination.key
+    else
+        self.down = destination.key
+    end
+    return self
+end
+
+function Target:set_focusable(value: bool): Target
+    self.focusable = value
+    return self
+end
+
+function Target:set_enabled(value: bool): Target
+    self.node:set_enabled(value)
+    return self
+end
+
+function Target:set_visible(value: bool): Target
+    self.node:set_visible(value)
+    return self
+end
+
+function Router:focused(): i32
+    return self.focused_key
+end
+
+function Router:hovered(): i32
+    if #self.hover_path == 0 then return -1 end
+    return self.hover_path[0]
+end
+
+function Router:focus(key: i32): bool
+    if key == self.focused_key then return focus_candidate(self, key) end
+    if not focus_candidate(self, key) then return false end
+
+    if self.focused_key >= 0 and self.focused_key < #self.targets then
+        self.targets[self.focused_key].handlers.on_blur()
+    end
+    self.focused_key = key
+    self.targets[key].handlers.on_focus()
+    return true
+end
+
+function Router:clear_focus(): unit
+    if self.focused_key >= 0 and self.focused_key < #self.targets then
+        self.targets[self.focused_key].handlers.on_blur()
+    end
+    self.focused_key = -1
+end
+
+function first_focusable(self: Router): i32
+    for target in self.targets do
+        if focus_candidate(self, target.key) then return target.key end
+    end
+    return -1
+end
+
+-- Activating a scope is the modal seam: pointer and keyboard events can only
+-- reach targets registered in that scope until another scope is activated.
+function Router:activate_scope(scope: i32): unit
+    assert(scope >= 0 and scope < #self.scopes)
+    if self.active_scope == scope then return end
+    self.active_scope = scope
+    self:pointer_leave()
+    self.pressed_key = -1
+    self.pressed_button = -1
+    if not focus_candidate(self, self.focused_key) then
+        self:clear_focus()
+        local first: i32 = first_focusable(self)
+        if first >= 0 then self:focus(first) end
+    end
+end
+
+function resolve(self: Router, x: f64, y: f64): i32
+    clear(self.next_path)
+    local hit: i32 = self.root:hit_path(x, y, self.hit_path)
+    if hit < 0 then return -1 end
+    local leaf: Target = target_at(self, hit)
+    if not target_active(self, leaf) then return -1 end
+
+    for key in self.hit_path do
+        local target: Target = target_at(self, key)
+        if target_active(self, target) then table.insert(self.next_path, key) end
+    end
+    return hit
+end
+
+function Router:pointer_move(x: f64, y: f64): i32
+    local hit: i32 = resolve(self, x, y)
+    local old_index: i32 = #self.hover_path - 1
+    local new_index: i32 = #self.next_path - 1
+    while old_index >= 0 and new_index >= 0
+        and self.hover_path[old_index] == self.next_path[new_index] do
+        old_index -= 1
+        new_index -= 1
+    end
+
+    -- Stored paths run leaf-to-root: leave bubbles out, enter tunnels in.
+    local index: i32 = 0
+    while index <= old_index do
+        target_at(self, self.hover_path[index]).handlers.on_leave()
+        index += 1
+    end
+    index = new_index
+    while index >= 0 do
+        target_at(self, self.next_path[index]).handlers.on_enter()
+        index -= 1
+    end
+
+    local previous: {i32} = self.hover_path
+    self.hover_path = self.next_path
+    self.next_path = previous
+    clear(self.next_path)
+    return hit
+end
+
+function Router:pointer_leave(): unit
+    for key in self.hover_path do target_at(self, key).handlers.on_leave() end
+    clear(self.hover_path)
+end
+
+function Router:pointer_down(x: f64, y: f64, button: i32): i32
+    local hit: i32 = self:pointer_move(x, y)
+    self.pressed_key = hit
+    self.pressed_button = button
+    if hit >= 0 then
+        local target: Target = target_at(self, hit)
+        target.handlers.on_down(button)
+        if target.focusable then self:focus(hit) end
+    end
+    return hit
+end
+
+function Router:pointer_up(x: f64, y: f64, button: i32): i32
+    local hit: i32 = self:pointer_move(x, y)
+    if hit >= 0 then target_at(self, hit).handlers.on_up(button) end
+    if hit >= 0 and hit == self.pressed_key and button == self.pressed_button then
+        local target: Target = target_at(self, hit)
+        target.handlers.on_click(button)
+        target.handlers.on_activate()
+    end
+    self.pressed_key = -1
+    self.pressed_button = -1
+    return hit
+end
+
+function explicit_destination(target: Target, direction: Direction): i32
+    if direction == "left" then return target.left end
+    if direction == "right" then return target.right end
+    if direction == "up" then return target.up end
+    return target.down
+end
+
+function ordered_destination(self: Router, direction: Direction, policy: Navigation): i32
+    local step: i32 = 0
+    if policy == "row" and direction == "left" then step = -1 end
+    if policy == "row" and direction == "right" then step = 1 end
+    if policy == "column" and direction == "up" then step = -1 end
+    if policy == "column" and direction == "down" then step = 1 end
+    if step == 0 then return -1 end
+
+    local index: i32 = self.focused_key + step
+    while index >= 0 and index < #self.targets do
+        if focus_candidate(self, index) then return index end
+        index += step
+    end
+    if not self.scopes[self.active_scope].wrap then return -1 end
+
+    if step > 0 then index = 0 else index = #self.targets - 1 end
+    while index >= 0 and index < #self.targets do
+        if focus_candidate(self, index) then return index end
+        index += step
+    end
+    return -1
+end
+
+function spatial_destination(self: Router, direction: Direction): i32
+    if not focus_candidate(self, self.focused_key) then return first_focusable(self) end
+    local from: Target = target_at(self, self.focused_key)
+    local from_bounds = from.node:bounds()
+    local from_x: f64 = from_bounds.x + from_bounds.width * 0.5
+    local from_y: f64 = from_bounds.y + from_bounds.height * 0.5
+    local best: i32 = -1
+    local best_score: f64 = 1000000000000.0
+    for candidate in self.targets do
+        if candidate.key ~= from.key and focus_candidate(self, candidate.key) then
+            local bounds = candidate.node:bounds()
+            local dx: f64 = bounds.x + bounds.width * 0.5 - from_x
+            local dy: f64 = bounds.y + bounds.height * 0.5 - from_y
+            local primary: f64 = 0.0
+            local cross: f64 = 0.0
+            local eligible: bool = false
+            if direction == "left" then
+                eligible = dx < 0.0
+                primary = 0.0 - dx
+                cross = math.abs(dy)
+            elseif direction == "right" then
+                eligible = dx > 0.0
+                primary = dx
+                cross = math.abs(dy)
+            elseif direction == "up" then
+                eligible = dy < 0.0
+                primary = 0.0 - dy
+                cross = math.abs(dx)
+            else
+                eligible = dy > 0.0
+                primary = dy
+                cross = math.abs(dx)
+            end
+            local score: f64 = primary + cross * 2.0
+            if eligible and score < best_score then
+                best = candidate.key
+                best_score = score
+            end
+        end
+    end
+    return best
+end
+
+function Router:navigate(direction: Direction): bool
+    if not focus_candidate(self, self.focused_key) then
+        local first: i32 = first_focusable(self)
+        return first >= 0 and self:focus(first)
+    end
+
+    local current: Target = target_at(self, self.focused_key)
+    local destination: i32 = explicit_destination(current, direction)
+    if focus_candidate(self, destination) then return self:focus(destination) end
+
+    local policy: Navigation = self.scopes[self.active_scope].navigation
+    if policy == "row" or policy == "column" then
+        destination = ordered_destination(self, direction, policy)
+    elseif policy == "spatial" then
+        destination = spatial_destination(self, direction)
+    else
+        destination = -1
+    end
+    return destination >= 0 and self:focus(destination)
+end
+
+function Router:activate_focused(): bool
+    if not focus_candidate(self, self.focused_key) then return false end
+    target_at(self, self.focused_key).handlers.on_activate()
+    return true
+end
+
+function Router:key_pressed(key: string): bool
+    if key == "ArrowLeft" then return self:navigate("left") end
+    if key == "ArrowRight" then return self:navigate("right") end
+    if key == "ArrowUp" then return self:navigate("up") end
+    if key == "ArrowDown" then return self:navigate("down") end
+    if key == "Enter" or key == " " then return self:activate_focused() end
+    return false
+end
+
+return {
+    handlers = handlers,
+}

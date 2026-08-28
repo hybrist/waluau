@@ -16,8 +16,8 @@ local spell_cast = require("../spell_cast")
 local burn_particles = require("../burn_particles")
 local card_burn = require("../card_burn")
 local easing = require("../easing")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local ink = require("../ink")
 local card = require("./card")
 
@@ -428,17 +428,49 @@ function draw_at(
 end
 
 -- The powered table_card as an entity: a card's box, whatever is standing on it.
-function node(
+type PoweredPresentation = {
+    value: card.Look,
+    kind: spells.SpellKind?,
+    clock: f64,
+    ash: card_burn.CardAsh,
+    dust: particles.ParticleSystem,
+}
+export type Stateful = { presentation: PoweredPresentation, root: entity.Node }
+
+function Stateful.new(
     value: card.Look, kind: spells.SpellKind?, clock: f64,
     ash: card_burn.CardAsh, dust: particles.ParticleSystem
-): entity.Node
-    return entity.Node.measured(
+): Stateful
+    local presentation: PoweredPresentation = {
+        value = value, kind = kind, clock = clock, ash = ash, dust = dust,
+    }
+    local root: entity.Node = entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
             return card.intrinsic()
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
-            draw_at(surface, value, bounds.x, bounds.y, kind, clock, ash, dust)
+            draw_at(surface, presentation.value, bounds.x, bounds.y,
+                presentation.kind, presentation.clock, presentation.ash, presentation.dust)
         end)
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(
+    value: card.Look, kind: spells.SpellKind?, clock: f64,
+    ash: card_burn.CardAsh, dust: particles.ParticleSystem
+): unit
+    self.presentation.value = value
+    self.presentation.kind = kind
+    self.presentation.clock = clock
+    self.presentation.ash = ash
+    self.presentation.dust = dust
+end
+
+function node(
+    value: card.Look, kind: spells.SpellKind?, clock: f64,
+    ash: card_burn.CardAsh, dust: particles.ParticleSystem
+): entity.Node
+    return Stateful.new(value, kind, clock, ash, dust).root
 end
 
 return {

@@ -8,6 +8,7 @@ local run = require("./run")
 local choreography = require("./choreography")
 local city_map = require("./city_map")
 local game_screen = require("./game_screen")
+local render = require("./render")
 
 local function card(rank: i32, suit: game.Suit): game.Card
     return { rank = rank, suit = suit }
@@ -20,6 +21,25 @@ local function finish_swap_phase(state: game.State): unit
 end
 
 describe("Ante Magic run health wiring", function()
+    it("applies retained board actions to domain selection and commit", function(): unit
+        math.randomseed(103)
+        local screen: game_screen.State = game_screen.State.new()
+        local city: city_map.State = city_map.State.new(103)
+        finish_swap_phase(screen.rules)
+        screen.presentation:skip()
+
+        local first: render.BoardAction = { kind = "hand", index = 1 }
+        local second: render.BoardAction = { kind = "hand", index = 3 }
+        screen:perform_board_action(city, first)
+        screen:perform_board_action(city, second)
+        expect(#screen.ui.play_picks):toBe(2)
+        expect(screen.ui.play_picks[0]):toBe(1)
+        expect(screen.ui.play_picks[1]):toBe(3)
+
+        screen:perform_board_action(city, { kind = "commit", index = 0 })
+        expect(screen.ui.revealing):toBe(true)
+    end)
+
     it("turns the last lost hand into a run-ending verdict and fresh run", function()
         math.randomseed(101)
         local screen: game_screen.State = game_screen.State.new()

@@ -3,8 +3,8 @@
 -- which is what it always was — it simply used to be a column written as
 -- eighteen y coordinates that had to be kept in order by hand.
 
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local modal = require("./modal")
 local label = require("./label")
 local color_tile = require("./color_tile")
@@ -17,7 +17,7 @@ const LEGEND_GAP: f64 = 22.0
 const LEGEND_ORB: f64 = 20.0
 
 function colors(): entity.Node
-    local tiles: {entity.Node} = {}
+    local tiles: {entity.LegacyNode} = {}
     for suit = 0::i32, 3::i32 do table.insert(tiles, color_tile.node(suit)) end
     return entity.Node.flow(
         tiles, entity.row(TILE_GAP, "center", "start")):wide()

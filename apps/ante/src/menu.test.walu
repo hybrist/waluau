@@ -1,0 +1,79 @@
+-- DOM-free interaction checks for the retained menu screen. Geometry is solved
+-- once here exactly as a frame would solve it; pointer routing then consumes
+-- those retained bounds without a second menu-specific hit test.
+
+require("waluau:vitest")
+
+local menu = require("./menu")
+local viewport_layout = require("./layout")
+local ui_layout = require("./ui/layout")
+
+function arrange(state: menu.State): unit
+    local viewport: viewport_layout.State = viewport_layout.current()
+    state.root:measure(nil)
+    state.root:arrange(0.0, 0.0, viewport.width, viewport.height)
+end
+
+describe("Ante Magic retained menu", function(): unit
+    it("uses one stable tree across presentation and stage changes", function(): unit
+        local state: menu.State = menu.State.new()
+        local retained_bounds: ui_layout.Rect = state.main_targets[0].node:bounds()
+        arrange(state)
+        local first_x: f64 = retained_bounds.x
+
+        expect(tostring(state:keypressed("Enter"))):toBe("none")
+        expect(tostring(state:keypressed("Enter"))):toBe("start")
+
+        state.root:arrange(12.0, 0.0, viewport_layout.current().width, viewport_layout.current().height)
+        expect(retained_bounds.x):toBe(first_x + 12.0)
+    end)
+
+    it("wraps focus and unifies keyboard activation", function(): unit
+        local state: menu.State = menu.State.new()
+        expect(tostring(state:keypressed("ArrowUp"))):toBe("none")
+        expect(state.router:focused()):toBe(state.main_targets[2].key)
+
+        state:keypressed("ArrowDown")
+        expect(state.router:focused()):toBe(state.main_targets[0].key)
+        state:keypressed("ArrowDown")
+        expect(tostring(state:keypressed(" "))):toBe("none")
+        expect(state.router:focused()):toBe(state.spell_targets[0].key)
+        expect(tostring(state:keypressed("Enter"))):toBe("start-rush")
+    end)
+
+    it("tracks enter and leave, and clicks only on matching release", function(): unit
+        local state: menu.State = menu.State.new()
+        arrange(state)
+        local first: ui_layout.Rect = state.main_targets[0].node:bounds()
+        local second: ui_layout.Rect = state.main_targets[1].node:bounds()
+        local first_x: f64 = first.x + first.width * 0.5
+        local first_y: f64 = first.y + first.height * 0.5
+        local second_x: f64 = second.x + second.width * 0.5
+        local second_y: f64 = second.y + second.height * 0.5
+
+        state:mousemoved(first_x, first_y)
+        expect(state.router:hovered()):toBe(state.main_targets[0].key)
+        state:mousemoved(second_x, second_y)
+        expect(state.router:hovered()):toBe(state.main_targets[1].key)
+
+        state:mousepressed(first_x, first_y, 1)
+        expect(tostring(state:mousereleased(second_x, second_y, 1))):toBe("none")
+        -- A mismatched release did not enter the spell stage.
+        expect(tostring(state:keypressed("Enter"))):toBe("none")
+        expect(tostring(state:keypressed("Enter"))):toBe("start")
+    end)
+
+    it("confines help interaction to its modal focus scope", function(): unit
+        local state: menu.State = menu.State.new()
+        arrange(state)
+        state.router:focus(state.main_targets[2].key)
+        expect(tostring(state:keypressed("Enter"))):toBe("none")
+        expect(state.help:is_visible()):toBe(true)
+        expect(state.router:focused()):not:toBe(state.main_targets[2].key)
+
+        state:mousepressed(10.0, 10.0, 1)
+        expect(tostring(state:mousereleased(10.0, 10.0, 1))):toBe("none")
+        expect(state.help:is_visible()):toBe(false)
+        expect(state.router:focused()):toBe(state.main_targets[2].key)
+    end)
+end)

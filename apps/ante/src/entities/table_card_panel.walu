@@ -7,8 +7,8 @@
 -- on the panel rather than inside it, which is what keeps the table cards reading as
 -- objects on a surface instead of tiles in a box.
 
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local ink = require("../ink")
 
 const PAD_X: f64 = 34.0

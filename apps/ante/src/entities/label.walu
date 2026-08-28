@@ -8,8 +8,8 @@
 -- for where `print` puts a string, so a row of labels aligned on baselines
 -- lines up the way reading it says it should.
 
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local ink = require("../ink")
 
 const ALIGN_LEFT: i32 = 0
@@ -36,44 +36,51 @@ function pen_x(bounds: box.Rect, width: f64, align: i32): f64
     return bounds.x
 end
 
-function node(value: string, size: f64, color: string, align: i32): entity.Node
-    return entity.Node.measured(
+type LabelPresentation = {
+    value: string, size: f64, color: string, align: i32, filling: bool,
+}
+export type Stateful = { presentation: LabelPresentation, root: entity.Node }
+
+function Stateful.new(
+    value: string, size: f64, color: string, align: i32, is_filling: bool
+): Stateful
+    local presentation: LabelPresentation = {
+        value = value, size = size, color = color, align = align, filling = is_filling,
+    }
+    local root: entity.Node = entity.Node.measured(
         function(metrics: entity.Metrics): box.Intrinsic
-            return measure(metrics, value, size)
+            local measured: box.Intrinsic = measure(
+                metrics, presentation.value, presentation.size)
+            if presentation.filling then measured.max_width = box.unbounded end
+            return measured
         end,
         function(surface: entity.Surface, bounds: box.Rect): unit
             local width: f64 = surface:metrics():text_width(
-                value, size)
+                presentation.value, presentation.size)
             ink.text(
-                surface.graphics, value,
-                pen_x(bounds, width, align), bounds.y + size, size, color)
+                surface.graphics, presentation.value,
+                pen_x(bounds, width, presentation.align),
+                bounds.y + presentation.size, presentation.size, presentation.color)
         end)
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(value: string, size: f64, color: string, align: i32): unit
+    self.presentation.value = value
+    self.presentation.size = size
+    self.presentation.color = color
+    self.presentation.align = align
+end
+
+function node(value: string, size: f64, color: string, align: i32): entity.Node
+    return Stateful.new(value, size, color, align, false).root
 end
 
 -- A line that takes whatever width the flow around it stretches it to, and
 -- aligns its type inside that. A centred caption needs a box to be centred in;
 -- this is how it gets one without a caller measuring the column for it.
 function filling(value: string, size: f64, color: string, align: i32): entity.Node
-    return entity.Node.measured(
-        function(metrics: entity.Metrics): box.Intrinsic
-            local width: f64 = metrics:text_width(value, size)
-            return {
-                min_width = width,
-                preferred_width = width,
-                max_width = box.unbounded,
-                min_height = size,
-                preferred_height = size,
-                max_height = size,
-                baseline = size,
-            }
-        end,
-        function(surface: entity.Surface, bounds: box.Rect): unit
-            local width: f64 = surface:metrics():text_width(
-                value, size)
-            ink.text(
-                surface.graphics, value,
-                pen_x(bounds, width, align), bounds.y + size, size, color)
-        end)
+    return Stateful.new(value, size, color, align, true).root
 end
 
 function left(value: string, size: f64, color: string): entity.Node

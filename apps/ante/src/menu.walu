@@ -1,42 +1,46 @@
--- The menu screen shown before a duel begins: a cursor-driven option list,
--- not a tap-through splash. It owns the pre-game presentation and turns raw
--- input into screen actions; the entry module decides what starting the duel
--- means (audio unlock, fresh deal, screen switch), so this module stays free
--- of resource and rules concerns.
---
--- Picking NEW RUN or BOSS RUSH leads to a second list: the starting spell the
--- player bring on the job. That list is the run's first shop — a street
--- vendor standing at the mouth of the route — so this screen aims the shared
--- city map at it and lets the map pan there from the drifting view the title
--- sits over. Only confirming a spell emits a start action, so the entry module
--- always receives a complete mode-plus-spell choice. Both entries start a run —
--- a sequence of duels sharing one gold pool; they differ only in how often a
--- duel is fought as a boss battle.
---
--- The map itself belongs to the entry module and outlives this screen, which is
--- why it arrives as a parameter rather than living here: the pan that starts on
--- this screen finishes on the duel's.
+-- Ante Magic's retained menu screen. Its node tree and interaction router are
+-- constructed once with the screen, then presented with the current viewport
+-- and resource readiness each frame. The small public interface turns browser
+-- input into menu actions; list geometry, hover, focus, and activation stay
+-- together behind that seam.
 
-local engine = require("waluau:engine")
 local render = require("./render")
 local ink = require("./ink")
-local entity = require("./entity")
 local spell_launch = require("./spell_launch")
 local spells = require("./spells/spell")
 local city_map = require("./city_map")
-local layout = require("./layout")
+local viewport_layout = require("./layout")
+local ui = require("./ui/node")
+local ui_layout = require("./ui/layout")
+local interaction = require("./ui/interaction")
 
 export type MenuAction = "none" | "start" | "start-rush"
 
 type Stage = "main" | "spell"
-
-export type State = {
+type Model = {
     clock: f64,
     cursor: i32,
     help_open: bool,
     stage: Stage,
     rush_choice: bool,
-    spell_cursor: i32
+    spell_cursor: i32,
+    pending_action: MenuAction,
+}
+type Presentation = { model: Model, viewport: viewport_layout.State, ready: bool }
+
+export type State = {
+    model: Model,
+    presentation: Presentation,
+    root: ui.Node,
+    main_list: ui.Node,
+    spell_list: ui.Node,
+    help: ui.Node,
+    router: interaction.Router,
+    main_scope: i32,
+    spell_scope: i32,
+    help_scope: i32,
+    main_targets: {interaction.Target},
+    spell_targets: {interaction.Target},
 }
 
 const ITEM_NEW_RUN: i32 = 0
@@ -48,200 +52,129 @@ const ITEM_W: f64 = 380.0
 const ITEM_H: f64 = 52.0
 const ITEM_PITCH: f64 = 60.0
 
-function item_x(viewport: layout.State): f64
-    return viewport.center_x - ITEM_W * 0.5
-end
-
-function title_y(viewport: layout.State): f64
+function title_y(viewport: viewport_layout.State): f64
     return viewport.height * 0.3533333333
 end
 
-function item_start_y(viewport: layout.State): f64
+function item_start_y(viewport: viewport_layout.State): f64
     return viewport.height * 0.51
 end
 
-function State.new(): State
-    return {
-        clock = 0.0,
-        cursor = ITEM_NEW_RUN,
-        help_open = false,
-        stage = "main",
-        rush_choice = false,
-        spell_cursor = 0,
-    }
+function list_style(viewport: viewport_layout.State): ui_layout.Style
+    return ui_layout.style(
+        "column", ITEM_PITCH - ITEM_H, "start", "center",
+        ui_layout.edges(0.0, item_start_y(viewport), 0.0, 0.0))
 end
 
--- Coming back to the menu is coming back to a different job: a new city, and a
--- new route through it for the next run to walk.
-function State:reset(city: city_map.State): unit
-    self.clock = 0.0
-    self.cursor = ITEM_NEW_RUN
-    self.help_open = false
-    self.stage = "main"
-    self.rush_choice = false
-    self.spell_cursor = 0
-    city:regenerate()
-end
-
--- Aim the map: the title sits over a city sweeping past, and the spell list
--- sits over the vendor the run sets out from. Nothing else changes, so the
--- change of stage is a pan rather than a cut.
-function State:update(city: city_map.State, dt: f64): unit
-    self.clock += dt
-    city:show()
-    if self.stage == "spell" then
-        city:follow(city_map.shop_stop(1))
-    else
-        city:drift()
-    end
-end
-
--- The starting spell the current selection names, as the rules' spell kind.
-function State:selected_spell(): spells.SpellKind
-    local kind: spells.SpellKind? = spells.SpellKind.from(self.spell_cursor + 1)
-    assert(kind ~= nil)
-    return kind::spells.SpellKind
-end
-
-function item_top(viewport: layout.State, index: i32): f64
-    return item_start_y(viewport) + (index::f64) * ITEM_PITCH
-end
-
--- Both stages share the option-list geometry; only the row count differs.
-function item_at(viewport: layout.State, x: f64, y: f64, count: i32): i32
-    local left: f64 = item_x(viewport)
-    if x < left or x > left + ITEM_W then return -1 end
-    for index = 0::i32, count - 1 do
-        local top: f64 = item_top(viewport, index)
-        if y >= top and y <= top + ITEM_H then return index end
-    end
-    return -1
-end
-
-function stage_item_count(state: State): i32
-    if state.stage == "spell" then return SPELL_COUNT end
-    return ITEM_COUNT
-end
-
--- Starting a run — standard cadence or boss rush — first routes through the
--- spell list; HOW TO PLAY is presentation the menu can satisfy itself with
--- the shared help modal.
-function activate(state: State, item: i32): MenuAction
-    if item == ITEM_NEW_RUN or item == ITEM_BOSS_RUSH then
-        state.stage = "spell"
-        state.rush_choice = item == ITEM_BOSS_RUSH
-        -- The shared cursor now points into the spell list; keep it on the
-        -- remembered spell so the halo and the eventual pick agree.
-        state.cursor = state.spell_cursor
-        return "none"
-    end
-    state.help_open = true
-    return "none"
-end
-
-function start_action(state: State): MenuAction
-    if state.rush_choice then return "start-rush" end
+function start_action(model: Model): MenuAction
+    if model.rush_choice then return "start-rush" end
     return "start"
 end
 
-function draw_item(state: State, viewport: layout.State, graphics: engine.Graphics, index: i32, label: string, idle_ink: string): unit
-    local top: f64 = item_top(viewport, index)
-    local left: f64 = item_x(viewport)
+function activate_main(model: Model, item: i32): unit
+    if item == ITEM_NEW_RUN or item == ITEM_BOSS_RUSH then
+        model.stage = "spell"
+        model.rush_choice = item == ITEM_BOSS_RUSH
+        model.cursor = model.spell_cursor
+        return
+    end
+    model.help_open = true
+end
+
+function draw_item(
+    presentation: Presentation,
+    surface: ui.Surface,
+    bounds: ui_layout.Rect,
+    index: i32,
+    label: string,
+    idle_ink: string
+): unit
+    local model: Model = presentation.model
+    local graphics = surface.graphics
     local edge: string = "#52525b"
     local tone: string = idle_ink
-    if index == state.cursor then
+    if index == model.cursor then
         edge = "#fbbf24"
         tone = "#fbbf24"
-        -- A halo breathing around the selected option: the one moving element
-        -- on an otherwise still screen, pointing at what Enter will do.
-        local grow: f64 = 4.0 + math.sin(state.clock * 2.4) * 2.5
+        local grow: f64 = 4.0 + math.sin(model.clock * 2.4) * 2.5
         graphics:set_color("#fbbf24")
         graphics:set_line_width(1.0)
         graphics:stroke_rectangle(
-            left - grow, top - grow, ITEM_W + grow * 2.0, ITEM_H + grow * 2.0)
+            bounds.x - grow, bounds.y - grow,
+            bounds.width + grow * 2.0, bounds.height + grow * 2.0)
     end
-    ink.panel(graphics, left, top, ITEM_W, ITEM_H, "#17171c", edge)
-    ink.text_centered(graphics, label, viewport.center_x, top + 33.0, 15, tone)
+    ink.panel(graphics, bounds.x, bounds.y, bounds.width, bounds.height, "#17171c", edge)
+    ink.text_centered(
+        graphics, label, bounds.x + bounds.width * 0.5, bounds.y + 33.0, 15, tone)
 end
 
-function draw_spell_stage(state: State, viewport: layout.State, graphics: engine.Graphics): unit
-    local heading_y: f64 = title_y(viewport)
-    -- The pick lasts the whole run, not one duel, and the gold it burns is
-    -- the same pool the next duel inherits. It is bought at a vendor like
-    -- every later upgrade, which is what the map behind this list is showing.
-    local mode: string = "NEW RUN"
-    if state.rush_choice then mode = "BOSS RUSH" end
-    ink.text_centered(graphics, "CHOOSE YOUR START", viewport.center_x, heading_y, 30, "#fbbf24")
-    ink.text_centered(
-        graphics, "CHOOSE A STARTING SPELL", viewport.center_x, heading_y + 34.0, 12, "#d4d4d8")
-    ink.text_centered(
-        graphics, mode .. "   CARRIED ALL RUN, EVERY USE COSTS 5 GOLD",
-        viewport.center_x, heading_y + 56.0, 11, "#a1a1aa")
-    for spell = 0::i32, SPELL_COUNT - 1 do
-        local kind: spells.SpellKind? = spells.SpellKind.from(spell + 1)
-        assert(kind ~= nil)
-        local active: spells.SpellKind = kind::spells.SpellKind
-        -- Each idle row wears its spell's colour, so the list doubles as the
-        -- legend for the effect the pick will launch in the duel.
-        draw_item(
-            state, viewport, graphics, spell,
-            spell_launch.name(active), spell_launch.color(active))
-    end
-    ink.text_centered(
-        graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
-        viewport.center_x, viewport.height - 34.0, 11, "#a1a1aa")
+function main_row(presentation: Presentation, index: i32, label: string): ui.Node
+    return ui.Node.sized(ITEM_W, ITEM_H,
+        function(surface: ui.Surface, bounds: ui_layout.Rect): unit
+            if presentation.model.stage ~= "main" or presentation.model.help_open then return end
+            draw_item(presentation, surface, bounds, index, label, "#8a8a92")
+        end)
 end
 
--- `ready` reports whether the required flip sound has finished loading. The
--- menu accepts NEW RUN either way — the duel screen already waits for its
--- resources — but says so instead of promising a start that visibly stalls.
---
--- The city map is already on the screen by the time this runs: the entry module
--- draws it under whichever screen is live, so what is drawn here is only the
--- list standing over it.
-function State:draw(viewport: layout.State, surface: entity.Surface, ready: bool): unit
-    local graphics: engine.Graphics = surface.graphics
+function spell_row(presentation: Presentation, index: i32): ui.Node
+    local kind: spells.SpellKind? = spells.SpellKind.from(index + 1)
+    assert(kind ~= nil)
+    local spell: spells.SpellKind = kind::spells.SpellKind
+    return ui.Node.sized(ITEM_W, ITEM_H,
+        function(surface: ui.Surface, bounds: ui_layout.Rect): unit
+            if presentation.model.stage ~= "spell" or presentation.model.help_open then return end
+            draw_item(
+                presentation, surface, bounds, index,
+                spell_launch.name(spell), spell_launch.color(spell))
+        end)
+end
+
+function draw_chrome(
+    presentation: Presentation, surface: ui.Surface, bounds: ui_layout.Rect
+): unit
+    local model: Model = presentation.model
+    if model.help_open then return end
+    local viewport: viewport_layout.State = presentation.viewport
+    local graphics = surface.graphics
     local heading_y: f64 = title_y(viewport)
-    if self.help_open then
-        -- The same help card the duel shows. It draws no card backs, while its
-        -- suit legend uses the same atlas as the live cards.
-        render.draw_help(surface, viewport)
+    if model.stage == "spell" then
+        local mode: string = "NEW RUN"
+        if model.rush_choice then mode = "BOSS RUSH" end
+        ink.text_centered(graphics, "CHOOSE YOUR START", viewport.center_x, heading_y, 30, "#fbbf24")
+        ink.text_centered(
+            graphics, "CHOOSE A STARTING SPELL", viewport.center_x, heading_y + 34.0, 12, "#d4d4d8")
+        ink.text_centered(
+            graphics, mode .. "   CARRIED ALL RUN, EVERY USE COSTS 5 GOLD",
+            viewport.center_x, heading_y + 56.0, 11, "#a1a1aa")
+        ink.text_centered(
+            graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
+            viewport.center_x, viewport.height - 34.0, 11, "#a1a1aa")
         return
     end
-    if self.stage == "spell" then
-        draw_spell_stage(self, viewport, graphics)
-        return
-    end
+
     ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
     ink.text_centered(
         graphics, "DUEL AFTER DUEL ON ONE POOL OF GOLD. ONE HAND EACH",
         viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")
-    -- The four colors of magic as small gold motes under the title, in the
-    -- same colours the footer legend uses in the duel.
     for i = 0::i32, 3::i32 do
         graphics:set_color(ink.color_ink(i))
-        graphics:fill_circle(viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
+        graphics:fill_circle(
+            viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
     end
 
-    draw_item(self, viewport, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
-    -- A boss battle deals seven cards and never replaces a spent one. The
-    -- standard run reaches one every third duel; the rush is nothing else.
-    -- Both labels carry the stakes without needing their own help screen.
-    draw_item(self, viewport, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
-    draw_item(self, viewport, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
-    if self.cursor == ITEM_NEW_RUN then
+    local detail_y: f64 = item_start_y(viewport) + (ITEM_COUNT::f64) * ITEM_PITCH + 16.0
+    if model.cursor == ITEM_NEW_RUN then
         ink.text_centered(
             graphics, "EVERY THIRD DUEL IS A CHALLENGE. GOLD CARRIES OVER",
-            viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
-    elseif self.cursor == ITEM_BOSS_RUSH then
+            viewport.center_x, detail_y, 10, "#fbbf24")
+    elseif model.cursor == ITEM_BOSS_RUSH then
         ink.text_centered(
             graphics, "EVERY DUEL IS A CHALLENGE. SEVEN CARDS, NO REPLACEMENTS",
-            viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
-    elseif not ready then
+            viewport.center_x, detail_y, 10, "#fbbf24")
+    elseif not presentation.ready then
         ink.text_centered(
-            graphics, "PREPARING THE DUEL", viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#8a8a92")
+            graphics, "PREPARING THE DUEL", viewport.center_x, detail_y, 10, "#8a8a92")
     end
-
     ink.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS",
         viewport.center_x, viewport.height - 76.0, 11, "#a1a1aa")
@@ -250,75 +183,198 @@ function State:draw(viewport: layout.State, surface: entity.Surface, ready: bool
         viewport.center_x, viewport.height - 52.0, 10, "#8a8a92")
 end
 
+function row_handlers(model: Model, stage: Stage, index: i32): interaction.Handlers
+    local callbacks: interaction.Handlers = interaction.handlers()
+    callbacks.on_focus = function(): unit
+        if stage == "spell" then model.spell_cursor = index end
+        model.cursor = index
+    end
+    callbacks.on_activate = function(): unit
+        if stage == "spell" then
+            model.spell_cursor = index
+            model.cursor = index
+            model.pending_action = start_action(model)
+        else
+            activate_main(model, index)
+        end
+    end
+    return callbacks
+end
+
+function State.new(): State
+    local model: Model = {
+        clock = 0.0,
+        cursor = ITEM_NEW_RUN,
+        help_open = false,
+        stage = "main",
+        rush_choice = false,
+        spell_cursor = 0,
+        pending_action = "none",
+    }
+    local presentation: Presentation = {
+        model = model,
+        viewport = viewport_layout.current(),
+        ready = false,
+    }
+    local main_rows: {ui.Node} = {
+        main_row(presentation, ITEM_NEW_RUN, "NEW RUN"),
+        main_row(presentation, ITEM_BOSS_RUSH, "BOSS RUSH"),
+        main_row(presentation, ITEM_HOW_TO_PLAY, "HOW TO PLAY"),
+    }
+    local spell_rows: {ui.Node} = {}
+    for index = 0::i32, SPELL_COUNT - 1 do
+        table.insert(spell_rows, spell_row(presentation, index))
+    end
+    local chrome: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit end,
+        function(surface: ui.Surface, bounds: ui_layout.Rect): unit
+            draw_chrome(presentation, surface, bounds)
+        end)
+    local main_list: ui.Node = ui.Node.flow(main_rows, list_style(presentation.viewport))
+    local spell_list: ui.Node = ui.Node.flow(spell_rows, list_style(presentation.viewport))
+    local help: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit end,
+        function(surface: ui.Surface, bounds: ui_layout.Rect): unit
+            if model.help_open then render.draw_help(surface, presentation.viewport) end
+        end)
+    local root: ui.Node = ui.Node.layer({ chrome, main_list, spell_list, help })
+    local router: interaction.Router = interaction.Router.new(root)
+    local main_scope: i32 = router:add_scope("column", true)
+    local spell_scope: i32 = router:add_scope("column", true)
+    local help_scope: i32 = router:add_scope("column", true)
+    local main_targets: {interaction.Target} = {}
+    for index, row in main_rows do
+        table.insert(main_targets, router:add(row, main_scope, true, row_handlers(model, "main", index)))
+    end
+    local spell_targets: {interaction.Target} = {}
+    for index, row in spell_rows do
+        table.insert(spell_targets, router:add(row, spell_scope, true, row_handlers(model, "spell", index)))
+    end
+    local help_callbacks: interaction.Handlers = interaction.handlers()
+    help_callbacks.on_activate = function(): unit model.help_open = false end
+    router:add(help, help_scope, true, help_callbacks)
+    main_list:set_visible(true)
+    spell_list:set_visible(false)
+    help:set_visible(false)
+    router:activate_scope(main_scope)
+    return {
+        model = model,
+        presentation = presentation,
+        root = root,
+        main_list = main_list,
+        spell_list = spell_list,
+        help = help,
+        router = router,
+        main_scope = main_scope,
+        spell_scope = spell_scope,
+        help_scope = help_scope,
+        main_targets = main_targets,
+        spell_targets = spell_targets,
+    }
+end
+
+function State:sync_scope(): unit
+    local model: Model = self.model
+    self.main_list:set_visible(not model.help_open and model.stage == "main")
+    self.spell_list:set_visible(not model.help_open and model.stage == "spell")
+    self.help:set_visible(model.help_open)
+    if model.help_open then
+        self.router:activate_scope(self.help_scope)
+    elseif model.stage == "spell" then
+        local desired: i32 = model.spell_cursor
+        self.router:activate_scope(self.spell_scope)
+        self.router:focus(self.spell_targets[desired].key)
+    else
+        local desired: i32 = model.cursor
+        self.router:activate_scope(self.main_scope)
+        self.router:focus(self.main_targets[desired].key)
+    end
+end
+
+function State:take_action(): MenuAction
+    local action: MenuAction = self.model.pending_action
+    self.model.pending_action = "none"
+    return action
+end
+
+function State:reset(city: city_map.State): unit
+    local model: Model = self.model
+    model.clock = 0.0
+    model.cursor = ITEM_NEW_RUN
+    model.help_open = false
+    model.stage = "main"
+    model.rush_choice = false
+    model.spell_cursor = 0
+    model.pending_action = "none"
+    self:sync_scope()
+    city:regenerate()
+end
+
+function State:update(city: city_map.State, dt: f64): unit
+    self.model.clock += dt
+    city:show()
+    if self.model.stage == "spell" then city:follow(city_map.shop_stop(1))
+    else city:drift() end
+end
+
+function State:selected_spell(): spells.SpellKind
+    local kind: spells.SpellKind? = spells.SpellKind.from(self.model.spell_cursor + 1)
+    assert(kind ~= nil)
+    return kind::spells.SpellKind
+end
+
+function State:draw(viewport: viewport_layout.State, surface: ui.Surface, ready: bool): unit
+    self.presentation.viewport = viewport
+    self.presentation.ready = ready
+    local style: ui_layout.Style = list_style(viewport)
+    self.main_list:present_style(style)
+    self.spell_list:present_style(style)
+    self:sync_scope()
+    self.root:draw(surface, 0.0, 0.0, viewport.width, viewport.height)
+end
+
 function State:keypressed(key: string): MenuAction
-    if self.help_open then
+    local model: Model = self.model
+    if model.help_open then
         if key == "Enter" or key == " " or key == "Escape" or key == "?" or key == "/" then
-            self.help_open = false
+            model.help_open = false
+            self:sync_scope()
         end
         return "none"
     end
-    if self.stage == "spell" then
-        if key == "Escape" then
-            self.stage = "main"
-            self.cursor = ITEM_NEW_RUN
-            if self.rush_choice then self.cursor = ITEM_BOSS_RUSH end
-            return "none"
-        end
-        if key == "ArrowUp" or key == "w" or key == "W" then
-            self.spell_cursor -= 1
-            if self.spell_cursor < 0 then self.spell_cursor = SPELL_COUNT - 1 end
-            self.cursor = self.spell_cursor
-            return "none"
-        end
-        if key == "ArrowDown" or key == "s" or key == "S" then
-            self.spell_cursor = (self.spell_cursor + 1) % SPELL_COUNT
-            self.cursor = self.spell_cursor
-            return "none"
-        end
-        if key == "Enter" or key == " " then
-            return start_action(self)
-        end
+    if model.stage == "spell" and key == "Escape" then
+        model.stage = "main"
+        model.cursor = ITEM_NEW_RUN
+        if model.rush_choice then model.cursor = ITEM_BOSS_RUSH end
+        self:sync_scope()
         return "none"
     end
-    if key == "ArrowUp" or key == "w" or key == "W" then
-        self.cursor -= 1
-        if self.cursor < 0 then self.cursor = ITEM_COUNT - 1 end
+    if model.stage == "main" and (key == "?" or key == "/") then
+        model.help_open = true
+        self:sync_scope()
         return "none"
     end
-    if key == "ArrowDown" or key == "s" or key == "S" then
-        self.cursor = (self.cursor + 1) % ITEM_COUNT
-        return "none"
-    end
-    if key == "?" or key == "/" then
-        self.help_open = true
-        return "none"
-    end
-    if key == "Enter" or key == " " then
-        return activate(self, self.cursor)
-    end
-    return "none"
+    local routed: string = key
+    if key == "w" or key == "W" then routed = "ArrowUp" end
+    if key == "s" or key == "S" then routed = "ArrowDown" end
+    self.router:key_pressed(routed)
+    self:sync_scope()
+    return self:take_action()
 end
 
-function State:mousemoved(viewport: layout.State, x: f64, y: f64): unit
-    if self.help_open then return end
-    local item: i32 = item_at(viewport, x, y, stage_item_count(self))
-    if item < 0 then return end
-    self.cursor = item
-    if self.stage == "spell" then self.spell_cursor = item end
+function State:mousemoved(x: f64, y: f64): unit
+    local hit: i32 = self.router:pointer_move(x, y)
+    if hit >= 0 then self.router:focus(hit) end
 end
 
-function State:mousepressed(viewport: layout.State, x: f64, y: f64, button: i32): MenuAction
+function State:mousepressed(x: f64, y: f64, button: i32): unit
+    if button ~= 1 then return end
+    self.router:pointer_down(x, y, button)
+end
+
+function State:mousereleased(x: f64, y: f64, button: i32): MenuAction
     if button ~= 1 then return "none" end
-    if self.help_open then
-        self.help_open = false
-        return "none"
-    end
-    local item: i32 = item_at(viewport, x, y, stage_item_count(self))
-    if item < 0 then return "none" end
-    self.cursor = item
-    if self.stage == "spell" then
-        self.spell_cursor = item
-        return start_action(self)
-    end
-    return activate(self, item)
+    self.router:pointer_up(x, y, button)
+    self:sync_scope()
+    return self:take_action()
 end

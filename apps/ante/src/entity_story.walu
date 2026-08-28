@@ -5,14 +5,14 @@
 -- measurement plus grow/shrink factors decide the rectangle it receives.
 local engine = require("waluau:engine")
 local storybook = require("waluau:engine/storybook")
-local box = require("./box_layout")
-local entity = require("./entity")
+local entity = require("./entities/adapter")
 local presentation_resources = require("./presentation_resources")
 
 export type Book = { assets: presentation_resources.State, started: bool }
 
 type Scene = {
     node: () -> entity.Node,
+    present: (() -> unit)?,
     width: f64,
     height: f64,
     scale: f64,
@@ -66,17 +66,23 @@ function Book:scene(spec: Scene): storybook.Scene
         end
     end
 
+    -- Construct the subject and stage once. Story controls update presentation
+    -- through `present`; drawing only remeasures, arranges, and paints this tree.
+    local root: entity.Node = stage(spec.node())
+
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         self.assets:prepare(graphics)
-        local surface: entity.Surface = self.assets:surface(graphics)
+        local present: (() -> unit)? = spec.present
+        if present ~= nil then present() end
+        local surface = self.assets:surface(graphics)
         graphics:push()
         graphics:scale(spec.scale, spec.scale)
-        stage(
-            spec.node()
-        ).paint(
-            surface,
-            entity.rect(0.0, 0.0, graphics.width / spec.scale, graphics.height / spec.scale)
-        )
+        root.paint(surface, {
+            x = 0.0,
+            y = 0.0,
+            width = graphics.width / spec.scale,
+            height = graphics.height / spec.scale,
+        })
         graphics:pop()
     end
 

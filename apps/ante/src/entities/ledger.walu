@@ -4,8 +4,8 @@
 -- of an empty one are the same code.
 
 local game = require("../game")
-local box = require("../box_layout")
-local entity = require("../entity")
+local box = require("../ui/layout")
+local entity = require("./adapter")
 local modal = require("./modal")
 local label = require("./label")
 
@@ -54,7 +54,7 @@ function body(state: game.View): entity.Node
             label.left("NO ROUNDS WON YET.", 16.0, "#8a8a92"),
         }, ROW_GAP)
     end
-    local rows: {entity.Node} = {}
+    local rows: {entity.LegacyNode} = {}
     for trick in state.history do table.insert(rows, row(trick)) end
     return modal.column(rows, ROW_GAP)
 end

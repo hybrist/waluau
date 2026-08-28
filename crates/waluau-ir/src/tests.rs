@@ -3075,6 +3075,57 @@ fn lowers_alias_cast_over_tagged_union_field_in_runtime_representation() {
 }
 
 #[test]
+fn lowers_nullable_recursive_record_traversal_through_unknown_anchor() {
+    let source = r#"
+        type Node = { value: i32, children: {Node} }
+
+        function find(root: Node, wanted: i32): Node?
+            if root.value == wanted then return root end
+            for child in root.children do
+                local found: Node? = find(child, wanted)
+                if found ~= nil then return found end
+            end
+            return nil
+        end
+
+        function value(node: Node): i32
+            return node.value
+        end
+
+        function find_value(root: Node, wanted: i32): i32
+            local found: Node? = find(root, wanted)
+            if found ~= nil then return value(found) end
+            return -1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("recursive nullable traversal should lower");
+    verify(&module).expect("recursive nullable traversal should verify");
+
+    let find = module
+        .functions
+        .iter()
+        .find(|function| function.name == "find")
+        .expect("find function");
+    assert!(
+        find.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Cast {
+                        from: Type::Record(_),
+                        to: Type::Unknown,
+                        ..
+                    }
+                )
+            })
+        }),
+        "recursive record should widen through its unknown runtime anchor"
+    );
+}
+
+#[test]
 fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
     // The value is a record whose field is already the canonical record; the
     // annotation names the same field by the union it came from. Those are one

@@ -19,7 +19,6 @@
 -- behind it — so that walking into a duel is one movement instead of a list
 -- vanishing and a board appearing.
 
-local engine = require("waluau:engine")
 local game = require("./game")
 local spells = require("./spells/spell")
 local run_module = require("./run")
@@ -30,7 +29,7 @@ local flow = require("./flow")
 local shop = require("./shop")
 local shop_render = require("./shop_render")
 local layout = require("./layout")
-local entity = require("./entity")
+local entity = require("./entities/adapter")
 local divine_intervention = require("./divine_intervention")
 
 export type State = {
@@ -38,7 +37,9 @@ export type State = {
     rules: game.State,
     ui: flow.State,
     presentation: choreography.State,
+    board: render.Board,
     shop: shop.State,
+    shop_ui: shop_render.View,
     intervention: divine_intervention.State,
     leaving_fence: bool,
     fence_fade: f64
@@ -87,12 +88,16 @@ end
 
 function State.new(): State
     local run: run_module.State = run_module.State.new(spells.SpellKind.Firebolt, false)
+    local rules: game.State = game.State.new(run:boss(), run.spells, run.gold)
+    local intermission: shop.State = shop.State.new()
     return {
         run = run,
-        rules = game.State.new(run:boss(), run.spells, run.gold),
+        rules = rules,
         ui = flow.State.new(),
         presentation = choreography.State.new(),
-        shop = shop.State.new(),
+        board = render.Board.new(rules:view(), run:view("none")),
+        shop = intermission,
+        shop_ui = shop_render.View.new(intermission, run),
         intervention = divine_intervention.State.new(),
         leaving_fence = false,
         fence_fade = 0.0,
@@ -113,6 +118,8 @@ function State:deal_vault(): unit
     self.rules:reset(run:boss(), run.spells, run.gold)
     self.ui:reset()
     self.presentation:reset()
+    self.board:pointer_leave()
+    self.board:focus_hand(0)
     self.intervention:reset()
     -- The opening deal is already reflected in rules self; choreography
     -- reveals that settled result as the screen comes alive.
@@ -120,6 +127,7 @@ function State:deal_vault(): unit
 end
 
 function State:close_fence(): unit
+    self.shop_ui:pointer_leave()
     self.shop:close()
     self.leaving_fence = false
 end
@@ -286,7 +294,7 @@ function State:update(city: city_map.State, dt: f64): i32
     if self:on_map() then return 0 end
     if self.leaving_fence and not city:visible() then self:close_fence() end
     if self.intervention.active then
-        self.presentation:update_fan(self.ui:fan_focus(true), dt)
+        self.presentation:update_fan(self.board:fan_focus(true), dt)
         local touched: {i32} = self.intervention:update(dt)
         for target in touched do self.rules:divine_intervention(target) end
         return 0
@@ -294,7 +302,7 @@ function State:update(city: city_map.State, dt: f64): i32
     local ui: flow.State = self.ui
     local presentation: choreography.State = self.presentation
     local animating: bool = presentation:is_animating()
-    presentation:update_fan(ui:fan_focus(animating), dt)
+    presentation:update_fan(self.board:fan_focus(animating), dt)
     local community_count: i32 = self.rules:community_size()
     -- Rules rotate or clear the live board as soon as play resolves, while the
     -- reveal still presents the five cards recorded in the trick. Keep spell
@@ -329,14 +337,13 @@ function State:draw_vault(surface: entity.Surface): unit
     local ui: flow.State = self.ui
     local aimed_slot: i32? = ui.cast_slot
     self.presentation:draw(
+        self.board,
         surface,
         self.rules:view(),
         self.run:view(self:run_outcome()),
         {
-            hand_focus = ui:fan_focus(
+            hand_focus = self.board:fan_focus(
                 self.presentation:is_animating()),
-            table_card_cursor = ui.table_card_cursor,
-            cursor_area = ui.cursor_area,
             play_picks = ui.play_picks,
             swap_hand = ui.swap_hand,
             swap_table_cards = ui.swap_table_cards,
@@ -354,9 +361,8 @@ end
 -- The shop's offers, at the opacity of the street they are laid out on: they
 -- arrive as the camera comes back out of the last duel, and are gone before
 -- the walk to the next house begins.
-function State:draw_fence(city: city_map.State, viewport: layout.State, graphics: engine.Graphics): unit
-    shop_render.draw(
-        self.shop, self.run, viewport, graphics, self.fence_fade * city.street)
+function State:draw_fence(city: city_map.State, viewport: layout.State, surface: entity.Surface): unit
+    self.shop_ui:draw(viewport, surface, self.fence_fade * city.street)
 end
 
 function State:submit_swap(): unit
@@ -409,13 +415,31 @@ function State:submit_round(): unit
     self.presentation:begin_reveal(resolved.winner ~= 0)
 end
 
--- The swap prompt has exactly two rows, so up and down both mean "the other
--- one".
-function toggle_cursor_area(ui: flow.State): unit
-    if ui.cursor_area == "hand" then
-        ui.cursor_area = "table-cards"
-    else
-        ui.cursor_area = "hand"
+function State:perform_board_action(
+    city: city_map.State, action: render.BoardAction
+): unit
+    if action.kind == "none" then return end
+    if action.kind == "modal" then
+        self:consume_gate(city, "primary")
+        return
+    end
+    local ui: flow.State = self.ui
+    local rules: game.State = self.rules
+    if action.kind == "hand" then
+        if rules:swap_open() then
+            flow.toggle(ui.swap_hand, action.index, rules:community_size())
+        else
+            flow.toggle(ui.play_picks, action.index, 2)
+        end
+    elseif action.kind == "table-card" then
+        local aimed_slot: i32? = ui.cast_slot
+        if aimed_slot ~= nil then
+            self:confirm_cast(aimed_slot::i32, action.index)
+        elseif rules:swap_open() and not rules:is_frozen(action.index) then
+            flow.toggle(ui.swap_table_cards, action.index, rules:community_size())
+        end
+    elseif action.kind == "commit" then
+        if rules:swap_open() then self:submit_swap() else self:submit_round() end
     end
 end
 
@@ -468,7 +492,7 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     if self:on_map() then
         if control == Key.restart then
             self:reset(city, self.run.rush, self.run.start_spell)
-        elseif self.shop:keypressed(self.run, key) == "leave" then
+        elseif self.shop_ui:keypressed(key) == "leave" then
             self:leave_shop()
         end
         return "none"
@@ -512,24 +536,23 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
             presentation:skip()
         end
         ui.cast_slot = cast_slot
+        self.board:focus_table(0)
         return "none"
     end
     local aimed_slot: i32? = ui.cast_slot
     if aimed_slot ~= nil then
-        local community_count: i32 = rules:community_size()
         match control do
-        case Key.cancel then ui.cast_slot = nil
-        case Key.left then
-            ui.table_card_cursor -= 1
-            if ui.table_card_cursor < 0 then
-                ui.table_card_cursor = community_count - 1
-            end
-        case Key.right then
-            ui.table_card_cursor = (ui.table_card_cursor + 1) % community_count
+        case Key.cancel then
+            ui.cast_slot = nil
+            self.board:focus_hand(0)
+        case Key.left then self.board:navigate("left")
+        case Key.right then self.board:navigate("right")
         case Key.confirm then
-            self:confirm_cast(aimed_slot::i32, ui.table_card_cursor)
+            local target: i32 = self.board:focused_table()
+            if target < 0 then target = 0 end
+            self:confirm_cast(aimed_slot::i32, target)
         case Key.select then
-            self:confirm_cast(aimed_slot::i32, ui.table_card_cursor)
+            self:perform_board_action(city, self.board:activate())
         case Key.exit then
         case Key.restart then
         case Key.history then
@@ -543,49 +566,31 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
         end
         return "none"
     end
+    if (ui.modal ~= "none" or ui.revealing)
+        and (control == Key.confirm or control == Key.select)
+    then
+        self:perform_board_action(city, self.board:activate_modal())
+        return "none"
+    end
     if self:consume_gate(city, key_command(control)) then return "none" end
-    local community_count: i32 = rules:community_size()
 
     match control do
-    case Key.left then
-        if ui.cursor_area == "hand" then
-            ui.hand_cursor -= 1
-            if ui.hand_cursor < 0 then ui.hand_cursor = rules:hand_size() - 1 end
-        else
-            ui.table_card_cursor -= 1
-            if ui.table_card_cursor < 0 then
-                ui.table_card_cursor = community_count - 1
-            end
-        end
-    case Key.right then
-        if ui.cursor_area == "hand" then
-            ui.hand_cursor = (ui.hand_cursor + 1) % rules:hand_size()
-        else
-            ui.table_card_cursor = (ui.table_card_cursor + 1) % community_count
-        end
-    case Key.up then
-        if rules:swap_open() then toggle_cursor_area(ui) end
-    case Key.down then
-        if rules:swap_open() then toggle_cursor_area(ui) end
+    case Key.left then self.board:navigate("left")
+    case Key.right then self.board:navigate("right")
+    case Key.up then self.board:navigate("up")
+    case Key.down then self.board:navigate("down")
     case Key.select then
-        if rules:swap_open() then
-            if ui.cursor_area == "hand" then
-                flow.toggle(ui.swap_hand, ui.hand_cursor, community_count)
-            elseif not rules:is_frozen(ui.table_card_cursor) then
-                flow.toggle(
-                    ui.swap_table_cards, ui.table_card_cursor, community_count)
-            end
-        else
-            flow.toggle(ui.play_picks, ui.hand_cursor, 2)
-        end
+        self:perform_board_action(city, self.board:activate())
     case Key.sort_ascending then
         local order: {i32} = rules:sort_player_hand(true)
         ui:apply_hand_order(order)
         presentation:apply_hand_order(order)
+        self.board:apply_hand_order(order)
     case Key.sort_descending then
         local order: {i32} = rules:sort_player_hand(false)
         ui:apply_hand_order(order)
         presentation:apply_hand_order(order)
+        self.board:apply_hand_order(order)
     case Key.pass then
         if rules:swap_open() then
             ui.swap_hand = {}
@@ -593,7 +598,11 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
             self:submit_swap()
         end
     case Key.confirm then
-        if rules:swap_open() then self:submit_swap() else self:submit_round() end
+        if rules:swap_open() or #ui.play_picks == 2 then
+            self:perform_board_action(city, { kind = "commit", index = 0 })
+        else
+            self:perform_board_action(city, self.board:activate())
+        end
     case Key.exit then
     case Key.restart then
     case Key.history then
@@ -605,10 +614,8 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
 end
 
 function State:mousemoved(x: f64, y: f64): unit
-    local viewport: layout.State = layout.current()
     if self:on_map() then
-        self.shop:focus(self.run,
-            shop_render.row_at(viewport, x, y, self.shop:row_count(self.run)))
+        self.shop_ui:mousemoved(x, y)
         return
     end
     if self.intervention.active then return end
@@ -618,97 +625,37 @@ function State:mousemoved(x: f64, y: f64): unit
         self.presentation:is_animating(),
         self.presentation:reveal_finished(), "none"
     ) ~= "live" then return end
-    local at: render.Point = render.point(x, y)
-    -- While aiming a cast, the pointer only steers the table_card the spell would
-    -- hit; the fan below stays folded and unfocused.
-    if ui.cast_slot ~= nil then
-        local target: i32 = render.hit_table_card(
-            viewport, at, self.rules:community_size())
-        if target >= 0 then ui.table_card_cursor = target end
-        return
-    end
-    local hand: i32 = self.presentation:hit_hand(at)
-    if hand >= 0 then
-        ui.cursor_area = "hand"
-        ui.hand_cursor = hand
-        return
-    end
-    if self.rules:swap_open() then
-        local table_card: i32 = render.hit_table_card(
-            viewport, at, self.rules:community_size())
-        if table_card >= 0 then
-            ui.cursor_area = "table-cards"
-            ui.table_card_cursor = table_card
-        end
-    end
+    self.board:pointer_move(x, y)
 end
 
 function State:mousepressed(city: city_map.State, x: f64, y: f64, button: i32): unit
     if button ~= 1 then return end
-    local viewport: layout.State = layout.current()
-    -- Clicking an offer buys it the same way Enter on it does; a click on the
-    -- chrome between the lines buys nothing rather than taking whatever the
-    -- cursor happened to rest on.
+    -- The retained shop starts a possible click here and commits it only when
+    -- release lands on the same row.
     if self:on_map() then
-        local row: i32 = shop_render.row_at(
-            viewport, x, y, self.shop:row_count(self.run))
-        if row < 0 then return end
-        self.shop:focus(self.run, row)
-        if self.shop:activate(self.run) == "leave" then
-            self:leave_shop()
-        end
+        self.shop_ui:mousepressed(x, y, button)
         return
     end
     if self.intervention.active then return end
     if self.presentation:firebolt_pending() then return end
-    if self:consume_gate(city, "primary") then return end
+    if self.presentation:is_animating() then
+        self:consume_gate(city, "primary")
+        return
+    end
+    self.board:pointer_down(x, y, button)
+end
 
-    local ui: flow.State = self.ui
-    local rules: game.State = self.rules
-    local at: render.Point = render.point(x, y)
-    -- Clicking a table_card while aiming confirms the cast on it; anywhere else
-    -- keeps targeting open for the keyboard to finish or cancel.
-    local aimed_slot: i32? = ui.cast_slot
-    if aimed_slot ~= nil then
-        local target: i32 = render.hit_table_card(
-            viewport, at, rules:community_size())
-        if target >= 0 then
-            ui.table_card_cursor = target
-            self:confirm_cast(aimed_slot::i32, target)
-        end
+-- Both shop and board controls commit through the retained router only when
+-- release lands on the same target that received the press.
+function State:mousereleased(
+    city: city_map.State, x: f64, y: f64, button: i32
+): unit
+    if self:on_map() then
+        if self.shop_ui:mousereleased(x, y, button) == "leave" then self:leave_shop() end
         return
     end
-    local hand: i32 = self.presentation:hit_hand(at)
-    if hand >= 0 then
-        ui.cursor_area = "hand"
-        ui.hand_cursor = hand
-        if rules:swap_open() then
-            flow.toggle(ui.swap_hand, hand, rules:community_size())
-        else flow.toggle(ui.play_picks, hand, 2) end
-        return
-    end
-    if rules:swap_open() then
-        local table_card: i32 = render.hit_table_card(
-            viewport, at, rules:community_size())
-        if table_card >= 0 then
-            ui.cursor_area = "table-cards"
-            ui.table_card_cursor = table_card
-            if not rules:is_frozen(table_card) then
-                flow.toggle(
-                    ui.swap_table_cards, table_card, rules:community_size())
-            end
-            return
-        end
-        if render.hit_pass(at) then
-            ui.swap_hand = {}
-            ui.swap_table_cards = {}
-            self:submit_swap()
-            return
-        end
-    end
-    if render.hit_commit(at) then
-        if rules:swap_open() then self:submit_swap() else self:submit_round() end
-    end
+    if button ~= 1 then return end
+    self:perform_board_action(city, self.board:pointer_up(x, y, button))
 end
 
 -- Five independently versioned development-snapshot payloads, in the same
@@ -752,12 +699,17 @@ function State.restore(
     then
         restored_ui.cast_slot = nil
     end
+    local restored_run: run_module.State = run::run_module.State
+    local restored_shop: shop.State = intermission::shop.State
     return {
-        run = run::run_module.State,
+        run = restored_run,
         rules = restored_rules,
         ui = restored_ui,
         presentation = presentation::choreography.State,
-        shop = intermission::shop.State,
+        board = render.Board.new(
+            restored_rules:view(), restored_run:view("none")),
+        shop = restored_shop,
+        shop_ui = shop_render.View.new(restored_shop, restored_run),
         intervention = divine_intervention.State.new(),
         -- Leaving a shop is a moment of movement, not a phase of the run. A
         -- snapshot lands on one side of it: an open shop comes back standing,
