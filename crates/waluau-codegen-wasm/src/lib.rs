@@ -790,7 +790,7 @@ fn emit_inner(
     let started = CompilerTimer::start();
     let declared_imports = used_declared_imports(module);
     let array_types = collect_array_types(module);
-    let record_types = collect_record_types(module);
+    let (record_types, record_key_by_ptr) = collect_record_types(module);
     let string_constants = host::collect_string_constants(module);
     let bytes_constants = host::collect_bytes_constants(module);
     let buffer_plan = BufferPlan::new(module);
@@ -880,6 +880,7 @@ fn emit_inner(
     let mut array_registry = ArrayTypeRegistry::with_function_type_offset(
         &array_types,
         &record_types,
+        record_key_by_ptr,
         array_type_base,
         record_types_base,
         RuntimeGcTypes {
