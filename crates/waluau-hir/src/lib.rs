@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{
     AssignOp, Expr, Function, FunctionExpr, FunctionName, GenericExternType, NumberLiteral,
@@ -101,7 +102,7 @@ fn bind_vararg(vars: &mut HashMap<String, Binding>, vararg: Option<&Type>) {
             vars.insert(
                 VARARG_BINDING.to_string(),
                 binding_for(
-                    Type::Variadic(Box::new(element.clone())),
+                    Type::Variadic(Arc::new(element.clone())),
                     Rebindability::Const,
                 ),
             );
@@ -331,28 +332,28 @@ fn type_visible_from_file_cached(
                 name: name.clone(),
                 ty: visible_ty,
                 generic_extern: generic_extern.as_ref().map(|generic| {
-                    Box::new(generic.map_type_args(|ty| {
+                    Arc::new(generic.map_type_args(|ty| {
                         type_visible_from_file_cached(ty, file_path, opaque, opaque_payloads)
                     }))
                 }),
             }
         }
-        Type::ExternSubtype(parent) => Type::ExternSubtype(Box::new(
+        Type::ExternSubtype(parent) => Type::ExternSubtype(Arc::new(
             type_visible_from_file_cached(parent, file_path, opaque, opaque_payloads),
         )),
-        Type::Nullable(inner) => Type::Nullable(Box::new(type_visible_from_file_cached(
+        Type::Nullable(inner) => Type::Nullable(Arc::new(type_visible_from_file_cached(
             inner,
             file_path,
             opaque,
             opaque_payloads,
         ))),
-        Type::Array(inner) => Type::Array(Box::new(type_visible_from_file_cached(
+        Type::Array(inner) => Type::Array(Arc::new(type_visible_from_file_cached(
             inner,
             file_path,
             opaque,
             opaque_payloads,
         ))),
-        Type::Variadic(inner) => Type::Variadic(Box::new(type_visible_from_file_cached(
+        Type::Variadic(inner) => Type::Variadic(Arc::new(type_visible_from_file_cached(
             inner,
             file_path,
             opaque,
@@ -373,7 +374,7 @@ fn type_visible_from_file_cached(
                 .iter()
                 .map(|ty| type_visible_from_file_cached(ty, file_path, opaque, opaque_payloads))
                 .collect(),
-            return_type: Box::new(type_visible_from_file_cached(
+            return_type: Arc::new(type_visible_from_file_cached(
                 return_type,
                 file_path,
                 opaque,
@@ -381,7 +382,7 @@ fn type_visible_from_file_cached(
             )),
             has_self: *has_self,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| {
@@ -394,7 +395,7 @@ fn type_visible_from_file_cached(
         ),
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(type_visible_from_file_cached(
+            payload: Arc::new(type_visible_from_file_cached(
                 &variant.payload,
                 file_path,
                 opaque,
@@ -406,7 +407,7 @@ fn type_visible_from_file_cached(
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(type_visible_from_file_cached(
+                    payload: Arc::new(type_visible_from_file_cached(
                         &variant.payload,
                         file_path,
                         opaque,
@@ -441,18 +442,18 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
             name: name.clone(),
             ty: waluau_ast::OpaquePayload::new(restore_module_opaque_type(ty, opaque)),
             generic_extern: generic_extern.as_ref().map(|generic| {
-                Box::new(generic.map_type_args(|ty| restore_module_opaque_type(ty, opaque)))
+                Arc::new(generic.map_type_args(|ty| restore_module_opaque_type(ty, opaque)))
             }),
         },
         Type::ExternSubtype(parent) => {
-            Type::ExternSubtype(Box::new(restore_module_opaque_type(parent, opaque)))
+            Type::ExternSubtype(Arc::new(restore_module_opaque_type(parent, opaque)))
         }
         Type::Nullable(inner) => {
-            Type::Nullable(Box::new(restore_module_opaque_type(inner, opaque)))
+            Type::Nullable(Arc::new(restore_module_opaque_type(inner, opaque)))
         }
-        Type::Array(inner) => Type::Array(Box::new(restore_module_opaque_type(inner, opaque))),
+        Type::Array(inner) => Type::Array(Arc::new(restore_module_opaque_type(inner, opaque))),
         Type::Variadic(inner) => {
-            Type::Variadic(Box::new(restore_module_opaque_type(inner, opaque)))
+            Type::Variadic(Arc::new(restore_module_opaque_type(inner, opaque)))
         }
         Type::Multi(types) => Type::Multi(
             types
@@ -469,10 +470,10 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
                 .iter()
                 .map(|ty| restore_module_opaque_type(ty, opaque))
                 .collect(),
-            return_type: Box::new(restore_module_opaque_type(return_type, opaque)),
+            return_type: Arc::new(restore_module_opaque_type(return_type, opaque)),
             has_self: *has_self,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), restore_module_opaque_type(ty, opaque)))
@@ -480,14 +481,14 @@ fn restore_module_opaque_type(ty: &Type, opaque: &ModuleOpaqueTypes) -> Type {
         ),
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(restore_module_opaque_type(&variant.payload, opaque)),
+            payload: Arc::new(restore_module_opaque_type(&variant.payload, opaque)),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(restore_module_opaque_type(&variant.payload, opaque)),
+                    payload: Arc::new(restore_module_opaque_type(&variant.payload, opaque)),
                 })
                 .collect(),
         ),
@@ -901,7 +902,7 @@ fn annotate_inferred_expr_locals(
                                 .iter()
                                 .map(|param| param.ty.clone())
                                 .collect(),
-                            return_type: Box::new(return_type.clone()),
+                            return_type: Arc::new(return_type.clone()),
                             has_self: false,
                         },
                         Rebindability::Const,
@@ -977,7 +978,7 @@ fn annotate_inferred_stmt_locals(
                     expected_ty
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty())
                 {
-                    Type::Record(BTreeMap::new())
+                    Type::record(BTreeMap::new())
                 } else {
                     // A single binding keeps only the first value of a
                     // multi-value initializer (Lua's adjustment rules), so the
@@ -1342,14 +1343,14 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         },
         Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(substitute_type_params(variant.payload.as_ref(), subst)),
+            payload: Arc::new(substitute_type_params(variant.payload.as_ref(), subst)),
         }),
         Type::TaggedUnion(variants) => Type::TaggedUnion(
             variants
                 .iter()
                 .map(|variant| waluau_ast::TaggedVariant {
                     tag: variant.tag.clone(),
-                    payload: Box::new(substitute_type_params(variant.payload.as_ref(), subst)),
+                    payload: Arc::new(substitute_type_params(variant.payload.as_ref(), subst)),
                 })
                 .collect(),
         ),
@@ -1361,18 +1362,18 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             name: name.clone(),
             ty: waluau_ast::OpaquePayload::new(substitute_type_params(ty, subst)),
             generic_extern: generic_extern.as_ref().map(|generic| {
-                Box::new(generic.map_type_args(|ty| substitute_type_params(ty, subst)))
+                Arc::new(generic.map_type_args(|ty| substitute_type_params(ty, subst)))
             }),
         },
         Type::ExternSubtype(parent) => {
-            Type::ExternSubtype(Box::new(substitute_type_params(parent, subst)))
+            Type::ExternSubtype(Arc::new(substitute_type_params(parent, subst)))
         }
-        Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type_params(inner, subst))),
+        Type::Nullable(inner) => Type::Nullable(Arc::new(substitute_type_params(inner, subst))),
         Type::TypeParam(name) => subst
             .get(name)
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
-        Type::Array(inner) => Type::Array(Box::new(substitute_type_params(inner, subst))),
+        Type::Array(inner) => Type::Array(Arc::new(substitute_type_params(inner, subst))),
         Type::Multi(types) => Type::Multi(
             types
                 .iter()
@@ -1388,10 +1389,10 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 .iter()
                 .map(|param| substitute_type_params(param, subst))
                 .collect(),
-            return_type: Box::new(substitute_type_params(return_type, subst)),
+            return_type: Arc::new(substitute_type_params(return_type, subst)),
             has_self: *has_self,
         },
-        Type::Record(fields) => Type::Record(
+        Type::Record(fields) => Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), substitute_type_params(ty, subst)))
@@ -1424,7 +1425,7 @@ fn specialize_generic_extern_constructor(
         Type::Extern | Type::ExternSubtype(_) => Type::Opaque {
             name: generic_instantiation_name(name, type_args),
             ty: waluau_ast::OpaquePayload::new(resolved),
-            generic_extern: Some(Box::new(GenericExternType {
+            generic_extern: Some(Arc::new(GenericExternType {
                 constructor: name.to_string(),
                 source_name: decl.source_name.clone(),
                 type_args: type_args.to_vec(),
@@ -1637,7 +1638,7 @@ fn resolve_type_refs_allowing_forward_refs(
                                 guarded,
                             )
                         })
-                        .map(Box::new)
+                        .map(Arc::new)
                 })
                 .transpose()?,
         }),
@@ -1652,7 +1653,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 guarded,
             )?;
             require_nullable_host_ref_type(&parent)?;
-            Ok(Type::ExternSubtype(Box::new(parent)))
+            Ok(Type::ExternSubtype(Arc::new(parent)))
         }
         Type::Nullable(inner) => {
             let inner = resolve_type_refs_allowing_forward_refs(
@@ -1665,9 +1666,9 @@ fn resolve_type_refs_allowing_forward_refs(
                 guarded,
             )?;
             require_nullable_inner_type(&inner)?;
-            Ok(Type::Nullable(Box::new(inner)))
+            Ok(Type::Nullable(Arc::new(inner)))
         }
-        Type::Array(inner) => Ok(Type::Array(Box::new(
+        Type::Array(inner) => Ok(Type::Array(Arc::new(
             resolve_type_refs_allowing_forward_refs(
                 inner,
                 active_type_params,
@@ -1713,7 +1714,7 @@ fn resolve_type_refs_allowing_forward_refs(
                     )
                 })
                 .collect::<Result<_, _>>()?,
-            return_type: Box::new(resolve_type_refs_allowing_forward_refs(
+            return_type: Arc::new(resolve_type_refs_allowing_forward_refs(
                 return_type,
                 active_type_params,
                 raw_opaque,
@@ -1724,7 +1725,7 @@ fn resolve_type_refs_allowing_forward_refs(
             )?),
             has_self: *has_self,
         }),
-        Type::Record(fields) => Ok(Type::Record(
+        Type::Record(fields) => Ok(Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| {
@@ -1753,7 +1754,7 @@ fn resolve_type_refs_allowing_forward_refs(
         // resolution still describes a finite runtime value.
         Type::TaggedVariant(variant) => Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(resolve_type_refs_allowing_forward_refs(
+            payload: Arc::new(resolve_type_refs_allowing_forward_refs(
                 variant.payload.as_ref(),
                 active_type_params,
                 raw_opaque,
@@ -1769,7 +1770,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 .map(|variant| {
                     Ok(waluau_ast::TaggedVariant {
                         tag: variant.tag.clone(),
-                        payload: Box::new(resolve_type_refs_allowing_forward_refs(
+                        payload: Arc::new(resolve_type_refs_allowing_forward_refs(
                             variant.payload.as_ref(),
                             active_type_params,
                             raw_opaque,
@@ -2103,7 +2104,7 @@ fn resolve_type_refs_fixpoint(
                                 fixpoint_mode,
                             )
                         })
-                        .map(Box::new)
+                        .map(Arc::new)
                 })
                 .transpose()?,
         }),
@@ -2118,7 +2119,7 @@ fn resolve_type_refs_fixpoint(
                 fixpoint_mode,
             )?;
             require_nullable_host_ref_type(&parent)?;
-            Ok(Type::ExternSubtype(Box::new(parent)))
+            Ok(Type::ExternSubtype(Arc::new(parent)))
         }
         Type::Nullable(inner) => {
             let inner = resolve_type_refs_fixpoint(
@@ -2131,9 +2132,9 @@ fn resolve_type_refs_fixpoint(
                 fixpoint_mode,
             )?;
             require_nullable_inner_type(&inner)?;
-            Ok(Type::Nullable(Box::new(inner)))
+            Ok(Type::Nullable(Arc::new(inner)))
         }
-        Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(
+        Type::Array(inner) => Ok(Type::Array(Arc::new(resolve_type_refs_fixpoint(
             inner,
             active_type_params,
             raw_opaque,
@@ -2177,7 +2178,7 @@ fn resolve_type_refs_fixpoint(
                     )
                 })
                 .collect::<Result<_, _>>()?,
-            return_type: Box::new(resolve_type_refs_fixpoint(
+            return_type: Arc::new(resolve_type_refs_fixpoint(
                 return_type,
                 active_type_params,
                 raw_opaque,
@@ -2188,7 +2189,7 @@ fn resolve_type_refs_fixpoint(
             )?),
             has_self: *has_self,
         }),
-        Type::Record(fields) => Ok(Type::Record(
+        Type::Record(fields) => Ok(Type::record(
             fields
                 .iter()
                 .map(|(name, ty)| {
@@ -2212,7 +2213,7 @@ fn resolve_type_refs_fixpoint(
         // stranded inside variants.
         Type::TaggedVariant(variant) => Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
             tag: variant.tag.clone(),
-            payload: Box::new(resolve_type_refs_fixpoint(
+            payload: Arc::new(resolve_type_refs_fixpoint(
                 variant.payload.as_ref(),
                 active_type_params,
                 raw_opaque,
@@ -2228,7 +2229,7 @@ fn resolve_type_refs_fixpoint(
                 .map(|variant| {
                     Ok(waluau_ast::TaggedVariant {
                         tag: variant.tag.clone(),
-                        payload: Box::new(resolve_type_refs_fixpoint(
+                        payload: Arc::new(resolve_type_refs_fixpoint(
                             variant.payload.as_ref(),
                             active_type_params,
                             raw_opaque,
@@ -3435,7 +3436,7 @@ fn annotate_function_expr_resolved_members(
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    return_type: Box::new(return_type.clone()),
+                    return_type: Arc::new(return_type.clone()),
                     has_self: false,
                 },
                 Rebindability::Const,
@@ -3505,7 +3506,7 @@ fn annotate_stmt_resolved_members(
                 )
                 .unwrap_or_else(|_| expected_ty.clone())
             } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
-                Type::Record(BTreeMap::new())
+                Type::record(BTreeMap::new())
             } else {
                 infer_expr(value, vars, fn_signatures, active_type_params, None)
                     .unwrap_or(Type::Unknown)
@@ -3550,7 +3551,7 @@ fn annotate_stmt_resolved_members(
                         existing_field.clone(),
                     ) {
                         if existing_field.is_none() && binding.record_open {
-                            fields.insert(name.clone(), value_ty);
+                            Arc::make_mut(&mut fields).insert(name.clone(), value_ty);
                         }
                     }
                     let mut updated = binding_for(Type::Record(fields), binding.rebindability);
@@ -4504,9 +4505,11 @@ fn type_check_and_infer_collect_raw(
             .all(|(current, previous)| current == previous || current.return_type.is_some())
             .then_some((reusable, previous_typed.functions.len()))
     });
+    let mut reused_from_cache = false;
     if let Some((cached_reusable, cached_function_count)) = reusable_from_cache
         && cached_function_count == typed.functions.len()
     {
+        reused_from_cache = true;
         reusable = cached_reusable;
         let cache = cache.as_deref_mut().expect("HIR cache");
         let mut cached_typed = cache.typed.take().expect("cached typed program");
@@ -4635,16 +4638,32 @@ fn type_check_and_infer_collect_raw(
             .iter()
             .map(|idx| typed.functions[*idx].name.to_string())
             .collect();
+        // The privacy views over the signature/binding tables depend only on
+        // the source file, so build them once per file per iteration instead
+        // of once per unresolved function. Signatures resolved earlier in the
+        // same iteration become visible in the next one; `unresolved_names`
+        // already tells inference to defer on them, so convergence and
+        // diagnostics are unchanged.
+        let mut iteration_signatures = HashMap::new();
+        let mut iteration_bindings = HashMap::new();
+        for idx in &unresolved {
+            let file_path = &typed.functions[*idx].file_path;
+            if !iteration_signatures.contains_key(file_path) {
+                iteration_signatures.insert(
+                    file_path.clone(),
+                    signatures_visible_from_file(&fn_signatures, file_path, &module_opaque),
+                );
+                iteration_bindings.insert(
+                    file_path.clone(),
+                    bindings_visible_from_file(&module_bindings, file_path, &module_opaque),
+                );
+            }
+        }
         for idx in unresolved {
             let function = &typed.functions[idx];
             let visible_function = function_visible_from_file(function, &module_opaque);
-            let visible_signatures =
-                signatures_visible_from_file(&fn_signatures, &function.file_path, &module_opaque);
-            let visible_bindings = bindings_visible_from_file(
-                function_module_bindings(function, &module_bindings),
-                &function.file_path,
-                &module_opaque,
-            );
+            let visible_signatures = &iteration_signatures[&function.file_path];
+            let visible_bindings = &iteration_bindings[&function.file_path];
             let function_name = function.name.to_string();
             let function_vararg = function.vararg.clone();
             let function_file_path = function.file_path.clone();
@@ -4655,9 +4674,9 @@ fn type_check_and_infer_collect_raw(
                 .collect();
             match infer_top_level_function_return_type(
                 &visible_function,
-                &visible_signatures,
+                visible_signatures,
                 &unresolved_names,
-                &visible_bindings,
+                visible_bindings,
             ) {
                 Ok(Some(ret)) => {
                     let ret = restore_module_opaque_type(&ret, &module_opaque);
@@ -4744,11 +4763,21 @@ fn type_check_and_infer_collect_raw(
     // function. Building them once per file avoids repeatedly cloning and
     // rewriting the full signature/binding tables for every function in a
     // large linked browser program.
+    // Only files that still have work in the passes below need a view:
+    // functions the incremental cache did not reuse, plus — when the cached
+    // context did not match at all — every module's top-level initializer.
+    let top_level_check_files: &[String] = if reused_from_cache {
+        &[]
+    } else {
+        &typed.top_level_file_paths
+    };
     let privacy_file_paths = typed
         .functions
         .iter()
-        .map(|function| function.file_path.clone())
-        .chain(typed.top_level_file_paths.iter().cloned())
+        .zip(&reusable)
+        .filter(|(_, reusable)| !**reusable)
+        .map(|(function, _)| function.file_path.clone())
+        .chain(top_level_check_files.iter().cloned())
         .collect::<HashSet<_>>();
     let privacy_signatures_by_file = if module_opaque.is_empty() {
         HashMap::new()
@@ -4781,30 +4810,35 @@ fn type_check_and_infer_collect_raw(
     // privacy is checked per source module. This preserves initializer order
     // and storage while preventing an importing module's top level from seeing
     // another module's opaque representation.
-    let top_level_body = typed
-        .functions
-        .iter()
-        .find(|function| function.name.to_string() == "__waluau_top_level_init")
-        .map(|function| function.body.as_slice())
-        .unwrap_or_default();
-    for function in top_level_functions_for_check(&typed, top_level_body) {
-        let visible_function = function_visible_from_file(&function, &module_opaque);
-        let visible_signatures = privacy_signatures_by_file
-            .get(&function.file_path)
-            .unwrap_or(&fn_signatures);
-        let visible_bindings = privacy_bindings_by_file
-            .get(&function.file_path)
-            .unwrap_or(&module_bindings);
-        errors.extend(
-            statements::check_function_collect(
-                &visible_function,
-                visible_signatures,
-                &HashSet::new(),
-                visible_bindings,
-            )
-            .into_iter()
-            .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
-        );
+    // When the incremental cache proved the context (including every
+    // top-level statement) unchanged against a previously clean run, the
+    // initializer re-check would re-derive the same empty diagnostics.
+    if !reused_from_cache {
+        let top_level_body = typed
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "__waluau_top_level_init")
+            .map(|function| function.body.as_slice())
+            .unwrap_or_default();
+        for function in top_level_functions_for_check(&typed, top_level_body) {
+            let visible_function = function_visible_from_file(&function, &module_opaque);
+            let visible_signatures = privacy_signatures_by_file
+                .get(&function.file_path)
+                .unwrap_or(&fn_signatures);
+            let visible_bindings = privacy_bindings_by_file
+                .get(&function.file_path)
+                .unwrap_or(&module_bindings);
+            errors.extend(
+                statements::check_function_collect(
+                    &visible_function,
+                    visible_signatures,
+                    &HashSet::new(),
+                    visible_bindings,
+                )
+                .into_iter()
+                .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
+            );
+        }
     }
 
     #[cfg(target_family = "wasm")]

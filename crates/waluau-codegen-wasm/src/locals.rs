@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use waluau_ast::{BinaryOp, NumericType, Type};
 use waluau_diagnostics::Diagnostic;
@@ -265,7 +266,7 @@ pub(crate) fn build_local_plan(
             if array_scratch.contains_key(&key) {
                 continue;
             }
-            let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+            let storage_array_ty = Type::Array(Arc::new(element_ty.clone()));
             let storage_index = array_registry.index(&storage_array_ty)?;
             let slot = function.params.len() as u32 + extra_locals.len() as u32;
             extra_locals.push(ValType::Ref(wasm_encoder::RefType {
@@ -382,7 +383,7 @@ pub(crate) fn infer_value_types(
                     } else {
                         // Runtime string/unknown parses yield `f64?` (nil on
                         // failure), represented as anyref.
-                        Type::Nullable(Box::new(Type::Numeric(NumericType::F64)))
+                        Type::Nullable(Arc::new(Type::Numeric(NumericType::F64)))
                     }
                 }
                 IrInstruction::Print { .. } | IrInstruction::Throw { .. } => Type::Unit,
@@ -411,11 +412,11 @@ pub(crate) fn infer_value_types(
                     ..
                 } => Type::Function {
                     params: params.clone(),
-                    return_type: Box::new(return_type.clone()),
+                    return_type: Arc::new(return_type.clone()),
                     has_self: false,
                 },
                 IrInstruction::ArrayNew { element_ty, .. } => {
-                    Type::Array(Box::new(element_ty.clone()))
+                    Type::Array(Arc::new(element_ty.clone()))
                 }
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
@@ -424,7 +425,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::DynIndex { .. } => Type::Unknown,
                 IrInstruction::ArrayPop { .. } => Type::Unit,
                 IrInstruction::ArraySlice { element_ty, .. } => {
-                    Type::Array(Box::new(element_ty.clone()))
+                    Type::Array(Arc::new(element_ty.clone()))
                 }
                 IrInstruction::BytesGet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::BytesLen { .. } => Type::Numeric(NumericType::I32),

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{Expr, NumberLiteral, NumberLiteralUnion, NumberUnionMember, NumericType, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
@@ -233,13 +234,16 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             let Type::Variadic(actual_element) = actual else {
                 unreachable!()
             };
-            coerce_type(*actual_element.clone(), Some((*expected_element).clone()))
-                .map(|_| Type::Variadic(expected_element.clone()))
-                .map_err(|_| {
-                    Diagnostic::new(format!(
-                        "cannot implicitly convert {actual_element}... to {expected_element}..."
-                    ))
-                })
+            coerce_type(
+                actual_element.as_ref().clone(),
+                Some((*expected_element).clone()),
+            )
+            .map(|_| Type::Variadic(expected_element.clone()))
+            .map_err(|_| {
+                Diagnostic::new(format!(
+                    "cannot implicitly convert {actual_element}... to {expected_element}..."
+                ))
+            })
         }
         // A variadic pack in a scalar context contributes its first value.
         Some(expected)
@@ -248,7 +252,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             let Type::Variadic(element) = actual else {
                 unreachable!()
             };
-            coerce_type(*element, Some(expected))
+            coerce_type(Arc::unwrap_or_clone(element), Some(expected))
         }
         // A multi-value result in a single-value context collapses to its
         // first value, following Lua's adjustment rules.
@@ -412,7 +416,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 )?;
                 Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
                     tag: expected_variant.tag,
-                    payload: Box::new(payload),
+                    payload: Arc::new(payload),
                 }))
             }
             other => Err(Diagnostic::new(format!(
@@ -439,7 +443,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 )?;
                 Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
                     tag: expected_variant.tag.clone(),
-                    payload: Box::new(payload),
+                    payload: Arc::new(payload),
                 }))
             }
             Type::TaggedUnion(actual_variants)
@@ -644,7 +648,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 )));
             };
 
-            for (name, expected_ty) in &expected_fields {
+            for (name, expected_ty) in expected_fields.iter() {
                 let Some(actual_ty) = actual_fields.get(name) else {
                     if expected_ty.accepts_nil() {
                         continue;
@@ -1044,11 +1048,11 @@ pub(super) fn resolve_number_literal(
             "numeric literal is not assignable to extern",
         )),
         Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),
-        Some(Type::Nullable(inner)) => match *inner {
-            Type::Numeric(numeric) => Ok(Type::Nullable(Box::new(Type::Numeric(numeric)))),
+        Some(Type::Nullable(inner)) => match Arc::unwrap_or_clone(inner) {
+            Type::Numeric(numeric) => Ok(Type::Nullable(Arc::new(Type::Numeric(numeric)))),
             Type::NumberLiteralUnion(union) => {
                 require_number_union_member(value, false, &union)?;
-                Ok(Type::Nullable(Box::new(Type::NumberLiteralUnion(union))))
+                Ok(Type::Nullable(Arc::new(Type::NumberLiteralUnion(union))))
             }
             other => Err(Diagnostic::new(format!(
                 "numeric literal is not assignable to {other}?",

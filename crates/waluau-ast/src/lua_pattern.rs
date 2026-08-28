@@ -11,6 +11,7 @@
 //! actually used.
 
 use crate::{NumericType, Type};
+use std::sync::Arc;
 
 /// The kind of one Lua pattern capture, in pattern order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,7 +38,7 @@ impl LuaCaptureKind {
 /// non-nil and keep their plain types.
 pub fn string_find_result_types(captures: &[LuaCaptureKind]) -> Vec<Type> {
     let i32_ty = Type::Numeric(NumericType::I32);
-    let mut types = vec![Type::Nullable(Box::new(i32_ty.clone())), i32_ty];
+    let mut types = vec![Type::Nullable(Arc::new(i32_ty.clone())), i32_ty];
     types.extend(captures.iter().map(|kind| kind.value_type()));
     types
 }
@@ -47,11 +48,11 @@ pub fn string_find_result_types(captures: &[LuaCaptureKind]) -> Vec<Type> {
 /// when there is no match.
 pub fn string_match_result_types(captures: &[LuaCaptureKind]) -> Vec<Type> {
     if captures.is_empty() {
-        return vec![Type::Nullable(Box::new(Type::String))];
+        return vec![Type::Nullable(Arc::new(Type::String))];
     }
     captures
         .iter()
-        .map(|kind| Type::Nullable(Box::new(kind.value_type())))
+        .map(|kind| Type::Nullable(Arc::new(kind.value_type())))
         .collect()
 }
 

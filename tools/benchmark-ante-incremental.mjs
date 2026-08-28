@@ -17,6 +17,10 @@ if (!existsSync(compiler)) {
 const temporary = mkdtempSync(join(tmpdir(), 'waluau-ante-incremental-'))
 const sourceDir = join(temporary, 'src')
 cpSync(join(workspace, 'apps/ante/src'), sourceDir, { recursive: true })
+// The asset manifest lives next to `src` and is discovered upward from the
+// entry file; `waluau:assets` imports fail without it.
+cpSync(join(workspace, 'apps/ante/waluau.assets.json'), join(temporary, 'waluau.assets.json'))
+cpSync(join(workspace, 'apps/ante/assets'), join(temporary, 'assets'), { recursive: true })
 const entry = join(sourceDir, 'main.walu')
 const editedFile = join(sourceDir, 'spell_cast.walu')
 const output = join(temporary, 'ante.wasm')

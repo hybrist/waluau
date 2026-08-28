@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{Expr, NumericType, TaggedVariant, Type, UnaryOp};
 use waluau_diagnostics::Diagnostic;
@@ -109,7 +110,7 @@ fn json_unpack_value_type(target: &Type) -> Type {
     if target.accepts_nil() {
         target.clone()
     } else {
-        Type::Nullable(Box::new(target.clone()))
+        Type::Nullable(Arc::new(target.clone()))
     }
 }
 
@@ -344,15 +345,15 @@ pub(super) fn infer_coroutine_builtin_call(
                         Type::TaggedUnion(vec![
                             TaggedVariant {
                                 tag: "Error".to_string(),
-                                payload: Box::new(Type::String),
+                                payload: Arc::new(Type::String),
                             },
                             TaggedVariant {
                                 tag: "Finished".to_string(),
-                                payload: Box::new(i32_ty.clone()),
+                                payload: Arc::new(i32_ty.clone()),
                             },
                             TaggedVariant {
                                 tag: "Yielded".to_string(),
-                                payload: Box::new(Type::Unknown),
+                                payload: Arc::new(Type::Unknown),
                             },
                         ]),
                         expected,
@@ -757,7 +758,7 @@ pub(super) fn infer_tonumber_builtin_call(
     if string_byte_requires_numeric_value(expected.as_ref()) {
         Some(coerce_type(f64_ty, expected))
     } else {
-        Some(coerce_type(Type::Nullable(Box::new(f64_ty)), expected))
+        Some(coerce_type(Type::Nullable(Arc::new(f64_ty)), expected))
     }
 }
 
@@ -920,7 +921,7 @@ pub(super) fn infer_table_builtin_call(
                     return Some(Err(error));
                 }
             }
-            return Some(coerce_type(Type::Array(Box::new(Type::Unknown)), expected));
+            return Some(coerce_type(Type::Array(Arc::new(Type::Unknown)), expected));
         }
         TABLE_CREATE => {
             if args.is_empty() || args.len() > 2 {
@@ -975,7 +976,7 @@ pub(super) fn infer_table_builtin_call(
                 // type comes from the expected type when there is one.
                 None => expected_element.unwrap_or(Type::Unknown),
             };
-            return Some(coerce_type(Type::Array(Box::new(element_ty)), expected));
+            return Some(coerce_type(Type::Array(Arc::new(element_ty)), expected));
         }
         TABLE_UNPACK => {
             if args.is_empty() || args.len() > 3 {
@@ -1140,7 +1141,7 @@ pub(super) fn infer_table_builtin_call(
             if let Some(comparator) = args.get(1) {
                 let comparator_ty = Type::Function {
                     params: vec![element_ty.clone(), element_ty.clone()],
-                    return_type: Box::new(Type::Bool),
+                    return_type: Arc::new(Type::Bool),
                     has_self: false,
                 };
                 match super::expressions::infer_expr(
@@ -1177,7 +1178,7 @@ pub(super) fn infer_table_builtin_call(
     // Infer with the expected element type so `{}` literals resolve, but fall
     // back to a plain inference when that fails so mismatches keep the
     // table.concat-specific diagnostic.
-    let expected_list = Type::Array(Box::new(Type::String));
+    let expected_list = Type::Array(Arc::new(Type::String));
     let list_ty = super::expressions::infer_expr(
         &args[0],
         vars,
@@ -1562,7 +1563,7 @@ pub(super) fn infer_string_builtin_call(
                 };
                 return Some(coerce_type(Type::Multi(vec![i32_ty; count]), expected));
             }
-            let nullable_i32 = Type::Nullable(Box::new(i32_ty.clone()));
+            let nullable_i32 = Type::Nullable(Arc::new(i32_ty.clone()));
             if string_byte_scalar_known_in_range(args)
                 || string_byte_requires_numeric_value(expected.as_ref())
             {
@@ -1665,7 +1666,7 @@ pub(super) fn infer_string_builtin_call(
                     return Some(Err(error));
                 }
             }
-            Some(coerce_type(Type::Array(Box::new(Type::String)), expected))
+            Some(coerce_type(Type::Array(Arc::new(Type::String)), expected))
         }
         STRING_FORMAT => {
             if args.is_empty() || args.len() > 101 {

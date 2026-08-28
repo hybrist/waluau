@@ -16,6 +16,7 @@
 //! lowering and codegen only ever see ordinary calls, closures, and records.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use waluau_ast::{
     BinaryOp, Expr, Function, FunctionExpr, FunctionName, NumberLiteral, NumericType, Param,
@@ -141,7 +142,7 @@ fn check_conformance(
         generic_extern: None,
     };
 
-    for (field_name, field_ty) in interface_fields {
+    for (field_name, field_ty) in interface_fields.iter() {
         // The hidden identity field belongs to the wrapper machinery, not to
         // the conformance obligation.
         if field_name == META_FIELD {
@@ -191,7 +192,7 @@ fn check_conformance(
                 } => {
                     let actual = Type::Function {
                         params: params.clone(),
-                        return_type: Box::new(return_type.clone()),
+                        return_type: Arc::new(return_type.clone()),
                         has_self: false,
                     };
                     if !nominal_types_match(&expected, &actual) {
@@ -265,12 +266,11 @@ fn nominal_types_match(left: &Type, right: &Type) -> bool {
         }
         (Type::Record(left), Type::Record(right)) => {
             left.len() == right.len()
-                && left
-                    .iter()
-                    .zip(right)
-                    .all(|((left_name, left_ty), (right_name, right_ty))| {
+                && left.iter().zip(right.as_ref()).all(
+                    |((left_name, left_ty), (right_name, right_ty))| {
                         left_name == right_name && nominal_types_match(left_ty, right_ty)
-                    })
+                    },
+                )
         }
         (Type::Nullable(left), Type::Nullable(right))
         | (Type::Array(left), Type::Array(right))
@@ -318,7 +318,7 @@ const META_RECEIVER_FIELD: &str = "receiver";
 /// as `unknown` because concrete types with different shapes share one
 /// interface.
 fn meta_field_type() -> Type {
-    Type::Nullable(Box::new(Type::Record(BTreeMap::from([
+    Type::Nullable(Arc::new(Type::record(BTreeMap::from([
         (
             META_BRAND_FIELD.to_string(),
             Type::Numeric(NumericType::I32),
@@ -458,7 +458,7 @@ pub(crate) fn generate_conformance_wrappers(program: &mut Program) {
         if interface_roots.contains(&decl.name)
             && let Type::Record(fields) = &mut decl.ty
         {
-            fields.insert(META_FIELD.to_string(), meta_field_type());
+            Arc::make_mut(fields).insert(META_FIELD.to_string(), meta_field_type());
         }
     }
     let brands = conformance_brands(program);
@@ -738,7 +738,7 @@ fn conformance_check_fn(decl: &TypeDeclaration, interface_name: &str, brand: i32
             },
         }],
         vararg: None,
-        return_type: Some(Type::Nullable(Box::new(target_ty))),
+        return_type: Some(Type::Nullable(Arc::new(target_ty))),
         body,
         file_path: decl.file_path.clone(),
         span: None,
@@ -1150,7 +1150,7 @@ impl CoercionRewriter<'_> {
                     .unwrap_or_else(|_| expected_ty.clone())
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty())
                 {
-                    Type::Record(BTreeMap::new())
+                    Type::record(BTreeMap::new())
                 } else {
                     infer_expr(value, vars, self.fn_signatures, active, None)
                         .unwrap_or(Type::Unknown)

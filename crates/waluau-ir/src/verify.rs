@@ -1,3 +1,4 @@
+use std::sync::Arc;
 pub fn verify(module: &Module) -> Result<(), Diagnostic> {
     verify_matching(module, |_| true)
 }
@@ -379,7 +380,7 @@ fn verify_function(
                     )?;
                     let expected_callee_ty = Type::Function {
                         params: params.clone(),
-                        return_type: Box::new(return_type.clone()),
+                        return_type: Arc::new(return_type.clone()),
                         has_self: false,
                     };
                     if callee_ty != expected_callee_ty {
@@ -422,7 +423,7 @@ fn verify_function(
                     )?;
                     let expected_callee_ty = Type::Function {
                         params: Vec::new(),
-                        return_type: Box::new(Type::Numeric(NumericType::I32)),
+                        return_type: Arc::new(Type::Numeric(NumericType::I32)),
                         has_self: false,
                     };
                     if callee_ty != expected_callee_ty {
@@ -504,12 +505,12 @@ fn verify_function(
                     }
                     let expected_sig = Type::Function {
                         params: params.clone(),
-                        return_type: Box::new(return_type.clone()),
+                        return_type: Arc::new(return_type.clone()),
                         has_self: false,
                     };
                     let actual_sig = Type::Function {
                         params: sig_params[captures.len()..].to_vec(),
-                        return_type: Box::new(sig_ret.clone()),
+                        return_type: Arc::new(sig_ret.clone()),
                         has_self: false,
                     };
                     if expected_sig != actual_sig {
@@ -551,8 +552,8 @@ fn verify_function(
                         block.id,
                         *array,
                     )?;
-                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
+                    let expected_array_ty = Type::Array(Arc::new(element_ty.clone()));
+                    let expected_variadic_ty = Type::Variadic(Arc::new(element_ty.clone()));
                     // Allow the array operand to be either an array of the element type
                     // or the raw element type itself (degenerate cell representation).
                     let ok_array = types_match(&array_ty, &expected_array_ty)
@@ -591,8 +592,8 @@ fn verify_function(
                         block.id,
                         *array,
                     )?;
-                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
+                    let expected_array_ty = Type::Array(Arc::new(element_ty.clone()));
+                    let expected_variadic_ty = Type::Variadic(Arc::new(element_ty.clone()));
                     let ok_array = types_match(&array_ty, &expected_array_ty)
                         || types_match(&array_ty, &expected_variadic_ty)
                         || types_match(&array_ty, element_ty);
@@ -652,8 +653,8 @@ fn verify_function(
                         block.id,
                         *array,
                     )?;
-                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
+                    let expected_array_ty = Type::Array(Arc::new(element_ty.clone()));
+                    let expected_variadic_ty = Type::Variadic(Arc::new(element_ty.clone()));
                     if array_ty != expected_array_ty && array_ty != expected_variadic_ty {
                         return Err(Diagnostic::new(format!(
                             "array pop in block {:?} expects {}, got {}",
@@ -719,8 +720,8 @@ fn verify_function(
                         block.id,
                         *array,
                     )?;
-                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
+                    let expected_array_ty = Type::Array(Arc::new(element_ty.clone()));
+                    let expected_variadic_ty = Type::Variadic(Arc::new(element_ty.clone()));
                     if array_ty != expected_array_ty && array_ty != expected_variadic_ty {
                         return Err(Diagnostic::new(format!(
                             "array slice in block {:?} expects {}, got {}",
@@ -1401,7 +1402,7 @@ fn infer_instruction_type(
                 Ok(Type::Numeric(NumericType::F64))
             } else {
                 // Runtime string/unknown parses yield `f64?`: nil on failure.
-                Ok(Type::Nullable(Box::new(Type::Numeric(NumericType::F64))))
+                Ok(Type::Nullable(Arc::new(Type::Numeric(NumericType::F64))))
             }
         }
         Instruction::IsNull { .. } => Ok(Type::Bool),
@@ -1428,17 +1429,17 @@ fn infer_instruction_type(
             ..
         } => Ok(Type::Function {
             params: params.clone(),
-            return_type: Box::new(return_type.clone()),
+            return_type: Arc::new(return_type.clone()),
             has_self: false,
         }),
-        Instruction::ArrayNew { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
+        Instruction::ArrayNew { element_ty, .. } => Ok(Type::Array(Arc::new(element_ty.clone()))),
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::DynLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::DynIndex { .. } => Ok(Type::Unknown),
         Instruction::ArrayPop { .. } => Ok(Type::Unit),
-        Instruction::ArraySlice { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
+        Instruction::ArraySlice { element_ty, .. } => Ok(Type::Array(Arc::new(element_ty.clone()))),
         Instruction::BytesGet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::BytesLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::BufferNew { kind, .. }
