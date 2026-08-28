@@ -112,34 +112,45 @@ test.describe('editor', () => {
     await page.locator('.code-textarea').fill(
       'local e_lib = require("./ops")\n\nlocal e = e_lib.E.A',
     );
-    await expect(page.locator('.status-text')).toHaveText('Analyzing...', {
-      timeout: COMPILER_READY_TIMEOUT,
-    });
+    // The status flips through 'Analyzing...' synchronously on each edit and
+    // can settle back to success between expect polls, so only wait for the
+    // final state here.
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
-    const variant = await page
-      .locator('.monaco-editor .view-line')
-      .filter({ hasText: 'local e = e_lib.E.A' })
-      .evaluate((line) => {
-        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
-        for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-          const index = text.textContent.lastIndexOf('A');
-          if (index < 0) continue;
-          const range = document.createRange();
-          range.setStart(text, index);
-          range.setEnd(text, index + 1);
-          const bounds = range.getBoundingClientRect();
-          return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
-        }
-        throw new Error('enum variant A was not rendered');
-      });
-    await page.keyboard.down('Control');
-    await page.mouse.click(variant.x, variant.y);
-    await page.keyboard.up('Control');
+    // The definition provider answers from the worker, which may still be
+    // analyzing the freshly filled files, so a first ctrl+click can be a
+    // no-op. Retry the whole gesture until the tab actually switches.
+    await expect(async () => {
+      const activeTab = page.locator('.file-tab.active .file-name-text');
+      if ((await activeTab.textContent()) === 'ops.walu') return;
 
-    await expect(page.locator('.file-tab.active .file-name-text')).toHaveText('ops.walu');
+      const variant = await page
+        .locator('.monaco-editor .view-line')
+        .filter({ hasText: 'local e = e_lib.E.A' })
+        .evaluate((line) => {
+          const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+          for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+            const index = text.textContent.lastIndexOf('A');
+            if (index < 0) continue;
+            const range = document.createRange();
+            range.setStart(text, index);
+            range.setEnd(text, index + 1);
+            const bounds = range.getBoundingClientRect();
+            return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+          }
+          throw new Error('enum variant A was not rendered');
+        });
+      await page.keyboard.down('Control');
+      try {
+        await page.mouse.click(variant.x, variant.y);
+      } finally {
+        await page.keyboard.up('Control');
+      }
+
+      await expect(activeTab).toHaveText('ops.walu', { timeout: 2_000 });
+    }).toPass({ timeout: COMPILER_READY_TIMEOUT });
     await expect(page.locator('.code-textarea')).toHaveValue('export enum E { A }');
     await expect(page.locator('.monaco-editor .view-line').first()).toContainText(
       'export enum E { A }',
