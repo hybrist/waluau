@@ -6,10 +6,10 @@ global.
 
 | Form | Binding | Order | Rebinding | Module interface |
 | --- | --- | --- | --- | --- |
-| `function f()` | private module function | hoisted | immutable | private unless selected by a legacy trailing return |
-| `export function f()` | exported module function | hoisted | immutable | named member of the module |
+| `function f()` | private module function | hoisted | not allowed | private unless selected by a legacy trailing return |
+| `export function f()` | exported module function | hoisted | not allowed | named member of the module |
 | `local function f()` | lexical closure | declaration order | rebindable | private |
-| `const function f()` | lexical closure | declaration order | immutable | private |
+| `const function f()` | lexical closure | declaration order | not allowed | private |
 
 Use a plain module function for implementation shared across functions in one
 file:
@@ -157,7 +157,7 @@ or in a development Wasm export list was relying on tooling exposure.
   additional callable surface.
 
 The compiler reports qualified exported functions, mixed value interfaces,
-and attempts to rebind immutable module functions directly. Editors surface
+and attempts to rebind module functions directly. Editors surface
 those compiler diagnostics rather than adding a second, potentially duplicate
 lint. Unused-function diagnostics apply to private simple module functions and
 lexical function declarations; explicit exports are public interface members

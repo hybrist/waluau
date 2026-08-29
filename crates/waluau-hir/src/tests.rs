@@ -65,7 +65,7 @@ fn local_function_remains_a_capturing_rebindable_closure() {
 }
 
 #[test]
-fn const_function_remains_an_immutable_lexical_closure() {
+fn const_function_remains_a_non_rebindable_lexical_closure() {
     let source = r#"
         function evaluate(seed: i32): i32
             const function apply(value: i32): i32
@@ -81,12 +81,12 @@ fn const_function_remains_an_immutable_lexical_closure() {
     let error = super::type_check(&program).expect_err("const function must reject rebinding");
     assert_eq!(
         error.to_string(),
-        "cannot rebind immutable lexical binding 'apply'"
+        "cannot rebind constant lexical binding 'apply'"
     );
 }
 
 #[test]
-fn module_function_rebinding_reports_its_immutable_binding_semantics() {
+fn module_function_rebinding_reports_its_non_rebindable_semantics() {
     let program = parse(
         r#"
         function answer(): i32
@@ -98,11 +98,8 @@ fn module_function_rebinding_reports_its_immutable_binding_semantics() {
         "#,
     )
     .expect("parse should succeed");
-    let error = super::type_check(&program).expect_err("module functions are immutable");
-    assert_eq!(
-        error.to_string(),
-        "cannot rebind immutable module function 'answer'"
-    );
+    let error = super::type_check(&program).expect_err("module functions cannot be rebound");
+    assert_eq!(error.to_string(), "cannot rebind module function 'answer'");
 }
 
 #[test]
@@ -129,9 +126,9 @@ fn module_rebinding_classification_survives_an_earlier_unrelated_error() {
         "earlier error remains visible: {errors:?}"
     );
     assert!(
-        errors.iter().any(|error| {
-            error.to_string() == "cannot rebind immutable module function 'answer'"
-        }),
+        errors
+            .iter()
+            .any(|error| { error.to_string() == "cannot rebind module function 'answer'" }),
         "later rebinding keeps its authored classification: {errors:?}"
     );
 }
@@ -149,7 +146,7 @@ fn non_module_function_rebinding_is_not_mislabeled_as_a_module_function() {
         ),
     ] {
         let program = parse(source).expect("parse should succeed");
-        let error = super::type_check(&program).expect_err("function binding is immutable");
+        let error = super::type_check(&program).expect_err("function binding cannot be rebound");
         assert_eq!(error.to_string(), expected);
         assert!(
             !error.to_string().contains("module function"),
@@ -2114,7 +2111,7 @@ fn rejects_rebinding_const_local() {
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "cannot rebind immutable lexical binding 'y'"
+        "cannot rebind constant lexical binding 'y'"
     );
 }
 

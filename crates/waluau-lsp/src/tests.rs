@@ -174,9 +174,7 @@ fn module_rebinding_diagnostic_points_at_the_assignment_value() {
     let diagnostics = diagnostics_for(&messages, "main.walu").expect("diagnostics published");
     let diagnostic = diagnostics
         .iter()
-        .find(|diagnostic| {
-            diagnostic["message"] == "cannot rebind immutable module function 'answer'"
-        })
+        .find(|diagnostic| diagnostic["message"] == "cannot rebind module function 'answer'")
         .expect("module rebinding diagnostic");
     assert_eq!(
         diagnostic["range"]["start"],

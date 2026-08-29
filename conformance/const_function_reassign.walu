@@ -1,6 +1,6 @@
 -- `const function f` declares a non-rebindable binding: assigning another
 -- function to the name must fail.
--- conformance: error=cannot rebind immutable lexical binding 'f'
+-- conformance: error=cannot rebind constant lexical binding 'f'
 function entry(): f64
     const function f(): f64
         return 1.0

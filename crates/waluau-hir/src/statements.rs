@@ -1671,9 +1671,9 @@ fn missing_assignment_binding(
         Some(FnSignature::Mono {
             authored_module: true,
             ..
-        }) => Diagnostic::new(format!("cannot rebind immutable module function '{name}'")),
+        }) => Diagnostic::new(format!("cannot rebind module function '{name}'")),
         Some(FnSignature::Generic(scheme)) if scheme.authored_module => {
-            Diagnostic::new(format!("cannot rebind immutable module function '{name}'"))
+            Diagnostic::new(format!("cannot rebind module function '{name}'"))
         }
         Some(FnSignature::Const { .. }) => {
             Diagnostic::new(format!("cannot rebind declared constant '{name}'"))
@@ -1810,7 +1810,7 @@ fn check_stmt_inner(
             }
             if existing.rebindability == Rebindability::Const {
                 return Err(Diagnostic::new(format!(
-                    "cannot rebind immutable lexical binding '{}'",
+                    "cannot rebind constant lexical binding '{}'",
                     name
                 )));
             }
@@ -2446,7 +2446,7 @@ fn check_stmt_inner(
                     .ok_or_else(|| missing_assignment_binding(target, fn_signatures))?;
                 if binding.rebindability == Rebindability::Const {
                     return Err(Diagnostic::new(format!(
-                        "cannot rebind immutable lexical binding '{}'",
+                        "cannot rebind constant lexical binding '{}'",
                         target
                     )));
                 }

@@ -1213,8 +1213,8 @@ struct Resolver {
     next_symbol_id: usize,
     /// Source name of every declared symbol, for Wasm debug-name emission.
     symbol_names: std::collections::BTreeMap<SymbolId, String>,
-    /// Hoisted authored module functions are immutable bindings.
-    immutable_module_functions: HashSet<SymbolId>,
+    /// Hoisted authored module function bindings cannot be rebound.
+    non_rebindable_module_functions: HashSet<SymbolId>,
 }
 
 impl Resolver {
@@ -1224,7 +1224,7 @@ impl Resolver {
             scopes: Vec::new(),
             next_symbol_id: 1,
             symbol_names: std::collections::BTreeMap::new(),
-            immutable_module_functions: HashSet::new(),
+            non_rebindable_module_functions: HashSet::new(),
         };
 
         // Populate builtins
@@ -1302,10 +1302,10 @@ impl Resolver {
         name: &str,
         span: Option<Span>,
     ) -> Result<(), Diagnostic> {
-        if self.immutable_module_functions.contains(&id) {
+        if self.non_rebindable_module_functions.contains(&id) {
             let mut diagnostic = Diagnostic::new_with_code(
-                "binding/immutable-module-function",
-                format!("cannot rebind immutable module function '{name}'"),
+                "binding/module-function-rebind",
+                format!("cannot rebind module function '{name}'"),
             );
             if let Some(span) = span {
                 diagnostic = diagnostic.with_span(span);
@@ -1915,7 +1915,7 @@ pub fn resolve_symbols(
         }
         if let FunctionName::Simple(name) = &function.name {
             let id = resolver.declare(name);
-            resolver.immutable_module_functions.insert(id);
+            resolver.non_rebindable_module_functions.insert(id);
             function.symbol_id = Some(id);
         }
     }

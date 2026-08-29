@@ -1,6 +1,6 @@
 -- A `const` binding cannot be reassigned (RFC #166). This file must fail
 -- to compile with the const-rebind diagnostic.
--- conformance: error=cannot rebind immutable lexical binding 'x'
+-- conformance: error=cannot rebind constant lexical binding 'x'
 function entry(): f64
     const x = 1.0
     x = 2.0

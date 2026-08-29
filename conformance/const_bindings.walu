@@ -64,7 +64,7 @@ end
 
 assert(closure_reads_const() == 10.0)
 
--- const makes the *binding* immutable, not the value: the contents of a
+-- const prevents rebinding; it does not freeze the value, so the contents of a
 -- table reached through a const binding stay mutable.
 function value_stays_mutable(): f64
     const items = {1.0, 2.0}
