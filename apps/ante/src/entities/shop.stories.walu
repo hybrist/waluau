@@ -1,0 +1,201 @@
+local storybook = require("waluau:engine/storybook")
+local ui = require("../ui/node")
+local ui_story = require("../ui/story")
+local run_ = require("../run")
+local shop_ = require("../shop_new")
+local shop_entity = require("./shop")
+local spells = require("../spells/spell")
+local scroll_ = require("../items/scroll")
+local item_ = require("../items/item")
+
+type ShopState = shop_.State
+type Slot = shop_.Slot
+type RunState = run_.State
+type SpellScroll = scroll_.SpellScroll
+type SpellKind = spells.SpellKind
+type Item = item_.Item
+
+const WIDTH: u32 = 740
+const HEIGHT: u32 = 560
+const BACKGROUND: string = "#0b0b12"
+
+local book = ui_story.Book.new()
+
+type SoldChoice = "none" | "first" | "second" | "both"
+
+local stock_gold = storybook.range("gold", 30, 0, 100, 5)
+local stock_cursor = storybook.range("cursor", 0, 0, 2, 1)
+local stock_duel = storybook.range("duel", 2, 1, 9, 1)
+local stock_sold = storybook.select(
+    "sold",
+    "none"::SoldChoice,
+    {
+        storybook.choice("None", "none"::SoldChoice),
+        storybook.choice("First offer", "first"::SoldChoice),
+        storybook.choice("Second offer", "second"::SoldChoice),
+        storybook.choice("Both offers", "both"::SoldChoice)
+    }
+)
+
+local function make_run(spell: SpellKind, gold: i32, duel: i32): RunState
+    local state: RunState = RunState.new(spell, false)
+    state.duel = duel
+    state.cleared = duel - 1
+    state.gold = gold
+    return state
+end
+
+local function slots(first_sold: bool, second_sold: bool): {Slot}
+    return {
+        { item = SpellScroll.new(SpellKind.Firebolt, 1)::Item, price = 5, sold = first_sold },
+        { item = SpellScroll.new(SpellKind.Clone, 2)::Item, price = 8, sold = second_sold }
+    }
+end
+
+local function apply_sold(shop: ShopState, choice: SoldChoice): unit
+    shop.slots[0].sold = choice == "first" or choice == "both"
+    shop.slots[1].sold = choice == "second" or choice == "both"
+end
+
+local stock_run: RunState = make_run(SpellKind.Firebolt, 30, 2)
+local stock_shop: ShopState = ShopState.new(stock_run)
+stock_shop.slots = slots(false, false)
+local stock_view: shop_entity.Stateful = shop_entity.Stateful.new(stock_shop, stock_run)
+
+local function present_stock(): unit
+    stock_run.gold = stock_gold.value()
+    stock_run.duel = stock_duel.value()
+    stock_run.cleared = stock_run.duel - 1
+    stock_shop.cursor = stock_cursor.value()
+    apply_sold(stock_shop, storybook.selected<SoldChoice>(stock_sold))
+    stock_view:present(stock_shop, stock_run)
+end
+
+local function stock_node(): ui.Node
+    return stock_view.root
+end
+
+local spent_run: RunState = make_run(SpellKind.Firebolt, 15, 3)
+local spent_shop: ShopState = ShopState.new(spent_run)
+spent_shop.slots = slots(true, true)
+spent_shop.cursor = 2
+local spent_view: shop_entity.Stateful = shop_entity.Stateful.new(spent_shop, spent_run)
+
+local function spent_node(): ui.Node
+    return spent_view.root
+end
+
+type InteractiveSession = { run: RunState, shop: ShopState }
+
+function InteractiveSession.new(): InteractiveSession
+    local run: RunState = make_run(SpellKind.Firebolt, 45, 2)
+    local shop: ShopState = ShopState.new(run)
+    shop.slots = slots(false, false)
+    return { run = run, shop = shop }
+end
+
+local interactive: InteractiveSession = InteractiveSession.new()
+local interactive_view: shop_entity.Stateful = shop_entity.Stateful.new(
+    interactive.shop,
+    interactive.run
+)
+
+local function present_interactive(): unit
+    interactive_view:present(interactive.shop, interactive.run)
+end
+
+local function reset_interactive(): unit
+    interactive = InteractiveSession.new()
+    present_interactive()
+end
+
+local function interactive_node(): ui.Node
+    return interactive_view.root
+end
+
+local function interactive_keypressed(key: string): unit
+    if key == "r" or key == "R" then
+        reset_interactive()
+        return
+    end
+    local done: bool = interactive.shop:keypressed(interactive.run, key)
+    if done then
+        interactive.run.duel += 1
+        reset_interactive()
+    end
+end
+
+local function interactive_mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+    local row: i32 = interactive_view:hit(x, y)
+    if row >= 0 then
+        interactive.shop.cursor = row
+    end
+end
+
+local function interactive_mousepressed(x: f64, y: f64, button: i32): unit
+    if button ~= 1 then
+        return
+    end
+    local row: i32 = interactive_view:hit(x, y)
+    if row >= 0 then
+        interactive.shop.cursor = row
+        local done: bool = interactive.shop:confirm_choice(interactive.run)
+        if done then
+            interactive.run.duel += 1
+            reset_interactive()
+        end
+    end
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Open visit",
+            book:scene(
+                {
+                    node = stock_node,
+                    present = present_stock,
+                    width = WIDTH::f64,
+                    height = HEIGHT::f64,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            ),
+            {
+                stock_gold.declaration,
+                stock_cursor.declaration,
+                stock_duel.declaration,
+                stock_sold.declaration
+            }
+        ),
+        storybook.story(
+            "Spent stock",
+            book:scene(
+                {
+                    node = spent_node,
+                    width = WIDTH::f64,
+                    height = HEIGHT::f64,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            )
+        ),
+        storybook.story(
+            "Interactive session",
+            book:scene(
+                {
+                    node = interactive_node,
+                    present = present_interactive,
+                    load = reset_interactive,
+                    keypressed = interactive_keypressed,
+                    mousemoved = interactive_mousemoved,
+                    mousepressed = interactive_mousepressed,
+                    width = WIDTH::f64,
+                    height = HEIGHT::f64,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            )
+        )
+    }
+)

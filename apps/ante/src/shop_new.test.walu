@@ -1,0 +1,47 @@
+require("waluau:vitest")
+
+local game = require("./game")
+local run_ = require("./run")
+local shop_ = require("./shop_new")
+local spell_ = require("./spells/spell")
+
+type RunState = run_.State
+type ShopState = shop_.State
+type SpellKind = spell_.SpellKind
+
+local function shopping_run(spell: SpellKind, gold: i32)
+    local run = RunState.new(spell, false)
+    run:settle(true, gold + run:target())
+
+    local shop = ShopState.new(run)
+
+    return run, shop
+end
+
+describe(
+    "Shop",
+    function()
+        it(
+            "opens on a full row of slots and a way into the duel",
+            function()
+                math.randomseed(101)
+                local run, shop = shopping_run(SpellKind.Firebolt, 30)
+                expect(shop.open):toBe(true)
+                expect(shop.cursor):toBe(0)
+                expect(#shop.slots):toBe(shop_.DEFAULT_SHOP_ITEM_COUNT)
+            end
+        )
+
+        it(
+            "marks a bought offer as sold",
+            function()
+                math.randomseed(109)
+                local run, shop = shopping_run(SpellKind.Firebolt, 40)
+                expect(shop:confirm_choice(run)):toBe(false)
+                expect(run.gold):toBe(36)
+
+                expect(shop.slots[0].sold):toBe(true)
+            end
+        )
+    end
+)

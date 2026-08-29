@@ -244,12 +244,23 @@ ${exports}
 `;
 }
 
-function testModuleSource(generatedModule) {
+function testModuleSource(generatedModule, version) {
+  const generatedSpecifier = `${generatedModule}?waluau-hmr=${version}`;
   return `
-import { run } from ${JSON.stringify(generatedModule)};
+import {
+  run,
+  wasmUrl as generatedWasmUrl,
+} from ${JSON.stringify(generatedSpecifier)};
 import { registerWaluGlueTests } from '@waluau/vite-plugin/testing';
 
-await registerWaluGlueTests({ run });
+function versionedWasmUrl() {
+  if (generatedWasmUrl == null) return null;
+  const url = new URL(generatedWasmUrl);
+  url.searchParams.set('waluau-hmr', ${JSON.stringify(String(version))});
+  return url;
+}
+
+await registerWaluGlueTests({ run, wasmUrl: versionedWasmUrl() });
 `;
 }
 
@@ -598,7 +609,10 @@ export function waluau(options = {}) {
     // `handleHotUpdate` prepares the new artifacts before invalidating the
     // entry module. Vite then transforms that module again; reuse the prepared
     // generation instead of compiling the same source a second time.
-    if (!force && state.fresh) return artifacts;
+    if (!force && state.fresh) {
+      state.fresh = false;
+      return artifacts;
+    }
 
     state.inFlight = (async () => {
       do {
@@ -644,7 +658,7 @@ export function waluau(options = {}) {
           );
         }
         state.version += 1;
-        state.fresh = true;
+        state.fresh = force;
       } while (state.queued);
     })().finally(() => {
       state.inFlight = null;
@@ -719,14 +733,15 @@ export function waluau(options = {}) {
       productionBuild = config.command === 'build';
     },
     async transform(code, id) {
-      const file = id.split('?')[0];
+      const [file, query] = id.split('?');
       if (generatedModules.has(file)) {
         return importManifestAssets(code).replace(
           "new URL('./', import.meta.url)",
           "new URL(/* @vite-ignore */ './', import.meta.url)",
         );
       }
-      if (id.includes('?') || !file.endsWith('.walu')) return null;
+      const searchParams = new URLSearchParams(query);
+      if (!file.endsWith('.walu') || searchParams.has('raw') || searchParams.has('url')) return null;
 
       this.addWatchFile(file);
       if (options.manifest != null) {
@@ -748,7 +763,15 @@ export function waluau(options = {}) {
         .digest('hex')
         .slice(0, 12)}`;
       shaderModules.set(`\0${shaderModule}`, shaderModuleSource(resolvedShaderSources()));
-      if (isTestModule) return { code: testModuleSource(artifacts.module), map: null };
+      if (isTestModule) {
+        return {
+          code: testModuleSource(
+            artifacts.module,
+            compileStates.get(file).version,
+          ),
+          map: null,
+        };
+      }
       if (isStoriesModule) {
         return {
           code: storiesModuleSource(

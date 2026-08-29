@@ -1,0 +1,169 @@
+local game_ = require("./game")
+local run_ = require("./run")
+local item_ = require("./items/item")
+local scroll_ = require("./items/scroll")
+local spell_ = require("./spells/spell")
+
+type RunState = run_.State
+type SpellKind = spell_.SpellKind
+type Item = item_.Item
+
+const DEFAULT_SHOP_ITEM_COUNT = 2
+
+export type Slot = { item: Item, price: number, sold: bool }
+
+export type State = { open: bool, slots: {Slot}, cursor: i32 }
+
+const SNAPSHOT_SCHEMA: string = "duel-shop-v5"
+
+function State.new(run: RunState): State
+    return { open = true, slots = roll_slots(run), cursor = 0 }
+end
+
+function all_scroll_items(run: RunState): {Item}
+    local scrolls: {Item} = {}
+    for name, kind in pairs(spell_.SpellKind) do
+        -- TODO: current level + 1 where "not known" is level 0
+        local level = 1
+        table.insert(scrolls, scroll_.SpellScroll.new(kind, 1)::Item)
+    end
+    return scrolls
+end
+
+function roll_slots(run: RunState): {Slot}
+    local slots: {Slot} = {}
+
+    -- For now: Pick only spells.
+    -- TODO: Only pick spells when there's space for a new spell.
+    local items = all_scroll_items(run)
+
+    for i = 1, DEFAULT_SHOP_ITEM_COUNT do
+        local index = math.random(#items) - 1
+        local item = table.remove(items, index)
+        table.insert(slots, { item = item, price = item:base_price(run), sold = false })
+    end
+
+    return slots
+end
+
+-- Returns true if this exits the shop.
+function State:confirm_choice(run: RunState): bool
+    if self.cursor < 0 or self.cursor >= #self.slots then
+        return true
+    end
+
+    local slot = self.slots[self.cursor]
+    local item = slot.item
+    if not slot.sold and item:can_use(run) then
+        item:use(run)
+        run.gold -= slot.price::i32
+        slot.sold = true
+    end
+    return false
+end
+
+function State:move(run: RunState, delta: i32): unit
+    local count = #self.slots + 1
+    self.cursor = (self.cursor + delta + count) % count
+end
+
+-- Returns true if this wraps up the shopping episode.
+function State:keypressed(run: RunState, key: string): bool
+    if key == "ArrowUp" or key == "w" or key == "W" then
+        self:move(run, -1)
+        return false
+    end
+    if key == "ArrowDown" or key == "s" or key == "S" then
+        self:move(run, 1)
+        return false
+    end
+
+    if key == "Enter" or key == " " then
+        return self:confirm_choice(run)
+    end
+
+    return key == "Escape"
+end
+
+-- -- What a snapshot writes of one slot. The live Slot also carries its Item,
+-- -- which is behavior rather than data: restore rebuilds it from the goods.
+-- type SnapshotSlot = { category: Category, goods: Goods, price: i32, sold: bool }
+-- -- Development snapshots ride the built-in JSON codec. The wrapper record
+-- -- carries the schema marker, and unpacking already validates the shape, the
+-- -- goods tags included; the category, a literal union that decodes as a plain
+-- -- string, is checked by restore itself.
+-- type Snapshot = {
+--     schema: string,
+--     open: bool,
+--     slots: {SnapshotSlot},
+--     cursor: i32,
+--     pending: Pending?
+-- }
+-- function State:snapshot(): string
+--     local slots: {SnapshotSlot} = {}
+--     for slot in self.slots do
+--         table.insert(slots, {
+--             category = slot.category,
+--             goods = slot.goods,
+--             price = slot.price,
+--             sold = slot.sold,
+--         })
+--     end
+--     local payload: Snapshot = {
+--         schema = SNAPSHOT_SCHEMA,
+--         open = self.open,
+--         slots = slots,
+--         cursor = self.cursor,
+--         pending = self.pending,
+--     }
+--     return json.pack(payload)
+-- end
+-- function State.restore(snapshot_value: string): State?
+--     local decoded = json.unpack<Snapshot>(snapshot_value)
+--     if decoded == nil then return nil end
+--     if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+--     local decoded_slots: {SnapshotSlot} = decoded.slots
+--     if #decoded_slots > #slot_layout() then return nil end
+--     if decoded.cursor < 0 then return nil end
+--     local slots: {Slot} = {}
+--     for slot in decoded_slots do
+--         -- `Category` currently has a single member, which the compiler widens
+--         -- to a plain string in the decoded shape, so membership is checked
+--         -- here rather than by the decoder.
+--         local category_known: bool = false
+--         for known in slot_layout() do
+--             if known == slot.category then category_known = true end
+--         end
+--         if not category_known then return nil end
+--         -- A spell kind is bounded by the spells that exist, which is not a
+--         -- bound the JSON shape carries; a quoted price is never negative.
+--         local kind: spells.SpellKind? = slot.goods:spell_kind()
+--         if kind == nil then return nil end
+--         if not spells.SpellKind.valid(kind::spells.SpellKind) then return nil end
+--         if slot.price < 0 then return nil end
+--         table.insert(slots, {
+--             category = slot.category,
+--             goods = slot.goods,
+--             item = slot.goods:item_for(),
+--             price = slot.price,
+--             sold = slot.sold,
+--         })
+--     end
+--     local pending: Pending? = decoded.pending
+--     if pending ~= nil then
+--         -- A pending question names one of this visit's slots, and the keys it
+--         -- offers to trade away are keys the loadout could hold.
+--         local question: Pending = pending::Pending
+--         if question.slot < 0 or question.slot >= #slots then return nil end
+--         for key in question.choices do
+--             if key < 0 or key >= run_module.max_spells then return nil end
+--         end
+--     end
+--     return {
+--         open = decoded.open,
+--         slots = slots,
+--         cursor = decoded.cursor,
+--         pending = pending,
+--     }
+-- end
+return { DEFAULT_SHOP_ITEM_COUNT = DEFAULT_SHOP_ITEM_COUNT }

@@ -1,0 +1,249 @@
+-- The shop's retained screen tree. Its two offer rows and exit row keep stable
+-- node identities while presentation swaps in the current visit and run. The
+-- arranged node tree is also the pointer target tree, so clicks use exactly the
+-- rectangles that were last painted.
+local box = require("../ui/layout")
+local ui = require("../ui/node")
+local ink = require("../ink")
+local label = require("./label")
+local run_module = require("../run")
+local shop_ = require("../shop_new")
+local spell_launch = require("../spell_launch")
+local scroll_ = require("../items/scroll")
+
+type ShopState = shop_.State
+type Slot = shop_.Slot
+type RunState = run_module.State
+type SpellScroll = scroll_.SpellScroll
+
+const PANEL_WIDTH: f64 = 540.0
+const PAD_X: f64 = 32.0
+const PAD_TOP: f64 = 24.0
+const PAD_BOTTOM: f64 = 24.0
+
+const PANEL_FILL: string = "#09090b"
+const PANEL_EDGE: string = "#a1a1aa"
+
+const TITLE_SIZE: f64 = 24.0
+const TITLE_INK: string = "#fbbf24"
+const GOLD_SIZE: f64 = 24.0
+const GOLD_INK: string = "#67e8f9"
+const ON_HAND_INK: string = "#155e75"
+const TARGET_SIZE: f64 = 9.0
+const GOLD_GAP: f64 = 2.0
+const HEADER_GAP: f64 = 24.0
+
+const ROW_WIDTH: f64 = 476.0
+const ROW_HEIGHT: f64 = 54.0
+const ROW_GAP: f64 = 10.0
+const ROW_PAD_X: f64 = 22.0
+const ROW_TEXT_SIZE: f64 = 13.0
+const ROW_BASELINE: f64 = 33.0
+-- Two offer slots plus the way out. Keep this in step with the shop model's
+-- fixed visit size; presentation asserts if that contract changes.
+const ROW_CAPACITY: i32 = 3
+
+const ROW_FILL: string = "#17171c"
+const ROW_EDGE: string = "#3f3f46"
+const FOCUS_EDGE: string = "#fbbf24"
+const DISABLED_INK: string = "#52525b"
+const DEFAULT_INK: string = "#d4d4d8"
+const PRICE_INK: string = "#fbbf24"
+const SOLD_INK: string = "#52525b"
+
+type Presentation = { state: ShopState, run: RunState }
+export type Stateful = {
+    presentation: Presentation,
+    gold: label.Stateful,
+    row_nodes: {ui.Node},
+    root: ui.Node
+}
+
+function shop_slot_color(slot: Slot): string
+    if slot.sold then
+        return DISABLED_INK
+    end
+    if SpellScroll(scroll) = slot.item then
+        return spell_launch.color(scroll.kind)
+    end
+    return DEFAULT_INK
+end
+
+function visual_row_bounds(bounds: box.Rect): box.Rect
+    return box.rect(bounds.x, bounds.y, bounds.width, math.min(bounds.height, ROW_HEIGHT))
+end
+
+function draw_row(
+    presentation: Presentation,
+    surface: ui.Surface,
+    bounds: box.Rect,
+    index: i32
+): unit
+    local state: ShopState = presentation.state
+    if index > #state.slots then
+        return
+    end
+
+    local row_bounds: box.Rect = visual_row_bounds(bounds)
+    local edge: string = ROW_EDGE
+    if index == state.cursor then
+        edge = FOCUS_EDGE
+    end
+    ink.panel(
+        surface.graphics,
+        row_bounds.x,
+        row_bounds.y,
+        row_bounds.width,
+        row_bounds.height,
+        ROW_FILL,
+        edge
+    )
+
+    if index == #state.slots then
+        ink.text(
+            surface.graphics,
+            "Leave Shop",
+            row_bounds.x + ROW_PAD_X,
+            row_bounds.y + ROW_BASELINE,
+            ROW_TEXT_SIZE,
+            DEFAULT_INK
+        )
+        return
+    end
+
+    local slot: Slot = state.slots[index]
+    ink.text(
+        surface.graphics,
+        slot.item:describe(),
+        row_bounds.x + ROW_PAD_X,
+        row_bounds.y + ROW_BASELINE,
+        ROW_TEXT_SIZE,
+        shop_slot_color(slot)
+    )
+    local price: string = tostring(slot.price) .. " GOLD"
+    local price_ink: string = PRICE_INK
+    if slot.sold then
+        price = "SOLD"
+        price_ink = SOLD_INK
+    end
+    ink.text_right(
+        surface.graphics,
+        price,
+        row_bounds.x + row_bounds.width - ROW_PAD_X,
+        row_bounds.y + ROW_BASELINE,
+        ROW_TEXT_SIZE,
+        price_ink
+    )
+end
+
+function shell(): ui.Node
+    return ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            box.set_fixed(into, PANEL_WIDTH, 0.0)
+        end,
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            ink.panel(
+                surface.graphics,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                PANEL_FILL,
+                PANEL_EDGE
+            )
+        end
+    )
+end
+
+function body_style(): box.Style
+    return box.style(
+        "column",
+        0.0,
+        "start",
+        "stretch",
+        box.edges(PAD_X, PAD_TOP, PAD_X, PAD_BOTTOM)
+    )
+end
+
+function row_hit(bounds: box.Rect, x: f64, y: f64): bool
+    return box.contains(visual_row_bounds(bounds), x, y)
+end
+
+function sync(view: Stateful, state: ShopState, run: RunState): unit
+    assert(#state.slots < ROW_CAPACITY)
+    assert(ROW_CAPACITY == shop_.DEFAULT_SHOP_ITEM_COUNT + 1)
+    view.presentation.state = state
+    view.presentation.run = run
+    view.gold:present(tostring(run.gold), GOLD_SIZE, GOLD_INK, label.align_right)
+
+    for index, row in view.row_nodes do
+        local visible: bool = index <= #state.slots
+        row:set_visible(visible)
+        row:set_enabled(visible)
+        local height: f64 = 0.0
+        if visible then
+            height = ROW_HEIGHT
+            if index < #state.slots then
+                height += ROW_GAP
+            end
+        end
+        row:present_fixed(ROW_WIDTH, height)
+    end
+end
+
+function Stateful.new(state: ShopState, run: RunState): Stateful
+    local presentation: Presentation = { state = state, run = run }
+    local gold: label.Stateful = label.Stateful.new(
+        tostring(run.gold),
+        GOLD_SIZE,
+        GOLD_INK,
+        label.align_right,
+        false
+    )
+    local on_hand: ui.Node = label.right("GOLD ON HAND", TARGET_SIZE, ON_HAND_INK)
+    local right_col: ui.Node = ui.Node.down({ gap = GOLD_GAP, align = "end" }, {gold.root, on_hand})
+    local header: ui.Node = ui.Node.across(
+        { justify = "space-between", align = "start" },
+        {label.left("THE SHOP", TITLE_SIZE, TITLE_INK), right_col}
+    ):wide()
+
+    local rows: {ui.Node} = {}
+    for index = 0::i32, ROW_CAPACITY - 1 do
+        local row: ui.Node = ui.Node.sized(
+            ROW_WIDTH,
+            ROW_HEIGHT,
+            function(surface: ui.Surface, bounds: box.Rect): unit
+                draw_row(presentation, surface, bounds, index)
+            end
+        ):accept_pointer(index):set_hit_test(row_hit)
+        table.insert(rows, row)
+    end
+    local row_list: ui.Node = ui.Node.flow(rows, box.column(0.0, "start", "stretch"))
+    local body: ui.Node = ui.Node.flow(
+        {header, ui.Node.gap(0.0, HEADER_GAP), row_list},
+        body_style()
+    )
+    local root: ui.Node = ui.Node.layer({shell(), body}):min_width(PANEL_WIDTH)
+    local view: Stateful = {
+        presentation = presentation,
+        gold = gold,
+        row_nodes = rows,
+        root = root
+    }
+    sync(view, state, run)
+    return view
+end
+
+function Stateful:present(state: ShopState, run: RunState): unit
+    sync(self, state, run)
+end
+
+function Stateful:hit(x: f64, y: f64): i32
+    return self.root:hit(x, y)
+end
+
+function node(state: ShopState, run: RunState): ui.Node
+    return Stateful.new(state, run).root
+end
+
+return { node = node, shop_slot_color = shop_slot_color }
