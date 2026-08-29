@@ -1,6 +1,5 @@
 -- Explicit multi-value return type in function type annotations (waluau-5a3).
 -- () -> (bool, i32) and function f(): (f64, f64) should parse as Type::Multi returns.
-
 -- Parenthesised return type in a function declaration.
 function two(): (f64, f64)
     return 1, 2

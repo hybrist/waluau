@@ -1,6 +1,5 @@
 -- Independent coroutine instances created from the same function keep their
 -- own suspension points when resumed in interleaved order.
-
 function helper(): ()
     coroutine.yield(1::i32)
     coroutine.yield(2::i32)

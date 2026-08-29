@@ -1,11 +1,12 @@
 -- `local ok, v = pcall(f, ...)` acts as a discriminated pair: branching on
 -- `ok` (or asserting it) narrows `v` to f's return type on the success path
 -- and to `string` (the error payload) on the failure path — no `::` casts.
-
 -- Branch narrowing: success side.
-local ok, value = pcall(function(): f64
-    return 42.0
-end)
+local ok, value = pcall(
+    function(): f64
+        return 42.0
+    end
+)
 
 if ok then
     assert(value == 42.0)
@@ -15,10 +16,12 @@ else
 end
 
 -- Branch narrowing with `not`: failure side first.
-local ok2, err = pcall(function(): f64
-    error("boom")
-    return 1.0
-end)
+local ok2, err = pcall(
+    function(): f64
+        error("boom")
+        return 1.0
+    end
+)
 
 if not ok2 then
     assert(err == "boom")
@@ -27,29 +30,38 @@ else
 end
 
 -- assert(ok) narrows the payload for the rest of the scope.
-local ok3, sum = pcall(function(x: i32, y: i32): i32
-    return x + y
-end, 20, 22)
+local ok3, sum = pcall(
+    function(x: i32, y: i32): i32
+        return x + y
+    end,
+    20,
+    22
+)
 
 assert(ok3)
 assert(sum + 0 == 42)
 
 -- assert(not ok) narrows to the error payload.
-local ok4, err4 = pcall(function(): unit
-    error("kaput")
-end)
+local ok4, err4 = pcall(
+    function(): unit
+        error("kaput")
+    end
+)
 
 assert(not ok4)
 assert(err4 == "kaput")
 
 -- Narrowing persists past a diverging branch (early-return style).
 function try_double(x: f64): f64
-    local call_ok, doubled = pcall(function(v: f64): f64
-        if v < 0 then
-            error("negative")
-        end
-        return v * 2
-    end, x)
+    local call_ok, doubled = pcall(
+        function(v: f64): f64
+            if v < 0 then
+                error("negative")
+            end
+            return v * 2
+        end,
+        x
+    )
     if not call_ok then
         return -1.0
     end
@@ -60,9 +72,11 @@ assert(try_double(21.0) == 42.0)
 assert(try_double(-1.0) == -1.0)
 
 -- String-returning success payloads narrow too.
-local ok5, greeting = pcall(function(): string
-    return "hello"
-end)
+local ok5, greeting = pcall(
+    function(): string
+        return "hello"
+    end
+)
 
 if ok5 then
     assert(greeting == "hello")

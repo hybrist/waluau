@@ -11,10 +11,7 @@ function point_mutation(seed: i32): i32
 end
 
 function nested_record(seed: i32): i32
-    local wrapper: { inner: { x: i32 }, z: i32 } = {
-        inner = { x = seed },
-        z = seed + 10,
-    }
+    local wrapper: { inner: { x: i32 }, z: i32 } = { inner = { x = seed }, z = seed + 10 }
     local inner = wrapper.inner
     inner.x = inner.x + 3
     return inner.x + wrapper.z
@@ -86,9 +83,6 @@ local nested: { inner: { items: {string} } } = { inner = { items = {"a", "b"} } 
 assert(#nested.inner.items == 2)
 
 -- Record types accept a trailing comma after the last field.
-type Vec2d = {
-    x: i32,
-    y: i32,
-}
+type Vec2d = { x: i32, y: i32 }
 local trailing: Vec2d = { x = 4, y = 5 }
 assert(trailing.x + trailing.y == 9)

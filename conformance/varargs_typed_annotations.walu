@@ -2,7 +2,6 @@
 -- Luau's syntax. The annotation checks arguments at call sites and gives `...`
 -- uses the element type inside the body; the pack itself keeps the same boxed
 -- runtime representation as an unannotated `...`.
-
 function sum(...: number): number
     local total = 0
     for index = 1, select('#', ...) do

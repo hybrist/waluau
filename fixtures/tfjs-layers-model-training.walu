@@ -13,35 +13,43 @@ end
 
 function run_training_demo(): unit
     local tf = require("tfjs")
-    local co: thread = coroutine.create(function(): i32
-        local model: LayersModel = promise.await(tf.load_layers_model("/tfjs-fixtures/layers-double-plus-one/model.json"))::extern::LayersModel
-        tf.layers_model_compile_sgd(model, "meanSquaredError", 0.01)
+    local co: thread = coroutine.create(
+        function(): i32
+            local model: LayersModel = promise.await(
+                tf.load_layers_model("/tfjs-fixtures/layers-double-plus-one/model.json")
+            )::extern::LayersModel
+            tf.layers_model_compile_sgd(model, "meanSquaredError", 0.01)
 
-        local xs: Tensor = make_input(4.0)
-        local ys: Tensor = make_input(11.0)
-        local before: Tensor = tf.layers_model_predict(model, xs)
-        local before_value: f64 = first_value(before)
+            local xs: Tensor = make_input(4.0)
+            local ys: Tensor = make_input(11.0)
+            local before: Tensor = tf.layers_model_predict(model, xs)
+            local before_value: f64 = first_value(before)
 
-        local history: TrainingHistory = promise.await(tf.layers_model_fit_one(model, xs, ys, 8, 1))::extern::TrainingHistory
-        local epochs: i32 = tf.training_history_len(history)
-        local final_loss: f64 = tf.training_history_loss(history, epochs - 1)
+            local history: TrainingHistory = promise.await(
+                tf.layers_model_fit_one(model, xs, ys, 8, 1)
+            )::extern::TrainingHistory
+            local epochs: i32 = tf.training_history_len(history)
+            local final_loss: f64 = tf.training_history_loss(history, epochs - 1)
 
-        local after: Tensor = tf.layers_model_predict(model, xs)
-        local after_value: f64 = first_value(after)
+            local after: Tensor = tf.layers_model_predict(model, xs)
+            local after_value: f64 = first_value(after)
 
-        local window = require("dom:window")
-        local document: Document = window.document
-        local result: Element = document:create_element("p")
-        result.id = "tfjs-training-result"
-        result.text_content = "TFJS training final loss: " .. tostring(final_loss) .. " prediction: " .. tostring(before_value) .. " -> " .. tostring(after_value)
-        document.body:append_child(result)
+            local window = require("dom:window")
+            local document: Document = window.document
+            local result: Element = document:create_element("p")
+            result.id = "tfjs-training-result"
+            result.text_content = "TFJS training final loss: " .. tostring(
+                final_loss
+            ) .. " prediction: " .. tostring(before_value) .. " -> " .. tostring(after_value)
+            document.body:append_child(result)
 
-        tf.dispose(xs)
-        tf.dispose(ys)
-        tf.dispose(before)
-        tf.dispose(after)
-        tf.dispose_layers_model(model)
-        return 0
-    end)
+            tf.dispose(xs)
+            tf.dispose(ys)
+            tf.dispose(before)
+            tf.dispose(after)
+            tf.dispose_layers_model(model)
+            return 0
+        end
+    )
     coroutine.resume(co)
 end

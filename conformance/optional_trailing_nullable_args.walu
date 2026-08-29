@@ -1,6 +1,5 @@
 -- Calls may omit a trailing suffix of nullable parameters. The callee still
 -- receives a value for every fixed parameter, with nil filling omitted slots.
-
 function choose(fallback: string, value: string?): string
     if value == nil then
         return fallback
@@ -58,11 +57,7 @@ assert(optional_vararg("six") == "six")
 -- Options records may themselves be nullable. Nullable fields can be omitted
 -- from a record literal and are materialized as nil, including nullable arrays.
 type Child = { name: string }
-type Options = {
-    id: string?,
-    class: string?,
-    children: {Child}?
-}
+type Options = { id: string?, class: string?, children: {Child}? }
 
 function render(opts: Options?): string
     if opts == nil then
@@ -83,4 +78,4 @@ end
 assert(render() == "default")
 assert(render { id = "my-el" } == "my-el")
 assert(render { class = "hero" } == "hero")
-assert(render { children = { { name = "child" } } } == "1")
+assert(render { children = {{ name = "child" }} } == "1")

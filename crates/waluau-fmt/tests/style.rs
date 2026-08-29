@@ -109,6 +109,14 @@ fn is_idempotent_on_messy_input() {
 }
 
 #[test]
+fn formats_keyword_named_properties_and_method_chains() {
+    assert_eq!(
+        fmt("declare property Expectation:not:Expectation\nexpect(value):not:toBe(other)\n"),
+        "declare property Expectation: not: Expectation\nexpect(value):not:toBe(other)\n"
+    );
+}
+
+#[test]
 fn formats_nominal_enums_and_matches() {
     let src = "enum Direction{north,east,south}\nfunction score(d:Direction):i32\nmatch d do\ncase Direction.north then\nreturn 1\ncase Direction.east then\nreturn 2\ncase Direction.south then\nreturn 3\nend\nend\n";
     assert_eq!(

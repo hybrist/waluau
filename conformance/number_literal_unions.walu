@@ -5,7 +5,7 @@ type BigId = 1 | 5000000000
 
 function louder(volume: Volume): Volume
     if volume < 2 then
-        return ((volume + 1) :: Volume)
+        return ((volume + 1)::Volume)
     end
     return volume
 end
@@ -23,7 +23,7 @@ assert(louder(2) == 2)
 local direction: Direction = -1
 assert(direction == -1)
 assert(tostring(direction) == "-1")
-local reversed: Direction = ((-direction) :: Direction)
+local reversed: Direction = ((-direction)::Direction)
 assert(reversed == 1)
 
 local speed: Speed = 0.5

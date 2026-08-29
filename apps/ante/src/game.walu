@@ -1,7 +1,6 @@
 -- DOM-free rules for Ante Magic. The presentation treats suits as
 -- colors, cards as cards, and the computer as the Opponent; the underlying
 -- five-card hand, exchange, wager, and trick rules remain unchanged.
-
 local spells = require("./spells/spell")
 
 export type Suit = 0 | 1 | 2 | 3
@@ -11,7 +10,12 @@ export type Side = -1 | 1
 
 export type Card = { rank: i32, suit: Suit }
 export type PairChoice = { first: i32, second: i32, value: i32, formation: {Card} }
-export type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
+export type SwapChoice = {
+    hand_indices: {i32},
+    middle_indices: {i32},
+    community_value: i32,
+    hand_value: i32
+}
 export type SwapOutcome = {
     winner: Winner,
     hand_indices: {i32},
@@ -33,7 +37,30 @@ export type HandSlot = { card: Card, known: bool }
 -- can upgrade the same spell between duels, and two player carrying Firebolt
 -- do not necessarily pay the same for it.
 export type Spell = spells.Spell
-export type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_formation: {Card}, computer_formation: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: Winner, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: Winner, swap_count: i32 }
+export type Trick = {
+    round: i32,
+    middle: {Card},
+    frozen_middle: {bool},
+    player_hand: {HandSlot},
+    computer_hand: {HandSlot},
+    player_cards: {Card},
+    computer_cards: {Card},
+    player_formation: {Card},
+    computer_formation: {Card},
+    player_first: i32,
+    player_second: i32,
+    computer_first: i32,
+    computer_second: i32,
+    player_value: i32,
+    computer_value: i32,
+    winner: Winner,
+    points: i32,
+    pot: i32,
+    player_wager: i32,
+    computer_wager: i32,
+    swap_winner: Winner,
+    swap_count: i32
+}
 -- `boss` selects the boss battle variant: both sides start with seven cards
 -- instead of five and never draw replacements, so the hands shrink by two each
 -- round and the third round is fought from a three-card hand.
@@ -44,7 +71,35 @@ export type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_
 -- their gold, both the wager stake and the resource each cast burns. Both the
 -- loadout and the gold are dealt in rather than fixed, so a run can hand one
 -- duel what the previous one left standing and whatever it bought since.
-export opaque type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: Winner, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, player_swap_max: i32, computer_swap_max: i32, swap_winner: Winner, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: SpellKind? }
+export opaque type State = {
+    deck: {Card},
+    player_hand: {HandSlot},
+    computer_hand: {HandSlot},
+    middle: {Card},
+    frozen_middle: {bool},
+    history: {Trick},
+    round: i32,
+    player_points: i32,
+    player_tricks: i32,
+    computer_tricks: i32,
+    last_player_value: i32,
+    last_computer_value: i32,
+    last_winner: Winner,
+    swap_open: bool,
+    pot: i32,
+    player_wager: i32,
+    computer_wager: i32,
+    player_swap_max: i32,
+    computer_swap_max: i32,
+    swap_winner: Winner,
+    swap_count: i32,
+    swap_hand_indices: {i32},
+    swap_middle_indices: {i32},
+    finished: bool,
+    boss: bool,
+    spells: {Spell},
+    cast_kind: SpellKind?
+}
 export type View = {
     deck_count: i32,
     player_hand: {HandSlot},
@@ -151,7 +206,9 @@ end
 -- which have no business knowing about watched marks.
 function hand_cards(slots: {HandSlot}): {Card}
     local cards: {Card} = {}
-    for slot in slots do table.insert(cards, slot.card) end
+    for slot in slots do
+        table.insert(cards, slot.card)
+    end
     return cards
 end
 
@@ -160,7 +217,9 @@ end
 -- Cards are never mutated and are safe to share.
 function clone_slots(slots: {HandSlot}): {HandSlot}
     local copy: {HandSlot} = {}
-    for slot in slots do table.insert(copy, { card = slot.card, known = slot.known }) end
+    for slot in slots do
+        table.insert(copy, { card = slot.card, known = slot.known })
+    end
     return copy
 end
 
@@ -190,14 +249,30 @@ end
 -- to it, so a larger swap wager never multiplies the rarity award.
 function hand_bonus(value: i32): i32
     local category: i32 = category_of(value)
-    if category == 8 then return 50 end
-    if category == 7 then return 25 end
-    if category == 6 then return 9 end
-    if category == 5 then return 6 end
-    if category == 4 then return 4 end
-    if category == 3 then return 3 end
-    if category == 2 then return 2 end
-    if category == 1 then return 1 end
+    if category == 8 then
+        return 50
+    end
+    if category == 7 then
+        return 25
+    end
+    if category == 6 then
+        return 9
+    end
+    if category == 5 then
+        return 6
+    end
+    if category == 4 then
+        return 4
+    end
+    if category == 3 then
+        return 3
+    end
+    if category == 2 then
+        return 2
+    end
+    if category == 1 then
+        return 1
+    end
     return 0
 end
 
@@ -213,7 +288,7 @@ end
 
 function rank_five(cards: {Card}): i32
     assert(#cards == 5)
-    local ranks: {i32} = { cards[0].rank, cards[1].rank, cards[2].rank, cards[3].rank, cards[4].rank }
+    local ranks: {i32} = {cards[0].rank, cards[1].rank, cards[2].rank, cards[3].rank, cards[4].rank}
     -- A fixed five-item bubble sorting network avoids allocating comparator
     -- closures and keeps the evaluator straightforward.
     swap_if_lower(ranks, 0, 1)
@@ -279,21 +354,19 @@ end
 -- card.
 function best_five(cards: {Card}): PairChoice
     assert(#cards >= 5 and #cards <= 7)
-    local formation: {Card} = {
-        cards[0], cards[1], cards[2], cards[3], cards[4]
-    }
+    local formation: {Card} = {cards[0], cards[1], cards[2], cards[3], cards[4]}
     local best: PairChoice = {
-        first = 0, second = 1,
-        value = rank_five(formation), formation = formation,
+        first = 0,
+        second = 1,
+        value = rank_five(formation),
+        formation = formation
     }
     for a = ZERO, #cards - 5 do
         for b = a + ONE, #cards - 4 do
             for c = b + ONE, #cards - 3 do
                 for d = c + ONE, #cards - 2 do
                     for e = d + ONE, #cards - 1 do
-                        local candidate: {Card} = {
-                            cards[a], cards[b], cards[c], cards[d], cards[e]
-                        }
+                        local candidate: {Card} = {cards[a], cards[b], cards[c], cards[d], cards[e]}
                         local value: i32 = rank_five(candidate)
                         if value > best.value then
                             best.value = value
@@ -312,37 +385,30 @@ end
 -- the formation-producing path used when a trick actually resolves.
 function straight_high_from_counts(counts: {i32}): i32
     for high = 14::i32, 5::i32, -1::i32 do
-        if counts[high] > 0 and counts[high - 1] > 0
-            and counts[high - 2] > 0 and counts[high - 3] > 0
-            and counts[high - 4] > 0
-        then
+        if counts[high] > 0 and counts[high - 1] > 0 and counts[high - 2] > 0 and counts[high - 3] > 0 and counts[high - 4] > 0 then
             return high
         end
     end
-    if counts[14] > 0 and counts[5] > 0 and counts[4] > 0
-        and counts[3] > 0 and counts[2] > 0
-    then
+    if counts[14] > 0 and counts[5] > 0 and counts[4] > 0 and counts[3] > 0 and counts[2] > 0 then
         return 5
     end
     return 0
 end
 
 function empty_rank_counts(): {i32}
-    return {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    }
+    return {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 end
 
 function empty_suit_rank_counts(): {{i32}}
-    return {
-        empty_rank_counts(), empty_rank_counts(),
-        empty_rank_counts(), empty_rank_counts(),
-    }
+    return {empty_rank_counts(), empty_rank_counts(), empty_rank_counts(), empty_rank_counts()}
 end
 
 function change_card_count(
-    rank_counts: {i32}, suit_counts: {i32}, suit_rank_counts: {{i32}},
-    card: Card, amount: i32
+    rank_counts: {i32},
+    suit_counts: {i32},
+    suit_rank_counts: {{i32}},
+    card: Card,
+    amount: i32
 ): unit
     local suit: i32 = card.suit::i32
     rank_counts[card.rank] += amount
@@ -350,16 +416,10 @@ function change_card_count(
     suit_rank_counts[suit][card.rank] += amount
 end
 
-function score_counts(
-    rank_counts: {i32},
-    suit_counts: {i32},
-    suit_rank_counts: {{i32}}
-): i32
-
+function score_counts(rank_counts: {i32}, suit_counts: {i32}, suit_rank_counts: {{i32}}): i32
     for suit = 0::i32, 3::i32 do
         if suit_counts[suit] >= 5 then
-            local straight_flush: i32 = straight_high_from_counts(
-                suit_rank_counts[suit])
+            local straight_flush: i32 = straight_high_from_counts(suit_rank_counts[suit])
             if straight_flush > 0 then
                 return pack(8, straight_flush, 0, 0, 0, 0)
             end
@@ -368,7 +428,10 @@ function score_counts(
 
     local four: i32 = 0
     for rank = 14::i32, 2::i32, -1::i32 do
-        if rank_counts[rank] == 4 then four = rank break end
+        if rank_counts[rank] == 4 then
+            four = rank
+            break
+        end
     end
     if four > 0 then
         for rank = 14::i32, 2::i32, -1::i32 do
@@ -402,29 +465,44 @@ function score_counts(
             for rank = 14::i32, 2::i32, -1::i32 do
                 local copies: i32 = suit_rank_counts[suit][rank]
                 while copies > 0 and found < 5 do
-                    if found == 0 then first = rank
-                    elseif found == 1 then second = rank
-                    elseif found == 2 then third = rank
-                    elseif found == 3 then fourth = rank
-                    else fifth = rank end
+                    if found == 0 then
+                        first = rank
+                    elseif found == 1 then
+                        second = rank
+                    elseif found == 2 then
+                        third = rank
+                    elseif found == 3 then
+                        fourth = rank
+                    else
+                        fifth = rank
+                    end
                     found += 1
                     copies -= 1
                 end
-                if found == 5 then break end
+                if found == 5 then
+                    break
+                end
             end
             return pack(5, first, second, third, fourth, fifth)
         end
     end
 
     local straight: i32 = straight_high_from_counts(rank_counts)
-    if straight > 0 then return pack(4, straight, 0, 0, 0, 0) end
+    if straight > 0 then
+        return pack(4, straight, 0, 0, 0, 0)
+    end
 
     if three > 0 then
         local first: i32 = 0
         local second: i32 = 0
         for rank = 14::i32, 2::i32, -1::i32 do
             if rank ~= three and rank_counts[rank] > 0 then
-                if first == 0 then first = rank else second = rank break end
+                if first == 0 then
+                    first = rank
+                else
+                    second = rank
+                    break
+                end
             end
         end
         return pack(3, three, first, second, 0, 0)
@@ -434,8 +512,12 @@ function score_counts(
     local second_pair: i32 = 0
     for rank = 14::i32, 2::i32, -1::i32 do
         if rank_counts[rank] >= 2 then
-            if first_pair == 0 then first_pair = rank
-            elseif second_pair == 0 then second_pair = rank break end
+            if first_pair == 0 then
+                first_pair = rank
+            elseif second_pair == 0 then
+                second_pair = rank
+                break
+            end
         end
     end
     if second_pair > 0 then
@@ -451,9 +533,14 @@ function score_counts(
         local third: i32 = 0
         for rank = 14::i32, 2::i32, -1::i32 do
             if rank ~= first_pair and rank_counts[rank] > 0 then
-                if first == 0 then first = rank
-                elseif second == 0 then second = rank
-                else third = rank break end
+                if first == 0 then
+                    first = rank
+                elseif second == 0 then
+                    second = rank
+                else
+                    third = rank
+                    break
+                end
             end
         end
         return pack(1, first_pair, first, second, third, 0)
@@ -467,13 +554,21 @@ function score_counts(
     local found: i32 = 0
     for rank = 14::i32, 2::i32, -1::i32 do
         if rank_counts[rank] > 0 then
-            if found == 0 then first = rank
-            elseif found == 1 then second = rank
-            elseif found == 2 then third = rank
-            elseif found == 3 then fourth = rank
-            else fifth = rank end
+            if found == 0 then
+                first = rank
+            elseif found == 1 then
+                second = rank
+            elseif found == 2 then
+                third = rank
+            elseif found == 3 then
+                fourth = rank
+            else
+                fifth = rank
+            end
             found += 1
-            if found == 5 then break end
+            if found == 5 then
+                break
+            end
         end
     end
     return pack(0, first, second, third, fourth, fifth)
@@ -482,7 +577,7 @@ end
 function best_five_value(cards: {Card}): i32
     assert(#cards >= 5 and #cards <= 7)
     local rank_counts: {i32} = empty_rank_counts()
-    local suit_counts: {i32} = { 0, 0, 0, 0 }
+    local suit_counts: {i32} = {0, 0, 0, 0}
     local suit_rank_counts: {{i32}} = empty_suit_rank_counts()
     for card in cards do
         change_card_count(rank_counts, suit_counts, suit_rank_counts, card, 1)
@@ -490,9 +585,7 @@ function best_five_value(cards: {Card}): i32
     return score_counts(rank_counts, suit_counts, suit_rank_counts)
 end
 
-function formation_for_pair(
-    hand: {Card}, middle: {Card}, first: i32, second: i32
-): PairChoice
+function formation_for_pair(hand: {Card}, middle: {Card}, first: i32, second: i32): PairChoice
     local available: {Card} = clone_cards(middle)
     table.insert(available, hand[first])
     table.insert(available, hand[second])
@@ -508,26 +601,19 @@ end
 
 function best_pair_indices(hand: {Card}, middle: {Card}): PairChoice
     local rank_counts: {i32} = empty_rank_counts()
-    local suit_counts: {i32} = { 0, 0, 0, 0 }
+    local suit_counts: {i32} = {0, 0, 0, 0}
     local suit_rank_counts: {{i32}} = empty_suit_rank_counts()
     for card in middle do
         change_card_count(rank_counts, suit_counts, suit_rank_counts, card, 1)
     end
-    local best: PairChoice = {
-        first = 0, second = 1, value = -1, formation = {},
-    }
+    local best: PairChoice = { first = 0, second = 1, value = -1, formation = {} }
     for first = ZERO, #hand - TWO do
         for second = first + ONE, #hand - ONE do
-            change_card_count(
-                rank_counts, suit_counts, suit_rank_counts, hand[first], 1)
-            change_card_count(
-                rank_counts, suit_counts, suit_rank_counts, hand[second], 1)
-            local value: i32 = score_counts(
-                rank_counts, suit_counts, suit_rank_counts)
-            change_card_count(
-                rank_counts, suit_counts, suit_rank_counts, hand[first], -1)
-            change_card_count(
-                rank_counts, suit_counts, suit_rank_counts, hand[second], -1)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[first], 1)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[second], 1)
+            local value: i32 = score_counts(rank_counts, suit_counts, suit_rank_counts)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[first], -1)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[second], -1)
             if value > best.value then
                 best.first = first
                 best.second = second
@@ -544,20 +630,23 @@ end
 
 function best_pair(hand: {Card}, middle: {Card}): PairChoice
     local best: PairChoice = best_pair_indices(hand, middle)
-    best.formation = formation_for_pair(
-        hand, middle, best.first, best.second).formation
+    best.formation = formation_for_pair(hand, middle, best.first, best.second).formation
     return best
 end
 
 function clone_cards(cards: {Card}): {Card}
     local copy: {Card} = {}
-    for card in cards do table.insert(copy, card) end
+    for card in cards do
+        table.insert(copy, card)
+    end
     return copy
 end
 
 function clone_flags(flags: {bool}): {bool}
     local copy: {bool} = {}
-    for flag in flags do table.insert(copy, flag) end
+    for flag in flags do
+        table.insert(copy, flag)
+    end
     return copy
 end
 
@@ -576,7 +665,12 @@ end
 -- card that was face up in the middle a moment ago, so the opponent knows all
 -- of them: the replacement slot is born marked, and whatever secrecy the old
 -- slot still had leaves with its card.
-function exchange_live(hand: {HandSlot}, middle: {Card}, hand_indices: {i32}, middle_indices: {i32}): unit
+function exchange_live(
+    hand: {HandSlot},
+    middle: {Card},
+    hand_indices: {i32},
+    middle_indices: {i32}
+): unit
     assert(#hand_indices == #middle_indices)
     for i = ZERO, #hand_indices - ONE do
         local outgoing: Card = hand[hand_indices[i]].card
@@ -589,7 +683,7 @@ end
 -- straight flush > three of a kind > straight > flush > pair > high card.
 function rank_three(cards: {Card}): i32
     assert(#cards == 3)
-    local ranks: {i32} = { cards[0].rank, cards[1].rank, cards[2].rank }
+    local ranks: {i32} = {cards[0].rank, cards[1].rank, cards[2].rank}
     swap_if_lower(ranks, 0, 1)
     swap_if_lower(ranks, 1, 2)
     swap_if_lower(ranks, 0, 1)
@@ -600,12 +694,24 @@ function rank_three(cards: {Card}): i32
     elseif ranks[0] == 14 and ranks[1] == 3 and ranks[2] == 2 then
         straight_high = 3
     end
-    if flush and straight_high > 0 then return pack(5, straight_high, 0, 0, 0, 0) end
-    if ranks[0] == ranks[2] then return pack(4, ranks[0], 0, 0, 0, 0) end
-    if straight_high > 0 then return pack(3, straight_high, 0, 0, 0, 0) end
-    if flush then return pack(2, ranks[0], ranks[1], ranks[2], 0, 0) end
-    if ranks[0] == ranks[1] then return pack(1, ranks[0], ranks[2], 0, 0, 0) end
-    if ranks[1] == ranks[2] then return pack(1, ranks[1], ranks[0], 0, 0, 0) end
+    if flush and straight_high > 0 then
+        return pack(5, straight_high, 0, 0, 0, 0)
+    end
+    if ranks[0] == ranks[2] then
+        return pack(4, ranks[0], 0, 0, 0, 0)
+    end
+    if straight_high > 0 then
+        return pack(3, straight_high, 0, 0, 0, 0)
+    end
+    if flush then
+        return pack(2, ranks[0], ranks[1], ranks[2], 0, 0)
+    end
+    if ranks[0] == ranks[1] then
+        return pack(1, ranks[0], ranks[2], 0, 0, 0)
+    end
+    if ranks[1] == ranks[2] then
+        return pack(1, ranks[1], ranks[0], 0, 0, 0)
+    end
     return pack(0, ranks[0], ranks[1], ranks[2], 0, 0)
 end
 
@@ -614,30 +720,50 @@ end
 -- triples rather than making slot order affect the bid.
 function community_value(cards: {Card}): i32
     assert(#cards >= OPENING_COMMUNITY_SIZE and #cards <= MAX_COMMUNITY_SIZE)
-    local best: i32 = rank_three({ cards[0], cards[1], cards[2] })
+    local best: i32 = rank_three({cards[0], cards[1], cards[2]})
     for first = ZERO, #cards - 3 do
         for second = first + ONE, #cards - 2 do
             for third = second + ONE, #cards - 1 do
-                local value: i32 = rank_three({
-                    cards[first], cards[second], cards[third]
-                })
-                if value > best then best = value end
+                local value: i32 = rank_three({cards[first], cards[second], cards[third]})
+                if value > best then
+                    best = value
+                end
             end
         end
     end
     return best
 end
 
-function swap_priority(player_wager: i32, player_community: i32, computer_wager: i32, computer_community: i32): Winner
-    if player_wager <= 0 and computer_wager <= 0 then return 0 end
-    if player_wager > computer_wager then return 1 end
-    if computer_wager > player_wager then return -1 end
-    if player_community > computer_community then return 1 end
-    if computer_community > player_community then return -1 end
+function swap_priority(
+    player_wager: i32,
+    player_community: i32,
+    computer_wager: i32,
+    computer_community: i32
+): Winner
+    if player_wager <= 0 and computer_wager <= 0 then
+        return 0
+    end
+    if player_wager > computer_wager then
+        return 1
+    end
+    if computer_wager > player_wager then
+        return -1
+    end
+    if player_community > computer_community then
+        return 1
+    end
+    if computer_community > player_community then
+        return -1
+    end
     return 0
 end
 
-function proposed_swap(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle_indices: {i32}): SwapChoice
+function proposed_swap(
+    hand: {Card},
+    middle: {Card},
+    hand_indices: {i32},
+    middle_indices: {i32}
+): SwapChoice
     local proposed_hand: {Card} = clone_cards(hand)
     local proposed_middle: {Card} = clone_cards(middle)
     exchange(proposed_hand, proposed_middle, hand_indices, middle_indices)
@@ -645,7 +771,7 @@ function proposed_swap(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle
         hand_indices = hand_indices,
         middle_indices = middle_indices,
         community_value = community_value(proposed_middle),
-        hand_value = best_pair_value(proposed_hand, proposed_middle),
+        hand_value = best_pair_value(proposed_hand, proposed_middle)
     }
 end
 
@@ -655,17 +781,17 @@ end
 function swap_hand_options(count: i32): {{i32}}
     local options: {{i32}} = {}
     for first = ZERO, count - ONE do
-        table.insert(options, { first })
+        table.insert(options, {first})
     end
     for first = ZERO, count - TWO do
         for second = first + ONE, count - ONE do
-            table.insert(options, { first, second })
+            table.insert(options, {first, second})
         end
     end
     for first = ZERO, count - TWO - ONE do
         for second = first + ONE, count - TWO do
             for third = second + ONE, count - ONE do
-                table.insert(options, { first, second, third })
+                table.insert(options, {first, second, third})
             end
         end
     end
@@ -673,7 +799,7 @@ function swap_hand_options(count: i32): {{i32}}
         for second = first + ONE, count - 3 do
             for third = second + ONE, count - 2 do
                 for fourth = third + ONE, count - 1 do
-                    table.insert(options, { first, second, third, fourth })
+                    table.insert(options, {first, second, third, fourth})
                 end
             end
         end
@@ -683,9 +809,7 @@ function swap_hand_options(count: i32): {{i32}}
             for third = second + ONE, count - 3 do
                 for fourth = third + ONE, count - 2 do
                     for fifth = fourth + ONE, count - 1 do
-                        table.insert(options, {
-                            first, second, third, fourth, fifth
-                        })
+                        table.insert(options, {first, second, third, fourth, fifth})
                     end
                 end
             end
@@ -701,20 +825,32 @@ function best_available_swap(
     minimum_count: i32
 ): SwapChoice
     local baseline: i32 = best_pair_value(hand, middle)
-    local best: SwapChoice = { hand_indices = {}, middle_indices = {}, community_value = community_value(middle), hand_value = baseline }
-    if minimum_count > #hand or minimum_count > #middle then return best end
+    local best: SwapChoice = {
+        hand_indices = {},
+        middle_indices = {},
+        community_value = community_value(middle),
+        hand_value = baseline
+    }
+    if minimum_count > #hand or minimum_count > #middle then
+        return best
+    end
     local hand_options: {{i32}} = swap_hand_options(#hand)
     local middle_options: {{i32}} = swap_hand_options(#middle)
     for hand_indices in hand_options do
         for middle_indices in middle_options do
             local available: bool = true
             for index in middle_indices do
-                if frozen_middle[index] then available = false end
+                if frozen_middle[index] then
+                    available = false
+                end
             end
-            if available and #hand_indices == #middle_indices
-                and #hand_indices >= minimum_count
-            then
-                local candidate: SwapChoice = proposed_swap(hand, middle, hand_indices, middle_indices)
+            if available and #hand_indices == #middle_indices and #hand_indices >= minimum_count then
+                local candidate: SwapChoice = proposed_swap(
+                    hand,
+                    middle,
+                    hand_indices,
+                    middle_indices
+                )
                 if candidate.hand_value > best.hand_value or (candidate.hand_value == best.hand_value and candidate.community_value > best.community_value) then
                     best.hand_indices = candidate.hand_indices
                     best.middle_indices = candidate.middle_indices
@@ -732,11 +868,11 @@ function best_available_swap(
     return best
 end
 
-function best_swap_at_least(
-    hand: {Card}, middle: {Card}, minimum_count: i32
-): SwapChoice
+function best_swap_at_least(hand: {Card}, middle: {Card}, minimum_count: i32): SwapChoice
     local available: {bool} = {}
-    for _ in middle do table.insert(available, false) end
+    for _ in middle do
+        table.insert(available, false)
+    end
     return best_available_swap(hand, middle, available, minimum_count)
 end
 
@@ -793,12 +929,16 @@ end
 
 function State:clear_frozen(): unit
     self.frozen_middle = {}
-    for _ in self.middle do table.insert(self.frozen_middle, false) end
+    for _ in self.middle do
+        table.insert(self.frozen_middle, false)
+    end
 end
 
 function State:middle_indices_available(indices: {i32}): bool
     for index in indices do
-        if index < 0 or index >= #self.middle or self.frozen_middle[index] then return false end
+        if index < 0 or index >= #self.middle or self.frozen_middle[index] then
+            return false
+        end
     end
     return true
 end
@@ -826,7 +966,9 @@ function State:sort_player_hand(by_color: bool): {i32}
     for i = ZERO, #order - TWO do
         local smallest: i32 = i
         for j = i + ONE, #order - ONE do
-            if keys[j] < keys[smallest] then smallest = j end
+            if keys[j] < keys[smallest] then
+                smallest = j
+            end
         end
         if smallest ~= i then
             local key: i32 = keys[i]
@@ -856,10 +998,7 @@ function State:divine_intervention(target: i32): bool
     end
     local hand_index: i32 = target - 3
     if hand_index >= 0 and hand_index < 2 and hand_index < #self.player_hand then
-        self.player_hand[hand_index] = {
-            card = { rank = 13 + hand_index, suit = 0 },
-            known = true,
-        }
+        self.player_hand[hand_index] = { card = { rank = 13 + hand_index, suit = 0 }, known = true }
         return true
     end
     return false
@@ -872,29 +1011,38 @@ function next_swap_min(own_max: i32, opponent_max: i32): i32
 end
 
 function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOutcome?
-    if self.finished or not self.swap_open then return nil end
+    if self.finished or not self.swap_open then
+        return nil
+    end
     local player_wager: i32 = #hand_indices
-    local player_minimum: i32 = next_swap_min(
-        self.player_swap_max, self.computer_swap_max)
-    local valid_player_swap: bool = player_wager <= #self.middle
-        and player_wager <= #self.player_hand
-        and player_wager <= self.player_points
-        and player_wager == #middle_indices
-        and self:middle_indices_available(middle_indices)
-        and (player_wager == 0 or player_wager >= player_minimum)
-    if not valid_player_swap then return nil end
+    local player_minimum: i32 = next_swap_min(self.player_swap_max, self.computer_swap_max)
+    local valid_player_swap: bool = player_wager <= #self.middle and player_wager <= #self.player_hand and player_wager <= self.player_points and player_wager == #middle_indices and self:middle_indices_available(
+        middle_indices
+    ) and (player_wager == 0 or player_wager >= player_minimum)
+    if not valid_player_swap then
+        return nil
+    end
 
     local proposed_player_max: i32 = self.player_swap_max
-    if player_wager > proposed_player_max then proposed_player_max = player_wager end
-    local computer_minimum: i32 = next_swap_min(
-        self.computer_swap_max, proposed_player_max)
+    if player_wager > proposed_player_max then
+        proposed_player_max = player_wager
+    end
+    local computer_minimum: i32 = next_swap_min(self.computer_swap_max, proposed_player_max)
     local computer: SwapChoice = best_available_swap(
-        hand_cards(self.computer_hand), self.middle, self.frozen_middle,
-        computer_minimum)
+        hand_cards(self.computer_hand),
+        self.middle,
+        self.frozen_middle,
+        computer_minimum
+    )
     local computer_wager: i32 = #computer.hand_indices
     local player_community: i32 = 0
     if player_wager > 0 then
-        player_community = proposed_swap(hand_cards(self.player_hand), self.middle, hand_indices, middle_indices).community_value
+        player_community = proposed_swap(
+            hand_cards(self.player_hand),
+            self.middle,
+            hand_indices,
+            middle_indices
+        ).community_value
     end
 
     self.player_wager += player_wager
@@ -906,7 +1054,11 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
         self.computer_swap_max = computer_wager
     end
     self.swap_winner = swap_priority(
-        player_wager, player_community, computer_wager, computer.community_value)
+        player_wager,
+        player_community,
+        computer_wager,
+        computer.community_value
+    )
     self.swap_count = 0
     -- The executed exchange, slot by slot, so the presentation can animate
     -- exactly which cards and table cards traded places (the Opponent's picks
@@ -919,7 +1071,12 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
         self.swap_hand_indices = hand_indices
         self.swap_middle_indices = middle_indices
     elseif self.swap_winner < 0 then
-        exchange_live(self.computer_hand, self.middle, computer.hand_indices, computer.middle_indices)
+        exchange_live(
+            self.computer_hand,
+            self.middle,
+            computer.hand_indices,
+            computer.middle_indices
+        )
         self.swap_count = #computer.hand_indices
         self.swap_hand_indices = computer.hand_indices
         self.swap_middle_indices = computer.middle_indices
@@ -931,8 +1088,11 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
             local hand_index: i32 = self.swap_hand_indices[k]
             local middle_index: i32 = self.swap_middle_indices[k]
             table.insert(outgoing, self.middle[middle_index])
-            if self.swap_winner > 0 then table.insert(incoming, self.player_hand[hand_index].card)
-            else table.insert(incoming, self.computer_hand[hand_index].card) end
+            if self.swap_winner > 0 then
+                table.insert(incoming, self.player_hand[hand_index].card)
+            else
+                table.insert(incoming, self.computer_hand[hand_index].card)
+            end
         end
     end
     self:clear_frozen()
@@ -953,7 +1113,7 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
         outgoing = outgoing,
         incoming = incoming,
         dealt = dealt,
-        middle_count = #self.middle,
+        middle_count = #self.middle
     }
 end
 
@@ -964,7 +1124,11 @@ function State:play(first: i32, second: i32): Trick?
 
     local computer: PairChoice = best_pair(hand_cards(self.computer_hand), self.middle)
     local player: PairChoice = formation_for_pair(
-        hand_cards(self.player_hand), self.middle, first, second)
+        hand_cards(self.player_hand),
+        self.middle,
+        first,
+        second
+    )
     self.last_player_value = player.value
     self.last_computer_value = computer.value
     self.last_winner = 0
@@ -991,8 +1155,11 @@ function State:play(first: i32, second: i32): Trick?
         -- replacement cards do not appear until their deal animation starts.
         player_hand = clone_slots(self.player_hand),
         computer_hand = clone_slots(self.computer_hand),
-        player_cards = { self.player_hand[first].card, self.player_hand[second].card },
-        computer_cards = { self.computer_hand[computer.first].card, self.computer_hand[computer.second].card },
+        player_cards = {self.player_hand[first].card, self.player_hand[second].card},
+        computer_cards = {
+            self.computer_hand[computer.first].card,
+            self.computer_hand[computer.second].card
+        },
         player_formation = player.formation,
         computer_formation = computer.formation,
         -- Hand slots both sides played, so the presentation can resolve the
@@ -1009,7 +1176,7 @@ function State:play(first: i32, second: i32): Trick?
         player_wager = self.player_wager,
         computer_wager = self.computer_wager,
         swap_winner = self.swap_winner,
-        swap_count = self.swap_count,
+        swap_count = self.swap_count
     }
     table.insert(self.history, trick)
 
@@ -1068,161 +1235,169 @@ function valid_winner(value: i32): bool
 end
 
 function valid_card(card: Card): bool
-    return card.rank >= MIN_RANK and card.rank <= MAX_RANK
-        and (card.suit::i32) >= MIN_SUIT and (card.suit::i32) <= MAX_SUIT
+    return card.rank >= MIN_RANK and card.rank <= MAX_RANK and (card.suit::i32) >= MIN_SUIT and (card.suit::i32) <= MAX_SUIT
 end
 
 function valid_cards(cards: {Card}): bool
     for card in cards do
-        if not valid_card(card) then return false end
+        if not valid_card(card) then
+            return false
+        end
     end
     return true
 end
 
 function valid_slots(slots: {HandSlot}): bool
     for slot in slots do
-        if not valid_card(slot.card) then return false end
+        if not valid_card(slot.card) then
+            return false
+        end
     end
     return true
 end
 
 function valid_indices(indices: {i32}, count: i32): bool
     for index in indices do
-        if index < 0 or index >= count then return false end
+        if index < 0 or index >= count then
+            return false
+        end
     end
     return true
 end
 
 function valid_trick(trick: Trick): bool
-    if trick.round < 1 or trick.round > MAX_ROUNDS then return false end
-    if #trick.middle ~= MAX_COMMUNITY_SIZE
-        or #trick.frozen_middle ~= MAX_COMMUNITY_SIZE
-    then
+    if trick.round < 1 or trick.round > MAX_ROUNDS then
         return false
     end
-    if #trick.player_cards ~= 2 or #trick.computer_cards ~= 2 then return false end
-    if #trick.player_formation ~= 5 or #trick.computer_formation ~= 5 then return false end
-    if not valid_cards(trick.middle)
-        or not valid_cards(trick.player_cards)
-        or not valid_cards(trick.computer_cards)
-        or not valid_cards(trick.player_formation)
-        or not valid_cards(trick.computer_formation)
-        or not valid_slots(trick.player_hand)
-        or not valid_slots(trick.computer_hand)
-    then
+    if #trick.middle ~= MAX_COMMUNITY_SIZE or #trick.frozen_middle ~= MAX_COMMUNITY_SIZE then
         return false
     end
-    if trick.player_first < 0 or trick.player_first >= #trick.player_hand
-        or trick.player_second < 0 or trick.player_second >= #trick.player_hand
-        or trick.computer_first < 0 or trick.computer_first >= #trick.computer_hand
-        or trick.computer_second < 0 or trick.computer_second >= #trick.computer_hand
-    then
+    if #trick.player_cards ~= 2 or #trick.computer_cards ~= 2 then
         return false
     end
-    if trick.player_first == trick.player_second
-        or trick.computer_first == trick.computer_second
-    then
+    if #trick.player_formation ~= 5 or #trick.computer_formation ~= 5 then
         return false
     end
-    if not valid_winner(trick.winner::i32)
-        or not valid_winner(trick.swap_winner::i32)
-    then
+    if not valid_cards(
+        trick.middle
+    ) or not valid_cards(
+        trick.player_cards
+    ) or not valid_cards(
+        trick.computer_cards
+    ) or not valid_cards(
+        trick.player_formation
+    ) or not valid_cards(
+        trick.computer_formation
+    ) or not valid_slots(trick.player_hand) or not valid_slots(trick.computer_hand) then
         return false
     end
-    if trick.winner == 1 and trick.player_value <= trick.computer_value then return false end
-    if trick.winner == -1 and trick.computer_value <= trick.player_value then return false end
-    if trick.winner == 0 and trick.player_value ~= trick.computer_value then return false end
-    if trick.points < 0 or trick.pot < 0
-        or trick.player_wager < 0 or trick.computer_wager < 0
-    then
+    if trick.player_first < 0 or trick.player_first >= #trick.player_hand or trick.player_second < 0 or trick.player_second >= #trick.player_hand or trick.computer_first < 0 or trick.computer_first >= #trick.computer_hand or trick.computer_second < 0 or trick.computer_second >= #trick.computer_hand then
         return false
     end
-    if trick.pot ~= trick.player_wager + trick.computer_wager then return false end
-    if rank_five(trick.player_formation) ~= trick.player_value
-        or rank_five(trick.computer_formation) ~= trick.computer_value
-    then
+    if trick.player_first == trick.player_second or trick.computer_first == trick.computer_second then
         return false
     end
-    if trick.swap_count < 0 or trick.swap_count > MAX_COMMUNITY_SIZE then return false end
+    if not valid_winner(trick.winner::i32) or not valid_winner(trick.swap_winner::i32) then
+        return false
+    end
+    if trick.winner == 1 and trick.player_value <= trick.computer_value then
+        return false
+    end
+    if trick.winner == -1 and trick.computer_value <= trick.player_value then
+        return false
+    end
+    if trick.winner == 0 and trick.player_value ~= trick.computer_value then
+        return false
+    end
+    if trick.points < 0 or trick.pot < 0 or trick.player_wager < 0 or trick.computer_wager < 0 then
+        return false
+    end
+    if trick.pot ~= trick.player_wager + trick.computer_wager then
+        return false
+    end
+    if rank_five(
+        trick.player_formation
+    ) ~= trick.player_value or rank_five(trick.computer_formation) ~= trick.computer_value then
+        return false
+    end
+    if trick.swap_count < 0 or trick.swap_count > MAX_COMMUNITY_SIZE then
+        return false
+    end
     return true
 end
 
 function State.restore(snapshot_value: string): State?
     local decoded = json.unpack<Snapshot>(snapshot_value)
-    if decoded == nil then return nil end
-    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
+    if decoded == nil then
+        return nil
+    end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then
+        return nil
+    end
     local restored: State = decoded.state
-    if not valid_cards(restored.deck) or not valid_slots(restored.player_hand)
-        or not valid_slots(restored.computer_hand)
-        or not valid_cards(restored.middle)
-    then
+    if not valid_cards(
+        restored.deck
+    ) or not valid_slots(
+        restored.player_hand
+    ) or not valid_slots(restored.computer_hand) or not valid_cards(restored.middle) then
         return nil
     end
-    if #restored.frozen_middle ~= #restored.middle then return nil end
+    if #restored.frozen_middle ~= #restored.middle then
+        return nil
+    end
     if restored.finished then
-        if #restored.middle ~= 0 or restored.swap_open then return nil end
-    elseif #restored.middle < OPENING_COMMUNITY_SIZE
-        or #restored.middle > MAX_COMMUNITY_SIZE
-    then
+        if #restored.middle ~= 0 or restored.swap_open then
+            return nil
+        end
+    elseif #restored.middle < OPENING_COMMUNITY_SIZE or #restored.middle > MAX_COMMUNITY_SIZE then
         return nil
     end
-    if not restored.finished and not restored.swap_open
-        and #restored.middle ~= MAX_COMMUNITY_SIZE
-    then
+    if not restored.finished and not restored.swap_open and #restored.middle ~= MAX_COMMUNITY_SIZE then
         return nil
     end
-    if #restored.history > MAX_ROUNDS
-        or restored.round < 1 or restored.round > MAX_ROUNDS
-    then
+    if #restored.history > MAX_ROUNDS or restored.round < 1 or restored.round > MAX_ROUNDS then
         return nil
     end
     for trick in restored.history do
-        if not valid_trick(trick) then return nil end
+        if not valid_trick(trick) then
+            return nil
+        end
     end
-    if restored.player_points < 0 or restored.player_tricks < 0
-        or restored.computer_tricks < 0
-    then
+    if restored.player_points < 0 or restored.player_tricks < 0 or restored.computer_tricks < 0 then
         return nil
     end
-    if not valid_winner(restored.last_winner::i32)
-        or not valid_winner(restored.swap_winner::i32)
-    then
+    if not valid_winner(
+        restored.last_winner::i32
+    ) or not valid_winner(restored.swap_winner::i32) then
         return nil
     end
-    if restored.pot < 0 or restored.player_wager < 0 or restored.computer_wager < 0
-        or restored.pot ~= restored.player_wager + restored.computer_wager
-    then
+    if restored.pot < 0 or restored.player_wager < 0 or restored.computer_wager < 0 or restored.pot ~= restored.player_wager + restored.computer_wager then
         return nil
     end
-    if restored.player_swap_max < 0 or restored.player_swap_max > MAX_COMMUNITY_SIZE
-        or restored.computer_swap_max < 0
-        or restored.computer_swap_max > MAX_COMMUNITY_SIZE
-        or restored.player_wager < restored.player_swap_max
-        or restored.computer_wager < restored.computer_swap_max
-        or (restored.player_swap_max == 0 and restored.player_wager ~= 0)
-        or (restored.computer_swap_max == 0 and restored.computer_wager ~= 0)
-        or (restored.swap_open and restored.player_swap_max == #restored.middle
-            and restored.computer_swap_max == #restored.middle)
-    then
+    if restored.player_swap_max < 0 or restored.player_swap_max > MAX_COMMUNITY_SIZE or restored.computer_swap_max < 0 or restored.computer_swap_max > MAX_COMMUNITY_SIZE or restored.player_wager < restored.player_swap_max or restored.computer_wager < restored.computer_swap_max or (restored.player_swap_max == 0 and restored.player_wager ~= 0) or (restored.computer_swap_max == 0 and restored.computer_wager ~= 0) or (restored.swap_open and restored.player_swap_max == #restored.middle and restored.computer_swap_max == #restored.middle) then
         return nil
     end
-    if restored.swap_count < 0 or restored.swap_count > MAX_COMMUNITY_SIZE
-        or #restored.swap_hand_indices ~= restored.swap_count
-        or #restored.swap_middle_indices ~= restored.swap_count
-        or not valid_indices(restored.swap_hand_indices, BOSS_HAND_SIZE)
-        or not valid_indices(restored.swap_middle_indices, MAX_COMMUNITY_SIZE)
-    then
+    if restored.swap_count < 0 or restored.swap_count > MAX_COMMUNITY_SIZE or #restored.swap_hand_indices ~= restored.swap_count or #restored.swap_middle_indices ~= restored.swap_count or not valid_indices(
+        restored.swap_hand_indices,
+        BOSS_HAND_SIZE
+    ) or not valid_indices(restored.swap_middle_indices, MAX_COMMUNITY_SIZE) then
         return nil
     end
     -- A spell kind is bounded by the spells that exist, which the JSON shape
     -- alone does not know; a dealt cast cost is never negative.
     for spell in restored.spells do
-        if not spells.SpellKind.valid(spell.kind) then return nil end
-        if spell.cost < 0 then return nil end
+        if not spells.SpellKind.valid(spell.kind) then
+            return nil
+        end
+        if spell.cost < 0 then
+            return nil
+        end
     end
     local cast_kind: SpellKind? = restored.cast_kind
     if cast_kind ~= nil then
-        if not spells.SpellKind.valid(cast_kind::SpellKind) then return nil end
+        if not spells.SpellKind.valid(cast_kind::SpellKind) then
+            return nil
+        end
     end
     return restored
 end
@@ -1235,7 +1410,7 @@ function State.new(boss: bool, spells: {Spell}, gold: i32): State
         player_hand = {},
         computer_hand = {},
         middle = {},
-        frozen_middle = { false, false, false },
+        frozen_middle = {false, false, false},
         history = {},
         round = 1,
         player_points = gold,
@@ -1257,10 +1432,12 @@ function State.new(boss: bool, spells: {Spell}, gold: i32): State
         finished = false,
         boss = boss,
         spells = clone_spells(spells),
-        cast_kind = nil,
+        cast_kind = nil
     }
     local hand_size: i32 = HAND_SIZE
-    if boss then hand_size = BOSS_HAND_SIZE end
+    if boss then
+        hand_size = BOSS_HAND_SIZE
+    end
     for _ = 1, hand_size do
         table.insert(state.player_hand, deal_slot(state.deck))
         table.insert(state.computer_hand, deal_slot(state.deck))
@@ -1293,7 +1470,7 @@ function State:view(): View
         swap_middle_indices = self.swap_middle_indices,
         finished = self.finished,
         boss = self.boss,
-        spells = self.spells,
+        spells = self.spells
     }
 end
 
@@ -1308,31 +1485,30 @@ function test_fresh_slots(cards: {Card}): {HandSlot}
     return slots
 end
 
-function State:test_arrange_round(middle: {Card},
-    player_hand: {Card},
-    computer_hand: {Card}
-): unit
+function State:test_arrange_round(middle: {Card}, player_hand: {Card}, computer_hand: {Card}): unit
     self.middle = clone_cards(middle)
     self.frozen_middle = {}
-    for _ in middle do table.insert(self.frozen_middle, false) end
+    for _ in middle do
+        table.insert(self.frozen_middle, false)
+    end
     self.player_hand = test_fresh_slots(player_hand)
     self.computer_hand = test_fresh_slots(computer_hand)
 end
 
-function State:test_arrange_opponent(middle: {Card},
-    computer_hand: {Card}
-): unit
+function State:test_arrange_opponent(middle: {Card}, computer_hand: {Card}): unit
     self.middle = clone_cards(middle)
     self.frozen_middle = {}
-    for _ in middle do table.insert(self.frozen_middle, false) end
+    for _ in middle do
+        table.insert(self.frozen_middle, false)
+    end
     self.computer_hand = test_fresh_slots(computer_hand)
 end
 
-function State:test_arrange_player(player_hand: {Card},
-    player_known: {bool}
-): unit
+function State:test_arrange_player(player_hand: {Card}, player_known: {bool}): unit
     local slots: {HandSlot} = test_fresh_slots(player_hand)
-    for index, known in player_known do slots[index].known = known end
+    for index, known in player_known do
+        slots[index].known = known
+    end
     self.player_hand = slots
 end
 
@@ -1345,9 +1521,7 @@ function State:test_finish(computer_tricks: i32): unit
     self.computer_tricks = computer_tricks
 end
 
-function State:test_set_swap_trace(hand_indices: {i32},
-    middle_indices: {i32}
-): unit
+function State:test_set_swap_trace(hand_indices: {i32}, middle_indices: {i32}): unit
     assert(#hand_indices == #middle_indices)
     self.swap_count = #hand_indices
     self.swap_hand_indices = hand_indices
@@ -1366,7 +1540,9 @@ end
 -- board view: one Opponent win takes an ordinary duel, while a boss battle
 -- keeps the first-to-two condition. Any other finish means the duel opened.
 function held_by_arch_mage(computer_tricks: i32, boss: bool): bool
-    if boss then return computer_tricks >= OPPONENT_WINS_TO_END end
+    if boss then
+        return computer_tricks >= OPPONENT_WINS_TO_END
+    end
     return computer_tricks >= 1
 end
 
@@ -1411,12 +1587,16 @@ end
 -- the input layer binds a fixed key per slot, so asking about an empty one is
 -- ordinary rather than a caller error.
 function State:spell_kind(slot: i32): SpellKind?
-    if slot < 0 or slot >= #self.spells then return nil end
+    if slot < 0 or slot >= #self.spells then
+        return nil
+    end
     return self.spells[slot].kind
 end
 
 function State:spell_cost(slot: i32): i32
-    if slot < 0 or slot >= #self.spells then return 0 end
+    if slot < 0 or slot >= #self.spells then
+        return 0
+    end
     return self.spells[slot].cost
 end
 
@@ -1429,7 +1609,9 @@ end
 -- turn a cast is allowed is the input layer's decision; affordability is the
 -- rule this module owns.
 function State:can_cast(slot: i32): bool
-    if self.finished or slot < 0 or slot >= #self.spells then return false end
+    if self.finished or slot < 0 or slot >= #self.spells then
+        return false
+    end
     return self.player_points >= self.spells[slot].cost
 end
 
@@ -1437,7 +1619,9 @@ end
 -- nothing — when the slot is empty or the spell unaffordable, so a confirmed
 -- target only spends gold once this accepts.
 function State:cast_spell(slot: i32, table_card: i32): bool
-    if not self:can_cast(slot) or table_card < 0 or table_card >= #self.middle then return false end
+    if not self:can_cast(slot) or table_card < 0 or table_card >= #self.middle then
+        return false
+    end
     local spell: Spell = self.spells[slot]
     self.player_points -= spell.cost
     self.cast_kind = spell.kind
@@ -1455,19 +1639,21 @@ end
 -- Only a Firebolt these rules charged for can burn a table_card away, whichever
 -- loadout slot it was cast from.
 function State:resolve_firebolt(target: i32): Card?
-    if self.finished or self.cast_kind == nil
-        or (self.cast_kind or spells.SpellKind.Firebolt) ~= spells.SpellKind.Firebolt
-    then
+    if self.finished or self.cast_kind == nil or (self.cast_kind or spells.SpellKind.Firebolt) ~= spells.SpellKind.Firebolt then
         return nil
     end
-    if target < 0 or target >= #self.middle or #self.deck == 0 then return nil end
+    if target < 0 or target >= #self.middle or #self.deck == 0 then
+        return nil
+    end
     local discarded: Card = self.middle[target]
     self.middle[target] = draw(self.deck)
     return discarded
 end
 
 function State:last_trick(): Trick?
-    if #self.history == 0 then return nil end
+    if #self.history == 0 then
+        return nil
+    end
     return self.history[#self.history - 1]
 end
 
@@ -1484,7 +1670,7 @@ function Trick:side(owner: Side): TrickSide
             first = self.player_first,
             second = self.player_second,
             value = self.player_value,
-            hand = self.player_hand,
+            hand = self.player_hand
         }
     end
     return {
@@ -1493,19 +1679,23 @@ function Trick:side(owner: Side): TrickSide
         first = self.computer_first,
         second = self.computer_second,
         value = self.computer_value,
-        hand = self.computer_hand,
+        hand = self.computer_hand
     }
 end
 
 function opposite_side(owner: Side): Side
-    if owner == 1 then return -1 end
+    if owner == 1 then
+        return -1
+    end
     return 1
 end
 
 -- The same owner selection over a live board view: the side's current hand,
 -- each slot carrying its own watched mark.
 function View:side(owner: Side): {HandSlot}
-    if owner > 0 then return self.player_hand end
+    if owner > 0 then
+        return self.player_hand
+    end
     return self.computer_hand
 end
 
@@ -1545,47 +1735,80 @@ function State:reset(boss: bool, spells: {Spell}, gold: i32): unit
 end
 
 function rank_name(rank: i32): string
-    if rank == 14 then return "A" end
-    if rank == 13 then return "K" end
-    if rank == 12 then return "Q" end
-    if rank == 11 then return "J" end
+    if rank == 14 then
+        return "A"
+    end
+    if rank == 13 then
+        return "K"
+    end
+    if rank == 12 then
+        return "Q"
+    end
+    if rank == 11 then
+        return "J"
+    end
     return tostring(rank)
 end
 
 function card_name(card: Card): string
     local color: string = "Red"
-    if card.suit == 1 then color = "Blue"
-    elseif card.suit == 2 then color = "Black"
-    elseif card.suit == 3 then color = "Green"
+    if card.suit == 1 then
+        color = "Blue"
+    elseif card.suit == 2 then
+        color = "Black"
+    elseif card.suit == 3 then
+        color = "Green"
     end
     return rank_name(card.rank) .. " of " .. color
 end
 
 function category_name(value: i32): string
     local category: i32 = category_of(value)
-    if category == 8 then return "straight flush" end
-    if category == 7 then return "four of a kind" end
-    if category == 6 then return "full house" end
-    if category == 5 then return "flush" end
-    if category == 4 then return "straight" end
-    if category == 3 then return "three of a kind" end
-    if category == 2 then return "two pair" end
-    if category == 1 then return "pair" end
+    if category == 8 then
+        return "straight flush"
+    end
+    if category == 7 then
+        return "four of a kind"
+    end
+    if category == 6 then
+        return "full house"
+    end
+    if category == 5 then
+        return "flush"
+    end
+    if category == 4 then
+        return "straight"
+    end
+    if category == 3 then
+        return "three of a kind"
+    end
+    if category == 2 then
+        return "two pair"
+    end
+    if category == 1 then
+        return "pair"
+    end
     return "high card"
 end
 
 -- Kicker component `index` of a packed score, most significant first.
 function score_component(value: i32, index: i32): i32
     local divisor: i32 = CATEGORY_DIVISOR // SCORE_RADIX
-    for _ = 1, index do divisor //= SCORE_RADIX end
-    if divisor < 1 then divisor = 1 end
+    for _ = 1, index do
+        divisor //= SCORE_RADIX
+    end
+    if divisor < 1 then
+        divisor = 1
+    end
     local quotient: i32 = value // divisor
     return quotient - (quotient // SCORE_RADIX) * SCORE_RADIX
 end
 
 function made_components_match(value: i32, other_value: i32, count: i32): bool
     for index = 0::i32, count - 1 do
-        if score_component(value, index) ~= score_component(other_value, index) then return false end
+        if score_component(value, index) ~= score_component(other_value, index) then
+            return false
+        end
     end
     return true
 end
@@ -1594,10 +1817,12 @@ function formation_cards(cards: {Card}, value: i32): {bool}
     assert(#cards == 5)
     local category: i32 = category_of(value)
     if category == 8 or category == 5 or category == 4 then
-        return { true, true, true, true, true }
+        return {true, true, true, true, true}
     end
     local made_components: i32 = 1
-    if category == 6 or category == 2 then made_components = 2 end
+    if category == 6 or category == 2 then
+        made_components = 2
+    end
     local marked_ranks: {i32} = {}
     for index = 0::i32, made_components - 1 do
         table.insert(marked_ranks, score_component(value, index))
@@ -1606,7 +1831,9 @@ function formation_cards(cards: {Card}, value: i32): {bool}
     for card in cards do
         local active: bool = false
         for rank in marked_ranks do
-            if card.rank == rank then active = true end
+            if card.rank == rank then
+                active = true
+            end
         end
         table.insert(marked, active)
     end
@@ -1623,24 +1850,36 @@ function scoring_cards(cards: {Card}, value: i32, other_value: i32): {bool}
     local other_category: i32 = category_of(other_value)
 
     if category == 8 or category == 5 or category == 4 then
-        return { true, true, true, true, true }
+        return {true, true, true, true, true}
     end
 
     local made_components: i32 = 1
-    if category == 6 or category == 2 then made_components = 2 end
-    if category == 0 then made_components = 0 end
+    if category == 6 or category == 2 then
+        made_components = 2
+    end
+    if category == 0 then
+        made_components = 0
+    end
     for index = 0::i32, made_components - 1 do
         table.insert(marked_ranks, score_component(value, index))
     end
 
-    local made_tied: bool = category == other_category and made_components_match(value, other_value, made_components)
+    local made_tied: bool = category == other_category and made_components_match(
+        value,
+        other_value,
+        made_components
+    )
     if made_tied then
         local first_kicker: i32 = made_components
         for index = first_kicker, 4::i32 do
             local rank: i32 = score_component(value, index)
-            if rank == 0 then break end
+            if rank == 0 then
+                break
+            end
             table.insert(marked_ranks, rank)
-            if rank ~= score_component(other_value, index) then break end
+            if rank ~= score_component(other_value, index) then
+                break
+            end
         end
     end
 
@@ -1648,7 +1887,9 @@ function scoring_cards(cards: {Card}, value: i32, other_value: i32): {bool}
     for card in cards do
         local active: bool = false
         for rank in marked_ranks do
-            if card.rank == rank then active = true end
+            if card.rank == rank then
+                active = true
+            end
         end
         table.insert(marked, active)
     end
@@ -1658,17 +1899,14 @@ end
 -- Mark exactly the five cards selected by Hold'em evaluation inside the
 -- seven-card pool shown at resolution. Cards are matched as a multiset so a
 -- spell-created duplicate cannot color more copies than the formation uses.
-function formation_marks(
-    cards: {Card}, formation: {Card}
-): {bool}
+function formation_marks(cards: {Card}, formation: {Card}): {bool}
     local marked: {bool} = {}
-    for _ in cards do table.insert(marked, false) end
+    for _ in cards do
+        table.insert(marked, false)
+    end
     for wanted in formation do
         for index, candidate in cards do
-            if not marked[index]
-                and candidate.rank == wanted.rank
-                and candidate.suit == wanted.suit
-            then
+            if not marked[index] and candidate.rank == wanted.rank and candidate.suit == wanted.suit then
                 marked[index] = true
                 break
             end
@@ -1703,5 +1941,5 @@ return {
     clone_spells = clone_spells,
     spell_cost = SPELL_COST,
     starting_gold = STARTING_GOLD,
-    max_rounds = MAX_ROUNDS,
+    max_rounds = MAX_ROUNDS
 }

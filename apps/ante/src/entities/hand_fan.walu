@@ -9,7 +9,6 @@
 -- it measures the envelope it needs, including the dip, and it arranges itself
 -- inside whatever rectangle it is handed, tightening its pitch when that
 -- rectangle is narrower than the hand would like.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local card = require("./card")
@@ -50,7 +49,9 @@ end
 -- the reference five-card silhouette instead of curling off the board.
 function scale_of(count: i32): f64
     local middle: f64 = middle_of(count)
-    if middle <= FAN_MIDDLE then return 1.0 end
+    if middle <= FAN_MIDDLE then
+        return 1.0
+    end
     return FAN_MIDDLE / middle
 end
 
@@ -77,10 +78,13 @@ function dip_of(count: i32): f64
 end
 
 function intrinsic(count: i32): box.Intrinsic
-    if count <= 0 then return box.Intrinsic.fixed(0.0, 0.0) end
+    if count <= 0 then
+        return box.Intrinsic.fixed(0.0, 0.0)
+    end
     return box.Intrinsic.fixed(
         ((count - 1)::f64) * FAN_PITCH + card.width,
-        card.height + dip_of(count) * 2.0)
+        card.height + dip_of(count) * 2.0
+    )
 end
 
 function pitch_in(bounds: box.Rect, count: i32): f64
@@ -93,12 +97,11 @@ function slot_rect(bounds: box.Rect, index: i32, part: f64, count: i32): box.Rec
     local step: f64 = step_at(index, part, count)
     local scale: f64 = scale_of(count)
     return box.rect(
-        bounds.x + bounds.width * 0.5 + step * pitch_in(bounds, count)
-            - card.width * 0.5,
-        bounds.y + bounds.height * 0.5 + step * step * FAN_DROP * scale * scale
-            - card.height * 0.5,
+        bounds.x + bounds.width * 0.5 + step * pitch_in(bounds, count) - card.width * 0.5,
+        bounds.y + bounds.height * 0.5 + step * step * FAN_DROP * scale * scale - card.height * 0.5,
         card.width,
-        card.height)
+        card.height
+    )
 end
 
 -- Where a card's parting offset is headed: the fan opens around the focused
@@ -107,9 +110,15 @@ end
 -- card toward this rather than reading it straight, so the fan parts over a
 -- few frames instead of snapping as the cursor steps along the hand.
 function part_target(index: i32, focus: i32): f64
-    if focus == CLOSED then return 0.0 end
-    if index < focus then return -FAN_PART end
-    if index > focus then return FAN_PART end
+    if focus == CLOSED then
+        return 0.0
+    end
+    if index < focus then
+        return -FAN_PART
+    end
+    if index > focus then
+        return FAN_PART
+    end
     return 0.0
 end
 
@@ -117,15 +126,17 @@ end
 -- everything with it — the select lift rises along the card's own axis rather
 -- than straight up the screen, and the focus edge stays square to the card.
 function draw_slot(
-    surface: ui.Surface, value: card.Look,
-    bounds: box.Rect, index: i32, part: f64, count: i32
+    surface: ui.Surface,
+    value: card.Look,
+    bounds: box.Rect,
+    index: i32,
+    part: f64,
+    count: i32
 ): unit
     local step: f64 = step_at(index, part, count)
     local scale: f64 = scale_of(count)
-    local x: f64 = bounds.x + bounds.width * 0.5
-        + step * pitch_in(bounds, count) - card.width * 0.5
-    local y: f64 = bounds.y + bounds.height * 0.5
-        + step * step * FAN_DROP * scale * scale - card.height * 0.5
+    local x: f64 = bounds.x + bounds.width * 0.5 + step * pitch_in(bounds, count) - card.width * 0.5
+    local y: f64 = bounds.y + bounds.height * 0.5 + step * step * FAN_DROP * scale * scale - card.height * 0.5
     local graphics = surface.graphics
     graphics:push()
     graphics:translate(x + card.width * 0.5, y + card.height * 0.5)
@@ -147,9 +158,7 @@ function hit(bounds: box.Rect, parts: {f64}, x: f64, y: f64): i32
         local dy: f64 = y - (slot.y + card.height * 0.5)
         local local_x: f64 = dx * math.cos(angle) + dy * math.sin(angle)
         local local_y: f64 = dy * math.cos(angle) - dx * math.sin(angle)
-        if math.abs(local_x) <= card.width * 0.5
-            and math.abs(local_y) <= card.height * 0.5
-        then
+        if math.abs(local_x) <= card.width * 0.5 and math.abs(local_y) <= card.height * 0.5 then
             return index
         end
     end
@@ -184,11 +193,17 @@ function Stateful.new(looks: {card.Look}, parts: {f64}, hidden: {bool}): Statefu
             for index = 0::i32, #presentation.looks - 1 do
                 if not presentation.hidden[index] then
                     draw_slot(
-                        surface, presentation.looks[index], bounds, index,
-                        presentation.parts[index], #presentation.looks)
+                        surface,
+                        presentation.looks[index],
+                        bounds,
+                        index,
+                        presentation.parts[index],
+                        #presentation.looks
+                    )
                 end
             end
-        end)
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -211,5 +226,5 @@ return {
     intrinsic = intrinsic,
     part_target = part_target,
     hit = hit,
-    closed = CLOSED,
+    closed = CLOSED
 }

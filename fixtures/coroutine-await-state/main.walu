@@ -1,38 +1,36 @@
 local worker = require("./worker")
 
-type HeldNested = {
-    value: i32
-}
+type HeldNested = { value: i32 }
 
-type HeldResult = {
-    inner: HeldNested
-}
+type HeldResult = { inner: HeldNested }
 
 declare function make_state_promise(value: i32): extern
 declare function record_state_step(value: i32): unit
 
 function run_transitive_await_state(): unit
-    local co: thread = coroutine.create(function(): i32
-        record_state_step(1)
-        local first = worker.await_record(10)
-        record_state_step(2)
-        local second = worker.await_record(20)
-        record_state_step(3)
+    local co: thread = coroutine.create(
+        function(): i32
+            record_state_step(1)
+            local first = worker.await_record(10)
+            record_state_step(2)
+            local second = worker.await_record(20)
+            record_state_step(3)
 
-        -- This record and its nested record must remain concrete, non-null GC
-        -- references across the direct await below.
-        local held: HeldResult = { inner = { value = 7 } }
-        local direct: i32 = coroutine.await_promise(make_state_promise(30))::i32
+            -- This record and its nested record must remain concrete, non-null GC
+            -- references across the direct await below.
+            local held: HeldResult = { inner = { value = 7 } }
+            local direct: i32 = coroutine.await_promise(make_state_promise(30))::i32
 
-        assert(first.request == 10)
-        assert(first.inner.value == 110)
-        assert(second.request == 20)
-        assert(second.inner.value == 120)
-        assert(held.inner.value == 7)
-        assert(direct == 130)
-        record_state_step(first.inner.value + second.inner.value + held.inner.value + direct)
-        return 0
-    end)
+            assert(first.request == 10)
+            assert(first.inner.value == 110)
+            assert(second.request == 20)
+            assert(second.inner.value == 120)
+            assert(held.inner.value == 7)
+            assert(direct == 130)
+            record_state_step(first.inner.value + second.inner.value + held.inner.value + direct)
+            return 0
+        end
+    )
     coroutine.resume(co)
 end
 

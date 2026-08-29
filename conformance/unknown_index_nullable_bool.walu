@@ -6,12 +6,11 @@
 -- `bool?` shares the i32 nullable box with `i32?`/`u32?`; the mixed collision
 -- coverage lives in unknown_index_nullable_primitives.walu, while this fixture
 -- keeps the bool boxing behavior focused.
-
 function get(v, i)
     return v[i]
 end
 
-local flags: {bool?} = { true, nil, false }
+local flags: {bool?} = {true, nil, false}
 assert(#flags == 3)
 assert(get(flags, 0) == true)
 assert(get(flags, 2) == false)

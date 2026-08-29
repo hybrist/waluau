@@ -3,7 +3,6 @@
 -- field-name string and the field value in field order (alphabetical); over
 -- an array it yields the 0-based index and the element. Unlike a plain array
 -- loop, a single variable binds the key — `next` yields keys first.
-
 local scores = { alice = 3, bob = 5, carol = 7 }
 
 local names = ""

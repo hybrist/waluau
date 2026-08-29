@@ -2,7 +2,6 @@
 -- code never touches Web Audio directly. Loading is safe to start before a user
 -- gesture; play() reports whether playback could be started, allowing a game to
 -- retry from its next input callback.
-
 local resources = require("./resources")
 
 declare function game_audio_load_sound(path: string): extern
@@ -70,7 +69,6 @@ function is_playing(resource: resources.Resource): bool
     return game_audio_is_playing(resource.handle)
 end
 
-
 function play_sound(resource: resources.SoundResource, looped: bool, volume: f64): bool
     return game_audio_play(resources.sound_handle(resource), looped, volume)
 end
@@ -98,5 +96,5 @@ return {
     is_playing = is_playing,
     play_sound = play_sound,
     stop_sound = stop_sound,
-    is_sound_playing = is_sound_playing,
+    is_sound_playing = is_sound_playing
 }

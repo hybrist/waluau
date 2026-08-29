@@ -8,14 +8,20 @@
 -- set_time. Text uses either the built-in bitmap font from font.walu or a
 -- custom font resource uploaded as a GPU atlas, and the push/pop transform
 -- stack is applied CPU-side while vertices are emitted.
-
 local window = require("dom:window")
 local font = require("./font")
 local resources = require("./resources")
 
-declare function game_gpu_texture_from_resource(gl: WebGL2RenderingContext, resource_handle: i32): i32
+declare function game_gpu_texture_from_resource(
+    gl: WebGL2RenderingContext,
+    resource_handle: i32
+): i32
 declare function game_gpu_font_from_resource(gl: WebGL2RenderingContext, resource_handle: i32): i32
-declare function game_gpu_render_target_create(gl: WebGL2RenderingContext, width: i32, height: i32): i32
+declare function game_gpu_render_target_create(
+    gl: WebGL2RenderingContext,
+    width: i32,
+    height: i32
+): i32
 declare function game_gpu_resource_ok(handle: i32): bool
 declare function game_gpu_resource_error_code(handle: i32): string
 declare function game_gpu_resource_error_message(handle: i32): string
@@ -38,7 +44,9 @@ declare function game_gpu_resource_release(handle: i32): unit
 -- widening the generated DOM surface: shader parameter declarations only need
 -- the GLenum for one named active uniform.
 declare function game_gpu_uniform_type(
-    gl: WebGL2RenderingContext, program: WebGLProgram, name: string
+    gl: WebGL2RenderingContext,
+    program: WebGLProgram,
+    name: string
 ): u32
 -- Web IDL types these return as `any`, but these two parameter names always
 -- produce booleans. Keeping the narrowed declarations here makes shader
@@ -82,12 +90,7 @@ local CURVE_STEP_LENGTH <const>: f64 = 4.0
 local CURVE_MAX_STEPS <const>: i32 = 64
 
 type GraphicsError = { code: string, message: string }
-type CachedUniform = {
-    name: string,
-    kind: u32,
-    revision: i32,
-    location: WebGLUniformLocation
-}
+type CachedUniform = { name: string, kind: u32, revision: i32, location: WebGLUniformLocation }
 export type Shader = {
     program: WebGLProgram?,
     id: i32,
@@ -108,21 +111,39 @@ type CompiledShader = { ok: bool, shader: WebGLShader?, error: GraphicsError }
 -- A parameter block is an array of these opaque, compiler-typed values. Games
 -- can only construct variants through the functions exported at the bottom of
 -- this module, so a vec3 uniform cannot accidentally receive a scalar value.
-opaque type ShaderParameter =
-      FloatParameter({ name: string, value: f64 })
-    | Vec2Parameter({ name: string, x: f64, y: f64 })
-    | Vec3Parameter({ name: string, x: f64, y: f64, z: f64 })
-    | Vec4Parameter({ name: string, x: f64, y: f64, z: f64, w: f64 })
-    | IntParameter({ name: string, value: i32 })
-    | IVec2Parameter({ name: string, x: i32, y: i32 })
-    | IVec3Parameter({ name: string, x: i32, y: i32, z: i32 })
-    | IVec4Parameter({ name: string, x: i32, y: i32, z: i32, w: i32 })
+opaque type ShaderParameter = FloatParameter({
+    name: string,
+    value: f64
+}) | Vec2Parameter({
+    name: string,
+    x: f64,
+    y: f64
+}) | Vec3Parameter({
+    name: string,
+    x: f64,
+    y: f64,
+    z: f64
+}) | Vec4Parameter({
+    name: string,
+    x: f64,
+    y: f64,
+    z: f64,
+    w: f64
+}) | IntParameter({
+    name: string,
+    value: i32
+}) | IVec2Parameter({
+    name: string,
+    x: i32,
+    y: i32
+}) | IVec3Parameter({
+    name: string,
+    x: i32,
+    y: i32,
+    z: i32
+}) | IVec4Parameter({ name: string, x: i32, y: i32, z: i32, w: i32 })
 export type ShaderBindingResult = { ok: bool, error: GraphicsError }
-type UniformResult = {
-    ok: bool,
-    location: WebGLUniformLocation?,
-    actual_kind: u32
-}
+type UniformResult = { ok: bool, location: WebGLUniformLocation?, actual_kind: u32 }
 
 export type Graphics = {
     gl: WebGL2RenderingContext,
@@ -202,17 +223,25 @@ function empty_shader(): Shader
         time_location = nil,
         pixel_scale_location = nil,
         texture_location = nil,
-        released = true,
+        released = true
     }
 end
 
-function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string, stage: string): CompiledShader
+function compile_shader(
+    gl: WebGL2RenderingContext,
+    kind: u32,
+    source: string,
+    stage: string
+): CompiledShader
     local maybe_shader: WebGLShader? = gl:createShader(kind)
     if maybe_shader == nil then
         return {
             ok = false,
             shader = nil,
-            error = { code = stage .. "_create", message = "WebGL could not create the " .. stage .. " shader" },
+            error = {
+                code = stage .. "_create",
+                message = "WebGL could not create the " .. stage .. " shader"
+            }
         }
     end
     local shader: WebGLShader = maybe_shader::WebGLShader
@@ -223,24 +252,41 @@ function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string, s
         local log: string? = gl:getShaderInfoLog(shader)
         if log ~= nil then
             local text: string = log::string
-            if #text > 0 then message = text end
+            if #text > 0 then
+                message = text
+            end
         end
         gl:deleteShader(shader)
         return {
             ok = false,
             shader = nil,
-            error = { code = stage .. "_compile", message = message },
+            error = { code = stage .. "_compile", message = message }
         }
     end
     return { ok = true, shader = shader, error = { code = "", message = "" } }
 end
 
-function build_shader(gl: WebGL2RenderingContext, vertex_source: string, pixel_source: string, id: i32): ShaderResult
-    local vertex_result: CompiledShader = compile_shader(gl, GL_VERTEX_SHADER, vertex_source, "vertex")
+function build_shader(
+    gl: WebGL2RenderingContext,
+    vertex_source: string,
+    pixel_source: string,
+    id: i32
+): ShaderResult
+    local vertex_result: CompiledShader = compile_shader(
+        gl,
+        GL_VERTEX_SHADER,
+        vertex_source,
+        "vertex"
+    )
     if not vertex_result.ok then
         return { ok = false, shader = empty_shader(), error = vertex_result.error }
     end
-    local pixel_result: CompiledShader = compile_shader(gl, GL_FRAGMENT_SHADER, pixel_source, "pixel")
+    local pixel_result: CompiledShader = compile_shader(
+        gl,
+        GL_FRAGMENT_SHADER,
+        pixel_source,
+        "pixel"
+    )
     if not pixel_result.ok then
         gl:deleteShader(vertex_result.shader)
         return { ok = false, shader = empty_shader(), error = pixel_result.error }
@@ -263,14 +309,12 @@ function build_shader(gl: WebGL2RenderingContext, vertex_source: string, pixel_s
         local log: string? = gl:getProgramInfoLog(program)
         if log ~= nil then
             local text: string = log::string
-            if #text > 0 then message = text end
+            if #text > 0 then
+                message = text
+            end
         end
         gl:deleteProgram(program)
-        return {
-            ok = false,
-            shader = empty_shader(),
-            error = { code = "link", message = message },
-        }
+        return { ok = false, shader = empty_shader(), error = { code = "link", message = message } }
     end
 
     return {
@@ -287,16 +331,22 @@ function build_shader(gl: WebGL2RenderingContext, vertex_source: string, pixel_s
             time_location = gl:getUniformLocation(program, "u_time"),
             pixel_scale_location = gl:getUniformLocation(program, "u_pixel_scale"),
             texture_location = gl:getUniformLocation(program, "u_texture"),
-            released = false,
+            released = false
         },
-        error = { code = "", message = "" },
+        error = { code = "", message = "" }
     }
 end
 
 -- Binds the shared 2D stream to whatever subset of the standard attribute
 -- contract the program actually consumes. Unused attributes are commonly
 -- optimized out by WebGL and therefore have location -1.
-function bind_shader(gl: WebGL2RenderingContext, shader: Shader, pixel_scale_x: f64, pixel_scale_y: f64, time: f64): unit
+function bind_shader(
+    gl: WebGL2RenderingContext,
+    shader: Shader,
+    pixel_scale_x: f64,
+    pixel_scale_y: f64,
+    time: f64
+): unit
     gl:useProgram(shader.program)
     if shader.position_location >= 0 then
         gl:enableVertexAttribArray(shader.position_location::u32)
@@ -369,7 +419,9 @@ void main() {
 
     local default_result: ShaderResult = build_shader(gl, vertex_source, fragment_source, 0)
     if not default_result.ok then
-        error("game engine default shader failed (" .. default_result.error.code .. "): " .. default_result.error.message)
+        error(
+            "game engine default shader failed (" .. default_result.error.code .. "): " .. default_result.error.message
+        )
     end
     local default_shader: Shader = default_result.shader
 
@@ -425,7 +477,7 @@ void main() {
         active_shader = default_shader,
         next_shader_id = 1,
         time = 0.0,
-        transforms = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 },
+        transforms = {1.0, 0.0, 0.0, 1.0, 0.0, 0.0},
         path_x = {},
         path_y = {},
         path_move = {},
@@ -499,7 +551,14 @@ end
 -- because the pixel shader already multiplies the vertex color into whatever
 -- it samples. Alpha keeps its own value: a shade darkens a surface, it does
 -- not make it see-through.
-function Graphics:emit_shaded_vertex(x: f64, y: f64, u: f64, v: f64, textured: f64, shade: f64): unit
+function Graphics:emit_shaded_vertex(
+    x: f64,
+    y: f64,
+    u: f64,
+    v: f64,
+    textured: f64,
+    shade: f64
+): unit
     local base: i32 = #self.transforms - 6
     local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
     local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
@@ -534,7 +593,16 @@ function Graphics:emit_triangle(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3:
 end
 
 -- Corners in drawing order; split into two triangles.
-function Graphics:emit_quad(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64, x4: f64, y4: f64): unit
+function Graphics:emit_quad(
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    x3: f64,
+    y3: f64,
+    x4: f64,
+    y4: f64
+): unit
     self:ensure_capacity(6)
     self:emit_vertex(x1, y1)
     self:emit_vertex(x2, y2)
@@ -550,7 +618,16 @@ end
 -- generated mask instead of showing its four sides. These are interpolation
 -- coordinates and not a texture lookup: `textured` stays zero, so nothing here
 -- samples an image.
-function Graphics:emit_quad_uv(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64, x4: f64, y4: f64): unit
+function Graphics:emit_quad_uv(
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    x3: f64,
+    y3: f64,
+    x4: f64,
+    y4: f64
+): unit
     self:ensure_capacity(6)
     self:emit_vertex_data(x1, y1, 0.0, 0.0, 0.0)
     self:emit_vertex_data(x2, y2, 1.0, 0.0, 0.0)
@@ -582,7 +659,9 @@ function Graphics:clear(color: string): unit
         red = channel(color, 2)
         green = channel(color, 4)
         blue = channel(color, 6)
-        if #color == 9 then alpha = channel(color, 8) end
+        if #color == 9 then
+            alpha = channel(color, 8)
+        end
     end
     local gl: WebGL2RenderingContext = self.gl
     gl:clearColor(red::f32, green::f32, blue::f32, alpha::f32)
@@ -596,7 +675,9 @@ function Graphics:set_color(color: string): unit
         self.green = channel(color, 4)
         self.blue = channel(color, 6)
         self.alpha = 1.0
-        if #color == 9 then self.alpha = channel(color, 8) end
+        if #color == 9 then
+            self.alpha = channel(color, 8)
+        end
     end
 end
 
@@ -617,20 +698,31 @@ end
 -- Creation never changes the active program and reports WebGL diagnostics as
 -- stable data rather than throwing host exceptions.
 function Graphics:create_shader(vertex_source: string, pixel_source: string): ShaderResult
-    local result: ShaderResult = build_shader(self.gl, vertex_source, pixel_source, self.next_shader_id)
-    if result.ok then self.next_shader_id += 1 end
+    local result: ShaderResult = build_shader(
+        self.gl,
+        vertex_source,
+        pixel_source,
+        self.next_shader_id
+    )
+    if result.ok then
+        self.next_shader_id += 1
+    end
     return result
 end
 
 -- Compile and link a replacement before touching the live shader. Failures
 -- preserve the same handle, id, and old program; success updates every
 -- reference to the Shader record.
-function Graphics:replace_shader(shader: Shader, vertex_source: string, pixel_source: string): ShaderResult
+function Graphics:replace_shader(
+    shader: Shader,
+    vertex_source: string,
+    pixel_source: string
+): ShaderResult
     if shader.released or shader.program == nil then
         return {
             ok = false,
             shader = shader,
-            error = { code = "released", message = "cannot replace a released shader" },
+            error = { code = "released", message = "cannot replace a released shader" }
         }
     end
     local maybe_old_program: WebGLProgram? = shader.program
@@ -640,18 +732,28 @@ function Graphics:replace_shader(shader: Shader, vertex_source: string, pixel_so
         return {
             ok = false,
             shader = shader,
-            error = { code = "foreign", message = "shader does not belong to this graphics context" },
+            error = {
+                code = "foreign",
+                message = "shader does not belong to this graphics context"
+            }
         }
     end
 
-    local replacement_result: ShaderResult = build_shader(self.gl, vertex_source, pixel_source, shader.id)
+    local replacement_result: ShaderResult = build_shader(
+        self.gl,
+        vertex_source,
+        pixel_source,
+        shader.id
+    )
     if not replacement_result.ok then
         return { ok = false, shader = shader, error = replacement_result.error }
     end
 
     local replacement: Shader = replacement_result.shader
     local was_active: bool = self.active_shader.program == maybe_old_program
-    if was_active then self:flush() end
+    if was_active then
+        self:flush()
+    end
 
     shader.program = replacement.program
     shader.position_location = replacement.position_location
@@ -679,8 +781,12 @@ function Graphics:replace_shader(shader: Shader, vertex_source: string, pixel_so
 end
 
 function Graphics:use_shader(shader: Shader): bool
-    if shader.released or shader.program == nil then return false end
-    if self.active_shader.id == shader.id then return true end
+    if shader.released or shader.program == nil then
+        return false
+    end
+    if self.active_shader.id == shader.id then
+        return true
+    end
     self:flush()
     self.active_shader = shader
     bind_shader(
@@ -694,7 +800,9 @@ function Graphics:use_shader(shader: Shader): bool
 end
 
 function Graphics:use_default_shader(): unit
-    if self.active_shader.id == self.default_shader.id then return end
+    if self.active_shader.id == self.default_shader.id then
+        return
+    end
     self:flush()
     self.active_shader = self.default_shader
     bind_shader(
@@ -707,8 +815,12 @@ function Graphics:use_default_shader(): unit
 end
 
 function Graphics:release_shader(shader: Shader): unit
-    if shader.released then return end
-    if self.active_shader.id == shader.id then self:use_default_shader() end
+    if shader.released then
+        return
+    end
+    if self.active_shader.id == shader.id then
+        self:use_default_shader()
+    end
     self.gl:deleteProgram(shader.program)
     shader.program = nil
     shader.uniforms = {}
@@ -716,26 +828,58 @@ function Graphics:release_shader(shader: Shader): unit
 end
 
 function parameter_name(parameter: ShaderParameter): string
-    if FloatParameter(value) = parameter then return value.name end
-    if Vec2Parameter(value) = parameter then return value.name end
-    if Vec3Parameter(value) = parameter then return value.name end
-    if Vec4Parameter(value) = parameter then return value.name end
-    if IntParameter(value) = parameter then return value.name end
-    if IVec2Parameter(value) = parameter then return value.name end
-    if IVec3Parameter(value) = parameter then return value.name end
-    if IVec4Parameter(value) = parameter then return value.name end
+    if FloatParameter(value) = parameter then
+        return value.name
+    end
+    if Vec2Parameter(value) = parameter then
+        return value.name
+    end
+    if Vec3Parameter(value) = parameter then
+        return value.name
+    end
+    if Vec4Parameter(value) = parameter then
+        return value.name
+    end
+    if IntParameter(value) = parameter then
+        return value.name
+    end
+    if IVec2Parameter(value) = parameter then
+        return value.name
+    end
+    if IVec3Parameter(value) = parameter then
+        return value.name
+    end
+    if IVec4Parameter(value) = parameter then
+        return value.name
+    end
     return ""
 end
 
 function parameter_kind(parameter: ShaderParameter): u32
-    if parameter is FloatParameter then return GL_FLOAT end
-    if parameter is Vec2Parameter then return GL_FLOAT_VEC2 end
-    if parameter is Vec3Parameter then return GL_FLOAT_VEC3 end
-    if parameter is Vec4Parameter then return GL_FLOAT_VEC4 end
-    if parameter is IntParameter then return GL_INT end
-    if parameter is IVec2Parameter then return GL_INT_VEC2 end
-    if parameter is IVec3Parameter then return GL_INT_VEC3 end
-    if parameter is IVec4Parameter then return GL_INT_VEC4 end
+    if parameter is FloatParameter then
+        return GL_FLOAT
+    end
+    if parameter is Vec2Parameter then
+        return GL_FLOAT_VEC2
+    end
+    if parameter is Vec3Parameter then
+        return GL_FLOAT_VEC3
+    end
+    if parameter is Vec4Parameter then
+        return GL_FLOAT_VEC4
+    end
+    if parameter is IntParameter then
+        return GL_INT
+    end
+    if parameter is IVec2Parameter then
+        return GL_INT_VEC2
+    end
+    if parameter is IVec3Parameter then
+        return GL_INT_VEC3
+    end
+    if parameter is IVec4Parameter then
+        return GL_INT_VEC4
+    end
     return 0
 end
 
@@ -743,14 +887,9 @@ end
 -- declared name and value shape match the linked program. A successful shader
 -- replacement advances revision, so old locations can never reach the new
 -- program even though callers keep the same Shader record.
-function shader_uniform(
-    graphics: Graphics, shader: Shader, name: string, kind: u32
-): UniformResult
+function shader_uniform(graphics: Graphics, shader: Shader, name: string, kind: u32): UniformResult
     for cached in shader.uniforms do
-        if cached.revision == shader.revision
-            and cached.name == name
-            and cached.kind == kind
-        then
+        if cached.revision == shader.revision and cached.name == name and cached.kind == kind then
             return { ok = true, location = cached.location, actual_kind = kind }
         end
     end
@@ -769,16 +908,18 @@ function shader_uniform(
         return { ok = false, location = nil, actual_kind = actual_kind }
     end
     local location: WebGLUniformLocation = maybe_location::WebGLUniformLocation
-    table.insert(shader.uniforms, {
-        name = name,
-        kind = kind,
-        revision = shader.revision,
-        location = location,
-    })
+    table.insert(
+        shader.uniforms,
+        { name = name, kind = kind, revision = shader.revision, location = location }
+    )
     return { ok = true, location = location, actual_kind = actual_kind }
 end
 
-function apply_parameter(graphics: Graphics, parameter: ShaderParameter, location: WebGLUniformLocation): unit
+function apply_parameter(
+    graphics: Graphics,
+    parameter: ShaderParameter,
+    location: WebGLUniformLocation
+): unit
     if FloatParameter(value) = parameter then
         graphics.gl:uniform1f(location, value.value::f32)
     elseif Vec2Parameter(value) = parameter then
@@ -805,7 +946,7 @@ function Graphics:bind_shader(shader: Shader, parameters: {ShaderParameter}): Sh
     if shader.released or shader.program == nil then
         return {
             ok = false,
-            error = { code = "released", message = "cannot bind parameters for a released shader" },
+            error = { code = "released", message = "cannot bind parameters for a released shader" }
         }
     end
     for parameter in parameters do
@@ -816,15 +957,18 @@ function Graphics:bind_shader(shader: Shader, parameters: {ShaderParameter}): Sh
             if resolved.actual_kind == 0 then
                 return {
                     ok = false,
-                    error = { code = "uniform_missing", message = "shader has no active uniform named " .. name },
+                    error = {
+                        code = "uniform_missing",
+                        message = "shader has no active uniform named " .. name
+                    }
                 }
             end
             return {
                 ok = false,
                 error = {
                     code = "uniform_type",
-                    message = "shader uniform " .. name .. " does not match its parameter value type",
-                },
+                    message = "shader uniform " .. name .. " does not match its parameter value type"
+                }
             }
         end
     end
@@ -832,13 +976,17 @@ function Graphics:bind_shader(shader: Shader, parameters: {ShaderParameter}): Sh
     if not self:use_shader(shader) then
         return {
             ok = false,
-            error = { code = "released", message = "cannot use a released shader" },
+            error = { code = "released", message = "cannot use a released shader" }
         }
     end
     self:flush()
     for parameter in parameters do
         local resolved: UniformResult = shader_uniform(
-            self, shader, parameter_name(parameter), parameter_kind(parameter))
+            self,
+            shader,
+            parameter_name(parameter),
+            parameter_kind(parameter)
+        )
         local maybe_location: WebGLUniformLocation? = resolved.location
         assert(maybe_location ~= nil)
         apply_parameter(self, parameter, maybe_location::WebGLUniformLocation)
@@ -857,7 +1005,9 @@ end
 -- returns false; changing a live uniform flushes queued vertices first.
 function Graphics:set_uniform_float(name: string, x: f64): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform1f(location, x::f32)
     return true
@@ -865,7 +1015,9 @@ end
 
 function Graphics:set_uniform_vec2(name: string, x: f64, y: f64): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform2f(location, x::f32, y::f32)
     return true
@@ -873,7 +1025,9 @@ end
 
 function Graphics:set_uniform_vec3(name: string, x: f64, y: f64, z: f64): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform3f(location, x::f32, y::f32, z::f32)
     return true
@@ -881,7 +1035,9 @@ end
 
 function Graphics:set_uniform_vec4(name: string, x: f64, y: f64, z: f64, w: f64): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform4f(location, x::f32, y::f32, z::f32, w::f32)
     return true
@@ -889,7 +1045,9 @@ end
 
 function Graphics:set_uniform_int(name: string, x: i32): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform1i(location, x)
     return true
@@ -897,7 +1055,9 @@ end
 
 function Graphics:set_uniform_ivec2(name: string, x: i32, y: i32): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform2i(location, x, y)
     return true
@@ -905,7 +1065,9 @@ end
 
 function Graphics:set_uniform_ivec3(name: string, x: i32, y: i32, z: i32): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform3i(location, x, y, z)
     return true
@@ -913,26 +1075,23 @@ end
 
 function Graphics:set_uniform_ivec4(name: string, x: i32, y: i32, z: i32, w: i32): bool
     local location: WebGLUniformLocation? = active_uniform_location(self, name)
-    if location == nil then return false end
+    if location == nil then
+        return false
+    end
     self:flush()
     self.gl:uniform4i(location, x, y, z, w)
     return true
 end
 
 function Graphics:supports(capability: string): bool
-    return capability == "gpu"
-        or capability == "shaders"
-        or capability == "blend-modes"
-        or capability == "textures"
-        or capability == "sprite-batches"
-        or capability == "render-targets"
-        or capability == "custom-fonts"
-        or capability == "paths"
-        or capability == "text-alignment"
+    return capability == "gpu" or capability == "shaders" or capability == "blend-modes" or capability == "textures" or capability == "sprite-batches" or capability == "render-targets" or capability == "custom-fonts" or capability == "paths" or capability == "text-alignment"
 end
 
 function gpu_error(handle: i32): GraphicsError
-    return { code = game_gpu_resource_error_code(handle), message = game_gpu_resource_error_message(handle) }
+    return {
+        code = game_gpu_resource_error_code(handle),
+        message = game_gpu_resource_error_message(handle)
+    }
 end
 
 function texture_from_handle(self: Graphics, resource_handle: i32): TextureResult
@@ -945,7 +1104,7 @@ function texture_from_handle(self: Graphics, resource_handle: i32): TextureResul
         return {
             ok = false,
             texture = { handle = handle, width = 0, height = 0, released = true, flip_v = false },
-            error = gpu_error(handle),
+            error = gpu_error(handle)
         }
     end
     return {
@@ -955,9 +1114,9 @@ function texture_from_handle(self: Graphics, resource_handle: i32): TextureResul
             width = game_gpu_resource_width(handle),
             height = game_gpu_resource_height(handle),
             released = false,
-            flip_v = false,
+            flip_v = false
         },
-        error = { code = "", message = "" },
+        error = { code = "", message = "" }
     }
 end
 
@@ -979,11 +1138,20 @@ function font_from_handle(self: Graphics, resource_handle: i32): FontResult
         return {
             ok = false,
             font = {
-                handle = handle, width = 0, height = 0, first_code = 0,
-                glyph_count = 0, columns = 0, cell_width = 0, cell_height = 0,
-                base_size = 0, advance = 0, advances = {}, released = true,
+                handle = handle,
+                width = 0,
+                height = 0,
+                first_code = 0,
+                glyph_count = 0,
+                columns = 0,
+                cell_width = 0,
+                cell_height = 0,
+                base_size = 0,
+                advance = 0,
+                advances = {},
+                released = true
             },
-            error = gpu_error(handle),
+            error = gpu_error(handle)
         }
     end
     local glyph_count: i32 = game_gpu_font_glyph_count(handle)
@@ -1007,9 +1175,9 @@ function font_from_handle(self: Graphics, resource_handle: i32): FontResult
             base_size = game_gpu_font_base_size(handle),
             advance = game_gpu_font_advance(handle),
             advances = advances,
-            released = false,
+            released = false
         },
-        error = { code = "", message = "" },
+        error = { code = "", message = "" }
     }
 end
 
@@ -1040,13 +1208,13 @@ function Graphics:create_render_target(width: i32, height: i32): RenderTargetRes
         return {
             ok = false,
             target = { handle = handle, width = 0, height = 0, released = true },
-            error = gpu_error(handle),
+            error = gpu_error(handle)
         }
     end
     return {
         ok = true,
         target = { handle = handle, width = width, height = height, released = false },
-        error = { code = "", message = "" },
+        error = { code = "", message = "" }
     }
 end
 
@@ -1059,44 +1227,83 @@ function Graphics:texture_from_render_target(target: RenderTarget): Texture
         width = target.width,
         height = target.height,
         released = target.released,
-        flip_v = true,
+        flip_v = true
     }
 end
 
 function Graphics:release_texture(texture: Texture): unit
-    if self.current_texture == texture.handle then self:flush() end
-    if not texture.released then game_gpu_resource_release(texture.handle) end
+    if self.current_texture == texture.handle then
+        self:flush()
+    end
+    if not texture.released then
+        game_gpu_resource_release(texture.handle)
+    end
     texture.released = true
-    if self.current_texture == texture.handle then self.current_texture = 0 end
+    if self.current_texture == texture.handle then
+        self.current_texture = 0
+    end
 end
 
 function Graphics:release_font(value: Font): unit
-    if self.current_texture == value.handle then self:flush() end
-    if not value.released then game_gpu_resource_release(value.handle) end
+    if self.current_texture == value.handle then
+        self:flush()
+    end
+    if not value.released then
+        game_gpu_resource_release(value.handle)
+    end
     value.released = true
-    if self.current_texture == value.handle then self.current_texture = 0 end
-    if self.current_font == value.handle then self.current_font = 0 end
+    if self.current_texture == value.handle then
+        self.current_texture = 0
+    end
+    if self.current_font == value.handle then
+        self.current_font = 0
+    end
 end
 
 function Graphics:release_render_target(target: RenderTarget): unit
-    if self.current_target == target.handle then self:set_screen_target()
-    elseif self.current_texture == target.handle then self:flush() end
-    if not target.released then game_gpu_resource_release(target.handle) end
+    if self.current_target == target.handle then
+        self:set_screen_target()
+    elseif self.current_texture == target.handle then
+        self:flush()
+    end
+    if not target.released then
+        game_gpu_resource_release(target.handle)
+    end
     target.released = true
-    if self.current_texture == target.handle then self.current_texture = 0 end
+    if self.current_texture == target.handle then
+        self.current_texture = 0
+    end
 end
 
 function Graphics:bind_sprite_texture(handle: i32): bool
-    if self.current_texture == handle then return true end
+    if self.current_texture == handle then
+        return true
+    end
     self:flush()
-    if not game_gpu_texture_bind(self.gl, handle) then return false end
+    if not game_gpu_texture_bind(self.gl, handle) then
+        return false
+    end
     self.current_texture = handle
     return true
 end
 
-function Graphics:draw_sprite_region(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64): bool
-    if texture.released or texture.width <= 0 or texture.height <= 0 then return false end
-    if not self:bind_sprite_texture(texture.handle) then return false end
+function Graphics:draw_sprite_region(
+    texture: Texture,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    source_x: f64,
+    source_y: f64,
+    source_width: f64,
+    source_height: f64
+): bool
+    if texture.released or texture.width <= 0 or texture.height <= 0 then
+        return false
+    end
+    if not self:bind_sprite_texture(texture.handle) then
+        return false
+    end
     self:ensure_capacity(6)
     local u1: f64 = source_x / (texture.width::f64)
     local u2: f64 = (source_x + source_width) / (texture.width::f64)
@@ -1119,8 +1326,28 @@ end
 
 -- Source coordinates select an atlas region in top-left logical pixels.
 -- Consecutive sprites using the same texture remain in one vertex batch.
-function Graphics:draw_sprite(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64): bool
-    return self:draw_sprite_region(texture, x, y, width, height, source_x, source_y, source_width, source_height)
+function Graphics:draw_sprite(
+    texture: Texture,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    source_x: f64,
+    source_y: f64,
+    source_width: f64,
+    source_height: f64
+): bool
+    return self:draw_sprite_region(
+        texture,
+        x,
+        y,
+        width,
+        height,
+        source_x,
+        source_y,
+        source_width,
+        source_height
+    )
 end
 
 -- One grid point of a mesh: it carries the position the caller shaped it into,
@@ -1136,7 +1363,9 @@ function emit_mesh_vertex(
     v: f64
 ): unit
     local shade: f64 = 1.0
-    if lit then shade = shades[index] end
+    if lit then
+        shade = shades[index]
+    end
     graphics:emit_shaded_vertex(xs[index], ys[index], u, v, 1.0, shade)
 end
 
@@ -1166,12 +1395,20 @@ function Graphics:draw_sprite_mesh(
     source_width: f64,
     source_height: f64
 ): bool
-    if texture.released or texture.width <= 0 or texture.height <= 0 then return false end
-    if columns < 1 or rows < 1 then return false end
+    if texture.released or texture.width <= 0 or texture.height <= 0 then
+        return false
+    end
+    if columns < 1 or rows < 1 then
+        return false
+    end
     local stride: i32 = columns + 1
     local points: i32 = stride * (rows + 1)
-    if #xs < points or #ys < points then return false end
-    if not self:bind_sprite_texture(texture.handle) then return false end
+    if #xs < points or #ys < points then
+        return false
+    end
+    if not self:bind_sprite_texture(texture.handle) then
+        return false
+    end
     local lit: bool = #shades >= points
     local u_origin: f64 = source_x / (texture.width::f64)
     local u_span: f64 = source_width / (texture.width::f64)
@@ -1209,15 +1446,26 @@ end
 
 function Graphics:draw_image(texture: Texture, x: f64, y: f64): bool
     return self:draw_sprite(
-        texture, x, y, texture.width::f64, texture.height::f64,
-        0.0, 0.0, texture.width::f64, texture.height::f64
+        texture,
+        x,
+        y,
+        texture.width::f64,
+        texture.height::f64,
+        0.0,
+        0.0,
+        texture.width::f64,
+        texture.height::f64
     )
 end
 
 function Graphics:set_render_target(target: RenderTarget): bool
-    if target.released then return false end
+    if target.released then
+        return false
+    end
     self:flush()
-    if not game_gpu_target_bind(self.gl, target.handle) then return false end
+    if not game_gpu_target_bind(self.gl, target.handle) then
+        return false
+    end
     -- Creating a target leaves its own color texture bound to the sampler
     -- unit, and drawing into a framebuffer that is simultaneously readable is
     -- a feedback loop: WebGL rejects the draw and the target stays empty.
@@ -1240,10 +1488,28 @@ function Graphics:set_screen_target(): unit
     self.draw_height = self.height
 end
 
-function Graphics:draw_render_target(target: RenderTarget, x: f64, y: f64, width: f64, height: f64): bool
-    if target.released or self.current_target == target.handle then return false end
+function Graphics:draw_render_target(
+    target: RenderTarget,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64
+): bool
+    if target.released or self.current_target == target.handle then
+        return false
+    end
     local texture: Texture = self:texture_from_render_target(target)
-    return self:draw_sprite_region(texture, x, y, width, height, 0.0, 0.0, target.width::f64, target.height::f64)
+    return self:draw_sprite_region(
+        texture,
+        x,
+        y,
+        width,
+        height,
+        0.0,
+        0.0,
+        target.width::f64,
+        target.height::f64
+    )
 end
 
 -- State changes flush first so one batch always has one blend equation. The
@@ -1252,11 +1518,21 @@ end
 function Graphics:set_blend_mode(mode: string): bool
     self:flush()
     if mode == "alpha" then
-        self.gl:blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+        self.gl:blendFuncSeparate(
+            GL_SRC_ALPHA,
+            GL_ONE_MINUS_SRC_ALPHA,
+            GL_ONE,
+            GL_ONE_MINUS_SRC_ALPHA
+        )
     elseif mode == "add" then
         self.gl:blendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
     elseif mode == "multiply" then
-        self.gl:blendFuncSeparate(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+        self.gl:blendFuncSeparate(
+            GL_DST_COLOR,
+            GL_ONE_MINUS_SRC_ALPHA,
+            GL_ONE,
+            GL_ONE_MINUS_SRC_ALPHA
+        )
     else
         return false
     end
@@ -1280,7 +1556,16 @@ end
 -- the same batch as every other filled primitive without a transform push, and
 -- carry the same 0..1 corner coordinates a rectangle does, so a shader shapes
 -- one the way it shapes the other.
-function Graphics:fill_quad(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64, x4: f64, y4: f64): unit
+function Graphics:fill_quad(
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    x3: f64,
+    y3: f64,
+    x4: f64,
+    y4: f64
+): unit
     self:emit_quad_uv(x1, y1, x2, y2, x3, y3, x4, y4)
 end
 
@@ -1297,9 +1582,12 @@ function Graphics:fill_circle(x: f64, y: f64, radius: f64): unit
         local from: f64 = (segment::f64) * step
         local to: f64 = from + step
         self:emit_triangle(
-            x, y,
-            x + math.cos(from) * radius, y + math.sin(from) * radius,
-            x + math.cos(to) * radius, y + math.sin(to) * radius
+            x,
+            y,
+            x + math.cos(from) * radius,
+            y + math.sin(from) * radius,
+            x + math.cos(to) * radius,
+            y + math.sin(to) * radius
         )
     end
 end
@@ -1370,8 +1658,9 @@ function Graphics:quadratic_curve_to(cx: f64, cy: f64, x: f64, y: f64): unit
     local index: i32 = #self.path_x - 1
     local from_x: f64 = self.path_x[index]
     local from_y: f64 = self.path_y[index]
-    local length: f64 = math.sqrt((cx - from_x) * (cx - from_x) + (cy - from_y) * (cy - from_y))
-        + math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy))
+    local length: f64 = math.sqrt(
+        (cx - from_x) * (cx - from_x) + (cy - from_y) * (cy - from_y)
+    ) + math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy))
     local steps: i32 = curve_steps(length)
     for step = 1::i32, steps do
         local t: f64 = (step::f64) / (steps::f64)
@@ -1393,23 +1682,19 @@ function Graphics:cubic_curve_to(cx1: f64, cy1: f64, cx2: f64, cy2: f64, x: f64,
     local index: i32 = #self.path_x - 1
     local from_x: f64 = self.path_x[index]
     local from_y: f64 = self.path_y[index]
-    local length: f64 = math.sqrt((cx1 - from_x) * (cx1 - from_x) + (cy1 - from_y) * (cy1 - from_y))
-        + math.sqrt((cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1))
-        + math.sqrt((x - cx2) * (x - cx2) + (y - cy2) * (y - cy2))
+    local length: f64 = math.sqrt(
+        (cx1 - from_x) * (cx1 - from_x) + (cy1 - from_y) * (cy1 - from_y)
+    ) + math.sqrt(
+        (cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1)
+    ) + math.sqrt((x - cx2) * (x - cx2) + (y - cy2) * (y - cy2))
     local steps: i32 = curve_steps(length)
     for step = 1::i32, steps do
         local t: f64 = (step::f64) / (steps::f64)
         local inverse: f64 = 1.0 - t
         path_append(
             self,
-            inverse * inverse * inverse * from_x
-                + 3.0 * inverse * inverse * t * cx1
-                + 3.0 * inverse * t * t * cx2
-                + t * t * t * x,
-            inverse * inverse * inverse * from_y
-                + 3.0 * inverse * inverse * t * cy1
-                + 3.0 * inverse * t * t * cy2
-                + t * t * t * y,
+            inverse * inverse * inverse * from_x + 3.0 * inverse * inverse * t * cx1 + 3.0 * inverse * t * t * cx2 + t * t * t * x,
+            inverse * inverse * inverse * from_y + 3.0 * inverse * inverse * t * cy1 + 3.0 * inverse * t * t * cy2 + t * t * t * y,
             false
         )
     end
@@ -1433,8 +1718,10 @@ function Graphics:stroke(): unit
     for index = 1::i32, #self.path_x - 1 do
         if not self.path_move[index] then
             self:line(
-                self.path_x[index - 1], self.path_y[index - 1],
-                self.path_x[index], self.path_y[index]
+                self.path_x[index - 1],
+                self.path_y[index - 1],
+                self.path_x[index],
+                self.path_y[index]
             )
         end
     end
@@ -1473,7 +1760,9 @@ end
 -- Selects a loaded custom font atlas at a logical-pixel size. Returns false
 -- for released or invalid GPU fonts so callers can retain a bitmap fallback.
 function Graphics:set_font_resource(value: Font, size: f64): bool
-    if value.released or size <= 0.0 or not game_gpu_resource_ok(value.handle) then return false end
+    if value.released or size <= 0.0 or not game_gpu_resource_ok(value.handle) then
+        return false
+    end
     self.current_font = value.handle
     self.custom_font_size = size
     self.custom_font_width = value.width
@@ -1531,7 +1820,9 @@ function Graphics:text_width(text: string): f64
 end
 
 function Graphics:print_custom(text: string, x: f64, y: f64): bool
-    if self.current_font == 0 or self.custom_font_base_size <= 0 or self.custom_font_columns <= 0 then return false end
+    if self.current_font == 0 or self.custom_font_base_size <= 0 or self.custom_font_columns <= 0 then
+        return false
+    end
     if not game_gpu_resource_ok(self.current_font) then
         self.current_font = 0
         return false
@@ -1543,7 +1834,7 @@ function Graphics:print_custom(text: string, x: f64, y: f64): bool
         width = self.custom_font_width,
         height = self.custom_font_height,
         released = false,
-        flip_v = false,
+        flip_v = false
     }
     for index = 1::i32, #text do
         local code: i32 = string.byte(text, index)
@@ -1553,14 +1844,17 @@ function Graphics:print_custom(text: string, x: f64, y: f64): bool
             local row: i32 = offset // self.custom_font_columns
             if not self:draw_sprite_region(
                 atlas,
-                pen, y - self.custom_font_size,
+                pen,
+                y - self.custom_font_size,
                 (self.custom_font_cell_width::f64) * scale,
                 (self.custom_font_cell_height::f64) * scale,
                 (column * self.custom_font_cell_width)::f64,
                 (row * self.custom_font_cell_height)::f64,
                 self.custom_font_cell_width::f64,
                 self.custom_font_cell_height::f64
-            ) then return false end
+            ) then
+                return false
+            end
         end
         local glyph_advance: i32 = self:custom_glyph_advance(code)
         pen += (glyph_advance::f64) * scale
@@ -1572,7 +1866,9 @@ end
 -- coordinate is the baseline, matching the Canvas 2D fillText convention
 -- the previous backend exposed.
 function Graphics:print(text: string, x: f64, y: f64): unit
-    if self.current_font ~= 0 and self:print_custom(text, x, y) then return end
+    if self.current_font ~= 0 and self:print_custom(text, x, y) then
+        return
+    end
     local upper: string = string.upper(text)
     local pixel: f64 = self.font_pixel
     local top: f64 = y - pixel * (font.height()::f64)
@@ -1723,5 +2019,5 @@ return {
     int_parameter = int_parameter,
     ivec2_parameter = ivec2_parameter,
     ivec3_parameter = ivec3_parameter,
-    ivec4_parameter = ivec4_parameter,
+    ivec4_parameter = ivec4_parameter
 }

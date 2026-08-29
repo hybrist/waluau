@@ -1,6 +1,5 @@
 -- Generic extern aliases instantiate as nominally distinct source types while
 -- still compiling through externref-compatible host imports.
-
 type Response = extern
 type Promise<T> = extern
 

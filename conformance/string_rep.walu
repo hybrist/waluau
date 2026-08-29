@@ -1,5 +1,4 @@
 -- string.rep / string:rep with an optional separator.
-
 assert(string.rep("ha", 3) == "hahaha")
 assert(("ha"):rep(3, "-") == "ha-ha-ha")
 assert(string.rep("x", 0) == "")

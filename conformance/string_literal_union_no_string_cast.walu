@@ -2,4 +2,4 @@
 type CardColor = "red" | "black"
 
 local name: string = "red"
-local color: CardColor = (name :: CardColor)
+local color: CardColor = (name::CardColor)

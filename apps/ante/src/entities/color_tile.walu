@@ -2,7 +2,6 @@
 -- own card and name. The help legend is four of these in a row, and it draws
 -- them through the card's own field binding rather than a copy of it, so the
 -- legend teaches the language the board actually speaks.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
@@ -16,7 +15,7 @@ const NAME_DROP: f64 = 56.0
 const NAME_SIZE: f64 = 12.0
 const NAME_INK: string = "#b5b5bd"
 
-local NAMES: {string} = { "RED", "BLUE", "BLACK", "GREEN" }
+local NAMES: {string} = {"RED", "BLUE", "BLACK", "GREEN"}
 
 type TilePresentation = { suit: i32 }
 export type Stateful = { presentation: TilePresentation, root: ui.Node }
@@ -24,13 +23,13 @@ export type Stateful = { presentation: TilePresentation, root: ui.Node }
 function Stateful.new(suit: i32): Stateful
     local presentation: TilePresentation = { suit = suit }
     local root: ui.Node = ui.Node.sized(
-        WIDTH, HEIGHT,
+        WIDTH,
+        HEIGHT,
         function(surface: ui.Surface, bounds: box.Rect): unit
             local suit: i32 = presentation.suit
             local graphics = surface.graphics
             local center: f64 = bounds.x + bounds.width * 0.5
-            card.use_color_field(
-                surface, suit, false, true, bounds.width / bounds.height)
+            card.use_color_field(surface, suit, false, true, bounds.width / bounds.height)
             graphics:set_color("#17171c")
             graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
             ink.stop_effect(graphics)
@@ -39,9 +38,15 @@ function Stateful.new(suit: i32): Stateful
             graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
             card.draw_sigil(surface, suit, center - 11.0, bounds.y + SIGIL_DROP)
             ink.text_centered(
-                graphics, NAMES[suit], center, bounds.y + NAME_DROP,
-                NAME_SIZE, NAME_INK)
-        end)
+                graphics,
+                NAMES[suit],
+                center,
+                bounds.y + NAME_DROP,
+                NAME_SIZE,
+                NAME_INK
+            )
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -53,6 +58,4 @@ function node(suit: i32): ui.Node
     return Stateful.new(suit).root
 end
 
-return {
-    node = node,
-}
+return { node = node }

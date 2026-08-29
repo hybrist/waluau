@@ -3,57 +3,71 @@ require("waluau:vitest")
 local choreography = require("./choreography")
 local spells = require("./spells/spell")
 
-describe("Ante Magic presentation choreography", function()
-    it("resets duel presentation through one initializer and retains scratch geometry", function()
-        local state: choreography.State = choreography.State.new()
-        local baseline: string = state:snapshot()
+describe(
+    "Ante Magic presentation choreography",
+    function()
+        it(
+            "resets duel presentation through one initializer and retains scratch geometry",
+            function()
+                local state: choreography.State = choreography.State.new()
+                local baseline: string = state:snapshot()
 
-        state.fan_parts = { 0.2, 0.4 }
-        state.sheet.xs[0] = 321.0
-        state:apply_power(spells.SpellKind.Firebolt, 1)
-        state:finish_reveal()
+                state.fan_parts = {0.2, 0.4}
+                state.sheet.xs[0] = 321.0
+                state:apply_power(spells.SpellKind.Firebolt, 1)
+                state:finish_reveal()
 
-        expect(state:snapshot() == baseline):toBe(false)
-        expect(state:firebolt_pending()):toBe(true)
-        expect(state:reveal_finished()):toBe(true)
+                expect(state:snapshot() == baseline):toBe(false)
+                expect(state:firebolt_pending()):toBe(true)
+                expect(state:reveal_finished()):toBe(true)
 
-        state:reset()
+                state:reset()
 
-        expect(state:snapshot()):toBe(baseline)
-        expect(#state.fan_parts):toBe(5)
-        expect(state:firebolt_pending()):toBe(false)
-        expect(state:reveal_finished()):toBe(false)
-        expect(state.sheet.xs[0]):toBe(321.0)
-    end)
+                expect(state:snapshot()):toBe(baseline)
+                expect(#state.fan_parts):toBe(5)
+                expect(state:firebolt_pending()):toBe(false)
+                expect(state:reveal_finished()):toBe(false)
+                expect(state.sheet.xs[0]):toBe(321.0)
+            end
+        )
 
+        it(
+            "rejects invalid restored spell conditions",
+            function()
+                -- The same body with the condition intact restores, so each rejection
+                -- below is the condition failing and not a malformed snapshot.
+                local state: choreography.State = choreography.State.new()
+                state:apply_power(spells.SpellKind.Firebolt, 1)
+                local encoded: string = state:snapshot()
+                expect(choreography.State.restore(encoded) == nil):toBe(false)
+                -- A spell that does not exist, and a target past the community row.
+                local unknown_kind: string = string.gsub(encoded, '"kind":%d+', '"kind":9')
+                expect(choreography.State.restore(unknown_kind) == nil):toBe(true)
+                local far_target: string = string.gsub(encoded, '"target":%d+', '"target":5')
+                expect(choreography.State.restore(far_target) == nil):toBe(true)
+            end
+        )
 
-    it("rejects invalid restored spell conditions", function()
-        -- The same body with the condition intact restores, so each rejection
-        -- below is the condition failing and not a malformed snapshot.
-        local state: choreography.State = choreography.State.new()
-        state:apply_power(spells.SpellKind.Firebolt, 1)
-        local encoded: string = state:snapshot()
-        expect(choreography.State.restore(encoded) == nil):toBe(false)
-        -- A spell that does not exist, and a target past the community row.
-        local unknown_kind: string = string.gsub(encoded, '"kind":%d+', '"kind":9')
-        expect(choreography.State.restore(unknown_kind) == nil):toBe(true)
-        local far_target: string = string.gsub(encoded, '"target":%d+', '"target":5')
-        expect(choreography.State.restore(far_target) == nil):toBe(true)
-    end)
+        it(
+            "does not index a community slot after the board has cleared",
+            function()
+                local state: choreography.State = choreography.State.new()
 
-    it("does not index a community slot after the board has cleared", function()
-        local state: choreography.State = choreography.State.new()
+                expect(state:update_power(0, 0.016)):toBe(-1)
+            end
+        )
 
-        expect(state:update_power(0, 0.016)):toBe(-1)
-    end)
+        it(
+            "clears a turn or river condition before drawing the next flop",
+            function()
+                local state: choreography.State = choreography.State.new()
+                local baseline: string = state:snapshot()
+                state:apply_power(spells.SpellKind.RaiseCard, 4)
 
-    it("clears a turn or river condition before drawing the next flop", function()
-        local state: choreography.State = choreography.State.new()
-        local baseline: string = state:snapshot()
-        state:apply_power(spells.SpellKind.RaiseCard, 4)
-
-        expect(state:snapshot() == baseline):toBe(false)
-        expect(state:update_power(3, 0.016)):toBe(-1)
-        expect(state:snapshot()):toBe(baseline)
-    end)
-end)
+                expect(state:snapshot() == baseline):toBe(false)
+                expect(state:update_power(3, 0.016)):toBe(-1)
+                expect(state:snapshot()):toBe(baseline)
+            end
+        )
+    end
+)

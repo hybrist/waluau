@@ -6,7 +6,11 @@ local interaction = require("./interaction")
 
 function fixed(width: f64, height: f64): ui.Node
     return ui.Node.sized(
-        width, height, function(surface: ui.Surface, bounds: layout.Rect): unit end)
+        width,
+        height,
+        function(surface: ui.Surface, bounds: layout.Rect): unit
+        end
+    )
 end
 
 function arrange(root: ui.Node, width: f64, height: f64): unit
@@ -15,11 +19,15 @@ function arrange(root: ui.Node, width: f64, height: f64): unit
 end
 
 function note(log: {string}, value: string): () -> unit
-    return function(): unit table.insert(log, value) end
+    return function(): unit
+        table.insert(log, value)
+    end
 end
 
 function note_button(log: {string}, value: string): (i32) -> unit
-    return function(button: i32): unit table.insert(log, value .. tostring(button)) end
+    return function(button: i32): unit
+        table.insert(log, value .. tostring(button))
+    end
 end
 
 function observed(log: {string}, name: string): interaction.Handlers
@@ -35,169 +43,275 @@ function observed(log: {string}, name: string): interaction.Handlers
     return result
 end
 
-describe("retained UI interaction", function(): unit
-    it("targets reverse paint order and honors custom hit shapes", function(): unit
-        local log: {string} = {}
-        local back: ui.Node = fixed(100.0, 40.0)
-        local front: ui.Node = fixed(100.0, 40.0):set_hit_test(
-            function(bounds: layout.Rect, x: f64, y: f64): bool
-                return layout.contains(bounds, x, y) and x >= bounds.x + 50.0
-            end)
-        local root: ui.Node = ui.Node.layer({ back, front })
-        arrange(root, 100.0, 40.0)
-        local router: interaction.Router = interaction.Router.new(root)
-        local back_target: interaction.Target = router:add(back, 0, true, observed(log, "back"))
-        local front_target: interaction.Target = router:add(front, 0, true, observed(log, "front"))
+describe(
+    "retained UI interaction",
+    function(): unit
+        it(
+            "targets reverse paint order and honors custom hit shapes",
+            function(): unit
+                local log: {string} = {}
+                local back: ui.Node = fixed(100.0, 40.0)
+                local front: ui.Node = fixed(
+                    100.0,
+                    40.0
+                ):set_hit_test(
+                    function(bounds: layout.Rect, x: f64, y: f64): bool
+                        return layout.contains(bounds, x, y) and x >= bounds.x + 50.0
+                    end
+                )
+                local root: ui.Node = ui.Node.layer({back, front})
+                arrange(root, 100.0, 40.0)
+                local router: interaction.Router = interaction.Router.new(root)
+                local back_target: interaction.Target = router:add(
+                    back,
+                    0,
+                    true,
+                    observed(log, "back")
+                )
+                local front_target: interaction.Target = router:add(
+                    front,
+                    0,
+                    true,
+                    observed(log, "front")
+                )
 
-        expect(router:pointer_move(20.0, 10.0)):toBe(back_target.key)
-        expect(router:pointer_move(80.0, 10.0)):toBe(front_target.key)
-        expect(table.concat(log, ",")):toBe(
-            "back:enter,back:leave,front:enter")
-    end)
+                expect(router:pointer_move(20.0, 10.0)):toBe(back_target.key)
+                expect(router:pointer_move(80.0, 10.0)):toBe(front_target.key)
+                expect(table.concat(log, ",")):toBe("back:enter,back:leave,front:enter")
+            end
+        )
 
-    it("lets transparent decoration pass through and opaque overlays block", function(): unit
-        local back: ui.Node = fixed(100.0, 40.0)
-        local decoration: ui.Node = fixed(100.0, 40.0)
-        local root: ui.Node = ui.Node.layer({ back, decoration })
-        arrange(root, 100.0, 40.0)
-        local router: interaction.Router = interaction.Router.new(root)
-        local target: interaction.Target = router:add(back, 0, false, interaction.handlers())
+        it(
+            "lets transparent decoration pass through and opaque overlays block",
+            function(): unit
+                local back: ui.Node = fixed(100.0, 40.0)
+                local decoration: ui.Node = fixed(100.0, 40.0)
+                local root: ui.Node = ui.Node.layer({back, decoration})
+                arrange(root, 100.0, 40.0)
+                local router: interaction.Router = interaction.Router.new(root)
+                local target: interaction.Target = router:add(
+                    back,
+                    0,
+                    false,
+                    interaction.handlers()
+                )
 
-        expect(router:pointer_move(20.0, 10.0)):toBe(target.key)
-        decoration:pointer_opaque()
-        expect(router:pointer_move(20.0, 10.0)):toBe(-1)
-        decoration:pointer_transparent()
-        expect(router:pointer_move(20.0, 10.0)):toBe(target.key)
-    end)
+                expect(router:pointer_move(20.0, 10.0)):toBe(target.key)
+                decoration:pointer_opaque()
+                expect(router:pointer_move(20.0, 10.0)):toBe(-1)
+                decoration:pointer_transparent()
+                expect(router:pointer_move(20.0, 10.0)):toBe(target.key)
+            end
+        )
 
-    it("synthesizes enter and leave from the retained responder path", function(): unit
-        local log: {string} = {}
-        local child: ui.Node = fixed(30.0, 20.0)
-        local parent: ui.Node = ui.Node.down({ gap = 0.0 }, { child })
-        arrange(parent, 100.0, 60.0)
-        local router: interaction.Router = interaction.Router.new(parent)
-        router:add(parent, 0, true, observed(log, "parent"))
-        router:add(child, 0, true, observed(log, "child"))
+        it(
+            "synthesizes enter and leave from the retained responder path",
+            function(): unit
+                local log: {string} = {}
+                local child: ui.Node = fixed(30.0, 20.0)
+                local parent: ui.Node = ui.Node.down({ gap = 0.0 }, {child})
+                arrange(parent, 100.0, 60.0)
+                local router: interaction.Router = interaction.Router.new(parent)
+                router:add(parent, 0, true, observed(log, "parent"))
+                router:add(child, 0, true, observed(log, "child"))
 
-        router:pointer_move(10.0, 10.0)
-        router:pointer_move(80.0, 40.0)
-        router:pointer_leave()
-        expect(table.concat(log, ",")):toBe(
-            "parent:enter,child:enter,child:leave,parent:leave")
-    end)
+                router:pointer_move(10.0, 10.0)
+                router:pointer_move(80.0, 40.0)
+                router:pointer_leave()
+                expect(
+                    table.concat(log, ",")
+                ):toBe("parent:enter,child:enter,child:leave,parent:leave")
+            end
+        )
 
-    it("clicks and activates only when press and release match", function(): unit
-        local log: {string} = {}
-        local left: ui.Node = fixed(40.0, 30.0)
-        local right: ui.Node = fixed(40.0, 30.0)
-        local root: ui.Node = ui.Node.across({ gap = 0.0 }, { left, right })
-        arrange(root, 80.0, 30.0)
-        local router: interaction.Router = interaction.Router.new(root)
-        router:add(left, 0, true, observed(log, "left"))
-        router:add(right, 0, true, observed(log, "right"))
+        it(
+            "clicks and activates only when press and release match",
+            function(): unit
+                local log: {string} = {}
+                local left: ui.Node = fixed(40.0, 30.0)
+                local right: ui.Node = fixed(40.0, 30.0)
+                local root: ui.Node = ui.Node.across({ gap = 0.0 }, {left, right})
+                arrange(root, 80.0, 30.0)
+                local router: interaction.Router = interaction.Router.new(root)
+                router:add(left, 0, true, observed(log, "left"))
+                router:add(right, 0, true, observed(log, "right"))
 
-        router:pointer_down(10.0, 10.0, 1)
-        router:pointer_up(60.0, 10.0, 1)
-        router:pointer_down(10.0, 10.0, 1)
-        router:pointer_up(10.0, 10.0, 1)
-        expect(table.concat(log, ",")):toBe(
-            "left:enter,left:down1,left:focus,left:leave,right:enter,right:up1,"
-            .. "right:leave,left:enter,left:down1,left:up1,left:click1,left:activate")
-    end)
+                router:pointer_down(10.0, 10.0, 1)
+                router:pointer_up(60.0, 10.0, 1)
+                router:pointer_down(10.0, 10.0, 1)
+                router:pointer_up(10.0, 10.0, 1)
+                expect(
+                    table.concat(log, ",")
+                ):toBe(
+                    "left:enter,left:down1,left:focus,left:leave,right:enter,right:up1," .. "right:leave,left:enter,left:down1,left:up1,left:click1,left:activate"
+                )
+            end
+        )
 
-    it("keeps focus separate and activates it with Enter or Space", function(): unit
-        local log: {string} = {}
-        local node: ui.Node = fixed(40.0, 20.0)
-        arrange(node, 40.0, 20.0)
-        local router: interaction.Router = interaction.Router.new(node)
-        local target: interaction.Target = router:add(node, 0, true, observed(log, "button"))
+        it(
+            "keeps focus separate and activates it with Enter or Space",
+            function(): unit
+                local log: {string} = {}
+                local node: ui.Node = fixed(40.0, 20.0)
+                arrange(node, 40.0, 20.0)
+                local router: interaction.Router = interaction.Router.new(node)
+                local target: interaction.Target = router:add(
+                    node,
+                    0,
+                    true,
+                    observed(log, "button")
+                )
 
-        expect(router:focus(target.key)):toBe(true)
-        expect(router:hovered()):toBe(-1)
-        expect(router:key_pressed("Enter")):toBe(true)
-        expect(router:key_pressed(" ")):toBe(true)
-        expect(table.concat(log, ",")):toBe(
-            "button:focus,button:activate,button:activate")
-    end)
+                expect(router:focus(target.key)):toBe(true)
+                expect(router:hovered()):toBe(-1)
+                expect(router:key_pressed("Enter")):toBe(true)
+                expect(router:key_pressed(" ")):toBe(true)
+                expect(table.concat(log, ",")):toBe("button:focus,button:activate,button:activate")
+            end
+        )
 
-    it("navigates rows with wrap while skipping disabled and hidden targets", function(): unit
-        local nodes: {ui.Node} = { fixed(20.0, 20.0), fixed(20.0, 20.0), fixed(20.0, 20.0) }
-        local root: ui.Node = ui.Node.across({ gap = 5.0 }, nodes)
-        arrange(root, 70.0, 20.0)
-        local router: interaction.Router = interaction.Router.new(root)
-        local scope: i32 = router:add_scope("row", true)
-        local first: interaction.Target = router:add(nodes[0], scope, true, interaction.handlers())
-        local second: interaction.Target = router:add(nodes[1], scope, true, interaction.handlers())
-        local third: interaction.Target = router:add(nodes[2], scope, true, interaction.handlers())
-        second:set_enabled(false)
-        router:activate_scope(scope)
+        it(
+            "navigates rows with wrap while skipping disabled and hidden targets",
+            function(): unit
+                local nodes: {ui.Node} = {fixed(20.0, 20.0), fixed(20.0, 20.0), fixed(20.0, 20.0)}
+                local root: ui.Node = ui.Node.across({ gap = 5.0 }, nodes)
+                arrange(root, 70.0, 20.0)
+                local router: interaction.Router = interaction.Router.new(root)
+                local scope: i32 = router:add_scope("row", true)
+                local first: interaction.Target = router:add(
+                    nodes[0],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                local second: interaction.Target = router:add(
+                    nodes[1],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                local third: interaction.Target = router:add(
+                    nodes[2],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                second:set_enabled(false)
+                router:activate_scope(scope)
 
-        expect(router:focused()):toBe(first.key)
-        expect(router:navigate("right")):toBe(true)
-        expect(router:focused()):toBe(third.key)
-        third:set_visible(false)
-        expect(router:navigate("right")):toBe(true)
-        expect(router:focused()):toBe(first.key)
-    end)
+                expect(router:focused()):toBe(first.key)
+                expect(router:navigate("right")):toBe(true)
+                expect(router:focused()):toBe(third.key)
+                third:set_visible(false)
+                expect(router:navigate("right")):toBe(true)
+                expect(router:focused()):toBe(first.key)
+            end
+        )
 
-    it("navigates columns and follows explicit links before scope policy", function(): unit
-        local nodes: {ui.Node} = { fixed(20.0, 20.0), fixed(20.0, 20.0), fixed(20.0, 20.0) }
-        local root: ui.Node = ui.Node.down({ gap = 5.0 }, nodes)
-        arrange(root, 20.0, 70.0)
-        local router: interaction.Router = interaction.Router.new(root)
-        local scope: i32 = router:add_scope("column", false)
-        local first: interaction.Target = router:add(nodes[0], scope, true, interaction.handlers())
-        local second: interaction.Target = router:add(nodes[1], scope, true, interaction.handlers())
-        local third: interaction.Target = router:add(nodes[2], scope, true, interaction.handlers())
-        first:link("right", third)
-        router:activate_scope(scope)
+        it(
+            "navigates columns and follows explicit links before scope policy",
+            function(): unit
+                local nodes: {ui.Node} = {fixed(20.0, 20.0), fixed(20.0, 20.0), fixed(20.0, 20.0)}
+                local root: ui.Node = ui.Node.down({ gap = 5.0 }, nodes)
+                arrange(root, 20.0, 70.0)
+                local router: interaction.Router = interaction.Router.new(root)
+                local scope: i32 = router:add_scope("column", false)
+                local first: interaction.Target = router:add(
+                    nodes[0],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                local second: interaction.Target = router:add(
+                    nodes[1],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                local third: interaction.Target = router:add(
+                    nodes[2],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                first:link("right", third)
+                router:activate_scope(scope)
 
-        expect(router:navigate("down")):toBe(true)
-        expect(router:focused()):toBe(second.key)
-        router:focus(first.key)
-        expect(router:navigate("right")):toBe(true)
-        expect(router:focused()):toBe(third.key)
-    end)
+                expect(router:navigate("down")):toBe(true)
+                expect(router:focused()):toBe(second.key)
+                router:focus(first.key)
+                expect(router:navigate("right")):toBe(true)
+                expect(router:focused()):toBe(third.key)
+            end
+        )
 
-    it("uses arranged centers for spatial navigation", function(): unit
-        local left: ui.Node = fixed(20.0, 20.0)
-        local right: ui.Node = fixed(20.0, 20.0)
-        local below: ui.Node = fixed(20.0, 20.0)
-        local top: ui.Node = ui.Node.across({ gap = 80.0 }, { left, right })
-        local root: ui.Node = ui.Node.down({ gap = 60.0 }, { top, below })
-        arrange(root, 120.0, 100.0)
-        local router: interaction.Router = interaction.Router.new(root)
-        local left_target: interaction.Target = router:add(left, 0, true, interaction.handlers())
-        local right_target: interaction.Target = router:add(right, 0, true, interaction.handlers())
-        router:add(below, 0, true, interaction.handlers())
-        router:focus(left_target.key)
+        it(
+            "uses arranged centers for spatial navigation",
+            function(): unit
+                local left: ui.Node = fixed(20.0, 20.0)
+                local right: ui.Node = fixed(20.0, 20.0)
+                local below: ui.Node = fixed(20.0, 20.0)
+                local top: ui.Node = ui.Node.across({ gap = 80.0 }, {left, right})
+                local root: ui.Node = ui.Node.down({ gap = 60.0 }, {top, below})
+                arrange(root, 120.0, 100.0)
+                local router: interaction.Router = interaction.Router.new(root)
+                local left_target: interaction.Target = router:add(
+                    left,
+                    0,
+                    true,
+                    interaction.handlers()
+                )
+                local right_target: interaction.Target = router:add(
+                    right,
+                    0,
+                    true,
+                    interaction.handlers()
+                )
+                router:add(below, 0, true, interaction.handlers())
+                router:focus(left_target.key)
 
-        expect(router:navigate("right")):toBe(true)
-        expect(router:focused()):toBe(right_target.key)
-    end)
+                expect(router:navigate("right")):toBe(true)
+                expect(router:focused()):toBe(right_target.key)
+            end
+        )
 
-    it("confines pointer, focus, and activation to the active modal scope", function(): unit
-        local log: {string} = {}
-        local outside: ui.Node = fixed(100.0, 40.0)
-        local modal: ui.Node = fixed(40.0, 20.0)
-        local root: ui.Node = ui.Node.layer({ outside, modal })
-        arrange(root, 100.0, 40.0)
-        -- Give the modal a smaller retained rectangle inside the shared layer.
-        modal:arrange(30.0, 10.0, 40.0, 20.0)
-        local router: interaction.Router = interaction.Router.new(root)
-        local outside_target: interaction.Target = router:add(
-            outside, 0, true, observed(log, "outside"))
-        local modal_scope: i32 = router:add_scope("column", true)
-        local modal_target: interaction.Target = router:add(
-            modal, modal_scope, true, observed(log, "modal"))
-        router:focus(outside_target.key)
-        router:activate_scope(modal_scope)
+        it(
+            "confines pointer, focus, and activation to the active modal scope",
+            function(): unit
+                local log: {string} = {}
+                local outside: ui.Node = fixed(100.0, 40.0)
+                local modal: ui.Node = fixed(40.0, 20.0)
+                local root: ui.Node = ui.Node.layer({outside, modal})
+                arrange(root, 100.0, 40.0)
+                -- Give the modal a smaller retained rectangle inside the shared layer.
+                modal:arrange(30.0, 10.0, 40.0, 20.0)
+                local router: interaction.Router = interaction.Router.new(root)
+                local outside_target: interaction.Target = router:add(
+                    outside,
+                    0,
+                    true,
+                    observed(log, "outside")
+                )
+                local modal_scope: i32 = router:add_scope("column", true)
+                local modal_target: interaction.Target = router:add(
+                    modal,
+                    modal_scope,
+                    true,
+                    observed(log, "modal")
+                )
+                router:focus(outside_target.key)
+                router:activate_scope(modal_scope)
 
-        expect(router:focused()):toBe(modal_target.key)
-        expect(router:pointer_down(5.0, 5.0, 1)):toBe(-1)
-        expect(router:pointer_down(40.0, 15.0, 1)):toBe(modal_target.key)
-        expect(router:key_pressed("Enter")):toBe(true)
-        expect(table.concat(log, ",")):toBe(
-            "outside:focus,outside:blur,modal:focus,modal:enter,modal:down1,modal:activate")
-    end)
-end)
+                expect(router:focused()):toBe(modal_target.key)
+                expect(router:pointer_down(5.0, 5.0, 1)):toBe(-1)
+                expect(router:pointer_down(40.0, 15.0, 1)):toBe(modal_target.key)
+                expect(router:key_pressed("Enter")):toBe(true)
+                expect(
+                    table.concat(log, ",")
+                ):toBe(
+                    "outside:focus,outside:blur,modal:focus,modal:enter,modal:down1,modal:activate"
+                )
+            end
+        )
+    end
+)

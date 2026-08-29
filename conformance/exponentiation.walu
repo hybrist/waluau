@@ -1,6 +1,5 @@
 -- Exponentiation with the `^` operator. Like Lua, `^` computes in floating
 -- point, binds tighter than the unary operators, and is right-associative.
-
 -- Basic powers (number literals default to f64). Exponents are kept to
 -- integers so the results are exactly representable in binary floating point.
 assert(2 ^ 10 == 1024)

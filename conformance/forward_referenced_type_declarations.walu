@@ -1,6 +1,5 @@
 -- Declaration order must not change what a type name means: a declaration may
 -- reference an alias, enum, or literal union that appears later in the file.
-
 type Beat = { index: BeatIndex, part: f64 }
 type BeatIndex = "flight" | "land"
 

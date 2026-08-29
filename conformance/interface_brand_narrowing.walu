@@ -13,7 +13,6 @@
 -- Add and Mul have identical layouts on purpose: layout-canonicalized wasm
 -- structs cannot distinguish them, so these checks must hinge on the brand,
 -- not on the shape.
-
 type Op = { exec: (self, a: i32, b: i32) -> i32 }
 type Add = Op & { bias: i32 }
 type Mul = Op & { bias: i32 }
@@ -33,7 +32,7 @@ local wrapped_mul: Op = mul
 local plain: Op = {
     exec = function(a: i32, b: i32): i32
         return a - b
-    end,
+    end
 }
 
 -- Narrowing takes the then-branch exactly for wrappers of the named type.
@@ -68,7 +67,7 @@ assert(mul.bias == 1)
 assert(wrapped_mul:exec(2, 3) == 7)
 
 -- The hard cast returns the original receiver, with reference identity.
-local back = wrapped_add :: Add
+local back = wrapped_add::Add
 assert(back.bias == 10)
 back.bias = 20
 assert(add.bias == 20)
@@ -77,13 +76,17 @@ assert(wrapped_add:exec(1, 1) == 22)
 -- On mismatch the hard cast raises a catchable error: sibling wrappers and
 -- plain literals both fail, so cross-sibling misidentification is impossible
 -- through these forms.
-local sibling_ok, sibling_err = pcall(function(): Add
-    return wrapped_mul :: Add
-end)
+local sibling_ok, sibling_err = pcall(
+    function(): Add
+        return wrapped_mul::Add
+    end
+)
 assert(not sibling_ok)
 assert(sibling_err == "interface cast failed: value is not 'Add'")
 
-local plain_ok, plain_err = pcall(function(): Add
-    return plain :: Add
-end)
+local plain_ok, plain_err = pcall(
+    function(): Add
+        return plain::Add
+    end
+)
 assert(not plain_ok)

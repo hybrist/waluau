@@ -12,7 +12,6 @@
 -- what the deformation actually does to a card can be checked without a
 -- canvas. Where the beats of an animation come from is card_draw.walu's
 -- business, not this module's.
-
 -- How much of its area a sheet keeps while it stretches. Perfect preservation
 -- is what liquid does; a card is stiff, and a card that conserved area exactly
 -- would read as rubber. Four fifths keeps the weight and loses the toy.
@@ -180,10 +179,13 @@ end
 function Pose:limited_pull(): f64
     local diagonal: f64 = math.sqrt(self.width * self.width + self.height * self.height)
     local reach: f64 = math.sqrt(
-        self.pull_x * self.pull_x + self.pull_y * self.pull_y + self.pull_z * self.pull_z)
+        self.pull_x * self.pull_x + self.pull_y * self.pull_y + self.pull_z * self.pull_z
+    )
     local spread: f64 = reach * math.abs(1.0 - self.follow)
     local allowed: f64 = (self.stretch_limit - 1.0) * diagonal
-    if allowed <= 0.0 or spread <= allowed or reach <= 0.0 then return reach end
+    if allowed <= 0.0 or spread <= allowed or reach <= 0.0 then
+        return reach
+    end
     return reach * allowed / spread
 end
 
@@ -191,7 +193,9 @@ end
 -- to narrow across to pay for.
 function Pose:stretch_ratio(reach: f64): f64
     local diagonal: f64 = math.sqrt(self.width * self.width + self.height * self.height)
-    if diagonal <= 0.0 then return 1.0 end
+    if diagonal <= 0.0 then
+        return 1.0
+    end
     return 1.0 + reach * math.abs(1.0 - self.follow) / diagonal
 end
 
@@ -205,7 +209,9 @@ function scale_about_axis(
     across_factor: f64
 ): Offset
     local length: f64 = math.sqrt(axis_x * axis_x + axis_y * axis_y)
-    if length <= 0.0 then return { x = x, y = y } end
+    if length <= 0.0 then
+        return { x = x, y = y }
+    end
     local ax: f64 = axis_x / length
     local ay: f64 = axis_y / length
     local along: f64 = (x * ax + y * ay) * along_factor
@@ -218,18 +224,20 @@ end
 -- direction and squashes against a stop this way; the pull pays for the
 -- length it gains the same way, through `narrow_across`.
 function apply_axial(x: f64, y: f64, axis_x: f64, axis_y: f64, amount: f64): Offset
-    if amount == 1.0 then return { x = x, y = y } end
-    return scale_about_axis(
-        x, y, axis_x, axis_y, amount, amount ^ (-AREA_PRESERVATION))
+    if amount == 1.0 then
+        return { x = x, y = y }
+    end
+    return scale_about_axis(x, y, axis_x, axis_y, amount, amount ^ (-AREA_PRESERVATION))
 end
 
 -- The narrowing alone. The pull has already lengthened the sheet by handing
 -- the held corner further than the rest of it, so charging it a second time
 -- along the axis would count that length twice.
 function narrow_across(x: f64, y: f64, axis_x: f64, axis_y: f64, amount: f64): Offset
-    if amount == 1.0 then return { x = x, y = y } end
-    return scale_about_axis(
-        x, y, axis_x, axis_y, 1.0, amount ^ (-AREA_PRESERVATION))
+    if amount == 1.0 then
+        return { x = x, y = y }
+    end
+    return scale_about_axis(x, y, axis_x, axis_y, 1.0, amount ^ (-AREA_PRESERVATION))
 end
 
 -- The average share of the lead across the sheet. Every point is displaced by
@@ -249,14 +257,7 @@ function Pose:mean_pull_weight(columns: i32, rows: i32): f64
     return total / (point_count(columns, rows)::f64)
 end
 
-function place_point(
-    pose: Pose,
-    u: f64,
-    v: f64,
-    reach: f64,
-    narrowing: f64,
-    mean: f64
-): Space
+function place_point(pose: Pose, u: f64, v: f64, reach: f64, narrowing: f64, mean: f64): Space
     local x: f64 = (u - 0.5) * pose.width
     local y: f64 = (v - 0.5) * pose.height
 
@@ -266,10 +267,18 @@ function place_point(
     local share: f64 = pose:pull_weight(u, v) - mean
     local scaled: f64 = 1.0
     local total: f64 = math.sqrt(
-        pose.pull_x * pose.pull_x + pose.pull_y * pose.pull_y + pose.pull_z * pose.pull_z)
-    if total > 0.0 then scaled = reach / total end
+        pose.pull_x * pose.pull_x + pose.pull_y * pose.pull_y + pose.pull_z * pose.pull_z
+    )
+    if total > 0.0 then
+        scaled = reach / total
+    end
     local narrowed: Offset = narrow_across(
-        x, y, pose.pull_x * scaled, pose.pull_y * scaled, narrowing)
+        x,
+        y,
+        pose.pull_x * scaled,
+        pose.pull_y * scaled,
+        narrowing
+    )
     x = narrowed.x
     y = narrowed.y
     local z: f64 = pose.pull_z * scaled * share
@@ -302,13 +311,17 @@ end
 -- the whole of the perspective: one divide, no depth buffer, no camera.
 function Pose:project_x(point: Space): f64
     local depth: f64 = self.focal - point.z
-    if depth < 1.0 then depth = 1.0 end
+    if depth < 1.0 then
+        depth = 1.0
+    end
     return self.center_x + point.x * self.focal / depth
 end
 
 function Pose:project_y(point: Space): f64
     local depth: f64 = self.focal - point.z
-    if depth < 1.0 then depth = 1.0 end
+    if depth < 1.0 then
+        depth = 1.0
+    end
     return self.center_y + point.y * self.focal / depth
 end
 
@@ -327,9 +340,10 @@ function Mesh:shade_at(left: i32, right: i32, above: i32, below: i32): f64
     local nz: f64 = ux * vy - uy * vx
     local length: f64 = math.sqrt(nx * nx + ny * ny + nz * nz)
     local ambient: f64 = 1.0 - DIFFUSE * LIGHT_Z
-    if length <= 0.0 then return ambient end
-    local facing: f64 = math.abs(
-        (nx * LIGHT_X + ny * LIGHT_Y + nz * LIGHT_Z) / length)
+    if length <= 0.0 then
+        return ambient
+    end
+    local facing: f64 = math.abs((nx * LIGHT_X + ny * LIGHT_Y + nz * LIGHT_Z) / length)
     return ambient + DIFFUSE * facing
 end
 
@@ -359,12 +373,20 @@ function Mesh:build(pose: Pose): unit
             local index: i32 = row * stride + column
             local left: i32 = index - 1
             local right: i32 = index + 1
-            if column == 0 then left = index end
-            if column == columns then right = index end
+            if column == 0 then
+                left = index
+            end
+            if column == columns then
+                right = index
+            end
             local above: i32 = index - stride
             local below: i32 = index + stride
-            if row == 0 then above = index end
-            if row == rows then below = index end
+            if row == 0 then
+                above = index
+            end
+            if row == rows then
+                below = index
+            end
             self.shades[index] = self:shade_at(left, right, above, below)
             local point: Space = { x = self.px[index], y = self.py[index], z = self.pz[index] }
             self.xs[index] = pose:project_x(point)
@@ -380,6 +402,4 @@ function Pose:facing_front(): bool
     return math.cos(self.flip) * math.cos(self.tilt) >= 0.0
 end
 
-return {
-    point_count = point_count,
-}
+return { point_count = point_count }

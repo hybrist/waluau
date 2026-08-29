@@ -2,7 +2,6 @@
 -- vitest-style matchers, compiled and run in the browser by vitest itself.
 -- The describe/it/expect declarations come from the waluau:vitest virtual
 -- module (externs/vitest.walu).
-
 require("waluau:vitest")
 
 function add(a: i32, b: i32): i32
@@ -14,109 +13,175 @@ function greet(name: string): string
 end
 
 function clamp(value: f64, low: f64, high: f64): f64
-    if value < low then return low end
-    if value > high then return high end
+    if value < low then
+        return low
+    end
+    if value > high then
+        return high
+    end
     return value
 end
 
-describe("arithmetic", function(): unit
-    it("adds integers", function(): unit
-        expect(add(2, 2)):toBe(4)
-        expect(add(-1, 1)):toBe(0)
-    end)
+describe(
+    "arithmetic",
+    function(): unit
+        it(
+            "adds integers",
+            function(): unit
+                expect(add(2, 2)):toBe(4)
+                expect(add(-1, 1)):toBe(0)
+            end
+        )
 
-    it("compares numbers", function(): unit
-        expect(3.5):toBeGreaterThan(3)
-        expect(2):toBeLessThanOrEqual(2)
-        expect(0.1 + 0.2):toBeCloseTo(0.3)
-        expect(add(20, 3)):notToBe(24)
-    end)
+        it(
+            "compares numbers",
+            function(): unit
+                expect(3.5):toBeGreaterThan(3)
+                expect(2):toBeLessThanOrEqual(2)
+                expect(0.1 + 0.2):toBeCloseTo(0.3)
+                expect(add(20, 3)):notToBe(24)
+            end
+        )
 
-    describe("clamp", function(): unit
-        it("passes values inside the range through", function(): unit
-            expect(clamp(0.5, 0, 1)):toBe(0.5)
-        end)
+        describe(
+            "clamp",
+            function(): unit
+                it(
+                    "passes values inside the range through",
+                    function(): unit
+                        expect(clamp(0.5, 0, 1)):toBe(0.5)
+                    end
+                )
 
-        it("clamps values outside the range", function(): unit
-            expect(clamp(-2, 0, 1)):toBe(0)
-            expect(clamp(9, 0, 1)):toBe(1)
-        end)
-    end)
-end)
+                it(
+                    "clamps values outside the range",
+                    function(): unit
+                        expect(clamp(-2, 0, 1)):toBe(0)
+                        expect(clamp(9, 0, 1)):toBe(1)
+                    end
+                )
+            end
+        )
+    end
+)
 
-describe("strings", function(): unit
-    it("concatenates", function(): unit
-        expect(greet("walu")):toBe("hello walu")
-        expect(greet("walu")):toContain("walu")
-        expect(greet("walu")):notToContain("goodbye")
-        expect(greet("walu")):toHaveLength(10)
-    end)
-end)
+describe(
+    "strings",
+    function(): unit
+        it(
+            "concatenates",
+            function(): unit
+                expect(greet("walu")):toBe("hello walu")
+                expect(greet("walu")):toContain("walu")
+                expect(greet("walu")):notToContain("goodbye")
+                expect(greet("walu")):toHaveLength(10)
+            end
+        )
+    end
+)
 
 enum Suit { clubs, diamonds, hearts, spades }
 
-describe("enums", function(): unit
-    it("compares enum values by ordinal", function(): unit
-        local trump = Suit.hearts
-        expect(trump):toBe(Suit.hearts)
-        expect(trump):notToBe(Suit.spades)
-    end)
+describe(
+    "enums",
+    function(): unit
+        it(
+            "compares enum values by ordinal",
+            function(): unit
+                local trump = Suit.hearts
+                expect(trump):toBe(Suit.hearts)
+                expect(trump):notToBe(Suit.spades)
+            end
+        )
 
-    it("negates matchers with :not", function(): unit
-        expect(Suit.clubs):not:toBe(Suit.diamonds)
-        expect(add(2, 2)):not:toBe(5)
-        expect(greet("walu")):not:toContain("goodbye")
-    end)
+        it(
+            "negates matchers with :not",
+            function(): unit
+                expect(Suit.clubs):not:toBe(Suit.diamonds)
+                expect(add(2, 2)):not:toBe(5)
+                expect(greet("walu")):not:toContain("goodbye")
+            end
+        )
 
-    it("checks nullable values for nil-ness and by value", function(): unit
-        local trump: Suit? = Suit.hearts
-        expect(trump):not:toBeNil()
-        expect(trump):toBe(Suit.hearts)
-        expect(trump):not:toBe(Suit.spades)
+        it(
+            "checks nullable values for nil-ness and by value",
+            function(): unit
+                local trump: Suit? = Suit.hearts
+                expect(trump):not:toBeNil()
+                expect(trump):toBe(Suit.hearts)
+                expect(trump):not:toBe(Suit.spades)
 
-        local folded: Suit? = nil
-        expect(folded):toBeNil()
+                local folded: Suit? = nil
+                expect(folded):toBeNil()
 
-        local wager: f64? = 12.5
-        expect(wager):toBe(12.5)
-        local name: string? = nil
-        expect(name):toBeNil()
-    end)
-end)
+                local wager: f64? = 12.5
+                expect(wager):toBe(12.5)
+                local name: string? = nil
+                expect(name):toBeNil()
+            end
+        )
+    end
+)
 
-describe("booleans", function(): unit
-    it("checks truthiness", function(): unit
-        expect(add(1, 1) == 2):toBeTruthy()
-        expect(add(1, 1) == 3):toBeFalsy()
-        expect(true):toBe(true)
-        expect(false):toBe(false)
-    end)
-end)
+describe(
+    "booleans",
+    function(): unit
+        it(
+            "checks truthiness",
+            function(): unit
+                expect(add(1, 1) == 2):toBeTruthy()
+                expect(add(1, 1) == 3):toBeFalsy()
+                expect(true):toBe(true)
+                expect(false):toBe(false)
+            end
+        )
+    end
+)
 
-describe("lifecycle hooks", function(): unit
-    local counter: i32 = 0
+describe(
+    "lifecycle hooks",
+    function(): unit
+        local counter: i32 = 0
 
-    before_each(function(): unit
-        counter = counter + 1
-    end)
+        before_each(
+            function(): unit
+                counter = counter + 1
+            end
+        )
 
-    it("runs before_each before the first test", function(): unit
-        expect(counter):toBeGreaterThanOrEqual(1)
-    end)
+        it(
+            "runs before_each before the first test",
+            function(): unit
+                expect(counter):toBeGreaterThanOrEqual(1)
+            end
+        )
 
-    it("runs before_each again for the next test", function(): unit
-        expect(counter):toBeGreaterThanOrEqual(2)
-    end)
+        it(
+            "runs before_each again for the next test",
+            function(): unit
+                expect(counter):toBeGreaterThanOrEqual(2)
+            end
+        )
 
-    todo("after_all teardown assertions")
-end)
+        todo("after_all teardown assertions")
+    end
+)
 
-xdescribe("skipped suite", function(): unit
-    it("never runs", function(): unit
+xdescribe(
+    "skipped suite",
+    function(): unit
+        it(
+            "never runs",
+            function(): unit
+                expect(1):toBe(2)
+            end
+        )
+    end
+)
+
+xit(
+    "skipped test never runs",
+    function(): unit
         expect(1):toBe(2)
-    end)
-end)
-
-xit("skipped test never runs", function(): unit
-    expect(1):toBe(2)
-end)
+    end
+)

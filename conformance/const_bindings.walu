@@ -2,7 +2,6 @@
 -- docs https://luau.org/syntax/#const-bindings): `const` works anywhere
 -- `local` does but forbids reassignment of the binding. The vendored Luau
 -- suite predates the keyword, so these cases are derived from the RFC/docs.
-
 -- Untyped const infers its type like `local`.
 const untyped = 5
 assert(untyped == 5)
@@ -68,7 +67,7 @@ assert(closure_reads_const() == 10.0)
 -- const makes the *binding* immutable, not the value: the contents of a
 -- table reached through a const binding stay mutable.
 function value_stays_mutable(): f64
-    const items = { 1.0, 2.0 }
+    const items = {1.0, 2.0}
     items[1] = 10.0
     return items[1]
 end

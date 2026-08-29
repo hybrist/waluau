@@ -10,7 +10,6 @@
 -- house the camera goes into. Drawing it here — under whichever screen is live,
 -- and only while it still owes the frame anything — is what makes each of those
 -- a pan and a push in rather than a cut.
-
 local engine = require("waluau:engine")
 local hot = require("waluau:engine/hot")
 local city_map = require("./city_map")
@@ -34,7 +33,9 @@ type ActiveScreen = "menu" | "game"
 type HotSnapshot = { schema: string, screen: ActiveScreen, sections: {string} }
 
 function play_flip_cues(assets: presentation_resources.State, count: i32): unit
-    for _ = 1, count do assets:play_flip() end
+    for _ = 1, count do
+        assets:play_flip()
+    end
 end
 
 function install_ante_magic(): unit
@@ -59,7 +60,9 @@ function install_ante_magic(): unit
     -- and the boss rush, where every duel is; `spell` is the starting spell
     -- picked on the menu's second list and carried for the whole run.
     local function begin_run(rush: bool, spell: spells.SpellKind): unit
-        if not assets:unlock_audio() then return end
+        if not assets:unlock_audio() then
+            return
+        end
         duel:reset(city, rush, spell)
         screen = "game"
     end
@@ -112,8 +115,12 @@ function install_ante_magic(): unit
                     landmark = duel:landmark_stop()
                 end
                 city_map_render.draw(
-                    city, graphics, ink.color_ink(city.streak_suit),
-                    city.cover, landmark)
+                    city,
+                    graphics,
+                    ink.color_ink(city.streak_suit),
+                    city.cover,
+                    landmark
+                )
             end
             if screen == "menu" then
                 menu_state:draw(canvas, assets:surface(graphics), assets.sound_finished)
@@ -133,7 +140,9 @@ function install_ante_magic(): unit
     end
 
     local function keypressed(key: string): unit
-        if #assets.fatal_audio_code > 0 then return end
+        if #assets.fatal_audio_code > 0 then
+            return
+        end
         if screen == "menu" then
             menu_action(menu_state:keypressed(key))
             return
@@ -144,7 +153,9 @@ function install_ante_magic(): unit
     end
 
     local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
-        if #assets.fatal_audio_code > 0 then return end
+        if #assets.fatal_audio_code > 0 then
+            return
+        end
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
         if screen == "menu" then
@@ -155,7 +166,9 @@ function install_ante_magic(): unit
     end
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
-        if #assets.fatal_audio_code > 0 then return end
+        if #assets.fatal_audio_code > 0 then
+            return
+        end
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
         if screen == "menu" then
@@ -166,7 +179,9 @@ function install_ante_magic(): unit
     end
 
     local function mousereleased(x: f64, y: f64, button: i32): unit
-        if #assets.fatal_audio_code > 0 then return end
+        if #assets.fatal_audio_code > 0 then
+            return
+        end
         x = layout.canvas_x(x)
         y = layout.canvas_y(y)
         if screen == "menu" then
@@ -179,69 +194,87 @@ function install_ante_magic(): unit
     -- No configured viewport: the canvas takes the browser's space and the
     -- layout module derives everything from whatever size that turns out to
     -- be, frame by frame.
-    local session: engine.Session? = engine.start({
-        title = "Ante Magic",
-        update_hz = 60.0,
-        max_frame_seconds = 0.25,
-        background = "#09090b",
-        canvas_sizing = true,
-    }, {
-        load = load,
-        update = update,
-        draw = draw,
-        keypressed = keypressed,
-        keyreleased = nil,
-        mousepressed = mousepressed,
-        mousereleased = mousereleased,
-        mousemoved = mousemoved,
-    })
+    local session: engine.Session? = engine.start(
+        {
+            title = "Ante Magic",
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#09090b",
+            canvas_sizing = true
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = nil,
+            mousepressed = mousepressed,
+            mousereleased = mousereleased,
+            mousemoved = mousemoved
+        }
+    )
 
-    hot.register({
-        snapshot = function(): string
-            local payload: HotSnapshot = {
-                schema = HOT_SNAPSHOT_SCHEMA,
-                screen = screen,
-                sections = duel:snapshot(),
-            }
-            return json.pack(payload)
-        end,
-        restore = function(snapshot_value: string): bool
-            local decoded = json.unpack<HotSnapshot>(snapshot_value)
-            if decoded == nil then return false end
-            if decoded.schema ~= HOT_SNAPSHOT_SCHEMA then return false end
-            -- The screen marker is a literal union, which decodes as a plain
-            -- string; an unknown marker is another build's payload.
-            if decoded.screen ~= "menu" and decoded.screen ~= "game" then
-                return false
+    hot.register(
+        {
+            snapshot = function(): string
+                local payload: HotSnapshot = {
+                    schema = HOT_SNAPSHOT_SCHEMA,
+                    screen = screen,
+                    sections = duel:snapshot()
+                }
+                return json.pack(payload)
+            end,
+            restore = function(snapshot_value: string): bool
+                local decoded = json.unpack<HotSnapshot>(snapshot_value)
+                if decoded == nil then
+                    return false
+                end
+                if decoded.schema ~= HOT_SNAPSHOT_SCHEMA then
+                    return false
+                end
+                -- The screen marker is a literal union, which decodes as a plain
+                -- string; an unknown marker is another build's payload.
+                if decoded.screen ~= "menu" and decoded.screen ~= "game" then
+                    return false
+                end
+                -- A payload framed by a differently shaped build is a normal
+                -- refusal: the sections it holds are not the ones this build
+                -- would restore.
+                if #decoded.sections ~= HOT_SNAPSHOT_SECTIONS then
+                    return false
+                end
+                local payloads: {string} = decoded.sections
+                local restored: game_screen.State? = game_screen.State.restore(
+                    payloads[0],
+                    payloads[1],
+                    payloads[2],
+                    payloads[3],
+                    payloads[4]
+                )
+                if restored == nil then
+                    return false
+                end
+                duel = restored::game_screen.State
+                menu_state:reset(city)
+                screen = decoded.screen
+                -- A restored run is set down where it stands rather than played
+                -- back to it: the map takes the duel's stop with no walk and no
+                -- dissolve left to run.
+                if decoded.screen == "game" then
+                    duel:place_city(city)
+                end
+                return true
+            end,
+            dispose = function(): unit
+                local running: engine.Session? = session
+                if running ~= nil then
+                    (running::engine.Session).suspend()
+                    session = nil
+                end
+                assets:dispose()
             end
-            -- A payload framed by a differently shaped build is a normal
-            -- refusal: the sections it holds are not the ones this build
-            -- would restore.
-            if #decoded.sections ~= HOT_SNAPSHOT_SECTIONS then return false end
-            local payloads: {string} = decoded.sections
-            local restored: game_screen.State? = game_screen.State.restore(
-                payloads[0], payloads[1], payloads[2], payloads[3], payloads[4])
-            if restored == nil then return false end
-            duel = restored::game_screen.State
-            menu_state:reset(city)
-            screen = decoded.screen
-            -- A restored run is set down where it stands rather than played
-            -- back to it: the map takes the duel's stop with no walk and no
-            -- dissolve left to run.
-            if decoded.screen == "game" then
-                duel:place_city(city)
-            end
-            return true
-        end,
-        dispose = function(): unit
-            local running: engine.Session? = session
-            if running ~= nil then
-                (running::engine.Session).suspend()
-                session = nil
-            end
-            assets:dispose()
-        end,
-    })
+        }
+    )
 end
 
 install_ante_magic()

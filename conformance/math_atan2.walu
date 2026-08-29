@@ -1,7 +1,6 @@
 -- math.atan2(y, x) is the signed angle of the vector (x, y) in radians. The
 -- argument order follows Lua and C, and the result covers all four quadrants
 -- in (-pi, pi] rather than the half-plane a single-argument arctangent sees.
-
 local function close(value: f64, expected: f64): bool
     return math.abs(value - expected) < 0.000001
 end

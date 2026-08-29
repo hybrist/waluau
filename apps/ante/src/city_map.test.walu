@@ -1,14 +1,15 @@
 -- Deterministic, DOM-free checks for the generated city map: its streets, the
 -- route the duel walks through them, and the pans and dissolves that carry the
 -- picture from one screen to the next.
-
 require("waluau:vitest")
 
 local city_map = require("./city_map")
 
 function contains(streets: {f64}, coordinate: f64): bool
     for street in streets do
-        if street == coordinate then return true end
+        if street == coordinate then
+            return true
+        end
     end
     return false
 end
@@ -19,291 +20,333 @@ end
 function on_screen(state: city_map.State, point: city_map.Point): bool
     local screen_x: f64 = state.anchor_x + (point.x - state.camera_x) * state.zoom
     local screen_y: f64 = state.anchor_y + (point.y - state.camera_y) * state.zoom
-    return screen_x >= 0.0 and screen_x <= state.view_width
-        and screen_y >= 0.0 and screen_y <= state.view_height
+    return screen_x >= 0.0 and screen_x <= state.view_width and screen_y >= 0.0 and screen_y <= state.view_height
 end
 
 -- Whether the camera has the point exactly where the screens leave room for it,
 -- rather than merely somewhere on the screen. Clamping against a city edge is
 -- what would break this.
 function at_anchor(state: city_map.State, point: city_map.Point): bool
-    return math.abs(point.x - state.camera_x) < 0.001
-        and math.abs(point.y - state.camera_y) < 0.001
+    return math.abs(point.x - state.camera_x) < 0.001 and math.abs(point.y - state.camera_y) < 0.001
 end
 
 function step_seconds(state: city_map.State, seconds: f64): unit
     local ticks: i32 = math.floor(seconds * 60.0)::i32
-    for _ = 1, ticks do state:update(1.0 / 60.0) end
+    for _ = 1, ticks do
+        state:update(1.0 / 60.0)
+    end
 end
 
-describe("city map", function()
-    it("generates a stable irregular map from a seed", function()
-        local first: city_map.State = city_map.State.new(41)
-        local second: city_map.State = city_map.State.new(41)
+describe(
+    "city map",
+    function()
+        it(
+            "generates a stable irregular map from a seed",
+            function()
+                local first: city_map.State = city_map.State.new(41)
+                local second: city_map.State = city_map.State.new(41)
 
-        expect(#first.vertical_streets):toBeGreaterThan(5)
-        expect(#first.horizontal_streets):toBeGreaterThan(5)
-        expect(first.vertical_streets[#first.vertical_streets - 1]):toBe(city_map.width)
-        expect(first.horizontal_streets[#first.horizontal_streets - 1]):toBe(city_map.height)
-        expect(#first.buildings):toBe(
-            (#first.vertical_streets - 1) * (#first.horizontal_streets - 1))
-        expect(#second.vertical_streets):toBe(#first.vertical_streets)
-        expect(#second.horizontal_streets):toBe(#first.horizontal_streets)
-        for index = 0::i32, #first.vertical_streets - 1 do
-            expect(second.vertical_streets[index]):toBe(first.vertical_streets[index])
-        end
-        for index = 0::i32, #first.horizontal_streets - 1 do
-            expect(second.horizontal_streets[index]):toBe(first.horizontal_streets[index])
-        end
-        for index = 0::i32, first:stop_count() - 1 do
-            expect(second.stops[index].x):toBe(first.stops[index].x)
-            expect(second.stops[index].y):toBe(first.stops[index].y)
-        end
-    end)
+                expect(#first.vertical_streets):toBeGreaterThan(5)
+                expect(#first.horizontal_streets):toBeGreaterThan(5)
+                expect(first.vertical_streets[#first.vertical_streets - 1]):toBe(city_map.width)
+                expect(
+                    first.horizontal_streets[#first.horizontal_streets - 1]
+                ):toBe(city_map.height)
+                expect(
+                    #first.buildings
+                ):toBe((#first.vertical_streets - 1) * (#first.horizontal_streets - 1))
+                expect(#second.vertical_streets):toBe(#first.vertical_streets)
+                expect(#second.horizontal_streets):toBe(#first.horizontal_streets)
+                for index = 0::i32, #first.vertical_streets - 1 do
+                    expect(second.vertical_streets[index]):toBe(first.vertical_streets[index])
+                end
+                for index = 0::i32, #first.horizontal_streets - 1 do
+                    expect(second.horizontal_streets[index]):toBe(first.horizontal_streets[index])
+                end
+                for index = 0::i32, first:stop_count() - 1 do
+                    expect(second.stops[index].x):toBe(first.stops[index].x)
+                    expect(second.stops[index].y):toBe(first.stops[index].y)
+                end
+            end
+        )
 
-    it("alternates vendors and duels along streets it generated", function()
-        local city: city_map.State = city_map.State.new(17)
-        -- A realistic measured viewport: the anchor claims below are about a
-        -- screen someone is actually looking at, not the unmeasured default.
-        city:resize(1100.0, 620.0)
-        city:ensure_stops(24)
+        it(
+            "alternates vendors and duels along streets it generated",
+            function()
+                local city: city_map.State = city_map.State.new(17)
+                -- A realistic measured viewport: the anchor claims below are about a
+                -- screen someone is actually looking at, not the unmeasured default.
+                city:resize(1100.0, 620.0)
+                city:ensure_stops(24)
 
-        expect(city:stop_count()):toBeGreaterThanOrEqual(24)
-        for index = 0::i32, city:stop_count() - 1 do
-            local stop: city_map.Stop = city.stops[index]
-            expect(stop.duel):toBe(index % 2 == 1)
-            expect(contains(city.vertical_streets, stop.x)):toBe(true)
-            expect(contains(city.horizontal_streets, stop.y)):toBe(true)
-            -- The route never stands on the city's outermost street, so every
-            -- stop has blocks on both sides of it to be a corner of.
-            expect(stop.x):toBeGreaterThan(0.0)
-            expect(stop.x):toBeLessThan(city_map.width)
-            expect(stop.y):toBeGreaterThan(0.0)
-            expect(stop.y):toBeLessThan(city_map.height)
-        end
+                expect(city:stop_count()):toBeGreaterThanOrEqual(24)
+                for index = 0::i32, city:stop_count() - 1 do
+                    local stop: city_map.Stop = city.stops[index]
+                    expect(stop.duel):toBe(index % 2 == 1)
+                    expect(contains(city.vertical_streets, stop.x)):toBe(true)
+                    expect(contains(city.horizontal_streets, stop.y)):toBe(true)
+                    -- The route never stands on the city's outermost street, so every
+                    -- stop has blocks on both sides of it to be a corner of.
+                    expect(stop.x):toBeGreaterThan(0.0)
+                    expect(stop.x):toBeLessThan(city_map.width)
+                    expect(stop.y):toBeGreaterThan(0.0)
+                    expect(stop.y):toBeLessThan(city_map.height)
+                end
 
-        -- Every stop can be brought under the anchor the map screens leave room
-        -- for. A stop too near a city edge for that would be shown wide of the
-        -- mark, behind whatever list is standing there.
-        for index = 0::i32, city:stop_count() - 1 do
-            city:warp(index)
-            expect(at_anchor(city, city:position())):toBe(true)
-        end
-        -- Each leg turns a corner and covers ground: one axis changes, the
-        -- other holds, and the two stops are never the same corner.
-        for index = 0::i32, city:stop_count() - 2 do
-            local from: city_map.Stop = city.stops[index]
-            local into: city_map.Stop = city.stops[index + 1]
-            expect(from.x == into.x or from.y == into.y):toBe(true)
-            expect(from.x == into.x and from.y == into.y):toBe(false)
-        end
-    end)
+                -- Every stop can be brought under the anchor the map screens leave room
+                -- for. A stop too near a city edge for that would be shown wide of the
+                -- mark, behind whatever list is standing there.
+                for index = 0::i32, city:stop_count() - 1 do
+                    city:warp(index)
+                    expect(at_anchor(city, city:position())):toBe(true)
+                end
+                -- Each leg turns a corner and covers ground: one axis changes, the
+                -- other holds, and the two stops are never the same corner.
+                for index = 0::i32, city:stop_count() - 2 do
+                    local from: city_map.Stop = city.stops[index]
+                    local into: city_map.Stop = city.stops[index + 1]
+                    expect(from.x == into.x or from.y == into.y):toBe(true)
+                    expect(from.x == into.x and from.y == into.y):toBe(false)
+                end
+            end
+        )
 
-    it("numbers the route so duels and the fences before them agree", function()
-        expect(city_map.shop_stop(1)):toBe(0)
-        expect(city_map.duel_stop(1)):toBe(1)
-        expect(city_map.shop_stop(3)):toBe(4)
-        expect(city_map.duel_stop(3)):toBe(5)
-        expect(city_map.stop_duel(0)):toBe(1)
-        expect(city_map.stop_duel(1)):toBe(1)
-        expect(city_map.stop_duel(4)):toBe(3)
-        expect(city_map.stop_duel(5)):toBe(3)
+        it(
+            "numbers the route so duels and the fences before them agree",
+            function()
+                expect(city_map.shop_stop(1)):toBe(0)
+                expect(city_map.duel_stop(1)):toBe(1)
+                expect(city_map.shop_stop(3)):toBe(4)
+                expect(city_map.duel_stop(3)):toBe(5)
+                expect(city_map.stop_duel(0)):toBe(1)
+                expect(city_map.stop_duel(1)):toBe(1)
+                expect(city_map.stop_duel(4)):toBe(3)
+                expect(city_map.stop_duel(5)):toBe(3)
 
-        -- Following a duel the route has not been walked out to still finds a
-        -- stop there: the map extends itself rather than ending.
-        local city: city_map.State = city_map.State.new(23)
-        city:follow(city_map.duel_stop(40))
-        expect(city:stop_count()):toBeGreaterThan(city_map.duel_stop(40))
-    end)
+                -- Following a duel the route has not been walked out to still finds a
+                -- stop there: the map extends itself rather than ending.
+                local city: city_map.State = city_map.State.new(23)
+                city:follow(city_map.duel_stop(40))
+                expect(city:stop_count()):toBeGreaterThan(city_map.duel_stop(40))
+            end
+        )
 
-    it("pans slowly within the generated map while no route is followed", function()
-        local city: city_map.State = city_map.State.new(52)
-        city:resize(1050.0, 600.0)
-        local start_x: f64 = city.camera_x
-        local start_y: f64 = city.camera_y
-        step_seconds(city, 10.0)
+        it(
+            "pans slowly within the generated map while no route is followed",
+            function()
+                local city: city_map.State = city_map.State.new(52)
+                city:resize(1050.0, 600.0)
+                local start_x: f64 = city.camera_x
+                local start_y: f64 = city.camera_y
+                step_seconds(city, 10.0)
 
-        expect(city.camera_x):toBeGreaterThan(start_x)
-        expect(city.camera_y):toBeGreaterThan(start_y)
-        -- The visible rectangle never runs off the generated city.
-        expect(city.camera_x - city.anchor_x / city.zoom):toBeGreaterThanOrEqual(0.0)
-        expect(
-            city.camera_x + (city.view_width - city.anchor_x) / city.zoom
-        ):toBeLessThanOrEqual(city_map.width)
-        expect(city.camera_y - city.anchor_y / city.zoom):toBeGreaterThanOrEqual(0.0)
-        expect(
-            city.camera_y + (city.view_height - city.anchor_y) / city.zoom
-        ):toBeLessThanOrEqual(city_map.height)
-    end)
+                expect(city.camera_x):toBeGreaterThan(start_x)
+                expect(city.camera_y):toBeGreaterThan(start_y)
+                -- The visible rectangle never runs off the generated city.
+                expect(city.camera_x - city.anchor_x / city.zoom):toBeGreaterThanOrEqual(0.0)
+                expect(
+                    city.camera_x + (city.view_width - city.anchor_x) / city.zoom
+                ):toBeLessThanOrEqual(city_map.width)
+                expect(city.camera_y - city.anchor_y / city.zoom):toBeGreaterThanOrEqual(0.0)
+                expect(
+                    city.camera_y + (city.view_height - city.anchor_y) / city.zoom
+                ):toBeLessThanOrEqual(city_map.height)
+            end
+        )
 
-    it("exposes additional city when the logical viewport grows", function()
-        local city: city_map.State = city_map.State.new(53)
-        city:resize(1200.0, 800.0)
+        it(
+            "exposes additional city when the logical viewport grows",
+            function()
+                local city: city_map.State = city_map.State.new(53)
+                city:resize(1200.0, 800.0)
 
-        expect(city.view_width):toBe(1200.0)
-        expect(city.view_height):toBe(800.0)
-        step_seconds(city, 10.0)
-        expect(city.camera_x - city.anchor_x / city.zoom):toBeGreaterThanOrEqual(0.0)
-        expect(
-            city.camera_x + (city.view_width - city.anchor_x) / city.zoom
-        ):toBeLessThanOrEqual(city_map.width)
-        expect(city.camera_y - city.anchor_y / city.zoom):toBeGreaterThanOrEqual(0.0)
-        expect(
-            city.camera_y + (city.view_height - city.anchor_y) / city.zoom
-        ):toBeLessThanOrEqual(city_map.height)
-    end)
+                expect(city.view_width):toBe(1200.0)
+                expect(city.view_height):toBe(800.0)
+                step_seconds(city, 10.0)
+                expect(city.camera_x - city.anchor_x / city.zoom):toBeGreaterThanOrEqual(0.0)
+                expect(
+                    city.camera_x + (city.view_width - city.anchor_x) / city.zoom
+                ):toBeLessThanOrEqual(city_map.width)
+                expect(city.camera_y - city.anchor_y / city.zoom):toBeGreaterThanOrEqual(0.0)
+                expect(
+                    city.camera_y + (city.view_height - city.anchor_y) / city.zoom
+                ):toBeLessThanOrEqual(city_map.height)
+            end
+        )
 
-    it("walks to a followed stop instead of jumping to it", function()
-        local city: city_map.State = city_map.State.new(64)
-        city:resize(1050.0, 600.0)
-        city:follow(4)
+        it(
+            "walks to a followed stop instead of jumping to it",
+            function()
+                local city: city_map.State = city_map.State.new(64)
+                city:resize(1050.0, 600.0)
+                city:follow(4)
 
-        city:update(1.0 / 60.0)
-        expect(city.travel):toBeGreaterThan(0.0)
-        expect(city.travel):toBeLessThan(4.0)
+                city:update(1.0 / 60.0)
+                expect(city.travel):toBeGreaterThan(0.0)
+                expect(city.travel):toBeLessThan(4.0)
 
-        step_seconds(city, 12.0)
-        expect(city.travel):toBe(4.0)
-        expect(on_screen(city, city:position())):toBe(true)
+                step_seconds(city, 12.0)
+                expect(city.travel):toBe(4.0)
+                expect(on_screen(city, city:position())):toBe(true)
 
-        -- The menu's drifting view and the first vendor are the same map, so
-        -- aiming at the vendor moves the camera rather than replacing the
-        -- picture.
-        city:drift()
-        step_seconds(city, 4.0)
-        city:follow(city_map.shop_stop(1))
-        step_seconds(city, 12.0)
-        expect(city.travel):toBe(0.0)
-        expect(on_screen(city, city:position())):toBe(true)
-    end)
+                -- The menu's drifting view and the first vendor are the same map, so
+                -- aiming at the vendor moves the camera rather than replacing the
+                -- picture.
+                city:drift()
+                step_seconds(city, 4.0)
+                city:follow(city_map.shop_stop(1))
+                step_seconds(city, 12.0)
+                expect(city.travel):toBe(0.0)
+                expect(on_screen(city, city:position())):toBe(true)
+            end
+        )
 
-    it("sets a restarted route down without walking the city back to it", function()
-        local city: city_map.State = city_map.State.new(77)
-        city:resize(1050.0, 600.0)
-        city:follow(6)
-        step_seconds(city, 12.0)
+        it(
+            "sets a restarted route down without walking the city back to it",
+            function()
+                local city: city_map.State = city_map.State.new(77)
+                city:resize(1050.0, 600.0)
+                city:follow(6)
+                step_seconds(city, 12.0)
 
-        city:warp(city_map.shop_stop(1))
-        expect(city.travel):toBe(0.0)
-        expect(on_screen(city, city:position())):toBe(true)
-    end)
+                city:warp(city_map.shop_stop(1))
+                expect(city.travel):toBe(0.0)
+                expect(on_screen(city, city:position())):toBe(true)
+            end
+        )
 
-    it("goes into the house before handing the screen to the duel", function()
-        local city: city_map.State = city_map.State.new(88)
-        city:warp(city_map.duel_stop(1))
-        expect(city.cover):toBe(1.0)
-        expect(city.zoom):toBe(1.0)
-        expect(city:visible()):toBe(true)
+        it(
+            "goes into the house before handing the screen to the duel",
+            function()
+                local city: city_map.State = city_map.State.new(88)
+                city:warp(city_map.duel_stop(1))
+                expect(city.cover):toBe(1.0)
+                expect(city.zoom):toBe(1.0)
+                expect(city:visible()):toBe(true)
 
-        -- The first half of the dive is the camera closing on the house, with
-        -- the map still holding the whole screen. A push in nobody can see is
-        -- the cut this exists to avoid.
-        city:hide()
-        step_seconds(city, 0.25)
-        expect(city.zoom):toBeGreaterThan(1.5)
-        expect(city.cover):toBe(1.0)
+                -- The first half of the dive is the camera closing on the house, with
+                -- the map still holding the whole screen. A push in nobody can see is
+                -- the cut this exists to avoid.
+                city:hide()
+                step_seconds(city, 0.25)
+                expect(city.zoom):toBeGreaterThan(1.5)
+                expect(city.cover):toBe(1.0)
 
-        -- Then the duel takes over, and by the time it has the door is wide
-        -- enough to be the frame around it.
-        step_seconds(city, 0.3)
-        expect(city.cover):toBeLessThan(1.0)
-        expect(city.cover):toBeGreaterThan(0.0)
-        expect(city:visible()):toBe(true)
-        local midway: f64 = city.zoom
+                -- Then the duel takes over, and by the time it has the door is wide
+                -- enough to be the frame around it.
+                step_seconds(city, 0.3)
+                expect(city.cover):toBeLessThan(1.0)
+                expect(city.cover):toBeGreaterThan(0.0)
+                expect(city:visible()):toBe(true)
+                local midway: f64 = city.zoom
 
-        step_seconds(city, 0.6)
-        expect(city.cover):toBe(0.0)
-        expect(city:visible()):toBe(false)
-        expect(city.zoom):toBeGreaterThan(midway)
-        -- Close enough that a map marker is the whole screen.
-        expect(city.zoom):toBeGreaterThan(20.0)
+                step_seconds(city, 0.6)
+                expect(city.cover):toBe(0.0)
+                expect(city:visible()):toBe(false)
+                expect(city.zoom):toBeGreaterThan(midway)
+                -- Close enough that a map marker is the whole screen.
+                expect(city.zoom):toBeGreaterThan(20.0)
 
-        -- Coming back out runs the same movement backwards: the map has the
-        -- screen again well before the camera has finished opening up.
-        city:show()
-        step_seconds(city, 0.45)
-        expect(city.cover):toBe(1.0)
-        expect(city.zoom):toBeGreaterThan(1.0)
-        step_seconds(city, 0.5)
-        expect(city.zoom):toBe(1.0)
-    end)
+                -- Coming back out runs the same movement backwards: the map has the
+                -- screen again well before the camera has finished opening up.
+                city:show()
+                step_seconds(city, 0.45)
+                expect(city.cover):toBe(1.0)
+                expect(city.zoom):toBeGreaterThan(1.0)
+                step_seconds(city, 0.5)
+                expect(city.zoom):toBe(1.0)
+            end
+        )
 
-    it("walks to the door and dives in afterwards, never both at once", function()
-        local city: city_map.State = city_map.State.new(31)
-        city:warp(city_map.shop_stop(1))
+        it(
+            "walks to the door and dives in afterwards, never both at once",
+            function()
+                local city: city_map.State = city_map.State.new(31)
+                city:warp(city_map.shop_stop(1))
 
-        -- Asking for the next duel while standing at its shop is a walk
-        -- first: the camera cannot go into a house the duel has not reached.
-        city:follow(city_map.duel_stop(1))
-        city:hide()
-        step_seconds(city, 0.3)
-        expect(city.travel):toBeGreaterThan(0.0)
-        expect(city.travel):toBeLessThan(1.0)
-        expect(city.zoom):toBe(1.0)
-        expect(city.cover):toBe(1.0)
+                -- Asking for the next duel while standing at its shop is a walk
+                -- first: the camera cannot go into a house the duel has not reached.
+                city:follow(city_map.duel_stop(1))
+                city:hide()
+                step_seconds(city, 0.3)
+                expect(city.travel):toBeGreaterThan(0.0)
+                expect(city.travel):toBeLessThan(1.0)
+                expect(city.zoom):toBe(1.0)
+                expect(city.cover):toBe(1.0)
 
-        step_seconds(city, 0.5)
-        expect(city.travel):toBe(1.0)
-        expect(city.zoom):toBeGreaterThan(1.0)
-        step_seconds(city, 1.0)
-        expect(city.zoom):toBeGreaterThan(20.0)
+                step_seconds(city, 0.5)
+                expect(city.travel):toBe(1.0)
+                expect(city.zoom):toBeGreaterThan(1.0)
+                step_seconds(city, 1.0)
+                expect(city.zoom):toBeGreaterThan(20.0)
 
-        -- And coming out of a duel the camera opens up before anyone steps
-        -- into the street.
-        city:follow(city_map.shop_stop(2))
-        city:show()
-        step_seconds(city, 0.4)
-        expect(city.travel):toBe(1.0)
-        expect(city.zoom):toBeGreaterThan(1.0)
-        step_seconds(city, 1.4)
-        expect(city.zoom):toBe(1.0)
-        expect(city.travel):toBe(2.0)
-    end)
+                -- And coming out of a duel the camera opens up before anyone steps
+                -- into the street.
+                city:follow(city_map.shop_stop(2))
+                city:show()
+                step_seconds(city, 0.4)
+                expect(city.travel):toBe(1.0)
+                expect(city.zoom):toBeGreaterThan(1.0)
+                step_seconds(city, 1.4)
+                expect(city.zoom):toBe(1.0)
+                expect(city.travel):toBe(2.0)
+            end
+        )
 
-    it("settles a dissolve that has nothing to play for", function()
-        local city: city_map.State = city_map.State.new(99)
-        city:resize(1050.0, 600.0)
-        city:follow(5)
-        city:hide()
-        city:settle()
+        it(
+            "settles a dissolve that has nothing to play for",
+            function()
+                local city: city_map.State = city_map.State.new(99)
+                city:resize(1050.0, 600.0)
+                city:follow(5)
+                city:hide()
+                city:settle()
 
-        expect(city.cover):toBe(0.0)
-        expect(city.travel):toBe(5.0)
-        expect(on_screen(city, city:position())):toBe(true)
-    end)
+                expect(city.cover):toBe(0.0)
+                expect(city.travel):toBe(5.0)
+                expect(on_screen(city, city:position())):toBe(true)
+            end
+        )
 
-    it("keeps every animated dash on a generated street", function()
-        local city: city_map.State = city_map.State.new(73)
-        if city.streak_horizontal then
-            expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
-        else
-            expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
-        end
-        expect(city.streak_suit):toBeGreaterThanOrEqual(0)
-        expect(city.streak_suit):toBeLessThan(4)
+        it(
+            "keeps every animated dash on a generated street",
+            function()
+                local city: city_map.State = city_map.State.new(73)
+                if city.streak_horizontal then
+                    expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
+                else
+                    expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
+                end
+                expect(city.streak_suit):toBeGreaterThanOrEqual(0)
+                expect(city.streak_suit):toBeLessThan(4)
 
-        -- Cross the first dash so the next randomized route is chosen.
-        city:update(2.0)
-        expect(city.streak_clock):toBeLessThan(0.0)
-        if city.streak_horizontal then
-            expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
-        else
-            expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
-        end
-    end)
+                -- Cross the first dash so the next randomized route is chosen.
+                city:update(2.0)
+                expect(city.streak_clock):toBeLessThan(0.0)
+                if city.streak_horizontal then
+                    expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
+                else
+                    expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
+                end
+            end
+        )
 
-    it("does not consume gameplay randomness while it animates", function()
-        math.randomseed(91)
-        local seed: i32 = math.random(2147483646)
-        local expected_next: i32 = math.random(2147483646)
+        it(
+            "does not consume gameplay randomness while it animates",
+            function()
+                math.randomseed(91)
+                local seed: i32 = math.random(2147483646)
+                local expected_next: i32 = math.random(2147483646)
 
-        math.randomseed(91)
-        local city: city_map.State = city_map.State.new(math.random(2147483646))
-        city:update(2.0)
-        city:follow(city_map.duel_stop(6))
-        city:update(9.0)
-        expect(math.random(2147483646)):toBe(expected_next)
-        -- Keep the sampled seed live so the compiler also pins its type.
-        expect(seed):toBeGreaterThan(0)
-    end)
-end)
+                math.randomseed(91)
+                local city: city_map.State = city_map.State.new(math.random(2147483646))
+                city:update(2.0)
+                city:follow(city_map.duel_stop(6))
+                city:update(9.0)
+                expect(math.random(2147483646)):toBe(expected_next)
+                -- Keep the sampled seed live so the compiler also pins its type.
+                expect(seed):toBeGreaterThan(0)
+            end
+        )
+    end
+)

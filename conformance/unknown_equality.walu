@@ -2,7 +2,6 @@
 -- boxed representations (so 1 == 1.0), booleans by value, strings by content,
 -- nil against nil, and reference values (tables) by identity — matching Lua's
 -- primitive equality without metamethods.
-
 function eq(a, b)
     return a == b
 end

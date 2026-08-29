@@ -2,7 +2,6 @@
 -- logic is exercised by headless tests without a canvas or animation frame.
 -- Timestamps arrive in milliseconds (the requestAnimationFrame convention);
 -- game updates receive seconds.
-
 export type Clock = { step: f64, max_frame: f64, accumulator: f64, last_ms: f64, started: bool }
 
 function Clock.new(update_hz: f64, max_frame_seconds: f64): Clock
@@ -13,7 +12,7 @@ function Clock.new(update_hz: f64, max_frame_seconds: f64): Clock
         max_frame = max_frame_seconds,
         accumulator = 0.0,
         last_ms = 0.0,
-        started = false,
+        started = false
     }
 end
 
@@ -47,6 +46,4 @@ function Clock:alpha(): f64
     return self.accumulator / self.step
 end
 
-return {
-    new = Clock.new,
-}
+return { new = Clock.new }

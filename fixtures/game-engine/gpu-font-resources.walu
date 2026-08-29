@@ -19,12 +19,15 @@ function install_gpu_font_fixture(): unit
         image = { handle = 0, kind = "image", path = "assets/card-back.svg" },
         font = { handle = 0, kind = "font", path = "assets/Cinzel-Bold.ttf" },
         loaded = false,
-        rendered = false,
+        rendered = false
     }
 
     local function load_async(): i32
         local image_result: resources.LoadResult = resources.await_image("assets/card-back.svg")
-        local font_result: resources.LoadResult = resources.await_font("assets/Cinzel-Bold.ttf", "Arcane Vault Test")
+        local font_result: resources.LoadResult = resources.await_font(
+            "assets/Cinzel-Bold.ttf",
+            "Arcane Vault Test"
+        )
         local missing: resources.LoadResult = resources.await_image("assets/missing.svg")
         assert(image_result.ok and font_result.ok)
         assert(not missing.ok and missing.error.code == "not_found")
@@ -39,12 +42,17 @@ function install_gpu_font_fixture(): unit
         local co: thread = coroutine.create(load_async)
         coroutine.resume(co)
     end
-    local function update(dt: f64, input: input_module.Input): unit end
+    local function update(dt: f64, input: input_module.Input): unit
+    end
     local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
-        if not state.loaded or state.rendered then return end
+        if not state.loaded or state.rendered then
+            return
+        end
         assert(graphics:supports("textures") and graphics:supports("custom-fonts"))
 
-        local texture_result: graphics_module.TextureResult = graphics:texture_from_resource(state.image)
+        local texture_result: graphics_module.TextureResult = graphics:texture_from_resource(
+            state.image
+        )
         local font_result: graphics_module.FontResult = graphics:font_from_resource(state.font)
         resources.release(state.image)
         resources.release(state.font)
@@ -56,7 +64,19 @@ function install_gpu_font_fixture(): unit
 
         graphics:clear("#101018")
         graphics:set_color("#ffffff")
-        assert(graphics:draw_sprite(texture, 8.0, 8.0, 32.0, 32.0, 0.0, 0.0, texture.width::f64, texture.height::f64))
+        assert(
+            graphics:draw_sprite(
+                texture,
+                8.0,
+                8.0,
+                32.0,
+                32.0,
+                0.0,
+                0.0,
+                texture.width::f64,
+                texture.height::f64
+            )
+        )
         assert(graphics:set_font_resource(custom_font, 24.0))
         graphics:set_color("#40ffff")
         graphics:print("VAULT", 52.0, 35.0)
@@ -74,18 +94,30 @@ function install_gpu_font_fixture(): unit
         record_gpu_font_step("released")
         state.rendered = true
     end
-    local function keypressed(key: string): unit end
-    local function keyreleased(key: string): unit end
-    engine.start({
-        title = "GPU font resources", width = 220, height = 64,
-        update_hz = 60.0, max_frame_seconds = 0.25, background = "#101018",
-    }, {
-        load = load, update = update, draw = draw,
-        keypressed = keypressed, keyreleased = keyreleased,
-        mousepressed = nil,
-        mousereleased = nil,
-        mousemoved = nil,
-    })
+    local function keypressed(key: string): unit
+    end
+    local function keyreleased(key: string): unit
+    end
+    engine.start(
+        {
+            title = "GPU font resources",
+            width = 220,
+            height = 64,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#101018"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
 end
 
 install_gpu_font_fixture()

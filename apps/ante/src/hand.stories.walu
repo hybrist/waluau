@@ -15,22 +15,30 @@ local book = ui_story.Book.new()
 
 type Position = "none" | "first" | "left-middle" | "middle" | "right-middle" | "last"
 local hand_count = storybook.range("count", 5, 1, 11, 1)
-local hand_selected = storybook.select("selected", "none"::Position, {
-    storybook.choice("None", "none"::Position),
-    storybook.choice("First", "first"::Position),
-    storybook.choice("Left of middle", "left-middle"::Position),
-    storybook.choice("Middle", "middle"::Position),
-    storybook.choice("Right of middle", "right-middle"::Position),
-    storybook.choice("Last", "last"::Position)
-})
-local hand_focused = storybook.select("focused", "none"::Position, {
-    storybook.choice("None", "none"::Position),
-    storybook.choice("First", "first"::Position),
-    storybook.choice("Left of middle", "left-middle"::Position),
-    storybook.choice("Middle", "middle"::Position),
-    storybook.choice("Right of middle", "right-middle"::Position),
-    storybook.choice("Last", "last"::Position)
-})
+local hand_selected = storybook.select(
+    "selected",
+    "none"::Position,
+    {
+        storybook.choice("None", "none"::Position),
+        storybook.choice("First", "first"::Position),
+        storybook.choice("Left of middle", "left-middle"::Position),
+        storybook.choice("Middle", "middle"::Position),
+        storybook.choice("Right of middle", "right-middle"::Position),
+        storybook.choice("Last", "last"::Position)
+    }
+)
+local hand_focused = storybook.select(
+    "focused",
+    "none"::Position,
+    {
+        storybook.choice("None", "none"::Position),
+        storybook.choice("First", "first"::Position),
+        storybook.choice("Left of middle", "left-middle"::Position),
+        storybook.choice("Middle", "middle"::Position),
+        storybook.choice("Right of middle", "right-middle"::Position),
+        storybook.choice("Last", "last"::Position)
+    }
+)
 
 local function card_at(index: i32): game.Card
     return { rank = 14 - index, suit = (index % 4)::game.Suit }
@@ -82,11 +90,8 @@ local function hand_values(): ({card.Look}, {f64}, {bool})
     return looks, parts, hidden
 end
 
-local initial_looks: {card.Look} = {
-    card.look(card_at(0), false, false, false, false, false),
-}
-local hand_view: hand_fan.Stateful = hand_fan.Stateful.new(
-    initial_looks, { 0.0 }, { false })
+local initial_looks: {card.Look} = {card.look(card_at(0), false, false, false, false, false)}
+local hand_view: hand_fan.Stateful = hand_fan.Stateful.new(initial_looks, {0.0}, {false})
 
 local function present_hand(): unit
     local looks, parts, hidden = hand_values()
@@ -101,7 +106,8 @@ storybook.publish(
     {
         storybook.story(
             "Fan",
-            book:scene({
+            book:scene(
+                {
                     node = hand,
                     present = present_hand,
                     width = WIDTH,

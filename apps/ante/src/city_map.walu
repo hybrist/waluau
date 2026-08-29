@@ -15,15 +15,7 @@
 -- map is the picture and 0.0 once the duel has taken it over. Its private
 -- random stream keeps generation and animation timing from changing the duel's
 -- deck shuffle.
-
-export type Building = {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    tone: i32,
-    detail: i32
-}
+export type Building = { x: f64, y: f64, width: f64, height: f64, tone: i32, detail: i32 }
 -- One place the duel stops. `duel` tells the two kinds apart: a house with a
 -- duel in it, or the street vendor standing between two of them.
 export type Stop = { x: f64, y: f64, duel: bool }
@@ -124,7 +116,9 @@ const MAX_STEP_BLOCKS: i32 = 3
 function random(state: State): f64
     local next: f64 = state.rng * RANDOM_MULTIPLIER
     next = next - math.floor(next / RANDOM_MODULUS) * RANDOM_MODULUS
-    if next < 1.0 then next = 1.0 end
+    if next < 1.0 then
+        next = 1.0
+    end
     state.rng = next
     return (next - 1.0) / (RANDOM_MODULUS - 1.0)
 end
@@ -134,7 +128,9 @@ function random_range(state: State, low: f64, high: f64): f64
 end
 
 function random_index(state: State, count: i32): i32
-    if count <= 1 then return 0 end
+    if count <= 1 then
+        return 0
+    end
     return math.floor(random(state) * (count::f64))::i32
 end
 
@@ -163,14 +159,17 @@ function generate(state: State): unit
             local bottom: f64 = state.horizontal_streets[row + 1] - STREET_WIDTH * 0.5
             local inset_x: f64 = random_range(state, 5.0, 12.0)
             local inset_y: f64 = random_range(state, 5.0, 11.0)
-            table.insert(state.buildings, {
-                x = left + inset_x,
-                y = top + inset_y,
-                width = right - left - inset_x * 2.0,
-                height = bottom - top - inset_y * 2.0,
-                tone = random_index(state, 4),
-                detail = random_index(state, 3),
-            })
+            table.insert(
+                state.buildings,
+                {
+                    x = left + inset_x,
+                    y = top + inset_y,
+                    width = right - left - inset_x * 2.0,
+                    height = bottom - top - inset_y * 2.0,
+                    tone = random_index(state, 4),
+                    detail = random_index(state, 3)
+                }
+            )
         end
     end
 end
@@ -183,7 +182,9 @@ end
 -- reason: a stop on it would have no block on one side to be a corner of.
 function first_street_past(streets: {f64}, margin: f64): i32
     for index = 1::i32, #streets - 2 do
-        if streets[index] >= margin then return index end
+        if streets[index] >= margin then
+            return index
+        end
     end
     return 1
 end
@@ -191,7 +192,9 @@ end
 function last_street_before(streets: {f64}, margin: f64): i32
     local found: i32 = 1
     for index = 1::i32, #streets - 2 do
-        if streets[index] <= margin then found = index end
+        if streets[index] <= margin then
+            found = index
+        end
     end
     return found
 end
@@ -200,15 +203,29 @@ end
 -- around rather than shortening it, so the route keeps its stride instead of
 -- crowding against an edge.
 function walk_axis(position: i32, low: i32, high: i32, span: i32, forward: bool): i32
-    if high <= low then return low end
+    if high <= low then
+        return low
+    end
     local direction: i32 = -1
-    if forward then direction = 1 end
+    if forward then
+        direction = 1
+    end
     local next: i32 = position + direction * span
-    if next > high or next < low then next = position - direction * span end
-    if next > high then next = high end
-    if next < low then next = low end
+    if next > high or next < low then
+        next = position - direction * span
+    end
+    if next > high then
+        next = high
+    end
+    if next < low then
+        next = low
+    end
     if next == position then
-        if position < high then next = position + 1 else next = position - 1 end
+        if position < high then
+            next = position + 1
+        else
+            next = position - 1
+        end
     end
     return next
 end
@@ -217,11 +234,14 @@ end
 -- is a house and every even one the vendor standing before it.
 function append_stop(state: State): unit
     local index: i32 = #state.stops
-    table.insert(state.stops, {
-        x = state.vertical_streets[state.walk_column],
-        y = state.horizontal_streets[state.walk_row],
-        duel = index % 2 == 1,
-    })
+    table.insert(
+        state.stops,
+        {
+            x = state.vertical_streets[state.walk_column],
+            y = state.horizontal_streets[state.walk_row],
+            duel = index % 2 == 1
+        }
+    )
 end
 
 -- Turn a corner and walk one to three blocks. Alternating the axis every leg is
@@ -232,10 +252,14 @@ function walk_next(state: State): unit
     local forward: bool = random(state) < 0.5
     if state.walk_horizontal then
         state.walk_column = walk_axis(
-            state.walk_column, state.column_low, state.column_high, span, forward)
+            state.walk_column,
+            state.column_low,
+            state.column_high,
+            span,
+            forward
+        )
     else
-        state.walk_row = walk_axis(
-            state.walk_row, state.row_low, state.row_high, span, forward)
+        state.walk_row = walk_axis(state.walk_row, state.row_low, state.row_high, span, forward)
     end
     state.walk_horizontal = not state.walk_horizontal
     append_stop(state)
@@ -245,21 +269,22 @@ end
 -- as the run asks for more of it, because a run has no last duel to generate
 -- up to.
 function State:ensure_stops(count: i32): unit
-    while #self.stops < count do walk_next(self) end
+    while #self.stops < count do
+        walk_next(self)
+    end
 end
 
 function begin_route(state: State): unit
     state.stops = {}
     state.column_low = first_street_past(state.vertical_streets, STOP_ANCHOR_X)
-    state.column_high = last_street_before(
-        state.vertical_streets, CITY_WIDTH - ROUTE_MARGIN_RIGHT)
+    state.column_high = last_street_before(state.vertical_streets, CITY_WIDTH - ROUTE_MARGIN_RIGHT)
     state.row_low = first_street_past(state.horizontal_streets, ROUTE_MARGIN_TOP)
-    state.row_high = last_street_before(
-        state.horizontal_streets, CITY_HEIGHT - ROUTE_MARGIN_BOTTOM)
-    state.walk_column = state.column_low
-        + random_index(state, state.column_high - state.column_low + 1)
-    state.walk_row = state.row_low
-        + random_index(state, state.row_high - state.row_low + 1)
+    state.row_high = last_street_before(state.horizontal_streets, CITY_HEIGHT - ROUTE_MARGIN_BOTTOM)
+    state.walk_column = state.column_low + random_index(
+        state,
+        state.column_high - state.column_low + 1
+    )
+    state.walk_row = state.row_low + random_index(state, state.row_high - state.row_low + 1)
     state.walk_horizontal = random(state) < 0.5
     append_stop(state)
     state.travel = 0.0
@@ -293,17 +318,20 @@ end
 -- never falls off the route.
 function State:position_at(travel: f64): Point
     local last: i32 = #self.stops - 1
-    if last < 0 then return { x = CITY_WIDTH * 0.5, y = CITY_HEIGHT * 0.5 } end
-    if travel <= 0.0 then return { x = self.stops[0].x, y = self.stops[0].y } end
-    if travel >= last::f64 then return { x = self.stops[last].x, y = self.stops[last].y } end
+    if last < 0 then
+        return { x = CITY_WIDTH * 0.5, y = CITY_HEIGHT * 0.5 }
+    end
+    if travel <= 0.0 then
+        return { x = self.stops[0].x, y = self.stops[0].y }
+    end
+    if travel >= last::f64 then
+        return { x = self.stops[last].x, y = self.stops[last].y }
+    end
     local base: i32 = math.floor(travel)::i32
     local fraction: f64 = travel - (base::f64)
     local from: Stop = self.stops[base]
     local into: Stop = self.stops[base + 1]
-    return {
-        x = from.x + (into.x - from.x) * fraction,
-        y = from.y + (into.y - from.y) * fraction,
-    }
+    return { x = from.x + (into.x - from.x) * fraction, y = from.y + (into.y - from.y) * fraction }
 end
 
 function State:position(): Point
@@ -315,16 +343,18 @@ end
 -- so the city itself is the subject.
 function drift_center_x(state: State): f64
     local span: f64 = CITY_WIDTH - state.view_width
-    if span < 0.0 then span = 0.0 end
-    return CITY_WIDTH * 0.5
-        + math.sin(state.pan_clock * 0.021) * span * 0.42
+    if span < 0.0 then
+        span = 0.0
+    end
+    return CITY_WIDTH * 0.5 + math.sin(state.pan_clock * 0.021) * span * 0.42
 end
 
 function drift_center_y(state: State): f64
     local span: f64 = CITY_HEIGHT - state.view_height
-    if span < 0.0 then span = 0.0 end
-    return CITY_HEIGHT * 0.5
-        + math.sin(state.pan_clock * 0.017) * span * 0.42
+    if span < 0.0 then
+        span = 0.0
+    end
+    return CITY_HEIGHT * 0.5 + math.sin(state.pan_clock * 0.017) * span * 0.42
 end
 
 function camera_target(state: State): Point
@@ -341,16 +371,21 @@ end
 function two_to_the(power: f64): f64
     local whole: f64 = math.floor(power)
     local fraction: f64 = power - whole
-    local scale: f64 = 1.0
-        + fraction * (0.6931472 + fraction * (0.2402265 + fraction * 0.0666263))
-    for _ = 1, whole::i32 do scale = scale * 2.0 end
+    local scale: f64 = 1.0 + fraction * (0.6931472 + fraction * (0.2402265 + fraction * 0.0666263))
+    for _ = 1, whole::i32 do
+        scale = scale * 2.0
+    end
     return scale
 end
 
 -- Ease in and out, so a movement leaves and arrives without a jolt.
 function smooth(progress: f64): f64
-    if progress <= 0.0 then return 0.0 end
-    if progress >= 1.0 then return 1.0 end
+    if progress <= 0.0 then
+        return 0.0
+    end
+    if progress >= 1.0 then
+        return 1.0
+    end
     return progress * progress * (3.0 - 2.0 * progress)
 end
 
@@ -363,7 +398,9 @@ function dive_zoom(dive: f64): f64
 end
 
 function dive_cover(dive: f64): f64
-    if dive <= DIVE_HANDOVER then return 1.0 end
+    if dive <= DIVE_HANDOVER then
+        return 1.0
+    end
     return 1.0 - smooth((dive - DIVE_HANDOVER) / (1.0 - DIVE_HANDOVER))
 end
 
@@ -408,28 +445,44 @@ end
 -- the anchor has on each side of it, which is not half the view once the anchor
 -- is off centre.
 function clamp_camera(value: f64, limit: f64, before: f64, after: f64): f64
-    if before + after >= limit then return limit * 0.5 end
-    if value < before then return before end
-    if value > limit - after then return limit - after end
+    if before + after >= limit then
+        return limit * 0.5
+    end
+    if value < before then
+        return before
+    end
+    if value > limit - after then
+        return limit - after
+    end
     return value
 end
 
 function clamp_camera_x(state: State, value: f64): f64
     return clamp_camera(
-        value, CITY_WIDTH,
-        state.anchor_x / state.zoom, (state.view_width - state.anchor_x) / state.zoom)
+        value,
+        CITY_WIDTH,
+        state.anchor_x / state.zoom,
+        (state.view_width - state.anchor_x) / state.zoom
+    )
 end
 
 function clamp_camera_y(state: State, value: f64): f64
     return clamp_camera(
-        value, CITY_HEIGHT,
-        state.anchor_y / state.zoom, (state.view_height - state.anchor_y) / state.zoom)
+        value,
+        CITY_HEIGHT,
+        state.anchor_y / state.zoom,
+        (state.view_height - state.anchor_y) / state.zoom
+    )
 end
 
 function approach(dt: f64, rate: f64): f64
     local step: f64 = dt * rate
-    if step > 1.0 then return 1.0 end
-    if step < 0.0 then return 0.0 end
+    if step > 1.0 then
+        return 1.0
+    end
+    if step < 0.0 then
+        return 0.0
+    end
     return step
 end
 
@@ -439,12 +492,16 @@ end
 function step_toward(value: f64, goal: f64, step: f64): f64
     if value < goal then
         local next: f64 = value + step
-        if next > goal then return goal end
+        if next > goal then
+            return goal
+        end
         return next
     end
     if value > goal then
         local next: f64 = value - step
-        if next < goal then return goal end
+        if next < goal then
+            return goal
+        end
         return next
     end
     return goal
@@ -453,11 +510,15 @@ end
 function choose_streak(state: State, wait: bool): unit
     state.streak_horizontal = random(state) < 0.5
     if state.streak_horizontal then
-        state.streak_street = state.horizontal_streets[
-            1 + random_index(state, #state.horizontal_streets - 2)]
+        state.streak_street = state.horizontal_streets[1 + random_index(
+            state,
+            #state.horizontal_streets - 2
+        )]
     else
-        state.streak_street = state.vertical_streets[
-            1 + random_index(state, #state.vertical_streets - 2)]
+        state.streak_street = state.vertical_streets[1 + random_index(
+            state,
+            #state.vertical_streets - 2
+        )]
     end
     state.streak_forward = random(state) < 0.5
     state.streak_suit = random_index(state, 4)
@@ -527,7 +588,7 @@ function State.new(seed: i32): State
         streak_horizontal = true,
         streak_street = 0.0,
         streak_forward = true,
-        streak_suit = 0,
+        streak_suit = 0
     }
     generate(state)
     begin_route(state)
@@ -540,8 +601,12 @@ end
 -- regenerate the route or move the party; it only changes how much city is
 -- visible and where a duel dive converges.
 function State:resize(width: f64, height: f64): unit
-    if width < 1.0 or height < 1.0 then return end
-    if self.view_width == width and self.view_height == height then return end
+    if width < 1.0 or height < 1.0 then
+        return
+    end
+    if self.view_width == width and self.view_height == height then
+        return
+    end
     self.view_width = width
     self.view_height = height
     apply_dive(self)
@@ -641,5 +706,5 @@ return {
     shop_stop = shop_stop,
     width = CITY_WIDTH,
     height = CITY_HEIGHT,
-    lookahead = LOOKAHEAD,
+    lookahead = LOOKAHEAD
 }

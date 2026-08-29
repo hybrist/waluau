@@ -1,7 +1,6 @@
 -- Presentation choreography for Ante Magic. The engine adapter names domain
 -- beats; this module owns the animation records, board geometry, pile ledgers,
 -- fan motion, timing, and flip-sound cue placement needed to render them.
-
 local game = require("./game")
 local spells = require("./spells/spell")
 local render = require("./render")
@@ -50,7 +49,6 @@ export type State = {
     -- sixty times a second should not be sixty allocations.
     sheet: card_warp.Mesh
 }
-
 
 const FAN_EASE_RESPONSE: f64 = 14.0
 const FAN_EASE_SNAP: f64 = 0.001
@@ -102,15 +100,15 @@ function new_session(): Session
         power = nil,
         ash = render.new_card_ash(),
         spells = render.new_spell_particles(),
-        discards = {},
+        discards = {}
     }
 end
 
 function State.new(): State
     return {
-        fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 },
+        fan_parts = {0.0, 0.0, 0.0, 0.0, 0.0},
         session = new_session(),
-        sheet = card_warp.Mesh.new(THROW_COLUMNS, THROW_ROWS),
+        sheet = card_warp.Mesh.new(THROW_COLUMNS, THROW_ROWS)
     }
 end
 
@@ -133,10 +131,10 @@ function State:is_animating(): bool
 end
 
 function State:reset(): unit
-    self.fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 }
+    self.fan_parts = {0.0, 0.0, 0.0, 0.0, 0.0}
     self.session = new_session()
-    -- `sheet` is working geometry, not duel self. Keep its allocation across
-    -- resets; the renderer overwrites every vertex before a thrown card draws.
+-- `sheet` is working geometry, not duel self. Keep its allocation across
+-- resets; the renderer overwrites every vertex before a thrown card draws.
 end
 
 -- Spell treatments mirror the rules-owned gameplay state: a kind replaces the
@@ -144,12 +142,13 @@ end
 -- condition entirely. update_power reports a timed rules transition when
 -- Firebolt's visual burn lands.
 function State:apply_power(kind: spells.SpellKind?, target: i32): unit
-    if target < 0 or target > 4 then return end
-    if kind == nil then self.session.power = nil
+    if target < 0 or target > 4 then
+        return
+    end
+    if kind == nil then
+        self.session.power = nil
     else
-        self.session.power = {
-            kind = kind::spells.SpellKind, clock = 0.0, target = target,
-        }
+        self.session.power = { kind = kind::spells.SpellKind, clock = 0.0, target = target }
     end
     -- A new condition starts its table_card's burn from nothing; whatever the last
     -- one left in the air belongs to a card that is no longer there. The same
@@ -187,16 +186,28 @@ function State:update_power(middle_count: i32, dt: f64): i32
             self:apply_power(nil, 0)
             tick_table_card_ash(self, NOT_BURNING, dt)
             render.step_spell_particles(
-                self.session.spells, layout.current(), nil, 0.0, 0,
-                middle_count, dt)
+                self.session.spells,
+                layout.current(),
+                nil,
+                0.0,
+                0,
+                middle_count,
+                dt
+            )
             return -1
         end
     end
     if power == nil then
         tick_table_card_ash(self, NOT_BURNING, dt)
         render.step_spell_particles(
-            self.session.spells, layout.current(), nil, 0.0, 0,
-            middle_count, dt)
+            self.session.spells,
+            layout.current(),
+            nil,
+            0.0,
+            0,
+            middle_count,
+            dt
+        )
         return -1
     end
     local active: Power = power::Power
@@ -207,11 +218,15 @@ function State:update_power(middle_count: i32, dt: f64): i32
     end
     tick_table_card_ash(self, burning, dt)
     render.step_spell_particles(
-        self.session.spells, layout.current(),
-        active.kind, active.clock, active.target, middle_count, dt)
-    if active.kind == spells.SpellKind.Firebolt
-        and render.firebolt_burn_finished(active.clock)
-    then
+        self.session.spells,
+        layout.current(),
+        active.kind,
+        active.clock,
+        active.target,
+        middle_count,
+        dt
+    )
+    if active.kind == spells.SpellKind.Firebolt and render.firebolt_burn_finished(active.clock) then
         local target: i32 = active.target
         self.session.power = nil
         return target
@@ -236,15 +251,21 @@ function State:firebolt_pending(): bool
     local power: Power? = self.session.power
     if power ~= nil then
         local active: Power = power::Power
-        if active.kind == spells.SpellKind.Firebolt then return true end
+        if active.kind == spells.SpellKind.Firebolt then
+            return true
+        end
     end
     return self.session.anim_kind == "firebolt-replace"
 end
 
 function State:apply_hand_order(order: {i32}): unit
     local parts: {f64} = {}
-    for _ in order do table.insert(parts, 0.0) end
-    for new_slot, old_slot in order do parts[new_slot] = self.fan_parts[old_slot] end
+    for _ in order do
+        table.insert(parts, 0.0)
+    end
+    for new_slot, old_slot in order do
+        parts[new_slot] = self.fan_parts[old_slot]
+    end
     self.fan_parts = parts
 end
 
@@ -252,17 +273,24 @@ end
 -- degree of freedom, so its length is what sizes every fan loop and hit scan.
 function closed_fan_parts(count: i32): {f64}
     local parts: {f64} = {}
-    for _ = 1, count do table.insert(parts, 0.0) end
+    for _ = 1, count do
+        table.insert(parts, 0.0)
+    end
     return parts
 end
 
 function State:update_fan(focus: i32, dt: f64): unit
     local blend: f64 = FAN_EASE_RESPONSE * dt
-    if blend > 1.0 then blend = 1.0 end
+    if blend > 1.0 then
+        blend = 1.0
+    end
     for i = 0::i32, #self.fan_parts - 1 do
         local delta: f64 = render.hand_part_target(i, focus) - self.fan_parts[i]
-        if math.abs(delta) <= FAN_EASE_SNAP then self.fan_parts[i] += delta
-        else self.fan_parts[i] += delta * blend end
+        if math.abs(delta) <= FAN_EASE_SNAP then
+            self.fan_parts[i] += delta
+        else
+            self.fan_parts[i] += delta * blend
+        end
     end
 end
 
@@ -272,7 +300,9 @@ end
 
 function flip_sound_time(start: f64, duration: f64): f64
     local event_time: f64 = start + duration * 0.5 - FLIP_SOUND_LEAD_SECONDS
-    if event_time < start then return start end
+    if event_time < start then
+        return start
+    end
     return event_time
 end
 
@@ -282,9 +312,10 @@ function turn_sound_time(anim: render.Anim): f64
     if anim.effect ~= render.anim_effect_throw then
         return flip_sound_time(anim.start, anim.duration)
     end
-    local event_time: f64 = anim.start
-        + anim.duration * THROW_FLIP_PART - FLIP_SOUND_LEAD_SECONDS
-    if event_time < anim.start then return anim.start end
+    local event_time: f64 = anim.start + anim.duration * THROW_FLIP_PART - FLIP_SOUND_LEAD_SECONDS
+    if event_time < anim.start then
+        return anim.start
+    end
     return event_time
 end
 
@@ -292,7 +323,9 @@ end
 -- cue crossed this frame. The engine adapter decides how the sound is played,
 -- but it no longer knows face modes or timing implementation.
 function State:update(dt: f64): i32
-    if self.session.anim_kind == "none" then return 0 end
+    if self.session.anim_kind == "none" then
+        return 0
+    end
     local previous: f64 = self.session.anim_clock
     self.session.anim_clock += dt
     local cues: i32 = 0
@@ -303,7 +336,9 @@ function State:update(dt: f64): i32
             end
         end
     end
-    if self.session.anim_clock >= self.session.anim_total then self:skip() end
+    if self.session.anim_clock >= self.session.anim_total then
+        self:skip()
+    end
     return cues
 end
 
@@ -311,8 +346,12 @@ function reveal_flip_cues(previous: f64, current: f64): i32
     local cues: i32 = 0
     local first: f64 = flip_sound_time(REVEAL_FIRST_DELAY, REVEAL_FLIP_SECONDS)
     local second: f64 = flip_sound_time(REVEAL_SECOND_DELAY, REVEAL_FLIP_SECONDS)
-    if crossed(previous, current, first) then cues += 1 end
-    if crossed(previous, current, second) then cues += 1 end
+    if crossed(previous, current, first) then
+        cues += 1
+    end
+    if crossed(previous, current, second) then
+        cues += 1
+    end
     return cues
 end
 
@@ -328,7 +367,9 @@ end
 function State:update_reveal(dt: f64): i32
     local previous: f64 = self.session.reveal_clock
     self.session.reveal_clock += dt
-    if self.session.reveal_clock >= REVEAL_SECONDS then self.session.reveal_clock = REVEAL_SECONDS end
+    if self.session.reveal_clock >= REVEAL_SECONDS then
+        self.session.reveal_clock = REVEAL_SECONDS
+    end
     local burning: f64 = NOT_BURNING
     if self.session.reveal_burns then
         burning = render.loss_burn_progress(self.session.reveal_clock)
@@ -368,19 +409,25 @@ end
 -- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
 -- Opponent's sealed row.
 function hand_slot_kind(owner: game.Side): render.Slot
-    if owner > 0 then return render.slot_player end
+    if owner > 0 then
+        return render.slot_player
+    end
     return render.slot_computer
 end
 
 -- Resting tilt of a slot in a hand row laid out for `count` cards; the table cards
 -- and the Opponent's sealed row lie square to the board at any size.
 function slot_tilt_at(kind: render.Slot, index: i32, count: i32): f64
-    if kind == render.slot_player then return render.hand_angle_at(index, 0.0, count) end
+    if kind == render.slot_player then
+        return render.hand_angle_at(index, 0.0, count)
+    end
     return 0.0
 end
 
 function slot_part(state: State, kind: render.Slot, index: i32): f64
-    if kind == render.slot_player then return state.fan_parts[index] end
+    if kind == render.slot_player then
+        return state.fan_parts[index]
+    end
     return 0.0
 end
 
@@ -394,7 +441,12 @@ end
 -- hand can differ from the settled slot render.slot_pos_at describes.
 function slot_pos_now(state: State, kind: render.Slot, index: i32): render.Point
     if kind == render.slot_player then
-        return render.hand_pos_at(layout.current(), index, slot_part(state, kind, index), live_hand_count(state))
+        return render.hand_pos_at(
+            layout.current(),
+            index,
+            slot_part(state, kind, index),
+            live_hand_count(state)
+        )
     end
     return render.slot_pos_at(layout.current(), kind, index, live_hand_count(state))
 end
@@ -411,7 +463,16 @@ end
 -- over past its leading edge, overshooting its slot and dropping onto it.
 -- The hands keep the flat slide: five cards arriving as aerial throws would
 -- be a juggling act, not a deal, and the sealed row has nothing to show off.
-function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card, kind: render.Slot, index: i32, count: i32, faces: render.Face, start: f64): f64
+function push_deal(
+    viewport: layout.State,
+    anims: {render.Anim},
+    card: game.Card,
+    kind: render.Slot,
+    index: i32,
+    count: i32,
+    faces: render.Face,
+    start: f64
+): f64
     local effect: render.AnimEffect = render.anim_effect_move
     local duration: f64 = DEAL_SECONDS
     if kind == render.slot_middle then
@@ -419,23 +480,26 @@ function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card
         duration = THROW_SECONDS
     end
     local finish: f64 = start + duration
-    table.insert(anims, {
-        card = card,
-        faces = faces,
-        known = false,
-        effect = effect,
-        from = render.slot_pos(viewport, render.slot_deck, 0),
-        to = render.slot_pos_at(viewport, kind, index, count),
-        angle0 = 0.0,
-        angle1 = slot_tilt_at(kind, index, count),
-        easing = render.ease_out_quint,
-        start = start,
-        duration = duration,
-        appear = start,
-        vanish = finish,
-        dest_kind = kind,
-        dest_index = index,
-    })
+    table.insert(
+        anims,
+        {
+            card = card,
+            faces = faces,
+            known = false,
+            effect = effect,
+            from = render.slot_pos(viewport, render.slot_deck, 0),
+            to = render.slot_pos_at(viewport, kind, index, count),
+            angle0 = 0.0,
+            angle1 = slot_tilt_at(kind, index, count),
+            easing = render.ease_out_quint,
+            start = start,
+            duration = duration,
+            appear = start,
+            vanish = finish,
+            dest_kind = kind,
+            dest_index = index
+        }
+    )
     return finish
 end
 
@@ -453,10 +517,19 @@ function State:firebolt_resolved(
     table.insert(self.session.discards, discarded)
     local anims: {render.Anim} = {}
     local finish: f64 = push_deal(
-        layout.current(), anims, replacement, render.slot_middle, target,
-        middle_count, render.faces_flip_up, 0.0)
+        layout.current(),
+        anims,
+        replacement,
+        render.slot_middle,
+        target,
+        middle_count,
+        render.faces_flip_up,
+        0.0
+    )
     local ash_finish: f64 = push_ash_reappearance(layout.current(), anims, discarded, 0.0)
-    if ash_finish > finish then finish = ash_finish end
+    if ash_finish > finish then
+        finish = ash_finish
+    end
     begin_anims(self, anims, finish, "firebolt-replace")
 end
 
@@ -467,59 +540,106 @@ function State:opening_deal(view: game.View): unit
     local start: f64 = 0.0
     local finish: f64 = 0.0
     for i = 0::i32, count - 1 do
-        finish = push_deal(layout.current(), anims, view.player_hand[i].card, render.slot_player, i, count, render.faces_flip_up, start)
+        finish = push_deal(
+            layout.current(),
+            anims,
+            view.player_hand[i].card,
+            render.slot_player,
+            i,
+            count,
+            render.faces_flip_up,
+            start
+        )
         start += DEAL_STEP
-        finish = push_deal(layout.current(), anims, view.computer_hand[i].card, render.slot_computer, i, count, render.faces_down, start)
+        finish = push_deal(
+            layout.current(),
+            anims,
+            view.computer_hand[i].card,
+            render.slot_computer,
+            i,
+            count,
+            render.faces_down,
+            start
+        )
         start += DEAL_STEP
     end
     for i = 0::i32, #view.middle - 1 do
         finish = push_deal(
-            layout.current(), anims, view.middle[i], render.slot_middle, i,
-            #view.middle, render.faces_flip_up, start)
+            layout.current(),
+            anims,
+            view.middle[i],
+            render.slot_middle,
+            i,
+            #view.middle,
+            render.faces_flip_up,
+            start
+        )
         start += DEAL_STEP
     end
     begin_anims(self, anims, finish, "deal")
 end
 
-function push_scoop(viewport: layout.State, anims: {render.Anim}, card: game.Card, from: render.Point, gather: render.Point, dest_kind: render.Slot): unit
+function push_scoop(
+    viewport: layout.State,
+    anims: {render.Anim},
+    card: game.Card,
+    from: render.Point,
+    gather: render.Point,
+    dest_kind: render.Slot
+): unit
     local carry_start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS
-    table.insert(anims, {
-        card = card,
-        faces = render.faces_up,
-        known = false,
-        effect = render.anim_effect_move,
-        from = from,
-        to = gather,
-        angle0 = 0.0,
-        angle1 = 0.0,
-        easing = render.ease_in_cubic,
-        start = 0.0,
-        duration = SCOOP_GATHER_SECONDS,
-        appear = 0.0,
-        vanish = carry_start,
-        dest_kind = render.slot_none,
-        dest_index = 0,
-    })
-    table.insert(anims, {
-        card = card,
-        faces = render.faces_up,
-        known = false,
-        effect = render.anim_effect_move,
-        from = gather,
-        to = render.slot_pos(viewport, dest_kind, 0),
-        angle0 = 0.0,
-        angle1 = 0.0,
-        easing = render.ease_in_out_cubic,
-        start = carry_start,
-        duration = SCOOP_CARRY_SECONDS,
-        appear = carry_start,
-        vanish = carry_start + SCOOP_CARRY_SECONDS,
-        dest_kind = dest_kind,
-        dest_index = 0,
-    })
+    table.insert(
+        anims,
+        {
+            card = card,
+            faces = render.faces_up,
+            known = false,
+            effect = render.anim_effect_move,
+            from = from,
+            to = gather,
+            angle0 = 0.0,
+            angle1 = 0.0,
+            easing = render.ease_in_cubic,
+            start = 0.0,
+            duration = SCOOP_GATHER_SECONDS,
+            appear = 0.0,
+            vanish = carry_start,
+            dest_kind = render.slot_none,
+            dest_index = 0
+        }
+    )
+    table.insert(
+        anims,
+        {
+            card = card,
+            faces = render.faces_up,
+            known = false,
+            effect = render.anim_effect_move,
+            from = gather,
+            to = render.slot_pos(viewport, dest_kind, 0),
+            angle0 = 0.0,
+            angle1 = 0.0,
+            easing = render.ease_in_out_cubic,
+            start = carry_start,
+            duration = SCOOP_CARRY_SECONDS,
+            appear = carry_start,
+            vanish = carry_start + SCOOP_CARRY_SECONDS,
+            dest_kind = dest_kind,
+            dest_index = 0
+        }
+    )
 end
 
-function push_scoop_pair(viewport: layout.State, anims: {render.Anim}, first_card: game.Card, second_card: game.Card, kind: render.Slot, first_index: i32, second_index: i32, count: i32): unit
+function push_scoop_pair(
+    viewport: layout.State,
+    anims: {render.Anim},
+    first_card: game.Card,
+    second_card: game.Card,
+    kind: render.Slot,
+    first_index: i32,
+    second_index: i32,
+    count: i32
+): unit
     local a: render.Point = render.slot_pos_at(viewport, kind, first_index, count)
     local b: render.Point = render.slot_pos_at(viewport, kind, second_index, count)
     local gather: render.Point = render.midpoint(a, b)
@@ -530,30 +650,43 @@ end
 -- A burned card has no intact journey left to make. Its next visible form is
 -- rebuilt directly on the spent pile, and marking that pile as its
 -- destination keeps the ledger copy hidden until the reconstruction lands.
-function push_ash_reappearance(viewport: layout.State, anims: {render.Anim}, card: game.Card, start: f64): f64
+function push_ash_reappearance(
+    viewport: layout.State,
+    anims: {render.Anim},
+    card: game.Card,
+    start: f64
+): f64
     local finish: f64 = start + ASH_REAPPEAR_SECONDS
     local pile: render.Point = render.slot_pos(viewport, render.slot_aside, 0)
-    table.insert(anims, {
-        card = card,
-        faces = render.faces_up,
-        known = false,
-        effect = render.anim_effect_ash_reappear,
-        from = pile,
-        to = pile,
-        angle0 = 0.0,
-        angle1 = 0.0,
-        easing = render.ease_in_out_cubic,
-        start = start,
-        duration = ASH_REAPPEAR_SECONDS,
-        appear = start,
-        vanish = finish,
-        dest_kind = render.slot_aside,
-        dest_index = 0,
-    })
+    table.insert(
+        anims,
+        {
+            card = card,
+            faces = render.faces_up,
+            known = false,
+            effect = render.anim_effect_ash_reappear,
+            from = pile,
+            to = pile,
+            angle0 = 0.0,
+            angle1 = 0.0,
+            easing = render.ease_in_out_cubic,
+            start = start,
+            duration = ASH_REAPPEAR_SECONDS,
+            appear = start,
+            vanish = finish,
+            dest_kind = render.slot_aside,
+            dest_index = 0
+        }
+    )
     return finish
 end
 
-function push_ash_pair(viewport: layout.State, anims: {render.Anim}, first_card: game.Card, second_card: game.Card): f64
+function push_ash_pair(
+    viewport: layout.State,
+    anims: {render.Anim},
+    first_card: game.Card,
+    second_card: game.Card
+): f64
     push_ash_reappearance(viewport, anims, first_card, 0.0)
     return push_ash_reappearance(viewport, anims, second_card, ASH_REAPPEAR_STEP)
 end
@@ -562,14 +695,23 @@ end
 -- slot in the settled one. In the base game both layouts hold five cards; in
 -- a boss battle the new layout is two cards narrower, so every survivor moves
 -- as the row recentres, not just the ones past a spent slot.
-function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: game.View, trick: game.Trick, owner: game.Side, start: f64): f64
+function push_hand_shifts(
+    viewport: layout.State,
+    anims: {render.Anim},
+    view: game.View,
+    trick: game.Trick,
+    owner: game.Side,
+    start: f64
+): f64
     local side: game.TrickSide = trick:side(owner)
     local live: {game.HandSlot} = view:side(owner)
     local kind: render.Slot = hand_slot_kind(owner)
     local old_count: i32 = #side.hand
     local new_count: i32 = #live
     local faces: render.Face = render.faces_up
-    if owner < 0 then faces = render.faces_down end
+    if owner < 0 then
+        faces = render.faces_down
+    end
     local finish: f64 = start
     local new_index: i32 = 0
     for old_index = 0::i32, old_count - 1 do
@@ -581,24 +723,29 @@ function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: ga
                 local known: bool = live[new_index].known
                 local depart: f64 = start + SHIFT_STEP * (new_index::f64)
                 local land: f64 = depart + SHIFT_SECONDS
-                if land > finish then finish = land end
-                table.insert(anims, {
-                    card = card,
-                    faces = faces,
-                    known = known,
-                    effect = render.anim_effect_move,
-                    from = from,
-                    to = to,
-                    angle0 = slot_tilt_at(kind, old_index, old_count),
-                    angle1 = slot_tilt_at(kind, new_index, new_count),
-                    easing = render.ease_in_out_cubic,
-                    start = depart,
-                    duration = SHIFT_SECONDS,
-                    appear = 0.0,
-                    vanish = land,
-                    dest_kind = kind,
-                    dest_index = new_index,
-                })
+                if land > finish then
+                    finish = land
+                end
+                table.insert(
+                    anims,
+                    {
+                        card = card,
+                        faces = faces,
+                        known = known,
+                        effect = render.anim_effect_move,
+                        from = from,
+                        to = to,
+                        angle0 = slot_tilt_at(kind, old_index, old_count),
+                        angle1 = slot_tilt_at(kind, new_index, new_count),
+                        easing = render.ease_in_out_cubic,
+                        start = depart,
+                        duration = SHIFT_SECONDS,
+                        appear = 0.0,
+                        vanish = land,
+                        dest_kind = kind,
+                        dest_index = new_index
+                    }
+                )
             end
             new_index += 1
         end
@@ -607,9 +754,10 @@ function push_hand_shifts(viewport: layout.State, anims: {render.Anim}, view: ga
 end
 
 function State:record_burned_losers(trick: game.Trick): unit
-    if trick.winner == 0 then return end
-    local loser: game.TrickSide = trick:side(
-        game.opposite_side(trick.winner::game.Side))
+    if trick.winner == 0 then
+        return
+    end
+    local loser: game.TrickSide = trick:side(game.opposite_side(trick.winner::game.Side))
     table.insert(self.session.discards, loser.cards[0])
     table.insert(self.session.discards, loser.cards[1])
 end
@@ -639,59 +787,149 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
     local anims: {render.Anim} = {}
     local ash_finish: f64 = 0.0
     local row_center: render.Point = render.midpoint(
-        render.row_left(layout.current()), render.row_right(layout.current()))
+        render.row_left(layout.current()),
+        render.row_right(layout.current())
+    )
     if trick.winner ~= 0 then
         local winner: game.TrickSide = trick:side(trick.winner::game.Side)
-        local loser: game.TrickSide = trick:side(
-            game.opposite_side(trick.winner::game.Side))
+        local loser: game.TrickSide = trick:side(game.opposite_side(trick.winner::game.Side))
         -- The taken hand goes the same way the burned pair already did: onto
         -- the one spent pile. Winning a round is worth points, not a keepsake.
         local spent: {game.Card} = self.session.discards
         for i = 0::i32, #trick.middle - 1 do
             if not trick.frozen_middle[i] then
-                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle), row_center, render.slot_aside)
+                push_scoop(
+                    layout.current(),
+                    anims,
+                    trick.middle[i],
+                    render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle),
+                    row_center,
+                    render.slot_aside
+                )
                 table.insert(spent, trick.middle[i])
             end
         end
-        push_scoop(layout.current(), anims, winner.cards[0], render.row_left(layout.current()), row_center, render.slot_aside)
-        push_scoop(layout.current(), anims, winner.cards[1], render.row_right(layout.current()), row_center, render.slot_aside)
+        push_scoop(
+            layout.current(),
+            anims,
+            winner.cards[0],
+            render.row_left(layout.current()),
+            row_center,
+            render.slot_aside
+        )
+        push_scoop(
+            layout.current(),
+            anims,
+            winner.cards[1],
+            render.row_right(layout.current()),
+            row_center,
+            render.slot_aside
+        )
         table.insert(spent, winner.cards[0])
         table.insert(spent, winner.cards[1])
         ash_finish = push_ash_pair(layout.current(), anims, loser.cards[0], loser.cards[1])
     else
         for i = 0::i32, #trick.middle - 1 do
             if not trick.frozen_middle[i] then
-                push_scoop(layout.current(), anims, trick.middle[i], render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle), row_center, render.slot_aside)
+                push_scoop(
+                    layout.current(),
+                    anims,
+                    trick.middle[i],
+                    render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle),
+                    row_center,
+                    render.slot_aside
+                )
                 table.insert(self.session.discards, trick.middle[i])
             end
         end
-        push_scoop_pair(layout.current(), anims, trick.player_cards[0], trick.player_cards[1], render.slot_player, trick.player_first, trick.player_second, old_count)
-        push_scoop_pair(layout.current(), anims, trick.computer_cards[0], trick.computer_cards[1], render.slot_computer, trick.computer_first, trick.computer_second, old_count)
+        push_scoop_pair(
+            layout.current(),
+            anims,
+            trick.player_cards[0],
+            trick.player_cards[1],
+            render.slot_player,
+            trick.player_first,
+            trick.player_second,
+            old_count
+        )
+        push_scoop_pair(
+            layout.current(),
+            anims,
+            trick.computer_cards[0],
+            trick.computer_cards[1],
+            render.slot_computer,
+            trick.computer_first,
+            trick.computer_second,
+            old_count
+        )
         table.insert(self.session.discards, trick.player_cards[0])
         table.insert(self.session.discards, trick.player_cards[1])
         table.insert(self.session.discards, trick.computer_cards[0])
         table.insert(self.session.discards, trick.computer_cards[1])
     end
-    local finish: f64 = push_hand_shifts(layout.current(), anims, view, trick, 1, SCOOP_GATHER_SECONDS)
-    local computer_finish: f64 = push_hand_shifts(layout.current(), anims, view, trick, -1, SCOOP_GATHER_SECONDS)
-    if computer_finish > finish then finish = computer_finish end
-    if ash_finish > finish then finish = ash_finish end
+    local finish: f64 = push_hand_shifts(
+        layout.current(),
+        anims,
+        view,
+        trick,
+        1,
+        SCOOP_GATHER_SECONDS
+    )
+    local computer_finish: f64 = push_hand_shifts(
+        layout.current(),
+        anims,
+        view,
+        trick,
+        -1,
+        SCOOP_GATHER_SECONDS
+    )
+    if computer_finish > finish then
+        finish = computer_finish
+    end
+    if ash_finish > finish then
+        finish = ash_finish
+    end
     local start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS + SCOOP_CARRY_SECONDS + 0.1
     -- Matching sizes mean the spent pair was replaced off the deck; a boss
     -- battle's hands shrink instead, and there is nothing to deal.
     if new_count == old_count then
         for i = new_count - 2, new_count - 1 do
-            finish = push_deal(layout.current(), anims, view.computer_hand[i].card, render.slot_computer, i, new_count, render.faces_down, start)
+            finish = push_deal(
+                layout.current(),
+                anims,
+                view.computer_hand[i].card,
+                render.slot_computer,
+                i,
+                new_count,
+                render.faces_down,
+                start
+            )
             start += DEAL_STEP
-            finish = push_deal(layout.current(), anims, view.player_hand[i].card, render.slot_player, i, new_count, render.faces_flip_up, start)
+            finish = push_deal(
+                layout.current(),
+                anims,
+                view.player_hand[i].card,
+                render.slot_player,
+                i,
+                new_count,
+                render.faces_flip_up,
+                start
+            )
             start += DEAL_STEP
         end
     end
     for i = 0::i32, #view.middle - 1 do
         if not retained_community(trick, view.middle[i]) then
             finish = push_deal(
-                layout.current(), anims, view.middle[i], render.slot_middle,
-                i, #view.middle, render.faces_flip_up, start)
+                layout.current(),
+                anims,
+                view.middle[i],
+                render.slot_middle,
+                i,
+                #view.middle,
+                render.faces_flip_up,
+                start
+            )
             start += DEAL_STEP
         end
     end
@@ -702,12 +940,20 @@ function State:swap(outcome: game.SwapOutcome): unit
     local count: i32 = #outcome.hand_indices
     if outcome.winner == 0 or count == 0 then
         local dealt_only: game.Card? = outcome.dealt
-        if dealt_only == nil then return end
+        if dealt_only == nil then
+            return
+        end
         local deal_anims: {render.Anim} = {}
         local finish: f64 = push_deal(
-            layout.current(), deal_anims, dealt_only::game.Card,
-            render.slot_middle, outcome.middle_count - 1,
-            outcome.middle_count, render.faces_flip_up, 0.0)
+            layout.current(),
+            deal_anims,
+            dealt_only::game.Card,
+            render.slot_middle,
+            outcome.middle_count - 1,
+            outcome.middle_count,
+            render.faces_flip_up,
+            0.0
+        )
         begin_anims(self, deal_anims, finish, "deal")
         return
     end
@@ -725,18 +971,33 @@ function State:swap(outcome: game.SwapOutcome): unit
         local incoming: game.Card = outcome.incoming[k]
         local leave: render.Point = slot_pos_now(self, hand_kind, hand_index)
         local leave_angle: f64 = slot_tilt_now(self, hand_kind, hand_index)
-        local land: render.Point = render.slot_pos_at(layout.current(), hand_kind, hand_index, live_hand_count(self))
+        local land: render.Point = render.slot_pos_at(
+            layout.current(),
+            hand_kind,
+            hand_index,
+            live_hand_count(self)
+        )
         local land_angle: f64 = slot_tilt_at(hand_kind, hand_index, live_hand_count(self))
         local mid: render.Point = render.slot_pos_at(
-            layout.current(), render.slot_middle, middle_index,
-            outcome.middle_count)
+            layout.current(),
+            render.slot_middle,
+            middle_index,
+            outcome.middle_count
+        )
         local hover_lift: f64 = -45.0
-        if not player_won then hover_lift = 45.0 end
-        local hover: render.Point = render.point(leave.x + (mid.x - leave.x) * 0.35, leave.y + hover_lift)
+        if not player_won then
+            hover_lift = 45.0
+        end
+        local hover: render.Point = render.point(
+            leave.x + (mid.x - leave.x) * 0.35,
+            leave.y + hover_lift
+        )
         local stagger: f64 = SWAP_STEP * (k::f64)
         local place: f64 = place_start + stagger
         local placed: f64 = place + SWAP_PLACE_SECONDS
-        if placed > total then total = placed end
+        if placed > total then
+            total = placed
+        end
         local leave_faces: render.Face = render.faces_up
         local settle_faces: render.Face = render.faces_up
         local return_faces: render.Face = render.faces_up
@@ -745,89 +1006,109 @@ function State:swap(outcome: game.SwapOutcome): unit
             settle_faces = render.faces_flip_up
             return_faces = render.faces_flip_down
         end
-        table.insert(anims, {
-            card = outgoing,
-            faces = leave_faces,
-            known = false,
-            effect = render.anim_effect_move,
-            from = leave,
-            to = hover,
-            angle0 = leave_angle,
-            angle1 = 0.0,
-            easing = render.ease_out_back,
-            start = stagger,
-            duration = SWAP_LEAVE_SECONDS,
-            appear = 0.0,
-            vanish = place,
-            dest_kind = render.slot_none,
-            dest_index = 0,
-        })
-        table.insert(anims, {
-            card = outgoing,
-            faces = settle_faces,
-            known = false,
-            effect = render.anim_effect_move,
-            from = hover,
-            to = mid,
-            angle0 = 0.0,
-            angle1 = 0.0,
-            easing = render.ease_out_back,
-            start = place,
-            duration = SWAP_PLACE_SECONDS,
-            appear = place,
-            vanish = placed,
-            dest_kind = render.slot_middle,
-            dest_index = middle_index,
-        })
-        table.insert(anims, {
-            card = incoming,
-            faces = render.faces_up,
-            known = true,
-            effect = render.anim_effect_move,
-            from = mid,
-            to = render.slot_pos(layout.current(), render.slot_aside, k),
-            angle0 = 0.0,
-            angle1 = 0.0,
-            easing = render.ease_in_out_cubic,
-            start = aside_start + stagger,
-            duration = SWAP_ASIDE_SECONDS,
-            appear = 0.0,
-            vanish = place,
-            dest_kind = render.slot_none,
-            dest_index = 0,
-        })
-        table.insert(anims, {
-            card = incoming,
-            faces = return_faces,
-            known = true,
-            effect = render.anim_effect_move,
-            from = render.slot_pos(layout.current(), render.slot_aside, k),
-            to = land,
-            angle0 = 0.0,
-            angle1 = land_angle,
-            easing = render.ease_out_back,
-            start = place,
-            duration = SWAP_PLACE_SECONDS,
-            appear = place,
-            vanish = placed,
-            dest_kind = hand_kind,
-            dest_index = hand_index,
-        })
+        table.insert(
+            anims,
+            {
+                card = outgoing,
+                faces = leave_faces,
+                known = false,
+                effect = render.anim_effect_move,
+                from = leave,
+                to = hover,
+                angle0 = leave_angle,
+                angle1 = 0.0,
+                easing = render.ease_out_back,
+                start = stagger,
+                duration = SWAP_LEAVE_SECONDS,
+                appear = 0.0,
+                vanish = place,
+                dest_kind = render.slot_none,
+                dest_index = 0
+            }
+        )
+        table.insert(
+            anims,
+            {
+                card = outgoing,
+                faces = settle_faces,
+                known = false,
+                effect = render.anim_effect_move,
+                from = hover,
+                to = mid,
+                angle0 = 0.0,
+                angle1 = 0.0,
+                easing = render.ease_out_back,
+                start = place,
+                duration = SWAP_PLACE_SECONDS,
+                appear = place,
+                vanish = placed,
+                dest_kind = render.slot_middle,
+                dest_index = middle_index
+            }
+        )
+        table.insert(
+            anims,
+            {
+                card = incoming,
+                faces = render.faces_up,
+                known = true,
+                effect = render.anim_effect_move,
+                from = mid,
+                to = render.slot_pos(layout.current(), render.slot_aside, k),
+                angle0 = 0.0,
+                angle1 = 0.0,
+                easing = render.ease_in_out_cubic,
+                start = aside_start + stagger,
+                duration = SWAP_ASIDE_SECONDS,
+                appear = 0.0,
+                vanish = place,
+                dest_kind = render.slot_none,
+                dest_index = 0
+            }
+        )
+        table.insert(
+            anims,
+            {
+                card = incoming,
+                faces = return_faces,
+                known = true,
+                effect = render.anim_effect_move,
+                from = render.slot_pos(layout.current(), render.slot_aside, k),
+                to = land,
+                angle0 = 0.0,
+                angle1 = land_angle,
+                easing = render.ease_out_back,
+                start = place,
+                duration = SWAP_PLACE_SECONDS,
+                appear = place,
+                vanish = placed,
+                dest_kind = hand_kind,
+                dest_index = hand_index
+            }
+        )
     end
     local dealt: game.Card? = outcome.dealt
     if dealt ~= nil then
         local start: f64 = total + 0.1
         total = push_deal(
-            layout.current(), anims, dealt::game.Card,
-            render.slot_middle, outcome.middle_count - 1,
-            outcome.middle_count, render.faces_flip_up, start)
+            layout.current(),
+            anims,
+            dealt::game.Card,
+            render.slot_middle,
+            outcome.middle_count - 1,
+            outcome.middle_count,
+            render.faces_flip_up,
+            start
+        )
     end
     begin_anims(self, anims, total, "swap")
 end
 
 function valid_cards(cards: {game.Card}): bool
     for card in cards do
-        if not game.valid_card(card) then return false end
+        if not game.valid_card(card) then
+            return false
+        end
     end
     return true
 end
@@ -845,12 +1126,7 @@ end
 -- table_card, and the spent pile's ledger. The condition's clock is left to
 -- restore to settle, so a snapshot writes only which spell and where.
 type SnapshotPower = { kind: spells.SpellKind, target: i32 }
-type Snapshot = {
-    schema: string,
-    fan_count: i32,
-    power: SnapshotPower?,
-    discards: {game.Card}
-}
+type Snapshot = { schema: string, fan_count: i32, power: SnapshotPower?, discards: {game.Card} }
 
 function State:snapshot(): string
     local power: SnapshotPower? = nil
@@ -862,29 +1138,39 @@ function State:snapshot(): string
         schema = SNAPSHOT_SCHEMA,
         fan_count = #self.fan_parts,
         power = power,
-        discards = self.session.discards,
+        discards = self.session.discards
     }
     return json.pack(payload)
 end
 
 function State.restore(snapshot_value: string): State?
     local decoded = json.unpack<Snapshot>(snapshot_value)
-    if decoded == nil then return nil end
-    if decoded.schema ~= SNAPSHOT_SCHEMA then return nil end
-    if decoded.fan_count < 0 then return nil end
+    if decoded == nil then
+        return nil
+    end
+    if decoded.schema ~= SNAPSHOT_SCHEMA then
+        return nil
+    end
+    if decoded.fan_count < 0 then
+        return nil
+    end
     local state: State = State.new()
     state.fan_parts = closed_fan_parts(decoded.fan_count)
     local power: SnapshotPower? = decoded.power
     if power ~= nil then
         -- A spell kind is bounded by the spells that exist, and its target
         -- names a community slot; neither bound is one the JSON shape carries.
-        if not spells.SpellKind.valid(power.kind) then return nil end
-        if power.target < 0 or power.target > 4 then return nil end
-        state.session.power = {
-            kind = power.kind, clock = 0.0, target = power.target,
-        }
+        if not spells.SpellKind.valid(power.kind) then
+            return nil
+        end
+        if power.target < 0 or power.target > 4 then
+            return nil
+        end
+        state.session.power = { kind = power.kind, clock = 0.0, target = power.target }
     end
-    if not valid_cards(decoded.discards) then return nil end
+    if not valid_cards(decoded.discards) then
+        return nil
+    end
     state.session.discards = decoded.discards
     -- The reveal comes back finished rather than mid-burn. The trick it shows
     -- was already resolved by the rules before the reveal began, and the flow
@@ -912,31 +1198,26 @@ function State:draw(
         clock = active.clock
         target = active.target
     end
-    board:draw(surface, {
-        viewport = layout.current(),
-        view = view,
-        run = run,
-        interaction = interaction,
-        motion = {
-            fan_parts = self.fan_parts,
-            reveal_clock = self.session.reveal_clock,
-            anims = self.session.anims,
-            anim_clock = self.session.anim_clock,
-        },
-        piles = {
-            discards = self.session.discards,
-        },
-        spell = {
-            kind = kind,
-            clock = clock,
-            target = target,
-        },
-        ash = self.session.ash,
-        spells = self.session.spells,
-        sheet = self.sheet,
-    })
+    board:draw(
+        surface,
+        {
+            viewport = layout.current(),
+            view = view,
+            run = run,
+            interaction = interaction,
+            motion = {
+                fan_parts = self.fan_parts,
+                reveal_clock = self.session.reveal_clock,
+                anims = self.session.anims,
+                anim_clock = self.session.anim_clock
+            },
+            piles = { discards = self.session.discards },
+            spell = { kind = kind, clock = clock, target = target },
+            ash = self.session.ash,
+            spells = self.session.spells,
+            sheet = self.sheet
+        }
+    )
 end
 
-return {
-    reveal_flip_cues = reveal_flip_cues,
-}
+return { reveal_flip_cues = reveal_flip_cues }

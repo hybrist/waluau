@@ -1,5 +1,4 @@
 -- Extern host objects support nominal inheritance plus guarded runtime casts.
-
 function take_node(value: Node): i32
     return 7
 end

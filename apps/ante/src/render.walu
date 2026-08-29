@@ -7,7 +7,6 @@
 -- is drawn against the board's slot anchors instead of being laid out — and
 -- those anchors are the same retained-layout frames the rows paint into, so a card
 -- can only ever land where a card is actually going to be.
-
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
 local effect_shaders = require("./effect_shaders")
@@ -190,29 +189,15 @@ export type Interaction = {
 }
 
 export type BoardAction = board_interaction.Action
-type Motion = {
-    fan_parts: {f64},
-    reveal_clock: f64,
-    anims: {Anim},
-    anim_clock: f64
-}
-type Piles = {
-    discards: {game.Card}
-}
-type SpellPresentation = {
-    kind: spells.SpellKind?,
-    clock: f64,
-    target: i32
-}
+type Motion = { fan_parts: {f64}, reveal_clock: f64, anims: {Anim}, anim_clock: f64 }
+type Piles = { discards: {game.Card} }
+type SpellPresentation = { kind: spells.SpellKind?, clock: f64, target: i32 }
 -- Everything a spell has in the air. `sparks` is the cast's own — the carrier's
 -- trail and the burst its landing threw — and belongs to the spell modules
 -- behind the launch seam. The grave dust is not a cast at all: it is the table_card
 -- Raise Card left standing, shedding off the aperture it climbed out of for as
 -- long as the condition holds.
-export type SpellParticles = {
-    sparks: spell_cast.Sparks,
-    grave_dust: particles.ParticleSystem
-}
+export type SpellParticles = { sparks: spell_cast.Sparks, grave_dust: particles.ParticleSystem }
 type Frame = {
     viewport: layout.State,
     view: game.View,
@@ -234,17 +219,20 @@ type Frame = {
 
 function ease_progress(t: f64, kind: Ease): f64
     match kind do
-    case Ease.out_quint then return easing.out_quint(t)
-    case Ease.in_cubic then return easing.in_cubic(t)
-    case Ease.in_out_cubic then return easing.in_out_cubic(t)
-    case Ease.out_back then return easing.out_back(t)
+    case Ease.out_quint then
+        return easing.out_quint(t)
+    case Ease.in_cubic then
+        return easing.in_cubic(t)
+    case Ease.in_out_cubic then
+        return easing.in_out_cubic(t)
+    case Ease.out_back then
+        return easing.out_back(t)
     end
 end
 
 -- ---------------------------------------------------------------------------
 -- The bands. Where each entity of the board stands inside the live viewport.
 -- ---------------------------------------------------------------------------
-
 -- Both hand rows are laid out for however many cards they currently hold, and
 -- both may spread at most as far as the viewport's hand span before their
 -- pitch tightens.
@@ -254,16 +242,18 @@ end
 
 function computer_band(viewport: layout.State): box.Rect
     local width: f64 = hand_width(viewport)
-    return box.rect(
-        viewport.center_x - width * 0.5, viewport.computer_y, width, card.height)
+    return box.rect(viewport.center_x - width * 0.5, viewport.computer_y, width, card.height)
 end
 
 function fan_band(viewport: layout.State, count: i32): box.Rect
     local width: f64 = hand_width(viewport)
     local height: f64 = hand_fan.intrinsic(count).preferred_height
     return box.rect(
-        viewport.center_x - width * 0.5, viewport.player_y - height * 0.5,
-        width, height)
+        viewport.center_x - width * 0.5,
+        viewport.player_y - height * 0.5,
+        width,
+        height
+    )
 end
 
 -- The middle of the board, sized for however many slots stand in it: three
@@ -272,8 +262,11 @@ end
 function table_card_band(viewport: layout.State, slots: i32): box.Rect
     local size: box.Intrinsic = card_row.intrinsic(slots, card_row.flat_pitch)
     return box.rect(
-        viewport.center_x - size.preferred_width * 0.5, viewport.table_card_y,
-        size.preferred_width, size.preferred_height)
+        viewport.center_x - size.preferred_width * 0.5,
+        viewport.table_card_y,
+        size.preferred_width,
+        size.preferred_height
+    )
 end
 
 function action_band(viewport: layout.State): box.Rect
@@ -282,8 +275,11 @@ end
 
 function deck_band(viewport: layout.State): box.Rect
     return box.rect(
-        viewport.side_left, viewport.table_card_y,
-        card.width, card.height + deck.caption_drop)
+        viewport.side_left,
+        viewport.table_card_y,
+        card.width,
+        card.height + deck.caption_drop
+    )
 end
 
 function board_rect(viewport: layout.State): box.Rect
@@ -291,21 +287,27 @@ function board_rect(viewport: layout.State): box.Rect
 end
 
 function header_band(height: f64, viewport: layout.State): box.Rect
-    return box.rect(
-        BOARD_EDGE, HEADER_TOP, viewport.width - BOARD_EDGE * 2.0, height)
+    return box.rect(BOARD_EDGE, HEADER_TOP, viewport.width - BOARD_EDGE * 2.0, height)
 end
 
 function footer_band(height: f64, viewport: layout.State): box.Rect
     return box.rect(
-        FOOTER_EDGE, viewport.height - FOOTER_BOTTOM - height,
-        viewport.width - FOOTER_EDGE * 2.0, height)
+        FOOTER_EDGE,
+        viewport.height - FOOTER_BOTTOM - height,
+        viewport.width - FOOTER_EDGE * 2.0,
+        height
+    )
 end
 
 -- A line of type centred across the board, hung off a baseline the way the
 -- board's prompts always have been.
 function centered_line(
-    surface: ui.Surface, viewport: layout.State,
-    text: string, baseline: f64, size: f64, color: string
+    surface: ui.Surface,
+    viewport: layout.State,
+    text: string,
+    baseline: f64,
+    size: f64,
+    color: string
 ): unit
     ink.text_centered(surface.graphics, text, viewport.center_x, baseline, size, color)
 end
@@ -314,14 +316,12 @@ end
 -- Slot anchors. The same retained-layout frames the rows paint into, answered
 -- without a frame so choreography can aim an animation at them.
 -- ---------------------------------------------------------------------------
-
 function hand_slot(viewport: layout.State, index: i32, part: f64, count: i32): box.Rect
     return hand_fan.slot_rect(fan_band(viewport, count), index, part, count)
 end
 
 function row_slot(viewport: layout.State, slots: i32, index: i32): box.Rect
-    return card_row.slot_rect(
-        slots, card_row.flat_pitch, table_card_band(viewport, slots), index)
+    return card_row.slot_rect(slots, card_row.flat_pitch, table_card_band(viewport, slots), index)
 end
 
 -- Top-left of a board slot's card box. The player's row reads off the closed
@@ -334,19 +334,28 @@ function slot_pos_at(viewport: layout.State, kind: Slot, index: i32, count: i32)
         return top_left(hand_slot(viewport, index, 0.0, count))
     case Slot.computer then
         local band: box.Rect = computer_band(viewport)
-        return top_left(card_row.slot_rect(
-            count, card_row.pitch_in(band, count, card_row.flat_pitch),
-            band, index))
-    case Slot.middle then return top_left(row_slot(viewport, count, index))
-    case Slot.deck then return point(viewport.side_left, viewport.table_card_y)
+        return top_left(
+            card_row.slot_rect(
+                count,
+                card_row.pitch_in(band, count, card_row.flat_pitch),
+                band,
+                index
+            )
+        )
+    case Slot.middle then
+        return top_left(row_slot(viewport, count, index))
+    case Slot.deck then
+        return point(viewport.side_left, viewport.table_card_y)
     case Slot.none then
         return point(
             viewport.side_right + (index::f64) * 4.0,
-            viewport.table_card_y + (index::f64) * 12.0)
+            viewport.table_card_y + (index::f64) * 12.0
+        )
     case Slot.aside then
         return point(
             viewport.side_right + (index::f64) * 4.0,
-            viewport.table_card_y + (index::f64) * 12.0)
+            viewport.table_card_y + (index::f64) * 12.0
+        )
     end
 end
 
@@ -391,7 +400,8 @@ function bound_hand_center(viewport: layout.State, index: i32, part: f64, count:
     local slot: box.Rect = hand_slot(viewport, index, part, count)
     return point(
         slot.x + card.width * 0.5 + math.sin(angle) * card.select_lift,
-        slot.y + card.height * 0.5 - math.cos(angle) * card.select_lift)
+        slot.y + card.height * 0.5 - math.cos(angle) * card.select_lift
+    )
 end
 
 function slot_hidden(anims: {Anim}, clock: f64, kind: Slot, index: i32): bool
@@ -404,7 +414,11 @@ function slot_hidden(anims: {Anim}, clock: f64, kind: Slot, index: i32): bool
 end
 
 function is_picked(picks: {i32}, value: i32): bool
-    for pick in picks do if pick == value then return true end end
+    for pick in picks do
+        if pick == value then
+            return true
+        end
+    end
     return false
 end
 
@@ -427,65 +441,90 @@ end
 function Board:begin_frame(frame: Frame): unit
     local hand_count: i32 = #frame.view.player_hand
     local table_count: i32 = #frame.view.middle
-    self.view:present_chrome(
-        frame.view, frame.run, frame.piles.discards, settled_pile_count(frame))
+    self.view:present_chrome(frame.view, frame.run, frame.piles.discards, settled_pile_count(frame))
     self.view:begin_player()
     for index = 0::i32, hand_count - 1 do
         local selected: bool = is_picked(frame.interaction.play_picks, index)
         if frame.view.swap_open then
             selected = is_picked(frame.interaction.swap_hand, index)
         end
-        self.view:add_player(card.look(
-            frame.view.player_hand[index].card,
-            selected,
-            index == frame.interaction.hand_focus,
-            false,
-            false,
-            frame.view.player_hand[index].known), slot_hidden(
-                frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, index))
+        self.view:add_player(
+            card.look(
+                frame.view.player_hand[index].card,
+                selected,
+                index == frame.interaction.hand_focus,
+                false,
+                false,
+                frame.view.player_hand[index].known
+            ),
+            slot_hidden(frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, index)
+        )
     end
     self.view:end_player(frame.motion.fan_parts)
 
     self.view:begin_computer()
     for index = 0::i32, hand_count - 1 do
         local hidden: bool = slot_hidden(
-            frame.motion.anims, frame.motion.anim_clock, SLOT_COMPUTER, index)
-        self.view:present_computer(index, card.sealed(
-            frame.view.computer_hand[index].card,
-            frame.view.computer_hand[index].known), hidden)
+            frame.motion.anims,
+            frame.motion.anim_clock,
+            SLOT_COMPUTER,
+            index
+        )
+        self.view:present_computer(
+            index,
+            card.sealed(
+                frame.view.computer_hand[index].card,
+                frame.view.computer_hand[index].known
+            ),
+            hidden
+        )
     end
 
-    local modal_open: bool = frame.interaction.modal ~= "none"
-        or frame.interaction.revealing
-    self.view:present_input({
-        viewport_width = frame.viewport.width,
-        viewport_height = frame.viewport.height,
-        fan_bounds = fan_band(frame.viewport, hand_count),
-        fan_parts = frame.motion.fan_parts,
-        hand_count = hand_count,
-        table_count = table_count,
-        frozen_table = frame.view.frozen_middle,
-        swap_open = frame.view.swap_open,
-        casting = frame.interaction.casting,
-        modal_open = modal_open,
-        finished = frame.interaction.finished,
-        play_pick_count = #frame.interaction.play_picks,
-    })
+    local modal_open: bool = frame.interaction.modal ~= "none" or frame.interaction.revealing
+    self.view:present_input(
+        {
+            viewport_width = frame.viewport.width,
+            viewport_height = frame.viewport.height,
+            fan_bounds = fan_band(frame.viewport, hand_count),
+            fan_parts = frame.motion.fan_parts,
+            hand_count = hand_count,
+            table_count = table_count,
+            frozen_table = frame.view.frozen_middle,
+            swap_open = frame.view.swap_open,
+            casting = frame.interaction.casting,
+            modal_open = modal_open,
+            finished = frame.interaction.finished,
+            play_pick_count = #frame.interaction.play_picks
+        }
+    )
     self.view:present_modal(frame.interaction.modal, frame.view, frame.run)
     self.view:begin_table()
     local table_focus: i32 = self:focused_table()
     for index = 0::i32, table_count - 1 do
         local hidden: bool = slot_hidden(
-            frame.motion.anims, frame.motion.anim_clock, SLOT_MIDDLE, index)
-        local selected: bool = frame.view.swap_open
-            and is_picked(frame.interaction.swap_table_cards, index)
-        local focused: bool = table_focus == index
-            and (frame.view.swap_open or frame.interaction.casting)
+            frame.motion.anims,
+            frame.motion.anim_clock,
+            SLOT_MIDDLE,
+            index
+        )
+        local selected: bool = frame.view.swap_open and is_picked(
+            frame.interaction.swap_table_cards,
+            index
+        )
+        local focused: bool = table_focus == index and (frame.view.swap_open or frame.interaction.casting)
         local power: spells.SpellKind? = nil
-        if index == frame.spell.target then power = frame.spell.kind end
-        self.view:present_table(index,
+        if index == frame.spell.target then
+            power = frame.spell.kind
+        end
+        self.view:present_table(
+            index,
             card.look(frame.view.middle[index], selected, focused, hidden, false, false),
-            power, frame.spell.clock, frame.ash, frame.spells.grave_dust, hidden)
+            power,
+            frame.spell.clock,
+            frame.ash,
+            frame.spells.grave_dust,
+            hidden
+        )
     end
 end
 
@@ -548,49 +587,70 @@ end
 -- ---------------------------------------------------------------------------
 -- Cards in flight, and the reveal's own effects.
 -- ---------------------------------------------------------------------------
-
 -- One quad backs the entire winning hand. A player win gets the radiant
 -- gold shimmer; an Opponent win gets the contracting defeat shroud. Because
 -- it is drawn before all five cards, the cards mask its centre while the
 -- continuous field remains visible around them and through every gap.
-function use_result_field(
-    surface: ui.Surface, strength: f64, aspect: f64, player_won: bool
-): bool
+function use_result_field(surface: ui.Surface, strength: f64, aspect: f64, player_won: bool): bool
     local effects: effect_shaders.EffectShaders = surface.effects
     local maybe_shader: graphics_module.Shader? = effects.defeat_shroud.shader
-    if player_won then maybe_shader = effects.gold_shimmer.shader end
-    if maybe_shader == nil then return false end
+    if player_won then
+        maybe_shader = effects.gold_shimmer.shader
+    end
+    if maybe_shader == nil then
+        return false
+    end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(shader, {
-        graphics_module.float_parameter("u_strength", strength),
-        graphics_module.float_parameter("u_aspect", aspect),
-    })
+    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
+        shader,
+        {
+            graphics_module.float_parameter("u_strength", strength),
+            graphics_module.float_parameter("u_aspect", aspect)
+        }
+    )
     return binding.ok
 end
 
 function draw_result_field(
-    surface: ui.Surface, bounds: box.Rect, strength: f64, player_won: bool
+    surface: ui.Surface,
+    bounds: box.Rect,
+    strength: f64,
+    player_won: bool
 ): unit
-    if strength <= 0.0 then return end
+    if strength <= 0.0 then
+        return
+    end
     local graphics = surface.graphics
     local quad_width: f64 = bounds.width + SHIMMER_MARGIN * 2.0
     local quad_height: f64 = bounds.height + SHIMMER_MARGIN * 2.0
-    if not use_result_field(
-        surface, strength, quad_width / quad_height, player_won)
-    then
+    if not use_result_field(surface, strength, quad_width / quad_height, player_won) then
         ink.stop_effect(graphics)
         ink.panel(
-            graphics, bounds.x - 10.0, bounds.y + 34.0, bounds.width + 20.0, 60.0,
-            "#2a001d", "#ff00ff")
+            graphics,
+            bounds.x - 10.0,
+            bounds.y + 34.0,
+            bounds.width + 20.0,
+            60.0,
+            "#2a001d",
+            "#ff00ff"
+        )
         ink.text_centered(
-            graphics, "RESULT SHADER ERROR",
-            bounds.x + bounds.width * 0.5, bounds.y + 71.0, 14, "#ff66ff")
+            graphics,
+            "RESULT SHADER ERROR",
+            bounds.x + bounds.width * 0.5,
+            bounds.y + 71.0,
+            14,
+            "#ff66ff"
+        )
         return
     end
     graphics:set_color("#ffffffff")
     graphics:fill_rectangle(
-        bounds.x - SHIMMER_MARGIN, bounds.y - SHIMMER_MARGIN,
-        quad_width, quad_height)
+        bounds.x - SHIMMER_MARGIN,
+        bounds.y - SHIMMER_MARGIN,
+        quad_width,
+        quad_height
+    )
     ink.stop_effect(graphics)
 end
 
@@ -601,9 +661,7 @@ end
 -- this leg projects the sheet itself instead of using the transform stack.
 -- The face is captured fresh each frame, the same bargain ash reappearance
 -- strikes: a throw is short and rare, and a captured card is exact.
-function draw_throw_card(
-    surface: ui.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh
-): unit
+function draw_throw_card(surface: ui.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh): unit
     local graphics = surface.graphics
     local clock: f64 = part * card_draw.land_end
     local throw: card_draw.Draw = {
@@ -621,7 +679,9 @@ function draw_throw_card(
     local pose: card_warp.Pose = throw:pose_at(clock)
     local face_up: bool = throw:shows_face(clock)
     local target: graphics_module.RenderTarget? = card.capture(
-        surface, card.look(anim.card, false, false, not face_up, false, anim.known))
+        surface,
+        card.look(anim.card, false, false, not face_up, false, anim.known)
+    )
     if target == nil then
         -- Without a capture there is no texture for the sheet; the plain
         -- card at the pose's centre keeps the deal legible until assets are
@@ -629,7 +689,9 @@ function draw_throw_card(
         card.draw_at(
             surface,
             card.look(anim.card, false, false, not face_up, false, anim.known),
-            pose.center_x - card.width * 0.5, pose.center_y - card.height * 0.5)
+            pose.center_x - card.width * 0.5,
+            pose.center_y - card.height * 0.5
+        )
         return
     end
     local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
@@ -642,12 +704,20 @@ function draw_throw_card(
         source_x = card.width
         source_width = -card.width
     end
-    local texture: graphics_module.Texture = graphics:texture_from_render_target(
-        captured)
+    local texture: graphics_module.Texture = graphics:texture_from_render_target(captured)
     graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
     graphics:draw_sprite_mesh(
-        texture, sheet.columns, sheet.rows, sheet.xs, sheet.ys, sheet.shades,
-        source_x, 0.0, source_width, card.height)
+        texture,
+        sheet.columns,
+        sheet.rows,
+        sheet.xs,
+        sheet.ys,
+        sheet.shades,
+        source_x,
+        0.0,
+        source_width,
+        card.height
+    )
     graphics:release_render_target(captured)
 end
 
@@ -655,13 +725,15 @@ end
 -- an optional mid-flight flip, turning to meet the tilt of wherever it lands
 -- and lifted slightly toward the viewer while it moves (matching the reveal
 -- flip's midair feel).
-function draw_anim_card(
-    surface: ui.Surface, anim: Anim, clock: f64, sheet: card_warp.Mesh
-): unit
-    if clock < anim.appear or clock >= anim.vanish then return end
+function draw_anim_card(surface: ui.Surface, anim: Anim, clock: f64, sheet: card_warp.Mesh): unit
+    if clock < anim.appear or clock >= anim.vanish then
+        return
+    end
     local graphics = surface.graphics
     local t: f64 = 1.0
-    if anim.duration > 0.0 then t = (clock - anim.start) / anim.duration end
+    if anim.duration > 0.0 then
+        t = (clock - anim.start) / anim.duration
+    end
     t = easing.clamp01(t)
     if anim.effect == ANIM_EFFECT_THROW then
         draw_throw_card(surface, anim, t, sheet)
@@ -678,62 +750,71 @@ function draw_anim_card(
     local turn: f64 = easing.in_out_cubic(t)
     if anim.faces == FACES_FLIP_UP or anim.faces == FACES_FLIP_DOWN then
         local flat: f64 = math.cos(turn * math.pi)
-        if anim.faces == FACES_FLIP_UP then hidden = flat >= 0.0 else hidden = flat < 0.0 end
+        if anim.faces == FACES_FLIP_UP then
+            hidden = flat >= 0.0
+        else
+            hidden = flat < 0.0
+        end
         width_scale = flat
-        if width_scale < 0.0 then width_scale = -width_scale end
+        if width_scale < 0.0 then
+            width_scale = -width_scale
+        end
     end
     local depth: f64 = math.sin(turn * math.pi)
     local lift: f64 = 1.0 + 0.08 * depth
     graphics:push()
-    graphics:translate(
-        at.x + card.width * 0.5, at.y + card.height * 0.5 - 8.0 * depth)
+    graphics:translate(at.x + card.width * 0.5, at.y + card.height * 0.5 - 8.0 * depth)
     graphics:rotate(anim.angle0 + (anim.angle1 - anim.angle0) * ease)
     graphics:apply_transform(width_scale * lift, 0.0, 0.0, lift, 0.0, 0.0)
     card.draw_at(
-        surface, card.look(anim.card, false, false, hidden, false, anim.known),
-        -(card.width * 0.5), -(card.height * 0.5))
+        surface,
+        card.look(anim.card, false, false, hidden, false, anim.known),
+        -(card.width * 0.5),
+        -(card.height * 0.5)
+    )
     graphics:pop()
 end
 
-function draw_anims(
-    surface: ui.Surface, anims: {Anim}, clock: f64, sheet: card_warp.Mesh
-): unit
-    for anim in anims do draw_anim_card(surface, anim, clock, sheet) end
+function draw_anims(surface: ui.Surface, anims: {Anim}, clock: f64, sheet: card_warp.Mesh): unit
+    for anim in anims do
+        draw_anim_card(surface, anim, clock, sheet)
+    end
 end
 
 -- A stronger cubic acceleration/deceleration gives the winner's flight a
 -- deliberate launch and a decisive landing, while remaining exactly bounded.
 function fly_ease(clock: f64, delay: f64): f64
     local t: f64 = (clock - delay) / FLY_SECONDS
-    if t < 0.0 then return 0.0 end
-    if t > 1.0 then t = 1.0 end
+    if t < 0.0 then
+        return 0.0
+    end
+    if t > 1.0 then
+        t = 1.0
+    end
     return easing.in_out_cubic(t)
 end
 
 -- The fairy visits the three shared table cards, then the two cards that complete
 -- their five-card hand. Card targets follow the live fan rather than its
 -- closed layout, so the light lands on the card even while the row settles.
-function divine_target(
-    viewport: layout.State, target: i32, fan_parts: {f64}
-): Point
+function divine_target(viewport: layout.State, target: i32, fan_parts: {f64}): Point
     if target < 3 then
         return slot_center(viewport, SLOT_MIDDLE, target, #fan_parts)
     end
     local hand_index: i32 = target - 3
-    local slot: box.Rect = hand_slot(
-        viewport, hand_index, fan_parts[hand_index], #fan_parts)
+    local slot: box.Rect = hand_slot(viewport, hand_index, fan_parts[hand_index], #fan_parts)
     return point(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
 end
 
-function divine_fairy_position(
-    viewport: layout.State, clock: f64, fan_parts: {f64}
-): Point
+function divine_fairy_position(viewport: layout.State, clock: f64, fan_parts: {f64}): Point
     local first_time: f64 = divine_intervention.contact_time(0)
     local entrance: Point = point(-34.0, viewport.table_card_y - 92.0)
     if clock < first_time then
         return lerp(
-            entrance, divine_target(viewport, 0, fan_parts),
-            easing.in_out_cubic(clock / first_time))
+            entrance,
+            divine_target(viewport, 0, fan_parts),
+            easing.in_out_cubic(clock / first_time)
+        )
     end
     for target = 1::i32, divine_intervention.target_count - 1 do
         local finish: f64 = divine_intervention.contact_time(target)
@@ -742,26 +823,29 @@ function divine_fairy_position(
             return lerp(
                 divine_target(viewport, target - 1, fan_parts),
                 divine_target(viewport, target, fan_parts),
-                easing.in_out_cubic((clock - start) / (finish - start)))
+                easing.in_out_cubic((clock - start) / (finish - start))
+            )
         end
     end
     local last: i32 = divine_intervention.target_count - 1
     local depart: f64 = divine_intervention.contact_time(last)
     local exit: Point = point(viewport.width + 38.0, viewport.player_y - 118.0)
     return lerp(
-        divine_target(viewport, last, fan_parts), exit,
-        easing.in_out_cubic(
-            (clock - depart) / (divine_intervention.total_seconds - depart)))
+        divine_target(viewport, last, fan_parts),
+        exit,
+        easing.in_out_cubic((clock - depart) / (divine_intervention.total_seconds - depart))
+    )
 end
 
 function divine_flash(clock: f64): f64
     local flash: f64 = 0.0
     for target = 0::i32, divine_intervention.target_count - 1 do
-        local distance: f64 = math.abs(
-            clock - divine_intervention.contact_time(target))
+        local distance: f64 = math.abs(clock - divine_intervention.contact_time(target))
         if distance < 0.13 then
             local strength: f64 = 1.0 - distance / 0.13
-            if strength > flash then flash = strength end
+            if strength > flash then
+                flash = strength
+            end
         end
     end
     return flash
@@ -774,9 +858,14 @@ end
 -- Like a card in flight it is drawn against the board's anchors rather than
 -- laid out: it is a visitor crossing the board, not a thing standing on it.
 function draw_divine_intervention(
-    surface: ui.Surface, clock: f64, active: bool, fan_parts: {f64}
+    surface: ui.Surface,
+    clock: f64,
+    active: bool,
+    fan_parts: {f64}
 ): unit
-    if not active or #fan_parts < 2 then return end
+    if not active or #fan_parts < 2 then
+        return
+    end
     local graphics = surface.graphics
     local viewport: layout.State = layout.current()
     local at: Point = divine_fairy_position(viewport, clock, fan_parts)
@@ -793,17 +882,22 @@ function draw_divine_intervention(
     -- Four orbiting motes sell the light as a living visitor rather than a
     -- cursor, while staying entirely in the existing WebGL2 shape vocabulary.
     for mote = 0::i32, 3::i32 do
-        local angle: f64 = clock * (4.0 + (mote::f64) * 0.35)
-            + (mote::f64) * math.pi * 0.5
+        local angle: f64 = clock * (4.0 + (mote::f64) * 0.35) + (mote::f64) * math.pi * 0.5
         local reach: f64 = halo + 5.0 + (mote::f64)
         graphics:fill_circle(
             at.x + math.cos(angle) * reach,
             at.y + math.sin(angle) * reach,
-            1.6 + flash * 1.5)
+            1.6 + flash * 1.5
+        )
     end
     centered_line(
-        surface, viewport, "DIVINE INTERVENTION",
-        viewport.table_card_y - 72.0, 11.0, "#ffffff")
+        surface,
+        viewport,
+        "DIVINE INTERVENTION",
+        viewport.table_card_y - 72.0,
+        11.0,
+        "#ffffff"
+    )
 end
 
 -- One winner card travelling from its revealed pose (`start`, a card centre)
@@ -812,13 +906,19 @@ end
 -- use keeps it airborne in between. ease 0 means the flight has not begun and
 -- the card still sits in its row, so nothing is drawn.
 function draw_winner_flight(
-    surface: ui.Surface, value: game.Card, start: Point, sangle: f64,
-    dest: Point, ease: f64, colored: bool
+    surface: ui.Surface,
+    value: game.Card,
+    start: Point,
+    sangle: f64,
+    dest: Point,
+    ease: f64,
+    colored: bool
 ): unit
-    if ease <= 0.0 then return end
+    if ease <= 0.0 then
+        return
+    end
     local graphics = surface.graphics
-    local dest_center: Point = point(
-        dest.x + card.width * 0.5, dest.y + card.height * 0.5)
+    local dest_center: Point = point(dest.x + card.width * 0.5, dest.y + card.height * 0.5)
     local at: Point = lerp(start, dest_center, ease)
     local depth: f64 = math.sin(ease * math.pi)
     local lift: f64 = 1.0 + 0.08 * depth
@@ -827,8 +927,11 @@ function draw_winner_flight(
     graphics:rotate(sangle * (1.0 - ease))
     graphics:apply_transform(lift, 0.0, 0.0, lift, 0.0, 0.0)
     card.draw_at(
-        surface, card.look(value, false, false, false, colored, false),
-        -(card.width * 0.5), -(card.height * 0.5))
+        surface,
+        card.look(value, false, false, false, colored, false),
+        -(card.width * 0.5),
+        -(card.height * 0.5)
+    )
     graphics:pop()
 end
 
@@ -836,16 +939,21 @@ end
 -- update tick steers the ash emitters from this and the resolution board draws
 -- the sheet from it, so the flakes and the front they leave never disagree.
 function loss_burn_progress(reveal_clock: f64): f64
-    return card_burn.progress_over(
-        reveal_clock, WIN_GLOW_START, card_burn.disintegrate_seconds)
+    return card_burn.progress_over(reveal_clock, WIN_GLOW_START, card_burn.disintegrate_seconds)
 end
 
 -- A card coming apart inside the fan. Past full burn there is no sheet left
 -- to capture, only the last flakes falling — and they fall inside the card's
 -- own tilt, the way they did while it was still there.
 function draw_hand_disintegration(
-    surface: ui.Surface, viewport: layout.State, value: game.Card,
-    index: i32, part: f64, count: i32, progress: f64, seed: i32,
+    surface: ui.Surface,
+    viewport: layout.State,
+    value: game.Card,
+    index: i32,
+    part: f64,
+    count: i32,
+    progress: f64,
+    seed: i32,
     ash: particles.ParticleSystem
 ): unit
     local graphics = surface.graphics
@@ -859,15 +967,24 @@ function draw_hand_disintegration(
     graphics:rotate(hand_fan.angle_at(index, part, count))
     if target == nil then
         card_burn.draw_ash(
-            surface, ash,
-            -(card.width * 0.5), -(card.height * 0.5) - card.select_lift, seed + 401)
+            surface,
+            ash,
+            -(card.width * 0.5),
+            -(card.height * 0.5) - card.select_lift,
+            seed + 401
+        )
     else
-        local captured: graphics_module.RenderTarget =
-            target::graphics_module.RenderTarget
+        local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
         card_burn.draw_captured(
-            surface, captured,
-            -(card.width * 0.5), -(card.height * 0.5) - card.select_lift,
-            progress, seed, value.suit, ash)
+            surface,
+            captured,
+            -(card.width * 0.5),
+            -(card.height * 0.5) - card.select_lift,
+            progress,
+            seed,
+            value.suit,
+            ash
+        )
         graphics:release_render_target(captured)
     end
     graphics:pop()
@@ -876,12 +993,8 @@ end
 -- ---------------------------------------------------------------------------
 -- Spell particles, which the update tick owns and this module tunes.
 -- ---------------------------------------------------------------------------
-
 function new_spell_particles(): SpellParticles
-    return {
-        sparks = spell_launch.new_sparks(),
-        grave_dust = powered_card.new_grave_dust(),
-    }
+    return { sparks = spell_launch.new_sparks(), grave_dust = powered_card.new_grave_dust() }
 end
 
 -- One tick of everything a spell has in the air. The launch seam is given the
@@ -889,61 +1002,74 @@ end
 -- work out for themselves; the grave reads the same hand the raised table_card
 -- is drawn from.
 function step_spell_particles(
-    spells: SpellParticles, viewport: layout.State,
-    kind: spells.SpellKind?, clock: f64, target: i32, middle_count: i32, dt: f64
+    spells: SpellParticles,
+    viewport: layout.State,
+    kind: spells.SpellKind?,
+    clock: f64,
+    target: i32,
+    middle_count: i32,
+    dt: f64
 ): unit
     -- A resolved terminal trick has already cleared the live community while
     -- its reveal is beginning. Likewise, a turn/river condition can briefly
     -- outlive the five-card board it named. Neither state has a card slot to
     -- index until choreography clears or retargets the condition.
-    if middle_count <= 0 or target < 0 or target >= middle_count then return end
-    local slot: Point = slot_pos_at(
-        viewport, SLOT_MIDDLE, target, middle_count)
+    if middle_count <= 0 or target < 0 or target >= middle_count then
+        return
+    end
+    local slot: Point = slot_pos_at(viewport, SLOT_MIDDLE, target, middle_count)
     spell_launch.step(
-        spells.sparks, kind, clock, dt,
-        slot.x + card.width * 0.5, slot.y + card.height * 0.5)
-    powered_card.step_grave_dust(
-        spells.grave_dust, powered_card.grave_progress(kind, clock), dt)
+        spells.sparks,
+        kind,
+        clock,
+        dt,
+        slot.x + card.width * 0.5,
+        slot.y + card.height * 0.5
+    )
+    powered_card.step_grave_dust(spells.grave_dust, powered_card.grave_progress(kind, clock), dt)
 end
 
 function draw_spell_launch(
-    surface: ui.Surface, viewport: layout.State,
-    kind: spells.SpellKind?, clock: f64, target: i32, middle_count: i32,
+    surface: ui.Surface,
+    viewport: layout.State,
+    kind: spells.SpellKind?,
+    clock: f64,
+    target: i32,
+    middle_count: i32,
     sparks: spell_cast.Sparks
 ): unit
-    if middle_count <= 0 or target < 0 or target >= middle_count then return end
-    local slot: Point = slot_pos_at(
-        viewport, SLOT_MIDDLE, target, middle_count)
+    if middle_count <= 0 or target < 0 or target >= middle_count then
+        return
+    end
+    local slot: Point = slot_pos_at(viewport, SLOT_MIDDLE, target, middle_count)
     spell_launch.draw(
-        surface.graphics, surface.effects, kind, clock,
-        slot.x + card.width * 0.5, slot.y + card.height * 0.5, sparks)
+        surface.graphics,
+        surface.effects,
+        kind,
+        clock,
+        slot.x + card.width * 0.5,
+        slot.y + card.height * 0.5,
+        sparks
+    )
 end
 
 -- ---------------------------------------------------------------------------
 -- The board, composed.
 -- ---------------------------------------------------------------------------
-
 function draw_backdrop(surface: ui.Surface, viewport: layout.State): unit
     backdrop.draw_at(surface, board_rect(viewport))
 end
 
-function draw_hud(
-    board: Board, surface: ui.Surface, viewport: layout.State
-): unit
-    board.view:paint_hud(header_band(
-        board.view:hud_height(surface.graphics), viewport))
+function draw_hud(board: Board, surface: ui.Surface, viewport: layout.State): unit
+    board.view:paint_hud(header_band(board.view:hud_height(surface.graphics), viewport))
 end
 
-function draw_footer(
-    board: Board, surface: ui.Surface, viewport: layout.State
-): unit
+function draw_footer(board: Board, surface: ui.Surface, viewport: layout.State): unit
     local height: f64 = board.view:footer_height(surface.graphics)
     board.view:paint_footer(footer_band(height, viewport))
 end
 
-function draw_deck(
-    board: Board, viewport: layout.State
-): unit
+function draw_deck(board: Board, viewport: layout.State): unit
     board.view:paint_deck(deck_band(viewport))
 end
 
@@ -954,15 +1080,20 @@ end
 function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: Slot): i32
     local pending: i32 = 0
     for anim in anims do
-        if anim.dest_kind == dest_kind and clock < anim.vanish then pending += 1 end
+        if anim.dest_kind == dest_kind and clock < anim.vanish then
+            pending += 1
+        end
     end
     return #cards - pending
 end
 
 -- The one right-edge pile, drawn only once it holds cards.
 function draw_pile(
-    board: Board, surface: ui.Surface, viewport: layout.State,
-    cards: {game.Card}, count: i32
+    board: Board,
+    surface: ui.Surface,
+    viewport: layout.State,
+    cards: {game.Card},
+    count: i32
 ): unit
     local slot: Point = slot_pos(viewport, SLOT_ASIDE, 0)
     board.view:present_pile(cards, count)
@@ -973,15 +1104,27 @@ end
 -- both sides to read, so it never carries an eye: the mark only says something
 -- about a hand.
 function draw_table_card_at(
-    surface: ui.Surface, frame: Frame, bounds: box.Rect,
-    value: game.Card, index: i32, selected: bool, focused: bool, colored: bool
+    surface: ui.Surface,
+    frame: Frame,
+    bounds: box.Rect,
+    value: game.Card,
+    index: i32,
+    selected: bool,
+    focused: bool,
+    colored: bool
 ): unit
     local look: card.Look = card.look(value, selected, focused, false, colored, false)
     if index == frame.spell.target then
         powered_card.draw_at(
-            surface, look, bounds.x, bounds.y,
-            frame.spell.kind, frame.spell.clock, frame.ash,
-            frame.spells.grave_dust)
+            surface,
+            look,
+            bounds.x,
+            bounds.y,
+            frame.spell.kind,
+            frame.spell.clock,
+            frame.ash,
+            frame.spells.grave_dust
+        )
         return
     end
     card.draw_at(surface, look, bounds.x, bounds.y)
@@ -989,22 +1132,27 @@ end
 
 function trick_scoring(trick: game.Trick): {bool}
     if trick.winner == 0 then
-        return { false, false, false, false, false, false, false }
+        return {false, false, false, false, false, false, false}
     end
     local winner: game.TrickSide = trick:side(trick.winner::game.Side)
-    return game.formation_marks({
-        trick.middle[0], trick.middle[1], trick.middle[2],
-        trick.middle[3], trick.middle[4],
-        winner.cards[0], winner.cards[1],
-    }, winner.formation)
+    return game.formation_marks(
+        {
+            trick.middle[0],
+            trick.middle[1],
+            trick.middle[2],
+            trick.middle[3],
+            trick.middle[4],
+            winner.cards[0],
+            winner.cards[1]
+        },
+        winner.formation
+    )
 end
 
 -- The live community cards on their field: a panel, and the row of slots standing on
 -- it. Both take the same band, so the field is always exactly as wide as the
 -- row it backs.
-function draw_table_card_band(
-    board: Board, surface: ui.Surface, frame: Frame
-): unit
+function draw_table_card_band(board: Board, surface: ui.Surface, frame: Frame): unit
     local count: i32 = #frame.view.middle
     local band: box.Rect = table_card_band(frame.viewport, count)
     board.view:paint_panel(band)
@@ -1044,8 +1192,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
     local lift_progress: f64 = 0.0
     local loss_progress: f64 = 0.0
     if trick.winner ~= 0 then
-        local glow_time: f64 = easing.clamp01(
-            (reveal_clock - WIN_GLOW_START) / WIN_GLOW_FADE)
+        local glow_time: f64 = easing.clamp01((reveal_clock - WIN_GLOW_START) / WIN_GLOW_FADE)
         glow = easing.out_quint(glow_time)
         lift_progress = easing.out_back(glow_time)
         loss_progress = loss_burn_progress(reveal_clock)
@@ -1055,27 +1202,48 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
     -- the ledger, but remains visibly absent until advancing the result
     -- rebuilds both cards from ash on the pile.
     local burn_landed: i32 = #discards
-    if trick.winner ~= 0 then burn_landed -= 2 end
+    if trick.winner ~= 0 then
+        burn_landed -= 2
+    end
     draw_pile(board, surface, viewport, discards, burn_landed)
     if trick.winner > 0 then
         centered_line(
-            surface, viewport,
+            surface,
+            viewport,
             "ROUND WON +" .. tostring(trick.points),
-            HEADLINE_TOP + HEADLINE_SIZE, HEADLINE_SIZE, "#67e8f9")
+            HEADLINE_TOP + HEADLINE_SIZE,
+            HEADLINE_SIZE,
+            "#67e8f9"
+        )
     elseif trick.winner < 0 then
         centered_line(
-            surface, viewport, "OPPONENT WINS THE ROUND",
-            HEADLINE_TOP + HEADLINE_SIZE, HEADLINE_SIZE, "#fca5a5")
+            surface,
+            viewport,
+            "OPPONENT WINS THE ROUND",
+            HEADLINE_TOP + HEADLINE_SIZE,
+            HEADLINE_SIZE,
+            "#fca5a5"
+        )
     else
         centered_line(
-            surface, viewport, "ROUND TIED",
-            HEADLINE_TOP + HEADLINE_SIZE, HEADLINE_SIZE, "#fbbf24")
+            surface,
+            viewport,
+            "ROUND TIED",
+            HEADLINE_TOP + HEADLINE_SIZE,
+            HEADLINE_SIZE,
+            "#fbbf24"
+        )
     end
     centered_line(
-        surface, viewport,
-        game.category_name(trick.player_value) .. "  VS  "
-            .. game.category_name(trick.computer_value),
-        viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE, PROMPT_INK)
+        surface,
+        viewport,
+        game.category_name(
+            trick.player_value
+        ) .. "  VS  " .. game.category_name(trick.computer_value),
+        viewport.table_card_y - PROMPT_RISE,
+        PROMPT_SIZE,
+        PROMPT_INK
+    )
 
     -- The played Opponent cards flip in their original slots, then fly to
     -- the hand if the table cards held; a slot goes empty the moment its card
@@ -1087,32 +1255,57 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
             if trick.winner >= 0 or fly0 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
                     card_burn.draw_disintegrating(
-                        surface, card.plain(trick.computer_cards[0]),
-                        slot.x, slot.y, loss_progress, 11, frame.ash.reveal_first)
+                        surface,
+                        card.plain(trick.computer_cards[0]),
+                        slot.x,
+                        slot.y,
+                        loss_progress,
+                        11,
+                        frame.ash.reveal_first
+                    )
                 else
                     card_flip.draw(
-                        surface, trick.computer_cards[0], slot.x, slot.y,
-                        reveal_clock, 0.2, trick.winner < 0 and scoring[5])
+                        surface,
+                        trick.computer_cards[0],
+                        slot.x,
+                        slot.y,
+                        reveal_clock,
+                        0.2,
+                        trick.winner < 0 and scoring[5]
+                    )
                 end
             end
         elseif i == trick.computer_second then
             if trick.winner >= 0 or fly1 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
                     card_burn.draw_disintegrating(
-                        surface, card.plain(trick.computer_cards[1]),
-                        slot.x, slot.y, loss_progress, 29, frame.ash.reveal_second)
+                        surface,
+                        card.plain(trick.computer_cards[1]),
+                        slot.x,
+                        slot.y,
+                        loss_progress,
+                        29,
+                        frame.ash.reveal_second
+                    )
                 else
                     card_flip.draw(
-                        surface, trick.computer_cards[1], slot.x, slot.y,
-                        reveal_clock, 0.2 + card_flip.seconds * 0.7,
-                        trick.winner < 0 and scoring[6])
+                        surface,
+                        trick.computer_cards[1],
+                        slot.x,
+                        slot.y,
+                        reveal_clock,
+                        0.2 + card_flip.seconds * 0.7,
+                        trick.winner < 0 and scoring[6]
+                    )
                 end
             end
         else
             card.draw_at(
                 surface,
                 card.sealed(trick.computer_hand[i].card, trick.computer_hand[i].known),
-                slot.x, slot.y)
+                slot.x,
+                slot.y
+            )
         end
     end
 
@@ -1125,15 +1318,26 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
     if glow <= 0.0 then
         for i = 0::i32, 4::i32 do
             draw_table_card_at(
-                surface, frame, row_slot(viewport, 5, i),
-                trick.middle[i], i, false, false,
-                trick.winner ~= 0 and scoring[i])
+                surface,
+                frame,
+                row_slot(viewport, 5, i),
+                trick.middle[i],
+                i,
+                false,
+                false,
+                trick.winner ~= 0 and scoring[i]
+            )
         end
     end
 
     centered_line(
-        surface, viewport, "CLICK OR ENTER CONTINUES",
-        viewport.action_y + CONTINUE_DROP, 12, "#fbbf24")
+        surface,
+        viewport,
+        "CLICK OR ENTER CONTINUES",
+        viewport.action_y + CONTINUE_DROP,
+        12,
+        "#fbbf24"
+    )
     -- The cursor is not live while a round resolves, so the fan is already
     -- easing shut; it settles closed behind the flips. The committed cards
     -- stay selected and lifted until their flight begins, so it stays clear
@@ -1145,37 +1349,75 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
             if trick.winner <= 0 or fly0 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
                     draw_hand_disintegration(
-                        surface, viewport, trick.player_cards[0], i, fan_parts[i],
-                        hand_count, loss_progress, 47, frame.ash.reveal_first)
+                        surface,
+                        viewport,
+                        trick.player_cards[0],
+                        i,
+                        fan_parts[i],
+                        hand_count,
+                        loss_progress,
+                        47,
+                        frame.ash.reveal_first
+                    )
                 else
                     hand_fan.draw_slot(
                         surface,
                         card.look(
-                            trick.player_cards[0], true, false, false,
-                            trick.winner > 0 and scoring[5], false),
-                        fan, i, fan_parts[i], hand_count)
+                            trick.player_cards[0],
+                            true,
+                            false,
+                            false,
+                            trick.winner > 0 and scoring[5],
+                            false
+                        ),
+                        fan,
+                        i,
+                        fan_parts[i],
+                        hand_count
+                    )
                 end
             end
         elseif i == trick.player_second then
             if trick.winner <= 0 or fly1 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
                     draw_hand_disintegration(
-                        surface, viewport, trick.player_cards[1], i, fan_parts[i],
-                        hand_count, loss_progress, 71, frame.ash.reveal_second)
+                        surface,
+                        viewport,
+                        trick.player_cards[1],
+                        i,
+                        fan_parts[i],
+                        hand_count,
+                        loss_progress,
+                        71,
+                        frame.ash.reveal_second
+                    )
                 else
                     hand_fan.draw_slot(
                         surface,
                         card.look(
-                            trick.player_cards[1], true, false, false,
-                            trick.winner > 0 and scoring[6], false),
-                        fan, i, fan_parts[i], hand_count)
+                            trick.player_cards[1],
+                            true,
+                            false,
+                            false,
+                            trick.winner > 0 and scoring[6],
+                            false
+                        ),
+                        fan,
+                        i,
+                        fan_parts[i],
+                        hand_count
+                    )
                 end
             end
         else
             hand_fan.draw_slot(
                 surface,
                 card.sealed(trick.player_hand[i].card, trick.player_hand[i].known),
-                fan, i, fan_parts[i], hand_count)
+                fan,
+                i,
+                fan_parts[i],
+                hand_count
+            )
         end
     end
     draw_footer(board, surface, viewport)
@@ -1197,8 +1439,15 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
         draw_result_field(surface, hand, glow, trick.winner > 0)
         for i = 0::i32, 4::i32 do
             draw_table_card_at(
-                surface, frame, row_slot(viewport, FORMATION_SLOTS, i + 1),
-                trick.middle[i], i, false, false, scoring[i])
+                surface,
+                frame,
+                row_slot(viewport, FORMATION_SLOTS, i + 1),
+                trick.middle[i],
+                i,
+                false,
+                false,
+                scoring[i]
+            )
         end
     end
 
@@ -1208,33 +1457,75 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
     -- takeoff continues the lift instead of snapping back down to the slot.
     if trick.winner < 0 then
         draw_winner_flight(
-            surface, trick.computer_cards[0],
+            surface,
+            trick.computer_cards[0],
             slot_center(viewport, SLOT_COMPUTER, trick.computer_first, hand_count),
-            0.0, row_left(viewport), fly0, scoring[5])
+            0.0,
+            row_left(viewport),
+            fly0,
+            scoring[5]
+        )
         draw_winner_flight(
-            surface, trick.computer_cards[1],
+            surface,
+            trick.computer_cards[1],
             slot_center(viewport, SLOT_COMPUTER, trick.computer_second, hand_count),
-            0.0, row_right(viewport), fly1, scoring[6])
+            0.0,
+            row_right(viewport),
+            fly1,
+            scoring[6]
+        )
     elseif trick.winner > 0 then
         local angle0: f64 = hand_fan.angle_at(
-            trick.player_first, fan_parts[trick.player_first], hand_count)
+            trick.player_first,
+            fan_parts[trick.player_first],
+            hand_count
+        )
         local angle1: f64 = hand_fan.angle_at(
-            trick.player_second, fan_parts[trick.player_second], hand_count)
+            trick.player_second,
+            fan_parts[trick.player_second],
+            hand_count
+        )
         draw_winner_flight(
-            surface, trick.player_cards[0],
+            surface,
+            trick.player_cards[0],
             bound_hand_center(
-                viewport, trick.player_first, fan_parts[trick.player_first], hand_count),
-            angle0, row_left(viewport), fly0, scoring[5])
+                viewport,
+                trick.player_first,
+                fan_parts[trick.player_first],
+                hand_count
+            ),
+            angle0,
+            row_left(viewport),
+            fly0,
+            scoring[5]
+        )
         draw_winner_flight(
-            surface, trick.player_cards[1],
+            surface,
+            trick.player_cards[1],
             bound_hand_center(
-                viewport, trick.player_second, fan_parts[trick.player_second], hand_count),
-            angle1, row_right(viewport), fly1, scoring[6])
+                viewport,
+                trick.player_second,
+                fan_parts[trick.player_second],
+                hand_count
+            ),
+            angle1,
+            row_right(viewport),
+            fly1,
+            scoring[6]
+        )
     end
-    if foreground then graphics:pop() end
+    if foreground then
+        graphics:pop()
+    end
     draw_spell_launch(
-        surface, viewport, frame.spell.kind, frame.spell.clock,
-        frame.spell.target, #trick.middle, frame.spells.sparks)
+        surface,
+        viewport,
+        frame.spell.kind,
+        frame.spell.clock,
+        frame.spell.target,
+        #trick.middle,
+        frame.spells.sparks
+    )
 end
 
 -- The Opponent's sealed row. Slots claimed by an in-flight card stay empty
@@ -1243,11 +1534,9 @@ end
 function draw_computer_row(board: Board, surface: ui.Surface, frame: Frame): unit
     local state: game.View = frame.view
     local band: box.Rect = computer_band(frame.viewport)
-    local pitch: f64 = card_row.pitch_in(
-        band, #state.computer_hand, card_row.flat_pitch)
+    local pitch: f64 = card_row.pitch_in(band, #state.computer_hand, card_row.flat_pitch)
     for i = 0::i32, #state.computer_hand - 1 do
-        board.view:paint_computer(
-            i, card_row.slot_rect(#state.computer_hand, pitch, band, i))
+        board.view:paint_computer(i, card_row.slot_rect(#state.computer_hand, pitch, band, i))
     end
 end
 
@@ -1274,56 +1563,77 @@ function draw_action_band(board: Board, surface: ui.Surface, frame: Frame): unit
         -- prompt names the spell whose key opened targeting, at its own price.
         local aimed: game.Spell = state.spells[interaction.cast_slot]
         centered_line(
-            surface, viewport,
+            surface,
+            viewport,
             "AIM " .. spell_launch.name(aimed.kind) .. " AT A TABLE CARD",
-            viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE,
-            spell_launch.color(aimed.kind))
+            viewport.table_card_y - PROMPT_RISE,
+            PROMPT_SIZE,
+            spell_launch.color(aimed.kind)
+        )
         centered_line(
-            surface, viewport,
-            "ARROWS MOVE   ENTER CASTS " .. tostring(aimed.cost)
-                .. " GOLD   ESC CANCELS",
+            surface,
+            viewport,
+            "ARROWS MOVE   ENTER CASTS " .. tostring(aimed.cost) .. " GOLD   ESC CANCELS",
             viewport.action_y + PROMPT_DROP,
-            action_bar.prompt_size, "#fbbf24")
+            action_bar.prompt_size,
+            "#fbbf24"
+        )
         return
     end
     if state.swap_open then
-        local minimum_swap: i32 = game.next_swap_min(
-            state.player_swap_max, state.computer_swap_max)
-        local swap_prompt: string = "SWAP AT LEAST " .. tostring(minimum_swap)
-            .. ": SELECT MATCHING CARDS + TABLE CARDS"
+        local minimum_swap: i32 = game.next_swap_min(state.player_swap_max, state.computer_swap_max)
+        local swap_prompt: string = "SWAP AT LEAST " .. tostring(
+            minimum_swap
+        ) .. ": SELECT MATCHING CARDS + TABLE CARDS"
         if minimum_swap > #state.middle then
             swap_prompt = "NO SWAP REMAINS: SKIP"
         end
         centered_line(
-            surface, viewport, swap_prompt,
-            viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE, "#fbbf24")
+            surface,
+            viewport,
+            swap_prompt,
+            viewport.table_card_y - PROMPT_RISE,
+            PROMPT_SIZE,
+            "#fbbf24"
+        )
         -- Mirrors the screen's submit rule so the capsule only lights up when
         -- a commit would actually be accepted.
         local available: bool = true
         for table_card in interaction.swap_table_cards do
-            if state.frozen_middle[table_card] then available = false end
+            if state.frozen_middle[table_card] then
+                available = false
+            end
         end
-        local balanced: bool = available
-            and #interaction.swap_hand == #interaction.swap_table_cards
-            and #interaction.swap_hand <= state.player_points
-            and (#interaction.swap_hand == 0 or #interaction.swap_hand >= minimum_swap)
+        local balanced: bool = available and #interaction.swap_hand == #interaction.swap_table_cards and #interaction.swap_hand <= state.player_points and (#interaction.swap_hand == 0 or #interaction.swap_hand >= minimum_swap)
         draw_action(board, "CONFIRM", balanced, band)
         return
     end
     if #interaction.play_picks == 2 then
         local preview: i32 = game.value_for_pair(
-            game.hand_cards(state.player_hand), state.middle,
-            interaction.play_picks[0], interaction.play_picks[1])
+            game.hand_cards(state.player_hand),
+            state.middle,
+            interaction.play_picks[0],
+            interaction.play_picks[1]
+        )
         centered_line(
-            surface, viewport, "HAND: " .. game.category_name(preview),
-            viewport.table_card_y - PROMPT_RISE, PROMPT_SIZE, PROMPT_INK)
+            surface,
+            viewport,
+            "HAND: " .. game.category_name(preview),
+            viewport.table_card_y - PROMPT_RISE,
+            PROMPT_SIZE,
+            PROMPT_INK
+        )
         draw_action(board, "PLAY HAND", true, band)
         return
     end
     centered_line(
-        surface, viewport, "PLAY: SELECT TWO CARDS",
+        surface,
+        viewport,
+        "PLAY: SELECT TWO CARDS",
         viewport.action_y + PROMPT_DROP,
-        action_bar.prompt_size, "#fbbf24")
+        action_bar.prompt_size,
+        "#fbbf24"
+    )
 end
 
 function draw_playfield(board: Board, surface: ui.Surface, frame: Frame): unit
@@ -1338,9 +1648,12 @@ function draw_playfield(board: Board, surface: ui.Surface, frame: Frame): unit
     draw_hud(board, surface, viewport)
     draw_deck(board, viewport)
     draw_pile(
-        board, surface, viewport,
+        board,
+        surface,
+        viewport,
         frame.piles.discards,
-        pile_landed(frame.piles.discards, anims, anim_clock, SLOT_ASIDE))
+        pile_landed(frame.piles.discards, anims, anim_clock, SLOT_ASIDE)
+    )
     draw_computer_row(board, surface, frame)
     draw_table_card_band(board, surface, frame)
 
@@ -1349,8 +1662,14 @@ function draw_playfield(board: Board, surface: ui.Surface, frame: Frame): unit
     draw_footer(board, surface, viewport)
     draw_anims(surface, anims, anim_clock, frame.sheet)
     draw_spell_launch(
-        surface, viewport, frame.spell.kind, frame.spell.clock,
-        frame.spell.target, #state.middle, frame.spells.sparks)
+        surface,
+        viewport,
+        frame.spell.kind,
+        frame.spell.clock,
+        frame.spell.target,
+        #state.middle,
+        frame.spells.sparks
+    )
 end
 
 local retained_help: ui.Node = help_card.node()
@@ -1438,5 +1757,5 @@ return {
     -- ticks them, and everything about how they look, where the carrier is, and
     -- where the board puts the target lives on this side.
     new_spell_particles = new_spell_particles,
-    step_spell_particles = step_spell_particles,
+    step_spell_particles = step_spell_particles
 }

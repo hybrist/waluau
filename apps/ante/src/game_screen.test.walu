@@ -1,5 +1,4 @@
 -- Deterministic coverage for run state that the live duel screen updates.
-
 require("waluau:vitest")
 
 local game = require("./game")
@@ -20,59 +19,68 @@ local function finish_swap_phase(state: game.State): unit
     end
 end
 
-describe("Ante Magic run health wiring", function()
-    it("applies retained board actions to domain selection and commit", function(): unit
-        math.randomseed(103)
-        local screen: game_screen.State = game_screen.State.new()
-        local city: city_map.State = city_map.State.new(103)
-        finish_swap_phase(screen.rules)
-        screen.presentation:skip()
+describe(
+    "Ante Magic run health wiring",
+    function()
+        it(
+            "applies retained board actions to domain selection and commit",
+            function(): unit
+                math.randomseed(103)
+                local screen: game_screen.State = game_screen.State.new()
+                local city: city_map.State = city_map.State.new(103)
+                finish_swap_phase(screen.rules)
+                screen.presentation:skip()
 
-        local first: render.BoardAction = { kind = "hand", index = 1 }
-        local second: render.BoardAction = { kind = "hand", index = 3 }
-        screen:perform_board_action(city, first)
-        screen:perform_board_action(city, second)
-        expect(#screen.ui.play_picks):toBe(2)
-        expect(screen.ui.play_picks[0]):toBe(1)
-        expect(screen.ui.play_picks[1]):toBe(3)
+                local first: render.BoardAction = { kind = "hand", index = 1 }
+                local second: render.BoardAction = { kind = "hand", index = 3 }
+                screen:perform_board_action(city, first)
+                screen:perform_board_action(city, second)
+                expect(#screen.ui.play_picks):toBe(2)
+                expect(screen.ui.play_picks[0]):toBe(1)
+                expect(screen.ui.play_picks[1]):toBe(3)
 
-        screen:perform_board_action(city, { kind = "commit", index = 0 })
-        expect(screen.ui.revealing):toBe(true)
-    end)
-
-    it("turns the last lost hand into a run-ending verdict and fresh run", function()
-        math.randomseed(101)
-        local screen: game_screen.State = game_screen.State.new()
-        local city: city_map.State = city_map.State.new(101)
-        -- Use a boss duel so one lost hand drains the last heart before the
-        -- duel's own multi-hand verdict has been reached.
-        screen.run.rush = true
-        screen:deal_vault()
-        screen.run.hearts = 1
-
-        finish_swap_phase(screen.rules)
-        game_fixture.arrange_breach(
-            screen.rules,
-            { card(10, 0), card(11, 0), card(12, 0), card(2, 1), card(3, 2) },
-            { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) },
-            { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+                screen:perform_board_action(city, { kind = "commit", index = 0 })
+                expect(screen.ui.revealing):toBe(true)
+            end
         )
-        screen.presentation:skip()
-        screen.ui.play_picks = { 0, 1 }
 
-        screen:keypressed(city, "Enter")
+        it(
+            "turns the last lost hand into a run-ending verdict and fresh run",
+            function()
+                math.randomseed(101)
+                local screen: game_screen.State = game_screen.State.new()
+                local city: city_map.State = city_map.State.new(101)
+                -- Use a boss duel so one lost hand drains the last heart before the
+                -- duel's own multi-hand verdict has been reached.
+                screen.run.rush = true
+                screen:deal_vault()
+                screen.run.hearts = 1
 
-        expect(screen.run.hearts):toBe(0)
-        expect(screen.rules:is_finished()):toBe(false)
-        expect(screen.ui.revealing):toBe(true)
+                finish_swap_phase(screen.rules)
+                game_fixture.arrange_breach(
+                    screen.rules,
+                    {card(10, 0), card(11, 0), card(12, 0), card(2, 1), card(3, 2)},
+                    {card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2)},
+                    {card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3)}
+                )
+                screen.presentation:skip()
+                screen.ui.play_picks = {0, 1}
 
-        screen.presentation:finish_reveal()
-        screen:keypressed(city, "Enter")
-        expect(tostring(screen.ui.modal)):toBe("final")
+                screen:keypressed(city, "Enter")
 
-        screen:keypressed(city, "Enter")
-        expect(screen.run.hearts):toBe(run.max_hearts)
-        expect(screen.run.duel):toBe(1)
-        expect(tostring(screen.ui.modal)):toBe("none")
-    end)
-end)
+                expect(screen.run.hearts):toBe(0)
+                expect(screen.rules:is_finished()):toBe(false)
+                expect(screen.ui.revealing):toBe(true)
+
+                screen.presentation:finish_reveal()
+                screen:keypressed(city, "Enter")
+                expect(tostring(screen.ui.modal)):toBe("final")
+
+                screen:keypressed(city, "Enter")
+                expect(screen.run.hearts):toBe(run.max_hearts)
+                expect(screen.run.duel):toBe(1)
+                expect(tostring(screen.ui.modal)):toBe("none")
+            end
+        )
+    end
+)

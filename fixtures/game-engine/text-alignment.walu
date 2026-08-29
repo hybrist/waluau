@@ -2,7 +2,6 @@
 -- renderer assertions cover multiple string lengths and font sizes; the
 -- browser test checks the colored glyphs' actual pixel bounds around a shared
 -- anchor.
-
 local engine = require("../../engine/browser")
 local graphics_module = require("../../engine/graphics")
 local input_module = require("../../engine/input")
@@ -41,23 +40,26 @@ function install_text_alignment_fixture(): unit
     local function keyreleased(key: string): unit
     end
 
-    engine.start({
-        title = "Graphics text alignment conformance",
-        width = 320,
-        height = 200,
-        update_hz = 60.0,
-        max_frame_seconds = 0.25,
-        background = "#000000",
-    }, {
-        load = load,
-        update = update,
-        draw = draw,
-        keypressed = keypressed,
-        keyreleased = keyreleased,
-        mousepressed = nil,
-        mousereleased = nil,
-        mousemoved = nil,
-    })
+    engine.start(
+        {
+            title = "Graphics text alignment conformance",
+            width = 320,
+            height = 200,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#000000"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
 end
 
 install_text_alignment_fixture()

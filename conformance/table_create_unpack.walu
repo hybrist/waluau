@@ -4,7 +4,6 @@
 -- supported: literal bounds, a statically sized array argument (an array
 -- literal or a direct table.create call with a literal count), or an
 -- expected multi-value arity such as an annotated multi-binding declaration.
-
 -- table.create(count, value) fills every element with the value.
 local filled: {i32} = table.create(3, 7)
 assert(#filled == 3)

@@ -19,12 +19,15 @@ function use(graphics: Graphics, effects: EffectShaders, seed: i32, ember: bool)
     if ember then
         kind = 1.0
     end
-    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(shader, {
-        graphics_module.float_parameter("u_progress", kind),
-        graphics_module.float_parameter("u_seed", seed::f64),
-        graphics_module.float_parameter("u_aspect", 1.0),
-        graphics_module.float_parameter("u_particle_mode", 1.0),
-    })
+    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(
+        shader,
+        {
+            graphics_module.float_parameter("u_progress", kind),
+            graphics_module.float_parameter("u_seed", seed::f64),
+            graphics_module.float_parameter("u_aspect", 1.0),
+            graphics_module.float_parameter("u_particle_mode", 1.0)
+        }
+    )
     return binding.ok
 end
 

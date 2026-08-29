@@ -1,6 +1,5 @@
 -- string.byte / string:byte returns the code point at a 1-based index
 -- (negative counts from the end), or nil out of range.
-
 local message: string = "ABC"
 
 assert(string.byte(message) == 65)

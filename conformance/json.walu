@@ -1,19 +1,13 @@
 -- The built-in json module specializes packing and unpacking to the native
 -- Waluau type at each call site. Decoding is recoverable and never returns a
 -- nullable error string: success is always the empty string.
-
-type Profile = {
-    enabled: bool,
-    name: string,
-    note: string?,
-    scores: {i32},
-}
+type Profile = { enabled: bool, name: string, note: string?, scores: {i32} }
 
 local original: Profile = {
     enabled = true,
     name = "Ada \"Lovelace\"",
     note = nil,
-    scores = {7, 11, 42},
+    scores = {7, 11, 42}
 }
 
 local packed = json.pack(original)
@@ -45,7 +39,9 @@ local malformed, malformed_error = json.unpack<Profile>("{")
 assert(malformed == nil)
 assert(malformed_error ~= "")
 
-local mismatched, mismatch_error = json.unpack<Profile>('{"enabled":true,"name":9,"note":null,"scores":[]}')
+local mismatched, mismatch_error = json.unpack<
+    Profile
+>('{"enabled":true,"name":9,"note":null,"scores":[]}')
 assert(mismatched == nil)
 assert(mismatch_error ~= "")
 

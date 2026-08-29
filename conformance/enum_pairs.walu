@@ -2,19 +2,13 @@
 -- binding the variant name and the enum value. The parser expands the loop
 -- into an array for-in over the variant-name strings; the value is rebuilt
 -- from the loop index, so no runtime table backs the enum.
-
-enum SpellKind {
-    Firebolt,
-    FreezeRay,
-    RaiseCard,
-    Clone,
-}
+enum SpellKind { Firebolt, FreezeRay, RaiseCard, Clone }
 
 local names = ""
 local ordinals: i32 = 0
 for name, kind in pairs(SpellKind) do
     names = names .. name .. ";"
-    ordinals = ordinals * 10 + (kind :: i32)
+    ordinals = ordinals * 10 + (kind::i32)
 end
 assert(names == "Firebolt;FreezeRay;RaiseCard;Clone;")
 assert(ordinals == 123)
@@ -65,7 +59,7 @@ assert(visited == "FireboltRaiseCard")
 local grid: i32 = 0
 for _, a in pairs(SpellKind) do
     for _, b in pairs(SpellKind) do
-        grid = grid + (a :: i32) * (b :: i32)
+        grid = grid + (a::i32) * (b::i32)
     end
 end
 assert(grid == 36)

@@ -7,4 +7,3 @@ end
 
 local seed: i32 = answer()
 seed += 1
-

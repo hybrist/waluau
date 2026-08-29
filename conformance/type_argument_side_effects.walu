@@ -1,6 +1,5 @@
 -- Statically known type()/typeof() results may fold to string literals, but
 -- their argument expressions still evaluate exactly once.
-
 type Counter = { value: i32 }
 
 function bump(counter: Counter): i32

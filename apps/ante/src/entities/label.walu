@@ -7,7 +7,6 @@
 -- with the baseline at its bottom edge. That is the engine's own convention
 -- for where `print` puts a string, so a row of labels aligned on baselines
 -- lines up the way reading it says it should.
-
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
@@ -25,49 +24,68 @@ function measure(graphics: ui.Graphics?, value: string, size: f64): box.Intrinsi
         min_height = size,
         preferred_height = size,
         max_height = size,
-        baseline = size,
+        baseline = size
     }
 end
 
 -- Where the pen starts, given how the line sits in the box layout handed it.
 function pen_x(bounds: box.Rect, width: f64, align: i32): f64
-    if align == ALIGN_CENTER then return bounds.x + (bounds.width - width) * 0.5 end
-    if align == ALIGN_RIGHT then return bounds.x + bounds.width - width end
+    if align == ALIGN_CENTER then
+        return bounds.x + (bounds.width - width) * 0.5
+    end
+    if align == ALIGN_RIGHT then
+        return bounds.x + bounds.width - width
+    end
     return bounds.x
 end
 
-type LabelPresentation = {
-    value: string, size: f64, color: string, align: i32, filling: bool,
-}
+type LabelPresentation = { value: string, size: f64, color: string, align: i32, filling: bool }
 export type Stateful = { presentation: LabelPresentation, root: ui.Node }
 
 function Stateful.new(
-    value: string, size: f64, color: string, align: i32, is_filling: bool
+    value: string,
+    size: f64,
+    color: string,
+    align: i32,
+    is_filling: bool
 ): Stateful
     local presentation: LabelPresentation = {
-        value = value, size = size, color = color, align = align, filling = is_filling,
+        value = value,
+        size = size,
+        color = color,
+        align = align,
+        filling = is_filling
     }
     local root: ui.Node = ui.Node.measured(
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
-            local width: f64 = ui.text_width(graphics,
-                presentation.value, presentation.size)
+            local width: f64 = ui.text_width(graphics, presentation.value, presentation.size)
             into.min_width = width
             into.preferred_width = width
             into.max_width = width
-            if presentation.filling then into.max_width = box.unbounded end
+            if presentation.filling then
+                into.max_width = box.unbounded
+            end
             into.min_height = presentation.size
             into.preferred_height = presentation.size
             into.max_height = presentation.size
             into.baseline = presentation.size
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
-            local width: f64 = ui.text_width(surface.graphics,
-                presentation.value, presentation.size)
+            local width: f64 = ui.text_width(
+                surface.graphics,
+                presentation.value,
+                presentation.size
+            )
             ink.text(
-                surface.graphics, presentation.value,
+                surface.graphics,
+                presentation.value,
                 pen_x(bounds, width, presentation.align),
-                bounds.y + presentation.size, presentation.size, presentation.color)
-        end)
+                bounds.y + presentation.size,
+                presentation.size,
+                presentation.color
+            )
+        end
+    )
     return { presentation = presentation, root = root }
 end
 
@@ -114,5 +132,5 @@ return {
     measure = measure,
     align_left = ALIGN_LEFT,
     align_center = ALIGN_CENTER,
-    align_right = ALIGN_RIGHT,
+    align_right = ALIGN_RIGHT
 }

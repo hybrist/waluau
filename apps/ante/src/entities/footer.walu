@@ -3,7 +3,6 @@
 -- ready-ability sockets occupy the lower right. The diamond owns spell identity,
 -- affordability, and key hints; this strip only places it against the same board
 -- edge on every viewport.
-
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../ui/layout")
@@ -30,54 +29,70 @@ function menu(): ui.Node
 end
 
 function stats(state: game.View, run: run_module.View): ui.Node
-    return padded_caption(ui.Node.down({ gap = 4.0, align = "start" }, {
-        label.left(
-            "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
-            HINT_SIZE, HEART_INK),
-        label.left(
-            "GOLD " .. tostring(state.player_points),
-            HINT_SIZE, GOLD_INK),
-    }))
+    return padded_caption(
+        ui.Node.down(
+            { gap = 4.0, align = "start" },
+            {
+                label.left(
+                    "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
+                    HINT_SIZE,
+                    HEART_INK
+                ),
+                label.left("GOLD " .. tostring(state.player_points), HINT_SIZE, GOLD_INK)
+            }
+        )
+    )
 end
 
 export type Stateful = {
     hearts: label.Stateful,
     gold: label.Stateful,
     abilities: ability_diamond.Stateful,
-    root: ui.Node,
+    root: ui.Node
 }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
     local hearts: label.Stateful = label.Stateful.new(
         "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
-        HINT_SIZE, HEART_INK, label.align_left, false)
+        HINT_SIZE,
+        HEART_INK,
+        label.align_left,
+        false
+    )
     local gold: label.Stateful = label.Stateful.new(
         "GOLD " .. tostring(state.player_points),
-        HINT_SIZE, GOLD_INK, label.align_left, false)
+        HINT_SIZE,
+        GOLD_INK,
+        label.align_left,
+        false
+    )
     local abilities: ability_diamond.Stateful = ability_diamond.Stateful.new(state)
-    local stat_root: ui.Node = padded_caption(ui.Node.down(
-        { gap = 4.0, align = "start" }, { hearts.root, gold.root }))
-    local root: ui.Node = ui.Node.layer({
-        ui.Node.across(
-            { justify = "start", align = "end" },
-            { stat_root }),
-        ui.Node.across(
-            { justify = "center", align = "end" },
-            { menu() }),
-        ui.Node.across(
-            { justify = "end", align = "end" },
-            { abilities.root }),
-    })
+    local stat_root: ui.Node = padded_caption(
+        ui.Node.down({ gap = 4.0, align = "start" }, {hearts.root, gold.root})
+    )
+    local root: ui.Node = ui.Node.layer(
+        {
+            ui.Node.across({ justify = "start", align = "end" }, {stat_root}),
+            ui.Node.across({ justify = "center", align = "end" }, {menu()}),
+            ui.Node.across({ justify = "end", align = "end" }, {abilities.root})
+        }
+    )
     return { hearts = hearts, gold = gold, abilities = abilities, root = root }
 end
 
 function Stateful:present(state: game.View, run: run_module.View): unit
     self.hearts:present(
         "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
-        HINT_SIZE, HEART_INK, label.align_left)
+        HINT_SIZE,
+        HEART_INK,
+        label.align_left
+    )
     self.gold:present(
         "GOLD " .. tostring(state.player_points),
-        HINT_SIZE, GOLD_INK, label.align_left)
+        HINT_SIZE,
+        GOLD_INK,
+        label.align_left
+    )
     self.abilities:present(state)
 end
 
@@ -85,6 +100,4 @@ function node(state: game.View, run: run_module.View): ui.Node
     return Stateful.new(state, run).root
 end
 
-return {
-    node = node,
-}
+return { node = node }

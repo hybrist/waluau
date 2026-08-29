@@ -1,6 +1,5 @@
 -- The item seam is intentionally smaller than the shop: any effect receives
 -- the mutable run and the selected destination, then changes only what it owns.
-
 require("waluau:vitest")
 
 local game = require("./game")
@@ -8,35 +7,46 @@ local run = require("./run")
 local shop_item = require("./shop_item")
 local spells = require("./spells/spell")
 
-describe("Ante Magic shop items", function()
-    it("passes enough mutable state for independent run effects", function()
-        local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-        state.gold = 21
-        state.hearts = 2
+describe(
+    "Ante Magic shop items",
+    function()
+        it(
+            "passes enough mutable state for independent run effects",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                state.gold = 21
+                state.hearts = 2
 
-        local halve_gold: shop_item.Item = shop_item.Item.new(
-            function(context: shop_item.UseState): unit
-                context.run.gold //= 2
-            end)
-        local add_health: shop_item.Item = shop_item.Item.new(
-            function(context: shop_item.UseState): unit
-                context.run.hearts += 1
-            end)
+                local halve_gold: shop_item.Item = shop_item.Item.new(
+                    function(context: shop_item.UseState): unit
+                        context.run.gold //= 2
+                    end
+                )
+                local add_health: shop_item.Item = shop_item.Item.new(
+                    function(context: shop_item.UseState): unit
+                        context.run.hearts += 1
+                    end
+                )
 
-        halve_gold:use({ run = state, key = -1 })
-        add_health:use({ run = state, key = -1 })
+                halve_gold:use({ run = state, key = -1 })
+                add_health:use({ run = state, key = -1 })
 
-        expect(state.gold):toBe(10)
-        expect(state.hearts):toBe(3)
-    end)
+                expect(state.gold):toBe(10)
+                expect(state.hearts):toBe(3)
+            end
+        )
 
-    it("uses the selected destination for an item which adds a spell", function()
-        local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-        local add_spell: shop_item.Item = shop_item.Item.learn(spells.SpellKind.Clone)
+        it(
+            "uses the selected destination for an item which adds a spell",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                local add_spell: shop_item.Item = shop_item.Item.learn(spells.SpellKind.Clone)
 
-        add_spell:use({ run = state, key = 1 })
+                add_spell:use({ run = state, key = 1 })
 
-        expect(state:spell_count()):toBe(2)
-        expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
-    end)
-end)
+                expect(state:spell_count()):toBe(2)
+                expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
+            end
+        )
+    end
+)

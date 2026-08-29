@@ -20,7 +20,6 @@
 -- The host (@waluau/storybook) mounts one story at a time into the element
 -- Storybook gives it, so a scene draws from the canvas origin and never has to
 -- know that anything else is on the page.
-
 local browser = require("./browser")
 local graphics_module = require("./graphics")
 local input_module = require("./input")
@@ -90,19 +89,25 @@ type Mount = {
 
 function scene_width(scene: Scene): u32
     local value: u32? = scene.width
-    if value ~= nil then return value::u32 end
+    if value ~= nil then
+        return value::u32
+    end
     return DEFAULT_WIDTH
 end
 
 function scene_height(scene: Scene): u32
     local value: u32? = scene.height
-    if value ~= nil then return value::u32 end
+    if value ~= nil then
+        return value::u32
+    end
     return DEFAULT_HEIGHT
 end
 
 function scene_background(scene: Scene): string
     local value: string? = scene.background
-    if value ~= nil then return value::string end
+    if value ~= nil then
+        return value::string
+    end
     return DEFAULT_BACKGROUND
 end
 
@@ -119,12 +124,18 @@ end
 -- The mounted scene's load hook runs on the first frame it is asked for, so a
 -- scene that needs the renderer has one by the time it builds anything.
 function prepare(mount: Mount): unit
-    if mount.prepared then return end
+    if mount.prepared then
+        return
+    end
     local scene: Scene? = mount.scene
-    if scene == nil then return end
+    if scene == nil then
+        return
+    end
     mount.prepared = true
     local hook: (() -> unit)? = (scene::Scene).load
-    if hook ~= nil then hook() end
+    if hook ~= nil then
+        hook()
+    end
 end
 
 function start_session(mount: Mount): unit
@@ -135,72 +146,101 @@ function start_session(mount: Mount): unit
     local function update(dt: f64, input: input_module.Input): unit
         prepare(mount)
         local scene: Scene? = mount.scene
-        if scene == nil then return end
+        if scene == nil then
+            return
+        end
         local step: ((f64, input_module.Input) -> unit)? = (scene::Scene).update
-        if step ~= nil then step(dt, input) end
+        if step ~= nil then
+            step(dt, input)
+        end
     end
 
     local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
         prepare(mount)
         graphics:clear(mount.background)
         local scene: Scene? = mount.scene
-        if scene == nil then return end
-        (scene::Scene).draw(graphics, alpha)
+        if scene == nil then
+            return
+        end
+        ;(scene::Scene).draw(graphics, alpha)
     end
 
     local function keypressed(key: string): unit
         local scene: Scene? = mount.scene
-        if scene == nil then return end
+        if scene == nil then
+            return
+        end
         local hook: ((string) -> unit)? = (scene::Scene).keypressed
-        if hook ~= nil then hook(key) end
+        if hook ~= nil then
+            hook(key)
+        end
     end
 
     local function keyreleased(key: string): unit
         local scene: Scene? = mount.scene
-        if scene == nil then return end
+        if scene == nil then
+            return
+        end
         local hook: ((string) -> unit)? = (scene::Scene).keyreleased
-        if hook ~= nil then hook(key) end
+        if hook ~= nil then
+            hook(key)
+        end
     end
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
         local scene: Scene? = mount.scene
-        if scene == nil then return end
+        if scene == nil then
+            return
+        end
         local hook: ((f64, f64, i32) -> unit)? = (scene::Scene).mousepressed
-        if hook ~= nil then hook(x, y, button) end
+        if hook ~= nil then
+            hook(x, y, button)
+        end
     end
 
     local function mousereleased(x: f64, y: f64, button: i32): unit
         local scene: Scene? = mount.scene
-        if scene == nil then return end
+        if scene == nil then
+            return
+        end
         local hook: ((f64, f64, i32) -> unit)? = (scene::Scene).mousereleased
-        if hook ~= nil then hook(x, y, button) end
+        if hook ~= nil then
+            hook(x, y, button)
+        end
     end
 
     local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
         local scene: Scene? = mount.scene
-        if scene == nil then return end
+        if scene == nil then
+            return
+        end
         local hook: ((f64, f64, f64, f64) -> unit)? = (scene::Scene).mousemoved
-        if hook ~= nil then hook(x, y, dx, dy) end
+        if hook ~= nil then
+            hook(x, y, dx, dy)
+        end
     end
 
-    mount.session = browser.start({
-        title = mount.name,
-        width = mount.width,
-        height = mount.height,
-        update_hz = DEFAULT_UPDATE_HZ,
-        max_frame_seconds = MAX_FRAME_SECONDS,
-        background = mount.background,
-        mount = __waluau_storybook_mount()
-    }, {
-        load = load,
-        update = update,
-        draw = draw,
-        keypressed = keypressed,
-        keyreleased = keyreleased,
-        mousepressed = mousepressed,
-        mousereleased = mousereleased,
-        mousemoved = mousemoved
-    })
+    mount.session = browser.start(
+        {
+            title = mount.name,
+            width = mount.width,
+            height = mount.height,
+            update_hz = DEFAULT_UPDATE_HZ,
+            max_frame_seconds = MAX_FRAME_SECONDS,
+            background = mount.background,
+            mount = __waluau_storybook_mount()
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = mousepressed,
+            mousereleased = mousereleased,
+            mousemoved = mousemoved
+        }
+    )
 end
 
 -- Puts one story on the canvas. The canvas, its WebGL context, and everything
@@ -267,13 +307,18 @@ function publish(stories: {Story}): unit
     for entry in stories do
         local name: string = entry.name
         local scene: Scene = entry.scene
-        __waluau_storybook_story(name, function(): unit
-            show(mount, name, scene)
-        end)
+        __waluau_storybook_story(
+            name,
+            function(): unit
+                show(mount, name, scene)
+            end
+        )
     end
-    __waluau_storybook_teardown(function(): unit
-        stop(mount)
-    end)
+    __waluau_storybook_teardown(
+        function(): unit
+            stop(mount)
+        end
+    )
 end
 
 return {

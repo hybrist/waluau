@@ -3,7 +3,6 @@
 -- and resource readiness each frame. The small public interface turns browser
 -- input into menu actions; list geometry, hover, focus, and activation stay
 -- together behind that seam.
-
 local render = require("./render")
 local ink = require("./ink")
 local spell_launch = require("./spell_launch")
@@ -24,7 +23,7 @@ type Model = {
     stage: Stage,
     rush_choice: bool,
     spell_cursor: i32,
-    pending_action: MenuAction,
+    pending_action: MenuAction
 }
 type Presentation = { model: Model, viewport: viewport_layout.State, ready: bool }
 
@@ -40,7 +39,7 @@ export type State = {
     spell_scope: i32,
     help_scope: i32,
     main_targets: {interaction.Target},
-    spell_targets: {interaction.Target},
+    spell_targets: {interaction.Target}
 }
 
 const ITEM_NEW_RUN: i32 = 0
@@ -62,12 +61,18 @@ end
 
 function list_style(viewport: viewport_layout.State): ui_layout.Style
     return ui_layout.style(
-        "column", ITEM_PITCH - ITEM_H, "start", "center",
-        ui_layout.edges(0.0, item_start_y(viewport), 0.0, 0.0))
+        "column",
+        ITEM_PITCH - ITEM_H,
+        "start",
+        "center",
+        ui_layout.edges(0.0, item_start_y(viewport), 0.0, 0.0)
+    )
 end
 
 function start_action(model: Model): MenuAction
-    if model.rush_choice then return "start-rush" end
+    if model.rush_choice then
+        return "start-rush"
+    end
     return "start"
 end
 
@@ -100,93 +105,167 @@ function draw_item(
         graphics:set_color("#fbbf24")
         graphics:set_line_width(1.0)
         graphics:stroke_rectangle(
-            bounds.x - grow, bounds.y - grow,
-            bounds.width + grow * 2.0, bounds.height + grow * 2.0)
+            bounds.x - grow,
+            bounds.y - grow,
+            bounds.width + grow * 2.0,
+            bounds.height + grow * 2.0
+        )
     end
     ink.panel(graphics, bounds.x, bounds.y, bounds.width, bounds.height, "#17171c", edge)
-    ink.text_centered(
-        graphics, label, bounds.x + bounds.width * 0.5, bounds.y + 33.0, 15, tone)
+    ink.text_centered(graphics, label, bounds.x + bounds.width * 0.5, bounds.y + 33.0, 15, tone)
 end
 
 function main_row(presentation: Presentation, index: i32, label: string): ui.Node
-    return ui.Node.sized(ITEM_W, ITEM_H,
+    return ui.Node.sized(
+        ITEM_W,
+        ITEM_H,
         function(surface: ui.Surface, bounds: ui_layout.Rect): unit
-            if presentation.model.stage ~= "main" or presentation.model.help_open then return end
+            if presentation.model.stage ~= "main" or presentation.model.help_open then
+                return
+            end
             draw_item(presentation, surface, bounds, index, label, "#8a8a92")
-        end)
+        end
+    )
 end
 
 function spell_row(presentation: Presentation, index: i32): ui.Node
     local kind: spells.SpellKind? = spells.SpellKind.from(index + 1)
     assert(kind ~= nil)
     local spell: spells.SpellKind = kind::spells.SpellKind
-    return ui.Node.sized(ITEM_W, ITEM_H,
+    return ui.Node.sized(
+        ITEM_W,
+        ITEM_H,
         function(surface: ui.Surface, bounds: ui_layout.Rect): unit
-            if presentation.model.stage ~= "spell" or presentation.model.help_open then return end
+            if presentation.model.stage ~= "spell" or presentation.model.help_open then
+                return
+            end
             draw_item(
-                presentation, surface, bounds, index,
-                spell_launch.name(spell), spell_launch.color(spell))
-        end)
+                presentation,
+                surface,
+                bounds,
+                index,
+                spell_launch.name(spell),
+                spell_launch.color(spell)
+            )
+        end
+    )
 end
 
-function draw_chrome(
-    presentation: Presentation, surface: ui.Surface, bounds: ui_layout.Rect
-): unit
+function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui_layout.Rect): unit
     local model: Model = presentation.model
-    if model.help_open then return end
+    if model.help_open then
+        return
+    end
     local viewport: viewport_layout.State = presentation.viewport
     local graphics = surface.graphics
     local heading_y: f64 = title_y(viewport)
     if model.stage == "spell" then
         local mode: string = "NEW RUN"
-        if model.rush_choice then mode = "BOSS RUSH" end
-        ink.text_centered(graphics, "CHOOSE YOUR START", viewport.center_x, heading_y, 30, "#fbbf24")
+        if model.rush_choice then
+            mode = "BOSS RUSH"
+        end
         ink.text_centered(
-            graphics, "CHOOSE A STARTING SPELL", viewport.center_x, heading_y + 34.0, 12, "#d4d4d8")
+            graphics,
+            "CHOOSE YOUR START",
+            viewport.center_x,
+            heading_y,
+            30,
+            "#fbbf24"
+        )
         ink.text_centered(
-            graphics, mode .. "   CARRIED ALL RUN, EVERY USE COSTS 5 GOLD",
-            viewport.center_x, heading_y + 56.0, 11, "#a1a1aa")
+            graphics,
+            "CHOOSE A STARTING SPELL",
+            viewport.center_x,
+            heading_y + 34.0,
+            12,
+            "#d4d4d8"
+        )
         ink.text_centered(
-            graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
-            viewport.center_x, viewport.height - 34.0, 11, "#a1a1aa")
+            graphics,
+            mode .. "   CARRIED ALL RUN, EVERY USE COSTS 5 GOLD",
+            viewport.center_x,
+            heading_y + 56.0,
+            11,
+            "#a1a1aa"
+        )
+        ink.text_centered(
+            graphics,
+            "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
+            viewport.center_x,
+            viewport.height - 34.0,
+            11,
+            "#a1a1aa"
+        )
         return
     end
 
     ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
     ink.text_centered(
-        graphics, "DUEL AFTER DUEL ON ONE POOL OF GOLD. ONE HAND EACH",
-        viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")
+        graphics,
+        "DUEL AFTER DUEL ON ONE POOL OF GOLD. ONE HAND EACH",
+        viewport.center_x,
+        heading_y + 40.0,
+        12,
+        "#d4d4d8"
+    )
     for i = 0::i32, 3::i32 do
         graphics:set_color(ink.color_ink(i))
-        graphics:fill_circle(
-            viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
+        graphics:fill_circle(viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
     end
 
     local detail_y: f64 = item_start_y(viewport) + (ITEM_COUNT::f64) * ITEM_PITCH + 16.0
     if model.cursor == ITEM_NEW_RUN then
         ink.text_centered(
-            graphics, "EVERY THIRD DUEL IS A CHALLENGE. GOLD CARRIES OVER",
-            viewport.center_x, detail_y, 10, "#fbbf24")
+            graphics,
+            "EVERY THIRD DUEL IS A CHALLENGE. GOLD CARRIES OVER",
+            viewport.center_x,
+            detail_y,
+            10,
+            "#fbbf24"
+        )
     elseif model.cursor == ITEM_BOSS_RUSH then
         ink.text_centered(
-            graphics, "EVERY DUEL IS A CHALLENGE. SEVEN CARDS, NO REPLACEMENTS",
-            viewport.center_x, detail_y, 10, "#fbbf24")
+            graphics,
+            "EVERY DUEL IS A CHALLENGE. SEVEN CARDS, NO REPLACEMENTS",
+            viewport.center_x,
+            detail_y,
+            10,
+            "#fbbf24"
+        )
     elseif not presentation.ready then
         ink.text_centered(
-            graphics, "PREPARING THE DUEL", viewport.center_x, detail_y, 10, "#8a8a92")
+            graphics,
+            "PREPARING THE DUEL",
+            viewport.center_x,
+            detail_y,
+            10,
+            "#8a8a92"
+        )
     end
     ink.text_centered(
-        graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS",
-        viewport.center_x, viewport.height - 76.0, 11, "#a1a1aa")
+        graphics,
+        "ARROWS MOVE   ENTER OR CLICK SELECTS",
+        viewport.center_x,
+        viewport.height - 76.0,
+        11,
+        "#a1a1aa"
+    )
     ink.text_centered(
-        graphics, "IN A DUEL: ? HELP   H HISTORY   R RESTART RUN   M MENU",
-        viewport.center_x, viewport.height - 52.0, 10, "#8a8a92")
+        graphics,
+        "IN A DUEL: ? HELP   H HISTORY   R RESTART RUN   M MENU",
+        viewport.center_x,
+        viewport.height - 52.0,
+        10,
+        "#8a8a92"
+    )
 end
 
 function row_handlers(model: Model, stage: Stage, index: i32): interaction.Handlers
     local callbacks: interaction.Handlers = interaction.handlers()
     callbacks.on_focus = function(): unit
-        if stage == "spell" then model.spell_cursor = index end
+        if stage == "spell" then
+            model.spell_cursor = index
+        end
         model.cursor = index
     end
     callbacks.on_activate = function(): unit
@@ -209,49 +288,63 @@ function State.new(): State
         stage = "main",
         rush_choice = false,
         spell_cursor = 0,
-        pending_action = "none",
+        pending_action = "none"
     }
     local presentation: Presentation = {
         model = model,
         viewport = viewport_layout.current(),
-        ready = false,
+        ready = false
     }
     local main_rows: {ui.Node} = {
         main_row(presentation, ITEM_NEW_RUN, "NEW RUN"),
         main_row(presentation, ITEM_BOSS_RUSH, "BOSS RUSH"),
-        main_row(presentation, ITEM_HOW_TO_PLAY, "HOW TO PLAY"),
+        main_row(presentation, ITEM_HOW_TO_PLAY, "HOW TO PLAY")
     }
     local spell_rows: {ui.Node} = {}
     for index = 0::i32, SPELL_COUNT - 1 do
         table.insert(spell_rows, spell_row(presentation, index))
     end
     local chrome: ui.Node = ui.Node.measured(
-        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit end,
+        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit
+        end,
         function(surface: ui.Surface, bounds: ui_layout.Rect): unit
             draw_chrome(presentation, surface, bounds)
-        end)
+        end
+    )
     local main_list: ui.Node = ui.Node.flow(main_rows, list_style(presentation.viewport))
     local spell_list: ui.Node = ui.Node.flow(spell_rows, list_style(presentation.viewport))
     local help: ui.Node = ui.Node.measured(
-        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit end,
+        function(graphics: ui.Graphics?, into: ui_layout.Intrinsic): unit
+        end,
         function(surface: ui.Surface, bounds: ui_layout.Rect): unit
-            if model.help_open then render.draw_help(surface, presentation.viewport) end
-        end)
-    local root: ui.Node = ui.Node.layer({ chrome, main_list, spell_list, help })
+            if model.help_open then
+                render.draw_help(surface, presentation.viewport)
+            end
+        end
+    )
+    local root: ui.Node = ui.Node.layer({chrome, main_list, spell_list, help})
     local router: interaction.Router = interaction.Router.new(root)
     local main_scope: i32 = router:add_scope("column", true)
     local spell_scope: i32 = router:add_scope("column", true)
     local help_scope: i32 = router:add_scope("column", true)
     local main_targets: {interaction.Target} = {}
     for index, row in main_rows do
-        table.insert(main_targets, router:add(row, main_scope, true, row_handlers(model, "main", index)))
+        table.insert(
+            main_targets,
+            router:add(row, main_scope, true, row_handlers(model, "main", index))
+        )
     end
     local spell_targets: {interaction.Target} = {}
     for index, row in spell_rows do
-        table.insert(spell_targets, router:add(row, spell_scope, true, row_handlers(model, "spell", index)))
+        table.insert(
+            spell_targets,
+            router:add(row, spell_scope, true, row_handlers(model, "spell", index))
+        )
     end
     local help_callbacks: interaction.Handlers = interaction.handlers()
-    help_callbacks.on_activate = function(): unit model.help_open = false end
+    help_callbacks.on_activate = function(): unit
+        model.help_open = false
+    end
     router:add(help, help_scope, true, help_callbacks)
     main_list:set_visible(true)
     spell_list:set_visible(false)
@@ -269,7 +362,7 @@ function State.new(): State
         spell_scope = spell_scope,
         help_scope = help_scope,
         main_targets = main_targets,
-        spell_targets = spell_targets,
+        spell_targets = spell_targets
     }
 end
 
@@ -313,8 +406,11 @@ end
 function State:update(city: city_map.State, dt: f64): unit
     self.model.clock += dt
     city:show()
-    if self.model.stage == "spell" then city:follow(city_map.shop_stop(1))
-    else city:drift() end
+    if self.model.stage == "spell" then
+        city:follow(city_map.shop_stop(1))
+    else
+        city:drift()
+    end
 end
 
 function State:selected_spell(): spells.SpellKind
@@ -345,7 +441,9 @@ function State:keypressed(key: string): MenuAction
     if model.stage == "spell" and key == "Escape" then
         model.stage = "main"
         model.cursor = ITEM_NEW_RUN
-        if model.rush_choice then model.cursor = ITEM_BOSS_RUSH end
+        if model.rush_choice then
+            model.cursor = ITEM_BOSS_RUSH
+        end
         self:sync_scope()
         return "none"
     end
@@ -355,8 +453,12 @@ function State:keypressed(key: string): MenuAction
         return "none"
     end
     local routed: string = key
-    if key == "w" or key == "W" then routed = "ArrowUp" end
-    if key == "s" or key == "S" then routed = "ArrowDown" end
+    if key == "w" or key == "W" then
+        routed = "ArrowUp"
+    end
+    if key == "s" or key == "S" then
+        routed = "ArrowDown"
+    end
     self.router:key_pressed(routed)
     self:sync_scope()
     return self:take_action()
@@ -364,16 +466,22 @@ end
 
 function State:mousemoved(x: f64, y: f64): unit
     local hit: i32 = self.router:pointer_move(x, y)
-    if hit >= 0 then self.router:focus(hit) end
+    if hit >= 0 then
+        self.router:focus(hit)
+    end
 end
 
 function State:mousepressed(x: f64, y: f64, button: i32): unit
-    if button ~= 1 then return end
+    if button ~= 1 then
+        return
+    end
     self.router:pointer_down(x, y, button)
 end
 
 function State:mousereleased(x: f64, y: f64, button: i32): MenuAction
-    if button ~= 1 then return "none" end
+    if button ~= 1 then
+        return "none"
+    end
     self.router:pointer_up(x, y, button)
     self:sync_scope()
     return self:take_action()

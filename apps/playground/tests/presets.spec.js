@@ -108,7 +108,9 @@ test.describe('preset selector', () => {
     await page.getByRole('button', { name: 'Tfjs Layers Model Training', exact: true }).click();
 
     await expect(page.locator('.code-textarea')).toContainText('tf.layers_model_compile_sgd(model, "meanSquaredError", 0.01)');
-    await expect(page.locator('.code-textarea')).toContainText('promise.await(tf.layers_model_fit_one(model, xs, ys, 8, 1))');
+    await expect(page.locator('.code-textarea')).toContainText(
+      /promise\.await\(\s*tf\.layers_model_fit_one\(model,\s*xs,\s*ys,\s*8,\s*1\)\s*\)/,
+    );
     await expect(page.locator('.code-textarea')).toContainText('tf.training_history_loss(history, epochs - 1)');
     await expect(page.locator('.code-textarea')).toContainText('tf.dispose_layers_model(model)');
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {

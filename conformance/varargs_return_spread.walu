@@ -1,6 +1,5 @@
 -- A variadic pack survives a function return and expands again when it is the
 -- trailing expression of another return, call, or table constructor.
-
 function concat(head, ...)
     if select('#', ...) == 0 then
         return tostring(head)

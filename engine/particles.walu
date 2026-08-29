@@ -23,7 +23,6 @@
 -- `set_sway_amplitude`/`set_sway_frequency` rock a particle from side to side
 -- on its own phase — falling ash, drifting snow, a wobbling smoke column —
 -- which no combination of the three accelerations produces.
-
 local graphics_module = require("./graphics")
 
 type Graphics = graphics_module.Graphics
@@ -76,18 +75,15 @@ export type ParticleSystem = {
     alive: {Particle},
     free: {Particle},
     capacity: i32,
-
     active: bool,
     emitter_lifetime: f64,
     life: f64,
     emit_counter: f64,
     emission_rate: f64,
-
     x: f64,
     y: f64,
     previous_x: f64,
     previous_y: f64,
-
     life_min: f64,
     life_max: f64,
     direction: f64,
@@ -108,7 +104,6 @@ export type ParticleSystem = {
     sway_amplitude_max: f64,
     sway_frequency_min: f64,
     sway_frequency_max: f64,
-
     sizes: {f64},
     size_variation: f64,
     rotation_min: f64,
@@ -119,25 +114,21 @@ export type ParticleSystem = {
     relative_rotation: bool,
     colors: {Color},
     color_variation: f64,
-
     offset_x: f64,
     offset_y: f64,
     offset_auto: bool,
     insert_mode: i32,
-
     area_distribution: i32,
     area_x: f64,
     area_y: f64,
     area_angle: f64,
     area_directed: bool,
-
     texture: graphics_module.Texture?,
     quads: {Quad},
     shape_width: f64,
     shape_height: f64,
     draw_mode: i32,
     blend_mode: string,
-
     rng: f64
 }
 
@@ -202,7 +193,7 @@ function hex(value: string): Color
         red = hex_channel(value, 2),
         green = hex_channel(value, 4),
         blue = hex_channel(value, 6),
-        alpha = alpha,
+        alpha = alpha
     }
 end
 
@@ -236,7 +227,7 @@ function new_particle(): Particle
         sway_amplitude = 0.0,
         sway_frequency = 0.0,
         sway_phase = 0.0,
-        sway_offset = 0.0,
+        sway_offset = 0.0
     }
 end
 
@@ -245,18 +236,15 @@ function ParticleSystem.new(buffer_size: i32): ParticleSystem
         alive = {},
         free = {},
         capacity = 0,
-
         active = true,
         emitter_lifetime = -1.0,
         life = -1.0,
         emit_counter = 0.0,
         emission_rate = 0.0,
-
         x = 0.0,
         y = 0.0,
         previous_x = 0.0,
         previous_y = 0.0,
-
         life_min = 1.0,
         life_max = 1.0,
         direction = 0.0,
@@ -278,8 +266,7 @@ function ParticleSystem.new(buffer_size: i32): ParticleSystem
         -- One rock per second, so setting an amplitude alone already sways.
         sway_frequency_min = 1.0,
         sway_frequency_max = 1.0,
-
-        sizes = { 1.0 },
+        sizes = {1.0},
         size_variation = 0.0,
         rotation_min = 0.0,
         rotation_max = 0.0,
@@ -287,28 +274,24 @@ function ParticleSystem.new(buffer_size: i32): ParticleSystem
         spin_end = 0.0,
         spin_variation = 0.0,
         relative_rotation = false,
-        colors = { { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 } },
+        colors = {{ red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 }},
         color_variation = 0.0,
-
         offset_x = 4.0,
         offset_y = 4.0,
         offset_auto = true,
         insert_mode = INSERT_TOP,
-
         area_distribution = AREA_NONE,
         area_x = 0.0,
         area_y = 0.0,
         area_angle = 0.0,
         area_directed = false,
-
         texture = nil,
         quads = {},
         shape_width = 8.0,
         shape_height = 8.0,
         draw_mode = DRAW_CIRCLE,
         blend_mode = "alpha",
-
-        rng = 1.0,
+        rng = 1.0
     }
     system:set_buffer_size(buffer_size)
     return system
@@ -481,7 +464,12 @@ end
 
 -- Constant per-particle acceleration, picked component-wise between the two
 -- corners. Gravity is `set_linear_acceleration(0, g, 0, g)`.
-function ParticleSystem:set_linear_acceleration(min_x: f64, min_y: f64, max_x: f64, max_y: f64): unit
+function ParticleSystem:set_linear_acceleration(
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64
+): unit
     self.acceleration_min_x = min_x
     self.acceleration_min_y = min_y
     self.acceleration_max_x = max_x
@@ -596,12 +584,10 @@ end
 function ParticleSystem:set_colors(colors: {Color}): unit
     local copied: {Color} = {}
     for value in colors do
-        table.insert(copied, {
-            red = value.red,
-            green = value.green,
-            blue = value.blue,
-            alpha = value.alpha,
-        })
+        table.insert(
+            copied,
+            { red = value.red, green = value.green, blue = value.blue, alpha = value.alpha }
+        )
     end
     if #copied == 0 then
         table.insert(copied, { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 })
@@ -665,7 +651,13 @@ end
 -- "borderrectangle". `dx`/`dy` are half-extents (or standard deviations for
 -- "normal"), `angle` rotates the region, and `directed` aims each particle
 -- away from the emitter centre instead of along the configured direction.
-function ParticleSystem:set_emission_area(distribution: string, dx: f64, dy: f64, angle: f64, directed: bool): bool
+function ParticleSystem:set_emission_area(
+    distribution: string,
+    dx: f64,
+    dy: f64,
+    angle: f64,
+    directed: bool
+): bool
     if distribution == "none" then
         self.area_distribution = AREA_NONE
     elseif distribution == "uniform" then
@@ -710,7 +702,10 @@ end
 function ParticleSystem:set_quads(quads: {Quad}): unit
     local copied: {Quad} = {}
     for value in quads do
-        table.insert(copied, { x = value.x, y = value.y, width = value.width, height = value.height })
+        table.insert(
+            copied,
+            { x = value.x, y = value.y, width = value.width, height = value.height }
+        )
     end
     self.quads = copied
     self:refresh_offset()
@@ -856,7 +851,10 @@ function ParticleSystem:spawn(part: f64): unit
     if self.area_directed and (offset_x ~= 0.0 or offset_y ~= 0.0) then
         direction = math.atan2(offset_y, offset_x)
     end
-    local heading: f64 = self:random_range(direction - self.spread * 0.5, direction + self.spread * 0.5)
+    local heading: f64 = self:random_range(
+        direction - self.spread * 0.5,
+        direction + self.spread * 0.5
+    )
     local speed: f64 = self:random_range(self.speed_min, self.speed_max)
     particle.velocity_x = math.cos(heading) * speed
     particle.velocity_y = math.sin(heading) * speed
@@ -889,8 +887,18 @@ function ParticleSystem:spawn(part: f64): unit
     if self.relative_rotation then
         particle.angle += math.atan2(particle.velocity_y, particle.velocity_x)
     end
-    particle.spin_start = variation_between(self.spin_start, self.spin_end, self.spin_variation, self:random())
-    particle.spin_end = variation_between(self.spin_end, self.spin_start, self.spin_variation, self:random())
+    particle.spin_start = variation_between(
+        self.spin_start,
+        self.spin_end,
+        self.spin_variation,
+        self:random()
+    )
+    particle.spin_end = variation_between(
+        self.spin_end,
+        self.spin_start,
+        self.spin_variation,
+        self:random()
+    )
 
     self:insert_particle(particle)
 end
@@ -939,8 +947,9 @@ function advance_particle(particle: Particle, dt: f64, relative_rotation: bool):
     -- since the previous step is added; the velocity never learns about it.
     if particle.sway_amplitude ~= 0.0 then
         local age: f64 = particle.lifetime - particle.life
-        local rock: f64 =
-            math.sin(particle.sway_phase + TAU * particle.sway_frequency * age) * particle.sway_amplitude
+        local rock: f64 = math.sin(
+            particle.sway_phase + TAU * particle.sway_frequency * age
+        ) * particle.sway_amplitude
         particle.x += rock - particle.sway_offset
         particle.sway_offset = rock
     end
@@ -1039,11 +1048,7 @@ function color_at(colors: {Color}, particle: Particle, t: f64): (f64, f64, f64, 
     local blend: f64 = position - (index::f64)
     local from: Color = colors[index]
     local to: Color = colors[index + 1]
-    return
-        from.red * (1.0 - blend) + to.red * blend,
-        from.green * (1.0 - blend) + to.green * blend,
-        from.blue * (1.0 - blend) + to.blue * blend,
-        from.alpha * (1.0 - blend) + to.alpha * blend
+    return from.red * (1.0 - blend) + to.red * blend, from.green * (1.0 - blend) + to.green * blend, from.blue * (1.0 - blend) + to.blue * blend, from.alpha * (1.0 - blend) + to.alpha * blend
 end
 
 -- Emits one rotated rectangle in local particle space: the rectangle spans
@@ -1066,16 +1071,25 @@ function draw_rotated_rectangle(
     local right: f64 = left + width
     local bottom: f64 = top + height
     graphics:fill_quad(
-        x + left * cosine - top * sine, y + left * sine + top * cosine,
-        x + right * cosine - top * sine, y + right * sine + top * cosine,
-        x + right * cosine - bottom * sine, y + right * sine + bottom * cosine,
-        x + left * cosine - bottom * sine, y + left * sine + bottom * cosine
+        x + left * cosine - top * sine,
+        y + left * sine + top * cosine,
+        x + right * cosine - top * sine,
+        y + right * sine + top * cosine,
+        x + right * cosine - bottom * sine,
+        y + right * sine + bottom * cosine,
+        x + left * cosine - bottom * sine,
+        y + left * sine + bottom * cosine
     )
 end
 
 -- Sprite pass. The texture arrives already narrowed out of its nullable
 -- field, so the per-particle path has no texture branch left in it.
-function ParticleSystem:draw_sprites(graphics: Graphics, x: f64, y: f64, texture: graphics_module.Texture): unit
+function ParticleSystem:draw_sprites(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    texture: graphics_module.Texture
+): unit
     local frames: i32 = #self.quads
     local base_width: f64 = texture.width::f64
     local base_height: f64 = texture.height::f64
@@ -1120,16 +1134,30 @@ function ParticleSystem:draw_sprites(graphics: Graphics, x: f64, y: f64, texture
         local particle_y: f64 = particle.y + y
         if particle.angle == 0.0 then
             graphics:draw_sprite(
-                texture, particle_x - origin_x, particle_y - origin_y, width, height,
-                source_x, source_y, source_width, source_height
+                texture,
+                particle_x - origin_x,
+                particle_y - origin_y,
+                width,
+                height,
+                source_x,
+                source_y,
+                source_width,
+                source_height
             )
         else
             graphics:push()
             graphics:translate(particle_x, particle_y)
             graphics:rotate(particle.angle)
             graphics:draw_sprite(
-                texture, -origin_x, -origin_y, width, height,
-                source_x, source_y, source_width, source_height
+                texture,
+                -origin_x,
+                -origin_y,
+                width,
+                height,
+                source_x,
+                source_y,
+                source_width,
+                source_height
             )
             graphics:pop()
         end
@@ -1158,7 +1186,16 @@ function ParticleSystem:draw_shapes(graphics: Graphics, x: f64, y: f64): unit
         if self.draw_mode == DRAW_POINT then
             graphics:fill_rectangle(particle_x - origin_x, particle_y - origin_y, width, height)
         elseif self.draw_mode == DRAW_SQUARE then
-            draw_rotated_rectangle(graphics, particle_x, particle_y, width, height, origin_x, origin_y, particle.angle)
+            draw_rotated_rectangle(
+                graphics,
+                particle_x,
+                particle_y,
+                width,
+                height,
+                origin_x,
+                origin_y,
+                particle.angle
+            )
         elseif self.draw_mode == DRAW_SPARK then
             -- A streak trailing the particle: `width` is its length and
             -- `height` its thickness, both aimed along the velocity.
@@ -1172,10 +1209,14 @@ function ParticleSystem:draw_shapes(graphics: Graphics, x: f64, y: f64): unit
                 local tail_x: f64 = particle_x - dir_x * width
                 local tail_y: f64 = particle_y - dir_y * width
                 graphics:fill_quad(
-                    particle_x - dir_y * half, particle_y + dir_x * half,
-                    particle_x + dir_y * half, particle_y - dir_x * half,
-                    tail_x + dir_y * half, tail_y - dir_x * half,
-                    tail_x - dir_y * half, tail_y + dir_x * half
+                    particle_x - dir_y * half,
+                    particle_y + dir_x * half,
+                    particle_x + dir_y * half,
+                    particle_y - dir_x * half,
+                    tail_x + dir_y * half,
+                    tail_y - dir_x * half,
+                    tail_x - dir_y * half,
+                    tail_y + dir_x * half
                 )
             else
                 graphics:fill_circle(particle_x, particle_y, height * 0.5)
@@ -1302,8 +1343,11 @@ function ParticleSystem:particle_color_red(index: i32): f64
         return 0.0
     end
     local particle: Particle = self.alive[index]
-    local red: f64, green: f64, blue: f64, alpha: f64 =
-        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
+        self.colors,
+        particle,
+        1.0 - particle.life / particle.lifetime
+    )
     return red
 end
 
@@ -1312,8 +1356,11 @@ function ParticleSystem:particle_color_green(index: i32): f64
         return 0.0
     end
     local particle: Particle = self.alive[index]
-    local red: f64, green: f64, blue: f64, alpha: f64 =
-        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
+        self.colors,
+        particle,
+        1.0 - particle.life / particle.lifetime
+    )
     return green
 end
 
@@ -1322,8 +1369,11 @@ function ParticleSystem:particle_color_blue(index: i32): f64
         return 0.0
     end
     local particle: Particle = self.alive[index]
-    local red: f64, green: f64, blue: f64, alpha: f64 =
-        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
+        self.colors,
+        particle,
+        1.0 - particle.life / particle.lifetime
+    )
     return blue
 end
 
@@ -1332,8 +1382,11 @@ function ParticleSystem:particle_color_alpha(index: i32): f64
         return 0.0
     end
     local particle: Particle = self.alive[index]
-    local red: f64, green: f64, blue: f64, alpha: f64 =
-        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
+        self.colors,
+        particle,
+        1.0 - particle.life / particle.lifetime
+    )
     return alpha
 end
 
@@ -1434,9 +1487,4 @@ function ParticleSystem:clone(): ParticleSystem
     return copy
 end
 
-return {
-    new = ParticleSystem.new,
-    color = color,
-    hex = hex,
-    quad = quad,
-}
+return { new = ParticleSystem.new, color = color, hex = hex, quad = quad }

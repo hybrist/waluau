@@ -15,7 +15,7 @@ export type Surface = {
     graphics: Graphics,
     effects: effect_shaders.EffectShaders,
     card_back: graphics_module.Texture?,
-    suit_symbols: graphics_module.Texture?,
+    suit_symbols: graphics_module.Texture?
 }
 export type Measure = (Graphics?, layout.Intrinsic) -> unit
 export type Paint = (Surface, layout.Rect) -> unit
@@ -32,22 +32,26 @@ export opaque type Node = {
     hit_behavior: HitBehavior,
     hit_test: (layout.Rect, f64, f64) -> bool,
     visible: bool,
-    enabled: bool,
+    enabled: bool
 }
 export type FlowSpec = {
     gap: f64?,
     justify: layout.Justify?,
     align: layout.Align?,
-    padding: layout.Edges?,
+    padding: layout.Edges?
 }
 
-function empty_paint(surface: Surface, bounds: layout.Rect): unit end
-function empty_measure(graphics: Graphics?, into: layout.Intrinsic): unit end
+function empty_paint(surface: Surface, bounds: layout.Rect): unit
+end
+function empty_measure(graphics: Graphics?, into: layout.Intrinsic): unit
+end
 
 const FALLBACK_ADVANCE: f64 = 0.75
 
 function text_width(graphics: Graphics?, value: string, size: f64): f64
-    if graphics == nil then return (#value::f64) * size * FALLBACK_ADVANCE end
+    if graphics == nil then
+        return (#value::f64) * size * FALLBACK_ADVANCE
+    end
     return ink.text_width(graphics::Graphics, value, size)
 end
 
@@ -57,7 +61,9 @@ end
 
 function own(children: {Node}): {Node}
     local result: {Node} = {}
-    for child in children do table.insert(result, child) end
+    for child in children do
+        table.insert(result, child)
+    end
     return result
 end
 
@@ -85,13 +91,11 @@ function make(
         hit_behavior = "transparent",
         hit_test = rectangular_hit,
         visible = true,
-        enabled = true,
+        enabled = true
     }
 end
 
-function Node.sized(
-    width: f64, height: f64, paint: (Surface, layout.Rect) -> unit
-): Node
+function Node.sized(width: f64, height: f64, paint: (Surface, layout.Rect) -> unit): Node
     return make(layout.Box.fixed(width, height), {}, empty_measure, paint)
 end
 
@@ -122,7 +126,8 @@ function Node.stretch(weight: f64): Node
             into.max_height = layout.unbounded
             into.baseline = -1.0
         end,
-        empty_paint)
+        empty_paint
+    )
     return node:flex(weight, 1.0)
 end
 
@@ -135,7 +140,7 @@ function Node.layer(children: {Node}): Node
 end
 
 function Node:padding(insets: layout.Edges): Node
-    return make(layout.Box.padding(self.box, insets), { self }, empty_measure, empty_paint)
+    return make(layout.Box.padding(self.box, insets), {self}, empty_measure, empty_paint)
 end
 
 function Node:padded(horizontal: f64, vertical: f64): Node
@@ -143,18 +148,25 @@ function Node:padded(horizontal: f64, vertical: f64): Node
 end
 
 function Node:min_width(width: f64): Node
-    return make(layout.Box.minimum(self.box, math.max(0.0, width), 0.0, false),
-        { self }, empty_measure, empty_paint)
+    return make(
+        layout.Box.minimum(self.box, math.max(0.0, width), 0.0, false),
+        {self},
+        empty_measure,
+        empty_paint
+    )
 end
 
 function Node:min_height(height: f64): Node
-    return make(layout.Box.minimum(self.box, 0.0, math.max(0.0, height), false),
-        { self }, empty_measure, empty_paint)
+    return make(
+        layout.Box.minimum(self.box, 0.0, math.max(0.0, height), false),
+        {self},
+        empty_measure,
+        empty_paint
+    )
 end
 
 function Node:wide(): Node
-    return make(
-        layout.Box.minimum(self.box, 0.0, 0.0, true), { self }, empty_measure, empty_paint)
+    return make(layout.Box.minimum(self.box, 0.0, 0.0, true), {self}, empty_measure, empty_paint)
 end
 
 function Node:widened(): Node
@@ -172,7 +184,8 @@ function spec_style(axis: layout.Axis, spec: FlowSpec): layout.Style
         spec.gap or 0.0,
         spec.justify or "start",
         spec.align or "start",
-        spec.padding or layout.edges(0.0, 0.0, 0.0, 0.0))
+        spec.padding or layout.edges(0.0, 0.0, 0.0, 0.0)
+    )
 end
 
 function Node.down(spec: FlowSpec, children: {Node}): Node
@@ -195,7 +208,9 @@ end
 
 function refresh(self: Node, graphics: Graphics?): unit
     self.measure_content(graphics, self.box:measurement())
-    for child in self.children do refresh(child, graphics) end
+    for child in self.children do
+        refresh(child, graphics)
+    end
 end
 
 function Node:measure(graphics: Graphics?): layout.Intrinsic
@@ -209,7 +224,9 @@ end
 
 function paint_tree(self: Node, surface: Surface): unit
     self.paint_content(surface, self.box:rectangle())
-    for child in self.children do paint_tree(child, surface) end
+    for child in self.children do
+        paint_tree(child, surface)
+    end
 end
 
 function Node:paint(surface: Surface): unit
@@ -222,9 +239,7 @@ function Node:draw(surface: Surface, x: f64, y: f64, width: f64, height: f64): u
     self:paint(surface)
 end
 
-function draw(
-    root: Node, surface: Surface, x: f64, y: f64, width: f64, height: f64
-): unit
+function draw(root: Node, surface: Surface, x: f64, y: f64, width: f64, height: f64): unit
     root:draw(surface, x, y, width, height)
 end
 
@@ -258,52 +273,52 @@ function Node:pointer_opaque(): Node
     return self
 end
 
-
 function Node:set_hit_test(test: (layout.Rect, f64, f64) -> bool): Node
     self.hit_test = test
     return self
 end
-
 
 function Node:set_visible(value: bool): Node
     self.visible = value
     return self
 end
 
-
 function Node:set_enabled(value: bool): Node
     self.enabled = value
     return self
 end
 
-
 function Node:is_visible(): bool
     return self.visible
 end
-
 
 function Node:is_enabled(): bool
     return self.enabled
 end
 
-
 const HIT_MISS: i32 = -1
 const HIT_BLOCKED: i32 = -2
 
 function clear_path(path: {i32}): unit
-    while #path > 0 do table.remove(path) end
+    while #path > 0 do
+        table.remove(path)
+    end
 end
 
 -- The path is retained by the caller and filled leaf-to-root. Integer responder
 -- identities are stable semantic keys: routers can persist focus and pointer
 -- state without exposing the recursive node representation.
 function hit_path_from(self: Node, x: f64, y: f64, path: {i32}): i32
-    if not self.visible then return HIT_MISS end
+    if not self.visible then
+        return HIT_MISS
+    end
 
     local index: i32 = #self.children - 1
     while index >= 0 do
         local found: i32 = hit_path_from(self.children[index], x, y, path)
-        if found == HIT_BLOCKED then return HIT_BLOCKED end
+        if found == HIT_BLOCKED then
+            return HIT_BLOCKED
+        end
         if found >= 0 then
             if self.hit_behavior == "target" and self.enabled then
                 table.insert(path, self.pointer_key)
@@ -313,16 +328,21 @@ function hit_path_from(self: Node, x: f64, y: f64, path: {i32}): i32
         index -= 1
     end
 
-    if not self.hit_test(self.box:rectangle(), x, y) then return HIT_MISS end
-    if self.hit_behavior == "opaque" then return HIT_BLOCKED end
+    if not self.hit_test(self.box:rectangle(), x, y) then
+        return HIT_MISS
+    end
+    if self.hit_behavior == "opaque" then
+        return HIT_BLOCKED
+    end
     if self.hit_behavior == "target" then
-        if not self.enabled then return HIT_BLOCKED end
+        if not self.enabled then
+            return HIT_BLOCKED
+        end
         table.insert(path, self.pointer_key)
         return self.pointer_key
     end
     return HIT_MISS
 end
-
 
 function Node:hit_path(x: f64, y: f64, path: {i32}): i32
     clear_path(path)
@@ -341,7 +361,4 @@ function Node:hit(x: f64, y: f64): i32
     return self:hit_path(x, y, path)
 end
 
-return {
-    draw = draw,
-    text_width = text_width,
-}
+return { draw = draw, text_width = text_width }

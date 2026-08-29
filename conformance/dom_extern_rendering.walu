@@ -1,5 +1,4 @@
 -- Generated DOM extern host-boundary fixture.
-
 local window = require("dom:window")
 local document: Document = window.document
 local body: HTMLElement = document.body
