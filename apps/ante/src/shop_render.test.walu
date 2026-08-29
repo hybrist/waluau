@@ -3,7 +3,6 @@
 -- wording and the loadout it describes are held to each other.
 require("waluau:vitest")
 
-local game = require("./game")
 local run = require("./run")
 local shop = require("./shop")
 local shop_render = require("./shop_render")

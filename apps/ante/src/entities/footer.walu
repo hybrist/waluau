@@ -5,7 +5,6 @@
 -- edge on every viewport.
 local game = require("../game")
 local run_module = require("../run")
-local box = require("../ui/layout")
 local ui = require("../ui/node")
 local label = require("./label")
 local ability_diamond = require("./ability_diamond")

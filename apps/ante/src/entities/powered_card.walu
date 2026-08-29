@@ -9,7 +9,6 @@
 -- much of the board it takes.
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
-local game = require("../game")
 local spells = require("../spells/spell")
 local spell_cast = require("../spell_cast")
 local burn_particles = require("../burn_particles")

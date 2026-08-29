@@ -27,7 +27,6 @@ describe(
                 local first = card.look({ rank = 7, suit = 0 }, false, false, false, false, false)
                 local second = card.look({ rank = 14, suit = 3 }, true, true, false, true, false)
                 local view: card.Stateful = card.Stateful.new(first)
-                local root = view.root
 
                 view:present(second)
 

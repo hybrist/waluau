@@ -2724,6 +2724,23 @@ mod definitions {
     }
 
     #[test]
+    fn expression_statement_records_nested_locals_once() {
+        // A bare call statement is first tried as an assignment target list
+        // (`expr, expr = ...`); when no `=` follows, the parser rewinds and
+        // reparses the same tokens as a plain expression. A closure argument
+        // used to have its locals recorded during both the speculative and
+        // the real parse, doubling every `DefinitionSite` inside it.
+        let source = "register({\n    on_event = function(): unit\n        local seen = 1\n        print(tostring(seen))\n    end\n})\n";
+        let definitions = defs(source);
+        let matches: Vec<_> = definitions.iter().filter(|d| d.name == "seen").collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one definition for `seen`: {definitions:?}"
+        );
+    }
+
+    #[test]
     fn local_function_is_visible_inside_its_own_body() {
         let source = "local function fact(n: i32): i32\n    if n <= 1 then\n        return 1\n    end\n    return n * fact(n - 1)\nend\n";
         let definitions = defs(source);

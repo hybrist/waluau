@@ -1,6 +1,5 @@
 require("waluau:vitest")
 
-local game = require("./game")
 local run_ = require("./run")
 local shop_ = require("./shop_new")
 local spell_ = require("./spells/spell")
@@ -25,7 +24,7 @@ describe(
             "opens on a full row of slots and a way into the duel",
             function()
                 math.randomseed(101)
-                local run, shop = shopping_run(SpellKind.Firebolt, 30)
+                local _, shop = shopping_run(SpellKind.Firebolt, 30)
                 expect(shop.open):toBe(true)
                 expect(shop.cursor):toBe(0)
                 expect(#shop.slots):toBe(shop_.DEFAULT_SHOP_ITEM_COUNT)

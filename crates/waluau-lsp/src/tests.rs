@@ -1575,6 +1575,27 @@ fn unused_local_functions_warn_but_top_level_functions_and_params_do_not() {
 }
 
 #[test]
+fn a_module_used_only_in_a_type_annotation_is_not_unused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    // `kind: spells.SpellKind` puts `spells` right after `:`, same as a
+    // method call's member name (`recv:method(`) — the lint must tell them
+    // apart instead of treating every post-colon identifier as a non-use.
+    let source = "local spells = require(\"./spells\")\nlocal function cast(kind: spells.SpellKind): unit\nend\ncast(nil)\n";
+    std::fs::write(&path, source).expect("write fixture");
+
+    let mut server = LspServer::new();
+    let messages = open(&mut server, &path, source);
+    let diagnostics = diagnostics_for(&messages, "main.walu").expect("warnings published");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["message"] != "unused variable `spells`"),
+        "`spells` is used in a type annotation: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn shadowing_and_loop_bindings_warn_individually() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");

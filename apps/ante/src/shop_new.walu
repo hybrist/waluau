@@ -1,4 +1,3 @@
-local game_ = require("./game")
 local run_ = require("./run")
 local item_ = require("./items/item")
 local scroll_ = require("./items/scroll")
@@ -14,17 +13,14 @@ export type Slot = { item: Item, price: number, sold: bool }
 
 export type State = { open: bool, slots: {Slot}, cursor: i32 }
 
-const SNAPSHOT_SCHEMA: string = "duel-shop-v5"
-
 function State.new(run: RunState): State
     return { open = true, slots = roll_slots(run), cursor = 0 }
 end
 
 function all_scroll_items(run: RunState): {Item}
     local scrolls: {Item} = {}
-    for name, kind in pairs(spell_.SpellKind) do
+    for _, kind in pairs(spell_.SpellKind) do
         -- TODO: current level + 1 where "not known" is level 0
-        local level = 1
         table.insert(scrolls, scroll_.SpellScroll.new(kind, 1)::Item)
     end
     return scrolls
@@ -37,7 +33,7 @@ function roll_slots(run: RunState): {Slot}
     -- TODO: Only pick spells when there's space for a new spell.
     local items = all_scroll_items(run)
 
-    for i = 1, DEFAULT_SHOP_ITEM_COUNT do
+    for _ = 1, DEFAULT_SHOP_ITEM_COUNT do
         local index = math.random(#items) - 1
         local item = table.remove(items, index)
         table.insert(slots, { item = item, price = item:base_price(run), sold = false })

@@ -292,7 +292,7 @@ end
 
 function gap_count(children: {Box}): f64
     local count: f64 = 0.0
-    for child in children do
+    for _ in children do
         count += 1.0
     end
     return math.max(0.0, count - 1.0)
