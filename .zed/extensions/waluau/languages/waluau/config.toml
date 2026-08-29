@@ -1,5 +1,5 @@
 name = "Waluau"
-grammar = "luau"
+grammar = "waluau"
 path_suffixes = ["walu"]
 line_comments = ["-- "]
 block_comment = ["--[[", "]]"]

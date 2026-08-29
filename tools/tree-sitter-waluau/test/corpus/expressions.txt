@@ -1,0 +1,287 @@
+================================================================================
+operator precedence
+================================================================================
+
+r = not a == b or c and d .. e + f * g
+q = 2 ^ -3 ^ 2
+neg = -2 ^ 2
+len = #items + 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (assignment_statement
+    (identifier)
+    (binary_expression
+      (binary_expression
+        (unary_expression
+          (identifier))
+        (identifier))
+      (binary_expression
+        (identifier)
+        (binary_expression
+          (identifier)
+          (binary_expression
+            (identifier)
+            (binary_expression
+              (identifier)
+              (identifier)))))))
+  (assignment_statement
+    (identifier)
+    (binary_expression
+      (number)
+      (unary_expression
+        (binary_expression
+          (number)
+          (number)))))
+  (assignment_statement
+    (identifier)
+    (unary_expression
+      (binary_expression
+        (number)
+        (number))))
+  (assignment_statement
+    (identifier)
+    (binary_expression
+      (unary_expression
+        (identifier))
+      (number))))
+
+================================================================================
+casts and is-tests
+================================================================================
+
+v = n::i32
+w = (2 ^ x)::f64
+t = value is Count
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (assignment_statement
+    (identifier)
+    (cast_expression
+      (identifier)
+      (builtin_type)))
+  (assignment_statement
+    (identifier)
+    (cast_expression
+      (parenthesized_expression
+        (binary_expression
+          (number)
+          (identifier)))
+      (builtin_type)))
+  (assignment_statement
+    (identifier)
+    (is_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+calls, methods, and sugar
+================================================================================
+
+f(x, y)
+obj:method(1)
+obj:method "text"
+make_thing { x = 0, y = 1 }
+require "./module"
+first<i32>(items)
+obj:pick<f64>(0)
+expect(x):not:toBe(y)
+print [[raw]]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (call_expression
+    (identifier)
+    (arguments
+      (identifier)
+      (identifier)))
+  (method_call_expression
+    (identifier)
+    (identifier)
+    (arguments
+      (number)))
+  (method_call_expression
+    (identifier)
+    (identifier)
+    (arguments
+      (string
+        (string_content))))
+  (call_expression
+    (identifier)
+    (arguments
+      (table_literal
+        (table_field
+          (identifier)
+          (number))
+        (table_field
+          (identifier)
+          (number)))))
+  (call_expression
+    (identifier)
+    (arguments
+      (string
+        (string_content))))
+  (call_expression
+    (identifier)
+    (type_arguments
+      (builtin_type))
+    (arguments
+      (identifier)))
+  (method_call_expression
+    (identifier)
+    (identifier)
+    (type_arguments
+      (builtin_type))
+    (arguments
+      (number)))
+  (method_call_expression
+    (not_modifier_expression
+      (call_expression
+        (identifier)
+        (arguments
+          (identifier))))
+    (identifier)
+    (arguments
+      (identifier)))
+  (call_expression
+    (identifier)
+    (arguments
+      (long_string))))
+
+================================================================================
+literals
+================================================================================
+
+n = 1_000
+h = 0xFF_FF
+f = 3.14
+s = "escaped \t \x41 \u{1F600} \065"
+c = 'single'
+long = [[multi
+line]]
+leveled = [==[ has ]] inside ]==]
+bs = b"ABC\x00"
+tuple = {}
+arr = { 1, 2, 3 }
+rec = { x = 10::i32, nested = { y = 2 } }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (assignment_statement
+    (identifier)
+    (number))
+  (assignment_statement
+    (identifier)
+    (number))
+  (assignment_statement
+    (identifier)
+    (number))
+  (assignment_statement
+    (identifier)
+    (string
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (escape_sequence)))
+  (assignment_statement
+    (identifier)
+    (string
+      (string_content)))
+  (assignment_statement
+    (identifier)
+    (long_string))
+  (assignment_statement
+    (identifier)
+    (long_string))
+  (assignment_statement
+    (identifier)
+    (bytes))
+  (assignment_statement
+    (identifier)
+    (array_literal))
+  (assignment_statement
+    (identifier)
+    (array_literal
+      (number)
+      (number)
+      (number)))
+  (assignment_statement
+    (identifier)
+    (table_literal
+      (table_field
+        (identifier)
+        (cast_expression
+          (number)
+          (builtin_type)))
+      (table_field
+        (identifier)
+        (table_literal
+          (table_field
+            (identifier)
+            (number)))))))
+
+================================================================================
+interpolated strings
+================================================================================
+
+s = `hi {name}!`
+t = `v={#{1}} s={"}"}`
+u = `\{escaped\} \` done`
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (assignment_statement
+    (identifier)
+    (interpolated_string
+      (string_content)
+      (interpolation
+        (identifier))
+      (string_content)))
+  (assignment_statement
+    (identifier)
+    (interpolated_string
+      (string_content)
+      (interpolation
+        (unary_expression
+          (array_literal
+            (number))))
+      (string_content)
+      (interpolation
+        (string
+          (string_content)))))
+  (assignment_statement
+    (identifier)
+    (interpolated_string
+      (escape_sequence)
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (escape_sequence)
+      (string_content))))
+
+================================================================================
+if expression
+================================================================================
+
+local pick = if cond then a else b
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (local_declaration
+    (binding
+      (identifier))
+    (if_expression
+      (identifier)
+      (identifier)
+      (identifier))))

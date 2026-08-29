@@ -1,0 +1,196 @@
+================================================================================
+type declarations
+================================================================================
+
+type Kind = "on" | "off"
+type Volume = 0 | 1 | 2
+type Direction = -1 | 1
+type Result = Count(i32) | Ratio(f64)
+type UIEvent = extern extends Event
+type Handle = i32
+export opaque type Id = i64
+type Pair<T> = { first: T, second: T }
+type Op = { exec: (self, a: i32, b: i32) -> i32 }
+type Add = Op & {}
+type Alias = game.State
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration
+    (identifier)
+    (union_type
+      (literal_type
+        (string
+          (string_content)))
+      (literal_type
+        (string
+          (string_content)))))
+  (type_declaration
+    (identifier)
+    (union_type
+      (union_type
+        (literal_type
+          (number))
+        (literal_type
+          (number)))
+      (literal_type
+        (number))))
+  (type_declaration
+    (identifier)
+    (union_type
+      (literal_type
+        (number))
+      (literal_type
+        (number))))
+  (type_declaration
+    (identifier)
+    (union_type
+      (tagged_variant_type
+        (identifier)
+        (builtin_type))
+      (tagged_variant_type
+        (identifier)
+        (builtin_type))))
+  (type_declaration
+    (identifier)
+    (extern_type
+      (type_reference
+        (identifier))))
+  (type_declaration
+    (identifier)
+    (builtin_type))
+  (type_declaration
+    (identifier)
+    (builtin_type))
+  (type_declaration
+    (identifier)
+    (type_parameters
+      (identifier))
+    (record_type
+      (record_field
+        (identifier)
+        (type_reference
+          (identifier)))
+      (record_field
+        (identifier)
+        (type_reference
+          (identifier)))))
+  (type_declaration
+    (identifier)
+    (record_type
+      (record_field
+        (identifier)
+        (function_type
+          (parameter_types
+            (self_parameter)
+            (identifier)
+            (builtin_type)
+            (identifier)
+            (builtin_type))
+          (builtin_type)))))
+  (type_declaration
+    (identifier)
+    (conformance_type
+      (type_reference
+        (identifier))
+      (record_type)))
+  (type_declaration
+    (identifier)
+    (type_reference
+      (identifier)
+      (identifier))))
+
+================================================================================
+enum declarations
+================================================================================
+
+enum Direction { north, east, south, west }
+export enum Suit {
+    clubs,
+    hearts,
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (enum_declaration
+    (identifier)
+    (enum_variant)
+    (enum_variant)
+    (enum_variant)
+    (enum_variant))
+  (enum_declaration
+    (identifier)
+    (enum_variant)
+    (enum_variant)))
+
+================================================================================
+type annotations
+================================================================================
+
+local xs: {i32} = {}
+local rec: { x: f64, tags: {string} } = make()
+local opt: KeyboardEvent? = nil
+local cb: (i32, f64) -> unit = handler
+local multi: () -> (bool, i32) = probe
+local generic: Pair<f64> = pair()
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (local_declaration
+    (binding
+      (identifier)
+      (array_type
+        (builtin_type)))
+    (array_literal))
+  (local_declaration
+    (binding
+      (identifier)
+      (record_type
+        (record_field
+          (identifier)
+          (builtin_type))
+        (record_field
+          (identifier)
+          (array_type
+            (builtin_type)))))
+    (call_expression
+      (identifier)
+      (arguments)))
+  (local_declaration
+    (binding
+      (identifier)
+      (nullable_type
+        (type_reference
+          (identifier))))
+    (nil))
+  (local_declaration
+    (binding
+      (identifier)
+      (function_type
+        (parameter_types
+          (builtin_type)
+          (builtin_type))
+        (builtin_type)))
+    (identifier))
+  (local_declaration
+    (binding
+      (identifier)
+      (function_type
+        (parameter_types)
+        (tuple_type
+          (builtin_type)
+          (builtin_type))))
+    (identifier))
+  (local_declaration
+    (binding
+      (identifier)
+      (type_reference
+        (identifier)
+        (type_arguments
+          (builtin_type))))
+    (call_expression
+      (identifier)
+      (arguments))))

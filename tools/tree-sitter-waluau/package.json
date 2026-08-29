@@ -1,0 +1,25 @@
+{
+  "name": "tree-sitter-waluau",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Waluau grammar for tree-sitter",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hybrist/waluau.git",
+    "directory": "tools/tree-sitter-waluau"
+  },
+  "scripts": {
+    "generate": "tree-sitter generate --abi 14",
+    "test": "tree-sitter test"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "0.25.8"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.waluau",
+      "file-types": ["walu"]
+    }
+  ]
+}

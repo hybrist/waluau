@@ -1,0 +1,20 @@
+{
+  "grammars": [
+    {
+      "name": "waluau",
+      "camelcase": "Waluau",
+      "scope": "source.waluau",
+      "path": ".",
+      "file-types": ["walu"]
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Waluau grammar for tree-sitter",
+    "authors": [{ "name": "Waluau contributors" }],
+    "links": {
+      "repository": "https://github.com/hybrist/waluau"
+    }
+  }
+}

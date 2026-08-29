@@ -1,0 +1,346 @@
+================================================================================
+local declarations
+================================================================================
+
+local x = 1
+local name: string = "walu"
+local a, b = 1, 2
+local uninit
+local total <const> = 0
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (local_declaration
+    (binding
+      (identifier))
+    (number))
+  (local_declaration
+    (binding
+      (identifier)
+      (builtin_type))
+    (string
+      (string_content)))
+  (local_declaration
+    (binding
+      (identifier))
+    (binding
+      (identifier))
+    (number)
+    (number))
+  (local_declaration
+    (binding
+      (identifier)))
+  (local_declaration
+    (binding
+      (identifier)
+      (attribute
+        (identifier)))
+    (number)))
+
+================================================================================
+const stays contextual
+================================================================================
+
+const limit: i32 = 8
+local const = 1.0
+const = 2.0
+const, other = 3.0, 4.0
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (const_declaration
+    (binding
+      (identifier)
+      (builtin_type))
+    (number))
+  (local_declaration
+    (binding
+      (identifier))
+    (number))
+  (assignment_statement
+    (identifier)
+    (number))
+  (assignment_statement
+    (identifier)
+    (identifier)
+    (number)
+    (number)))
+
+================================================================================
+control flow
+================================================================================
+
+if ready then
+    go()
+elseif waiting then
+    hold()
+else
+    stop()
+end
+while n < 10 do
+    n += 1
+end
+repeat
+    tick()
+until done
+for i = 1, 10, 2 do
+    break
+end
+for name, kind in pairs(SpellKind) do
+    continue
+end
+do
+    scoped()
+end
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (if_statement
+    (identifier)
+    (block
+      (call_expression
+        (identifier)
+        (arguments)))
+    (elseif_clause
+      (identifier)
+      (block
+        (call_expression
+          (identifier)
+          (arguments))))
+    (else_clause
+      (block
+        (call_expression
+          (identifier)
+          (arguments)))))
+  (while_statement
+    (binary_expression
+      (identifier)
+      (number))
+    (block
+      (assignment_statement
+        (identifier)
+        (number))))
+  (repeat_statement
+    (block
+      (call_expression
+        (identifier)
+        (arguments)))
+    (identifier))
+  (for_statement
+    (identifier)
+    (number)
+    (number)
+    (number)
+    (block
+      (break_statement)))
+  (for_in_statement
+    (identifier)
+    (identifier)
+    (call_expression
+      (identifier)
+      (arguments
+        (identifier)))
+    (block
+      (continue_statement)))
+  (do_statement
+    (block
+      (call_expression
+        (identifier)
+        (arguments)))))
+
+================================================================================
+compound assignment
+================================================================================
+
+n += 1
+s ..= "x"
+m.field //= 2
+xs[0] ^= 2
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (assignment_statement
+    (identifier)
+    (number))
+  (assignment_statement
+    (identifier)
+    (string
+      (string_content)))
+  (assignment_statement
+    (field_expression
+      (identifier)
+      (identifier))
+    (number))
+  (assignment_statement
+    (index_expression
+      (identifier)
+      (number))
+    (number)))
+
+================================================================================
+match statement
+================================================================================
+
+match kind do
+case SpellKind.Firebolt then
+    cast()
+case game.SpellKind.Clone then
+    copy()
+end
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (match_statement
+    (identifier)
+    (match_case
+      (enum_member
+        (identifier)
+        (identifier))
+      (block
+        (call_expression
+          (identifier)
+          (arguments))))
+    (match_case
+      (enum_member
+        (identifier)
+        (identifier)
+        (identifier))
+      (block
+        (call_expression
+          (identifier)
+          (arguments))))))
+
+================================================================================
+if-cast bindings
+================================================================================
+
+if HTMLInputElement(input) = element then
+    read(input)
+elseif Left(n) = value then
+    use(n)
+end
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (if_statement
+    (cast_binding
+      (type_reference
+        (identifier))
+      (identifier)
+      (identifier))
+    (block
+      (call_expression
+        (identifier)
+        (arguments
+          (identifier))))
+    (elseif_clause
+      (cast_binding
+        (type_reference
+          (identifier))
+        (identifier)
+        (identifier))
+      (block
+        (call_expression
+          (identifier)
+          (arguments
+            (identifier)))))))
+
+================================================================================
+functions
+================================================================================
+
+function add(a: i32, b: i32): i32
+    return a + b
+end
+export function entry(): f64
+    return 0.0
+end
+function State.new(): State
+    return make()
+end
+function State:step(dt: f64)
+    self.t += dt
+end
+local function helper(...)
+    return select("#", ...)
+end
+const function fixed(): i32
+    return 1
+end
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (builtin_type))
+      (parameter
+        (identifier)
+        (builtin_type)))
+    (builtin_type)
+    (block
+      (return_statement
+        (binary_expression
+          (identifier)
+          (identifier)))))
+  (function_declaration
+    (identifier)
+    (parameters)
+    (builtin_type)
+    (block
+      (return_statement
+        (number))))
+  (function_declaration
+    (dotted_name
+      (identifier)
+      (identifier))
+    (parameters)
+    (type_reference
+      (identifier))
+    (block
+      (return_statement
+        (call_expression
+          (identifier)
+          (arguments)))))
+  (function_declaration
+    (method_name
+      (identifier)
+      (identifier))
+    (parameters
+      (parameter
+        (identifier)
+        (builtin_type)))
+    (block
+      (assignment_statement
+        (field_expression
+          (identifier)
+          (identifier))
+        (identifier))))
+  (local_function_declaration
+    (identifier)
+    (parameters
+      (vararg_parameter))
+    (block
+      (return_statement
+        (call_expression
+          (identifier)
+          (arguments
+            (string
+              (string_content))
+            (vararg_expression))))))
+  (const_function_declaration
+    (identifier)
+    (parameters)
+    (builtin_type)
+    (block
+      (return_statement
+        (number)))))
