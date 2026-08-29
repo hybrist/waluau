@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use waluau_ast::{Span, Type};
+use waluau_diagnostics::{Diagnostic, DiagnosticTag, Severity};
 use waluau_lexer::{Token, TokenKind};
 use waluau_parser::{DefinitionKind, DefinitionSite};
 
@@ -1503,4 +1504,79 @@ pub fn completion(text: &str, path: &Path, offset: u32, load: Loader) -> Vec<Com
     }
     items.sort_by(|a, b| a.label.cmp(&b.label));
     items
+}
+
+/// Warning diagnostics for bindings the document never reads: `local`/`const`
+/// variables, loop variables, and `local function`s. Single-file by design —
+/// it runs on the parser's [`DefinitionSite`] side table, so it needs no
+/// linked program and stays correct even while the file has parse errors.
+///
+/// Detection is deliberately conservative: any identifier token that resolves
+/// to a binding counts as a use (including assignments and same-named record
+/// keys), so a warning can be missing but never wrong. Names starting with
+/// `_` are exempt, the conventional spelling for intentionally unused
+/// bindings. Parameters are exempt too: signatures often must match an
+/// interface or callback shape that the body does not fully use.
+pub fn unused_definitions(text: &str, path: &Path) -> Vec<Diagnostic> {
+    let index = index_document(text, path);
+    let mut used = vec![false; index.definitions.len()];
+    for (at, token) in index.tokens.iter().enumerate() {
+        let TokenKind::Identifier(name) = &token.kind else {
+            continue;
+        };
+        // The member part of `receiver.name` / `receiver:name`, and type
+        // annotations after `:`, never reference a bare binding.
+        if at > 0 && matches!(index.tokens[at - 1].kind, TokenKind::Dot | TokenKind::Colon) {
+            continue;
+        }
+        let offset = token.span.start;
+        // A token inside a definition's own name span is the declaration,
+        // not a use (`local x` must not mark `x` used).
+        if index
+            .definitions
+            .iter()
+            .any(|def| def.name_span.start <= offset && offset < def.name_span.end)
+        {
+            continue;
+        }
+        let resolved = index
+            .definitions
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| {
+                def.name == *name && def.visible_from <= offset && offset < def.scope_end
+            })
+            .max_by_key(|(_, def)| def.visible_from);
+        if let Some((position, _)) = resolved {
+            used[position] = true;
+        }
+    }
+
+    let mut diagnostics = Vec::new();
+    for (definition, used) in index.definitions.iter().zip(&used) {
+        if *used || definition.name.starts_with('_') {
+            continue;
+        }
+        if definition.name_span.start >= definition.name_span.end {
+            continue;
+        }
+        let (code, what) = match definition.kind {
+            DefinitionKind::Local => ("lint/unused-variable", "variable"),
+            DefinitionKind::LoopVar => ("lint/unused-variable", "loop variable"),
+            // `visible_from == 0` marks a top-level `function`, which is
+            // callable from the host and from requiring modules; only
+            // `local function` / `const function` bindings are file-local.
+            DefinitionKind::Function if definition.visible_from > 0 => {
+                ("lint/unused-function", "function")
+            }
+            _ => continue,
+        };
+        diagnostics.push(
+            Diagnostic::new_with_code(code, format!("unused {what} `{}`", definition.name))
+                .with_severity(Severity::Warning)
+                .with_tag(DiagnosticTag::Unnecessary)
+                .with_span(definition.name_span),
+        );
+    }
+    diagnostics
 }
