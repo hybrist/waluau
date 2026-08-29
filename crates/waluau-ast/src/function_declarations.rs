@@ -1,4 +1,4 @@
-use crate::{Expr, Function, FunctionExpr, Rebindability, Stmt};
+use crate::{Expr, Function, FunctionExpr, Program, Rebindability, Stmt};
 
 /// The authored forms that introduce a function declaration.
 ///
@@ -11,6 +11,8 @@ use crate::{Expr, Function, FunctionExpr, Rebindability, Stmt};
 pub enum FunctionDeclarationClass {
     /// `function f`, `function T.f`, or `function T:m`.
     Module,
+    /// `export function f`.
+    Export,
     /// `local function f`.
     Local,
     /// `const function f`.
@@ -34,6 +36,7 @@ pub enum FunctionBindingClass {
 pub enum FunctionExposure {
     Private,
     PrivateWithCompatibilityExposure,
+    Exported,
 }
 
 /// Semantic facts shared by compiler phases and tooling.
@@ -45,6 +48,20 @@ pub struct FunctionDeclarationFacts {
     pub exposure: FunctionExposure,
 }
 
+/// The one dependency-facing interface authored by a module.
+///
+/// Exported types make an empty declaration namespace require-able, while
+/// exported functions add named value members. Legacy trailing returns remain
+/// a separate interface and may coexist with exported types, but never with an
+/// exported function declaration.
+#[derive(Clone, Debug)]
+pub enum ModuleInterface<'a> {
+    Legacy(&'a Expr),
+    Declarations { functions: Vec<&'a Function> },
+    Missing,
+    Conflict,
+}
+
 impl FunctionDeclarationClass {
     pub const fn facts(self) -> FunctionDeclarationFacts {
         match self {
@@ -53,6 +70,12 @@ impl FunctionDeclarationClass {
                 hoisted: true,
                 rebindability: Rebindability::Const,
                 exposure: FunctionExposure::PrivateWithCompatibilityExposure,
+            },
+            Self::Export => FunctionDeclarationFacts {
+                binding: FunctionBindingClass::Module,
+                hoisted: true,
+                rebindability: Rebindability::Const,
+                exposure: FunctionExposure::Exported,
             },
             Self::Local => FunctionDeclarationFacts {
                 binding: FunctionBindingClass::Lexical,
@@ -80,10 +103,46 @@ pub struct LexicalFunctionDeclaration<'a> {
 }
 
 impl Function {
-    /// Plain named functions are module declarations, including qualified
-    /// static and method forms.
+    /// Read the canonical declaration class, checking the direct-function AST
+    /// invariant in debug builds.
     pub const fn declaration_class(&self) -> FunctionDeclarationClass {
-        FunctionDeclarationClass::Module
+        debug_assert!(matches!(
+            self.declaration_class,
+            FunctionDeclarationClass::Module | FunctionDeclarationClass::Export
+        ));
+        self.declaration_class
+    }
+}
+
+impl Program {
+    /// Authored named value declarations in this module's public interface.
+    pub fn exported_functions(&self) -> impl Iterator<Item = &Function> {
+        self.functions.iter().filter(|function| {
+            function.declaration_class().facts().exposure == FunctionExposure::Exported
+        })
+    }
+
+    /// Resolve the authored module interface before either linker applies
+    /// module-specific name mangling or diagnostic adaptation.
+    pub fn module_interface(&self) -> ModuleInterface<'_> {
+        let functions = self.exported_functions().collect::<Vec<_>>();
+        if let Some(export) = self.export.as_ref() {
+            return if functions.is_empty() {
+                ModuleInterface::Legacy(export)
+            } else {
+                ModuleInterface::Conflict
+            };
+        }
+        if !functions.is_empty()
+            || self
+                .type_declarations
+                .iter()
+                .any(|declaration| declaration.exported)
+        {
+            ModuleInterface::Declarations { functions }
+        } else {
+            ModuleInterface::Missing
+        }
     }
 }
 
@@ -165,6 +224,15 @@ mod tests {
             }
         );
         assert_eq!(
+            FunctionDeclarationClass::Export.facts(),
+            FunctionDeclarationFacts {
+                binding: FunctionBindingClass::Module,
+                hoisted: true,
+                rebindability: Rebindability::Const,
+                exposure: FunctionExposure::Exported,
+            }
+        );
+        assert_eq!(
             FunctionDeclarationClass::Local.facts(),
             FunctionDeclarationFacts {
                 binding: FunctionBindingClass::Lexical,
@@ -215,6 +283,7 @@ mod tests {
                 table: "State".to_string(),
                 method: "step".to_string(),
             },
+            declaration_class: FunctionDeclarationClass::Module,
             symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),
@@ -228,5 +297,46 @@ mod tests {
             function.declaration_class(),
             FunctionDeclarationClass::Module
         );
+    }
+
+    #[test]
+    fn explicit_simple_function_is_an_exported_module_declaration() {
+        let function = Function {
+            name: FunctionName::Simple("run".to_string()),
+            declaration_class: FunctionDeclarationClass::Export,
+            symbol_id: None,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            vararg: None,
+            return_type: None,
+            body: Vec::new(),
+            file_path: "test.walu".to_string(),
+            span: None,
+        };
+        assert_eq!(
+            function.declaration_class(),
+            FunctionDeclarationClass::Export
+        );
+
+        let mut program = Program {
+            functions: vec![function],
+            declared_imports: Vec::new(),
+            declared_constants: Vec::new(),
+            type_declarations: Vec::new(),
+            top_level: Vec::new(),
+            top_level_file_paths: Vec::new(),
+            export: None,
+            sources: std::collections::BTreeMap::new(),
+            entry_file_path: "test.walu".to_string(),
+        };
+        assert!(matches!(
+            program.module_interface(),
+            ModuleInterface::Declarations { functions } if functions.len() == 1
+        ));
+        program.export = Some(Expr::Name("run".to_string(), None, None));
+        assert!(matches!(
+            program.module_interface(),
+            ModuleInterface::Conflict
+        ));
     }
 }

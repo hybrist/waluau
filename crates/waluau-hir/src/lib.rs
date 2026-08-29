@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use waluau_ast::{
-    AssignOp, Expr, Function, FunctionExpr, FunctionName, GenericExternType, NumberLiteral,
-    NumericType, Param, Program, Rebindability, Stmt, Type,
+    AssignOp, Expr, Function, FunctionDeclarationClass, FunctionExpr, FunctionName,
+    GenericExternType, NumberLiteral, NumericType, Param, Program, Rebindability, Stmt, Type,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
@@ -760,6 +760,7 @@ fn top_level_functions_for_check(program: &Program, resolved_body: &[Stmt]) -> V
         }
         functions.push(Function {
             name: FunctionName::Simple(format!("__waluau_top_level_check_{}", functions.len())),
+            declaration_class: FunctionDeclarationClass::Module,
             symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),
@@ -2857,6 +2858,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                 params.extend(function.params.clone());
                 rewritten.functions.push(Function {
                     name: FunctionName::Simple(method_signature_name(table, method)),
+                    declaration_class: FunctionDeclarationClass::Module,
                     symbol_id: None,
                     type_params: function.type_params.clone(),
                     params,
@@ -4516,6 +4518,7 @@ fn type_check_and_infer_collect_raw(
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
             name: FunctionName::Simple("__waluau_top_level_init".to_string()),
+            declaration_class: FunctionDeclarationClass::Module,
             symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),

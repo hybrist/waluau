@@ -24,6 +24,67 @@ fn parses_v0_function() {
 }
 
 #[test]
+fn parses_explicit_exported_function() {
+    let source = "export function answer(): i32\n    return 42\nend\n";
+    let outcome = crate::parse_with_recovery(source, "module.walu");
+    assert!(outcome.diagnostics.is_empty(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.program.functions.len(), 1);
+    let function = &outcome.program.functions[0];
+    assert_eq!(function.name, FunctionName::Simple("answer".to_string()));
+    assert_eq!(
+        function.declaration_class,
+        waluau_ast::FunctionDeclarationClass::Export
+    );
+    assert_eq!(
+        function.declaration_class(),
+        waluau_ast::FunctionDeclarationClass::Export
+    );
+    assert_eq!(function.span.expect("source span").start, 0);
+
+    let definition = outcome
+        .definitions
+        .iter()
+        .find(|definition| definition.name == "answer")
+        .expect("exported function definition");
+    assert!(definition.exported);
+    assert_eq!(
+        definition.function_declaration,
+        Some(waluau_ast::FunctionDeclarationClass::Export)
+    );
+}
+
+#[test]
+fn rejects_qualified_exported_functions_with_recovery() {
+    for source in [
+        "export function State.new(): i32\n    return 1\nend\n",
+        "export function State:step(): i32\n    return 1\nend\n",
+    ] {
+        let outcome = crate::parse_with_recovery(source, "module.walu");
+        assert_eq!(outcome.program.functions.len(), 1);
+        assert_eq!(
+            outcome.program.functions[0].declaration_class,
+            waluau_ast::FunctionDeclarationClass::Module
+        );
+        assert!(outcome.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .to_string()
+                .contains("`export function` requires a simple function name")
+        }));
+    }
+}
+
+#[test]
+fn rejects_mixing_exported_functions_with_trailing_module_return() {
+    let error = parse("export function answer(): i32\n    return 42\nend\n\nreturn answer\n")
+        .expect_err("mixed module interfaces should fail");
+    assert!(
+        error.to_string().contains(
+            "a module cannot combine `export function` declarations with a trailing return"
+        )
+    );
+}
+
+#[test]
 fn rejects_reserved_linker_identifiers() {
     let error = parse("local value: __waluau_m0_Hidden = 1\n")
         .expect_err("source must not address linker-private declarations");
@@ -2767,6 +2828,9 @@ mod definitions {
 function plain(): i32
     return 1
 end
+export function public(): i32
+    return plain()
+end
 local function local_fn(): i32
     return plain()
 end
@@ -2783,6 +2847,7 @@ end
         let definitions = defs(source);
         let expected = [
             ("plain", FunctionDeclarationClass::Module),
+            ("public", FunctionDeclarationClass::Export),
             ("local_fn", FunctionDeclarationClass::Local),
             ("const_fn", FunctionDeclarationClass::Const),
             ("State.new", FunctionDeclarationClass::Module),
@@ -2792,10 +2857,14 @@ end
             let definition = find(&definitions, name);
             assert_eq!(definition.kind, DefinitionKind::Function);
             assert_eq!(definition.function_declaration, Some(class), "{name}");
-            let expected_exposure = if class == FunctionDeclarationClass::Module {
-                FunctionExposure::PrivateWithCompatibilityExposure
-            } else {
-                FunctionExposure::Private
+            let expected_exposure = match class {
+                FunctionDeclarationClass::Module => {
+                    FunctionExposure::PrivateWithCompatibilityExposure
+                }
+                FunctionDeclarationClass::Export => FunctionExposure::Exported,
+                FunctionDeclarationClass::Local | FunctionDeclarationClass::Const => {
+                    FunctionExposure::Private
+                }
             };
             assert_eq!(class.facts().exposure, expected_exposure, "{name}");
         }

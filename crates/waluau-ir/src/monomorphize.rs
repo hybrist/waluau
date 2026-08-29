@@ -635,6 +635,7 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(AstFunction {
             name,
+            declaration_class: waluau_ast::FunctionDeclarationClass::Module,
             symbol_id: None,
             type_params: Vec::new(),
             params: function

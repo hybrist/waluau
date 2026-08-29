@@ -177,7 +177,9 @@ impl Parser {
         if self.is_type_decl_start() {
             return self.parse_type_decl();
         }
-        if self.at(&TokenKind::Function) {
+        if self.at(&TokenKind::Function)
+            || (self.at_kw("export") && self.at_n(1, &TokenKind::Function))
+        {
             return self.parse_function_decl();
         }
         if self.at_kw("declare") && self.at_n(1, &TokenKind::Function) {
@@ -262,6 +264,9 @@ impl Parser {
 
     fn parse_function_decl(&mut self) -> Result<Node, Diagnostic> {
         let mut c = Vec::new();
+        if self.at_kw("export") {
+            self.bump(&mut c);
+        }
         self.bump(&mut c); // `function`
         c.push(self.parse_function_name()?);
         self.parse_function_tail(&mut c, false)?;
