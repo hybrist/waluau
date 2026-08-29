@@ -1615,7 +1615,7 @@ fn unused_local_variables_warn_with_the_unnecessary_tag() {
 fn unused_local_functions_warn_but_top_level_functions_and_params_do_not() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
-    let source = "local function helper(): i32\n    return 1\nend\nconst function fixed(): i32\n    return 2\nend\nfunction add(a: i32, b: i32): i32\n    return a\nend\n";
+    let source = "local function helper(): i32\n    return 1\nend\ndo\n    const function fixed(): i32\n        return 2\n    end\nend\nfunction add(a: i32, b: i32): i32\n    return a\nend\n";
     std::fs::write(&path, source).expect("write fixture");
 
     let mut server = LspServer::new();
