@@ -27,6 +27,62 @@ fn type_checks_valid_program() {
 }
 
 #[test]
+fn module_functions_remain_hoisted_for_forward_and_mutual_calls() {
+    let source = r#"
+        function is_even(n: i32): bool
+            if n == 0 then
+                return true
+            end
+            return is_odd(n - 1)
+        end
+
+        function is_odd(n: i32): bool
+            if n == 0 then
+                return false
+            end
+            return is_even(n - 1)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("hoisted mutual calls should type check");
+}
+
+#[test]
+fn local_function_remains_a_capturing_rebindable_closure() {
+    let source = r#"
+        function evaluate(seed: i32): i32
+            local function apply(value: i32): i32
+                return seed + value
+            end
+            apply = function(value: i32): i32
+                return seed * value
+            end
+            return apply(3)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("capturing local function should remain rebindable");
+}
+
+#[test]
+fn const_function_remains_an_immutable_lexical_closure() {
+    let source = r#"
+        function evaluate(seed: i32): i32
+            const function apply(value: i32): i32
+                return seed + value
+            end
+            apply = function(value: i32): i32
+                return value
+            end
+            return apply(3)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("const function must reject rebinding");
+    assert_eq!(error.to_string(), "cannot rebind const local 'apply'");
+}
+
+#[test]
 fn diagnostic_type_display_retains_nested_module_identity_until_decoration() {
     let ty = Type::Function {
         has_self: false,

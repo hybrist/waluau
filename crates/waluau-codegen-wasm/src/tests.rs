@@ -391,8 +391,12 @@ fn minimal_exports_keep_only_the_entry_points() {
     let source = r#"
         type Point = {x: i32, y: i32}
 
-        function helper(point: Point): i32
+        local function local_helper(point: Point): i32
             return point.x + point.y
+        end
+
+        function helper(point: Point): i32
+            return local_helper(point)
         end
 
         assert(helper({x = 1, y = 2}) == 3)
@@ -405,6 +409,10 @@ fn minimal_exports_keep_only_the_entry_points() {
     assert!(
         wasm_export_func_index(&full, "helper").is_some(),
         "default emission keeps the playground/debugging exports"
+    );
+    assert!(
+        wasm_export_func_index(&full, "local_helper").is_none(),
+        "lexical function declarations are not host exports"
     );
     assert!(
         wasm_has_export_with_prefix(&full, "__waluau_new_record_")

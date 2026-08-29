@@ -1,5 +1,6 @@
 use waluau_ast::{
-    AssignOp, BinaryOp, Binding, EnumMatchArm, Expr, Rebindability, Span, Stmt, Type,
+    AssignOp, BinaryOp, Binding, EnumMatchArm, Expr, FunctionDeclarationClass, Rebindability, Span,
+    Stmt, Type,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::TokenKind;
@@ -499,7 +500,8 @@ impl Parser {
         let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::Function, "expected 'function' after 'local'")?;
         let (name, name_span) = self.expect_identifier_spanned()?;
-        let function = self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+        let mut function = self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+        function.declaration_class = Some(FunctionDeclarationClass::Local);
         // Visible from the name itself so recursive calls in the body resolve.
         let index = self.record_definition(
             name.clone(),
@@ -508,6 +510,7 @@ impl Parser {
             Self::function_signature_type(&function),
             name_span.end,
         );
+        self.definitions[index].function_declaration = Some(FunctionDeclarationClass::Local);
         self.definitions[index].detail = Some(Self::function_signature_detail(&name, &function));
         Ok(Stmt::Let {
             name,
@@ -544,7 +547,9 @@ impl Parser {
             let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
             self.advance();
             let (name, name_span) = self.expect_identifier_spanned()?;
-            let function = self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+            let mut function =
+                self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+            function.declaration_class = Some(FunctionDeclarationClass::Const);
             // Visible from the name itself so recursive calls resolve.
             let index = self.record_definition(
                 name.clone(),
@@ -553,6 +558,7 @@ impl Parser {
                 Self::function_signature_type(&function),
                 name_span.end,
             );
+            self.definitions[index].function_declaration = Some(FunctionDeclarationClass::Const);
             self.definitions[index].detail =
                 Some(Self::function_signature_detail(&name, &function));
             return Ok(Stmt::Let {

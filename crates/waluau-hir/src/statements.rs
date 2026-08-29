@@ -977,15 +977,22 @@ pub(super) fn check_function_collect(
 /// statements referencing them don't cascade: an explicit annotation is
 /// trusted (it's the user's stated intent), otherwise fall back to `unknown`.
 fn bind_failed_stmt_names_as_unknown(stmt: &Stmt, vars: &mut HashMap<String, Binding>) {
+    let declaration_rebindability = stmt.declaration_rebindability();
     match stmt {
         Stmt::Let {
             name,
-            rebindability,
+            rebindability: _,
             ty,
             ..
         } => {
             let fallback = ty.clone().unwrap_or(Type::Unknown);
-            vars.insert(name.clone(), binding_for(fallback, *rebindability));
+            vars.insert(
+                name.clone(),
+                binding_for(
+                    fallback,
+                    declaration_rebindability.expect("matched a single-binding declaration"),
+                ),
+            );
         }
         Stmt::LetMulti { bindings, .. } => {
             for binding in bindings {
@@ -1036,6 +1043,7 @@ fn collect_return_types_with_scope(
 ) -> Result<HashMap<String, Binding>, Diagnostic> {
     let mut scope = vars.clone();
     for stmt in body {
+        let declaration_rebindability = stmt.declaration_rebindability();
         match stmt {
             Stmt::Match {
                 value,
@@ -1066,7 +1074,7 @@ fn collect_return_types_with_scope(
             }
             Stmt::Let {
                 name,
-                rebindability,
+                rebindability: _,
                 ty,
                 value,
                 ..
@@ -1092,7 +1100,13 @@ fn collect_return_types_with_scope(
                     )?)
                 };
                 seal_record_locals_in_expr(value, &mut scope);
-                scope.insert(name.clone(), binding_for(inferred_ty, *rebindability));
+                scope.insert(
+                    name.clone(),
+                    binding_for(
+                        inferred_ty,
+                        declaration_rebindability.expect("matched a single-binding declaration"),
+                    ),
+                );
             }
             Stmt::Assign { name, value, .. } => {
                 let existing = scope
@@ -1676,6 +1690,7 @@ fn check_stmt_inner(
     expected_return: &Type,
     in_loop: bool,
 ) -> Result<bool, Diagnostic> {
+    let declaration_rebindability = stmt.declaration_rebindability();
     match stmt {
         Stmt::Match {
             value,
@@ -1715,7 +1730,7 @@ fn check_stmt_inner(
         }
         Stmt::Let {
             name,
-            rebindability,
+            rebindability: _,
             ty,
             value,
             ..
@@ -1747,7 +1762,13 @@ fn check_stmt_inner(
                 )?)
             };
             seal_record_locals_in_expr(value, vars);
-            vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
+            vars.insert(
+                name.clone(),
+                binding_for(
+                    inferred_ty,
+                    declaration_rebindability.expect("matched a single-binding declaration"),
+                ),
+            );
             Ok(false)
         }
         Stmt::Assign {

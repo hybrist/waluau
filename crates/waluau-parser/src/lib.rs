@@ -1,4 +1,4 @@
-use waluau_ast::{Program, Span, Type};
+use waluau_ast::{FunctionDeclarationClass, Program, Span, Type};
 use waluau_diagnostics::Diagnostic;
 
 mod parser;
@@ -61,6 +61,9 @@ pub struct DefinitionSite {
     /// Exact span of the defining identifier token(s).
     pub name_span: Span,
     pub kind: DefinitionKind,
+    /// Canonical function-declaration semantics. `None` for non-function
+    /// definitions, including declared host imports.
+    pub function_declaration: Option<FunctionDeclarationClass>,
     /// Whether a type/enum declaration is visible through a required module.
     /// Value definitions continue to use the module's trailing return table.
     pub exported: bool,

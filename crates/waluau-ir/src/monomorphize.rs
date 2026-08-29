@@ -1470,6 +1470,7 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            declaration_class: function.declaration_class,
             symbol_id: function.symbol_id,
             implicit_self: function.implicit_self.clone(),
             type_params: Vec::new(),
@@ -1535,6 +1536,7 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            declaration_class: function.declaration_class,
             symbol_id: function.symbol_id,
             implicit_self: function.implicit_self.clone(),
             type_params: Vec::new(),

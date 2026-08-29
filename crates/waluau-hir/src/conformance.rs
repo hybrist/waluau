@@ -568,6 +568,7 @@ fn conformance_wrapper(
                 };
                 Expr::Function(FunctionExpr {
                     name: None,
+                    declaration_class: None,
                     symbol_id: None,
                     implicit_self: None,
                     type_params: Vec::new(),
@@ -1128,10 +1129,11 @@ impl CoercionRewriter<'_> {
         active: &HashSet<String>,
         expected_return: Option<&Type>,
     ) {
+        let declaration_rebindability = stmt.declaration_rebindability();
         match stmt {
             Stmt::Let {
                 name,
-                rebindability,
+                rebindability: _,
                 ty,
                 value,
                 ..
@@ -1155,7 +1157,13 @@ impl CoercionRewriter<'_> {
                     infer_expr(value, vars, self.fn_signatures, active, None)
                         .unwrap_or(Type::Unknown)
                 };
-                vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
+                vars.insert(
+                    name.clone(),
+                    binding_for(
+                        inferred_ty,
+                        declaration_rebindability.expect("matched a single-binding declaration"),
+                    ),
+                );
             }
             Stmt::Assign {
                 op, name, value, ..

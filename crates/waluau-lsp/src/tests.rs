@@ -643,6 +643,8 @@ fn completion_after_dot_lists_namespace_and_module_members() {
         "export type Public = { value: i32 }\n\
 type Hidden = { value: i32 }\n\
 export enum Direction { north, south }\n\
+local function local_hidden(): i32\n    return 1\nend\n\
+const function const_hidden(): i32\n    return 2\nend\n\
 function double(x: i32): i32\n    return x * 2\nend\nreturn double\n",
     )
     .expect("write fixture");
@@ -690,6 +692,8 @@ function double(x: i32): i32\n    return x * 2\nend\nreturn double\n",
     assert!(labels.contains(&"Public"), "{labels:?}");
     assert!(labels.contains(&"Direction"), "{labels:?}");
     assert!(!labels.contains(&"Hidden"), "{labels:?}");
+    assert!(!labels.contains(&"local_hidden"), "{labels:?}");
+    assert!(!labels.contains(&"const_hidden"), "{labels:?}");
 }
 
 #[test]
@@ -1611,16 +1615,18 @@ fn unused_local_variables_warn_with_the_unnecessary_tag() {
 fn unused_local_functions_warn_but_top_level_functions_and_params_do_not() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
-    let source = "local function helper(): i32\n    return 1\nend\nfunction add(a: i32, b: i32): i32\n    return a\nend\n";
+    let source = "local function helper(): i32\n    return 1\nend\ndo\n    const function fixed(): i32\n        return 2\n    end\nend\nfunction add(a: i32, b: i32): i32\n    return a\nend\n";
     std::fs::write(&path, source).expect("write fixture");
 
     let mut server = LspServer::new();
     let messages = open(&mut server, &path, source);
     let diagnostics = diagnostics_for(&messages, "main.walu").expect("warnings published");
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
     assert_eq!(diagnostics[0]["message"], "unused function `helper`");
     assert_eq!(diagnostics[0]["code"], "lint/unused-function");
     assert_eq!(diagnostics[0]["severity"], 2);
+    assert_eq!(diagnostics[1]["message"], "unused function `fixed`");
+    assert_eq!(diagnostics[1]["code"], "lint/unused-function");
 }
 
 #[test]
