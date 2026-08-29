@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, SymbolId, Type};
@@ -404,12 +404,11 @@ struct CodeImage {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EmitOptions {
     pub development_dwarf: bool,
-    /// Export only the runtime entry points: `main`/`__waluau_main` plus the
-    /// explicit `__waluau_*` helper exports the JS runtime calls (trampolines,
-    /// error tag). The per-user-function and record-marshalling exports exist
-    /// for the playground and debugging; skipping them leaves unused code
-    /// unreachable so a post-link optimizer (wasm-opt) can remove it.
-    pub minimal_exports: bool,
+    /// Deliberately expose every eligible entry-file function and its JS
+    /// marshalling helpers for the playground, conformance harness, and story
+    /// tooling. Authored `export function` declarations and compiler-owned
+    /// runtime exports are emitted independently of this instrumentation.
+    pub expose_all_functions_for_tooling: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -801,6 +800,11 @@ fn emit_inner(
     let mut coroutine_plan =
         CoroutinePlan::new(module, user_global_base + module.globals.len() as u32);
     let start_thunk = module.start;
+    let host_marshalling = HostMarshallingNeeds::for_module(
+        module,
+        &declared_imports,
+        options.expose_all_functions_for_tooling,
+    );
 
     // Typed nullable box structs (`$nullable_box_K`, backing `i32?` etc.) come
     // first in the type section so array/record storage types can reference
@@ -1786,17 +1790,18 @@ fn emit_inner(
             .get(&params, &function.return_type)
             .unwrap();
         functions.function(user_type_base + sig_index);
-        // Minimal-export builds keep only `main` from the user functions;
-        // the playground/debugging exports of every other function would pin
-        // otherwise-unreachable code against wasm-opt's dead-code removal.
-        let export_user_function = if options.minimal_exports {
-            function.name == MAIN_EXPORT
-        } else {
-            should_export_function(&function.name)
-        };
-        if export_user_function && !(start_thunk.is_some() && function.name == MAIN_EXPORT) {
+        let authored_export = function
+            .symbol_id
+            .and_then(|symbol_id| module.authored_function_exports.get(&symbol_id));
+        let tooling_export = options.expose_all_functions_for_tooling
+            && is_tooling_exposable_function(&function.name)
+            && !(start_thunk.is_some() && function.name == MAIN_EXPORT);
+        if let Some(export_name) = authored_export
+            .map(String::as_str)
+            .or_else(|| tooling_export.then_some(function.name.as_str()))
+        {
             exports.export(
-                &function.name,
+                export_name,
                 ExportKind::Func,
                 import_func_count + index as u32,
             );
@@ -1906,11 +1911,17 @@ fn emit_inner(
             import_func_count + module.functions.len() as u32,
             format!("{MAIN_EXPORT}$thunk"),
         ));
-        exports.export(
-            MAIN_EXPORT,
-            ExportKind::Func,
-            import_func_count + module.functions.len() as u32,
-        );
+        if !module
+            .authored_function_exports
+            .values()
+            .any(|name| name == MAIN_EXPORT)
+        {
+            exports.export(
+                MAIN_EXPORT,
+                ExportKind::Func,
+                import_func_count + module.functions.len() as u32,
+            );
+        }
         exports.export(
             INTERNAL_MAIN_EXPORT,
             ExportKind::Func,
@@ -2113,12 +2124,13 @@ fn emit_inner(
 
         // 1. Emit constructor
         functions.function(info.constructor_type_idx);
-        // Record metadata helpers serve the playground/story-args marshalling
-        // (`constructArg`/`executeCall` in the JS runtime), not the game
-        // runtime. Minimal-export builds still emit the bodies — helper
-        // function indices are precomputed — but leave them unexported so
-        // wasm-opt can drop them along with otherwise-unreferenced types.
-        if !options.minimal_exports {
+        // Record metadata helpers are browser-host marshalling for authored or
+        // deliberately tooling-exposed signatures. Bodies keep their stable
+        // precomputed indices; unexported helpers remain removable by wasm-opt.
+        let expose_record_helper = host_marshalling
+            .record_type_keys
+            .contains(&arrays::type_key(record_ty));
+        if expose_record_helper {
             exports.export(
                 &format!("__waluau_new_record_{}", info.record_idx),
                 ExportKind::Func,
@@ -2142,7 +2154,7 @@ fn emit_inner(
         // 2. Emit getters
         for (field_idx, _field_name) in fields.keys().enumerate() {
             functions.function(info.getter_type_indices[field_idx]);
-            if !options.minimal_exports {
+            if expose_record_helper {
                 exports.export(
                     &format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
                     ExportKind::Func,
@@ -2169,7 +2181,7 @@ fn emit_inner(
     // Emit nullable box JS interop helpers (constructor + payload reader).
     for helper in &nullable_box_helpers {
         functions.function(helper.box_fn_type_idx);
-        if !options.minimal_exports {
+        if host_marshalling.nullable_box_kinds.contains(&helper.kind) {
             exports.export(
                 &format!("__waluau_box_nullable_{}", helper.kind.export_suffix()),
                 ExportKind::Func,
@@ -2188,7 +2200,7 @@ fn emit_inner(
         codes.function(&box_fn);
 
         functions.function(helper.unbox_fn_type_idx);
-        if !options.minimal_exports {
+        if host_marshalling.nullable_box_kinds.contains(&helper.kind) {
             exports.export(
                 &format!("__waluau_unbox_nullable_{}", helper.kind.export_suffix()),
                 ExportKind::Func,
@@ -2440,6 +2452,7 @@ fn try_emit_incremental(
     }
     if options != cache.options
         || module.declared_imports != previous.declared_imports
+        || module.authored_function_exports != previous.authored_function_exports
         || module.start != previous.start
         || module.globals != previous.globals
         || module.tag_ids != previous.tag_ids
@@ -2615,8 +2628,139 @@ fn split_code_image(wasm: &[u8]) -> Result<CodeImage, Diagnostic> {
     Err(Diagnostic::new("emitted Wasm has no code section"))
 }
 
-fn should_export_function(name: &str) -> bool {
+fn is_tooling_exposable_function(name: &str) -> bool {
     name != "__waluau_top_level_init" && !name.starts_with("__waluau_") && !name.contains("$lambda")
+}
+
+#[derive(Default)]
+struct HostMarshallingNeeds {
+    record_type_keys: BTreeSet<String>,
+    nullable_box_kinds: BTreeSet<NullableBoxKind>,
+}
+
+impl HostMarshallingNeeds {
+    fn for_module(
+        module: &Module,
+        declared_imports: &[&DeclaredImport],
+        expose_all_functions_for_tooling: bool,
+    ) -> Self {
+        let mut needs = Self::default();
+        for declared in declared_imports {
+            for ty in declared
+                .params
+                .iter()
+                .chain(std::iter::once(&declared.return_type))
+            {
+                collect_host_nullable_box_kinds(ty, &mut needs.nullable_box_kinds);
+            }
+        }
+        for function in &module.functions {
+            let authored = function
+                .symbol_id
+                .is_some_and(|symbol_id| module.authored_function_exports.contains_key(&symbol_id));
+            let tooling = expose_all_functions_for_tooling
+                && is_tooling_exposable_function(&function.name)
+                && !(module.start.is_some() && function.name == MAIN_EXPORT);
+            if authored || tooling {
+                for ty in function
+                    .params
+                    .iter()
+                    .map(|(_, ty)| ty)
+                    .chain(std::iter::once(&function.return_type))
+                {
+                    collect_host_record_type_keys(ty, &mut needs.record_type_keys);
+                    collect_host_nullable_box_kinds(ty, &mut needs.nullable_box_kinds);
+                }
+            }
+        }
+        needs
+    }
+}
+
+fn collect_host_record_type_keys(ty: &Type, keys: &mut BTreeSet<String>) {
+    match ty {
+        Type::Record(fields) => {
+            for field_ty in fields.values() {
+                collect_host_record_type_keys(field_ty, keys);
+            }
+            keys.insert(arrays::type_key(ty));
+        }
+        Type::Array(element)
+        | Type::Variadic(element)
+        | Type::Nullable(element)
+        | Type::ExternSubtype(element) => collect_host_record_type_keys(element, keys),
+        Type::Multi(types) => {
+            for nested in types {
+                collect_host_record_type_keys(nested, keys);
+            }
+        }
+        Type::Function {
+            params,
+            return_type,
+            ..
+        } => {
+            for param in params {
+                collect_host_record_type_keys(param, keys);
+            }
+            collect_host_record_type_keys(return_type, keys);
+        }
+        Type::TaggedVariant(variant) => {
+            collect_host_record_type_keys(&variant.payload, keys);
+            let record = Type::canonical_tagged_union_record();
+            collect_host_record_type_keys(&record, keys);
+        }
+        Type::TaggedUnion(variants) => {
+            for variant in variants {
+                collect_host_record_type_keys(&variant.payload, keys);
+            }
+            let record = Type::canonical_tagged_union_record();
+            collect_host_record_type_keys(&record, keys);
+        }
+        _ => {}
+    }
+}
+
+fn collect_host_nullable_box_kinds(ty: &Type, kinds: &mut BTreeSet<NullableBoxKind>) {
+    match ty {
+        Type::Nullable(inner) => {
+            if let Some(kind) = NullableBoxKind::for_inner(inner) {
+                kinds.insert(kind);
+            }
+            collect_host_nullable_box_kinds(inner, kinds);
+        }
+        Type::Array(element) | Type::Variadic(element) | Type::ExternSubtype(element) => {
+            collect_host_nullable_box_kinds(element, kinds);
+        }
+        Type::Multi(types) => {
+            for nested in types {
+                collect_host_nullable_box_kinds(nested, kinds);
+            }
+        }
+        Type::Function {
+            params,
+            return_type,
+            ..
+        } => {
+            for param in params {
+                collect_host_nullable_box_kinds(param, kinds);
+            }
+            collect_host_nullable_box_kinds(return_type, kinds);
+        }
+        Type::Record(fields) => {
+            for field_ty in fields.values() {
+                collect_host_nullable_box_kinds(field_ty, kinds);
+            }
+        }
+        Type::TaggedVariant(variant) => {
+            collect_host_nullable_box_kinds(&variant.payload, kinds);
+        }
+        Type::TaggedUnion(variants) => {
+            for variant in variants {
+                collect_host_nullable_box_kinds(&variant.payload, kinds);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(Clone)]

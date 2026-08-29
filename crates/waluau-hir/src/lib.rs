@@ -4457,6 +4457,7 @@ fn incremental_context_matches(current: &Program, previous: &Program) -> bool {
             .zip(&previous.functions)
             .all(|(current, previous)| {
                 current.name == previous.name
+                    && current.declaration_class == previous.declaration_class
                     && current.type_params == previous.type_params
                     && current.params == previous.params
                     && current.vararg == previous.vararg

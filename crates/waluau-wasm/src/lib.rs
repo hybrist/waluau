@@ -236,7 +236,14 @@ fn compile_typed_program(typed_program: &waluau_ast::Program) -> Result<CompileR
         ir_dump.push('\n');
     }
 
-    let emit_res = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
+    let emit_res = waluau_codegen_wasm::emit_with_options(
+        &module,
+        waluau_codegen_wasm::EmitOptions {
+            expose_all_functions_for_tooling: true,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
     let wat = wasmprinter::print_bytes(&emit_res.wasm).map_err(|e| e.to_string())?;
     let js_glue = waluau_codegen_wasm::generate_js_glue("program.wasm", &emit_res);
     let required_imports = required_imports_json(&emit_res.required_imports);

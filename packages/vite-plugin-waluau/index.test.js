@@ -198,7 +198,7 @@ test('passes a resolved asset manifest to the compiler', async () => {
   }
 });
 
-test('requests minimal exports only for production game builds', async () => {
+test('selects authored-only production exports and explicit tooling exports elsewhere', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {
     const invocation = join(root, 'invocation.json');
@@ -215,13 +215,13 @@ test('requests minimal exports only for production game builds', async () => {
 
     assert.ok(
       (await compiledArgs('build', 'main.walu')).includes('--minimal-exports'),
-      'a production game build should prune the playground export surface',
+      'a production game build should use the authored-only surface',
     );
-    // The dev server, vitest, and non-build entries keep the full export
-    // surface: test functions and story args are reached through it.
-    assert.ok(!(await compiledArgs('serve', 'main.walu')).includes('--minimal-exports'));
-    assert.ok(!(await compiledArgs('build', 'main.test.walu')).includes('--minimal-exports'));
-    assert.ok(!(await compiledArgs('build', 'main.stories.walu')).includes('--minimal-exports'));
+    // The dev server, vitest, and story builds opt into instrumentation:
+    // private test functions and story args are reached through it.
+    assert.ok((await compiledArgs('serve', 'main.walu')).includes('--tooling-exports'));
+    assert.ok((await compiledArgs('build', 'main.test.walu')).includes('--tooling-exports'));
+    assert.ok((await compiledArgs('build', 'main.stories.walu')).includes('--tooling-exports'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

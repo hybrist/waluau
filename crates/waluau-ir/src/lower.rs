@@ -314,6 +314,26 @@ fn build_inner(
     changed_hint: Option<&[usize]>,
 ) -> Result<Module, Diagnostic> {
     let started = CompilerTimer::start();
+    if let Some(function) = program.functions.iter().find(|function| {
+        function.declaration_class == waluau_ast::FunctionDeclarationClass::Export
+            && function.name.unqualified_name().is_some_and(|name| {
+                name.starts_with("__waluau_") || name == "memory"
+            })
+    }) {
+        return Err(Diagnostic::new(format!(
+            "browser-exported function '{}' uses a compiler-owned export name; names beginning '__waluau_' and 'memory' are reserved",
+            function.name
+        )));
+    }
+    if let Some(function) = program.functions.iter().find(|function| {
+        function.declaration_class == waluau_ast::FunctionDeclarationClass::Export
+            && !function.type_params.is_empty()
+    }) {
+        return Err(Diagnostic::new(format!(
+            "browser-exported function '{}' cannot be generic",
+            function.name
+        )));
+    }
     let hinted_index = changed_hint
         .and_then(|changed| changed.first().copied())
         .filter(|index| {
@@ -551,6 +571,7 @@ fn build_inner(
         functions.extend(lowered?);
     }
     let lowered_at = started.elapsed();
+    let authored_function_exports = collect_authored_function_exports(&monomorphic)?;
     let start = functions
         .iter()
         .position(|function| function.name == "__waluau_top_level_init");
@@ -562,6 +583,7 @@ fn build_inner(
 
     let module = Module {
         functions,
+        authored_function_exports,
         globals,
         declared_imports,
         start,
@@ -611,6 +633,7 @@ fn incremental_context_matches(current: &Program, previous: &Program) -> bool {
             .zip(&previous.functions)
             .all(|(current, previous)| {
                 current.name == previous.name
+                    && current.declaration_class == previous.declaration_class
                     && current.symbol_id == previous.symbol_id
                     && current.type_params == previous.type_params
                     && current.params == previous.params
@@ -630,6 +653,27 @@ fn collect_source_files(sources: &BTreeMap<String, String>) -> Vec<SourceFile> {
         .map(|(path, source)| SourceFile {
             path: path.clone(),
             source: source.clone(),
+        })
+        .collect()
+}
+
+fn collect_authored_function_exports(
+    program: &Program,
+) -> Result<BTreeMap<SymbolId, String>, Diagnostic> {
+    program
+        .functions
+        .iter()
+        .filter(|function| {
+            function.declaration_class == waluau_ast::FunctionDeclarationClass::Export
+        })
+        .map(|function| {
+            let symbol_id = function.symbol_id.ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "exported function '{}' must have a symbol ID resolved",
+                    function.name
+                ))
+            })?;
+            Ok((symbol_id, function.name.to_string()))
         })
         .collect()
 }
@@ -792,6 +836,11 @@ fn try_build_incremental(
         return Ok(None);
     }
     if declared_imports != previous_module.declared_imports {
+        return Ok(None);
+    }
+    if collect_authored_function_exports(&monomorphic)?
+        != previous_module.authored_function_exports
+    {
         return Ok(None);
     }
     let Some(module_index) = previous_module

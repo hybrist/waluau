@@ -524,7 +524,7 @@ mod tests {
                 root,
                 "program.wasm",
                 crate::CompileOptions {
-                    minimal_exports: minimal,
+                    expose_all_functions_for_tooling: !minimal,
                     ..Default::default()
                 },
             );
@@ -566,6 +566,55 @@ mod tests {
         assert!(
             incremental_wasm,
             "same-option rebuilds should keep incremental emission"
+        );
+    }
+
+    #[test]
+    fn authored_export_changes_invalidate_the_incremental_wasm_image() {
+        fn has_export(wasm: &[u8], name: &str) -> bool {
+            wasmprinter::print_bytes(wasm)
+                .expect("wasm should print")
+                .contains(&format!("(export \"{name}\""))
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let main = write(
+            dir.path(),
+            "main.walu",
+            "function helper(): i32\n    return 1\nend\n",
+        );
+        let canonical_main = main.canonicalize().expect("canonicalize");
+        let mut session = CompilerSession::new();
+
+        let private = session.build_root(&main, "program.wasm");
+        let private_wasm = private.artifacts.expect("private artifacts").wasm;
+        assert!(!has_export(&private_wasm, "helper"));
+
+        session.set_overlay(
+            &canonical_main,
+            "export function helper(): i32\n    return 2\nend\n",
+        );
+        let exported = session.build_root(&main, "program.wasm");
+        let exported_wasm = exported.artifacts.expect("exported artifacts").wasm;
+        assert!(has_export(&exported_wasm, "helper"));
+        assert!(
+            !session.incremental_stats(&main).2,
+            "changing authored exports must rebuild the export section"
+        );
+
+        session.set_overlay(
+            &canonical_main,
+            "function helper(): i32\n    return 3\nend\n",
+        );
+        let private_again = session.build_root(&main, "program.wasm");
+        let private_again_wasm = private_again
+            .artifacts
+            .expect("private-again artifacts")
+            .wasm;
+        assert!(!has_export(&private_again_wasm, "helper"));
+        assert!(
+            !session.incremental_stats(&main).2,
+            "removing authored exports must rebuild the export section"
         );
     }
 

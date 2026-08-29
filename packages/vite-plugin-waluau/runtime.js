@@ -2712,6 +2712,7 @@ export function getWasmExports(buffer) {
     const signature = types[typeIdx] || { params: [], returns: [] };
     return {
       name: exp.name,
+      index: exp.index,
       params: signature.params.map(typeCode => {
         if (typeCode === 0x7f) return 'i32';
         if (typeCode === 0x7e) return 'i64';

@@ -1600,6 +1600,7 @@ fn rejects_non_bool_branch_condition() {
     let err = verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
@@ -1640,6 +1641,7 @@ fn rejects_return_type_mismatch() {
     let err = verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
@@ -1758,6 +1760,7 @@ fn rejects_phi_predecessor_order_mismatch() {
     let err = verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
@@ -2067,6 +2070,7 @@ fn verifies_loop_with_break_and_continue() {
     let module = super::Module {
         globals: Vec::new(),
         functions,
+        authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
         tag_ids: std::collections::BTreeMap::new(),
@@ -2456,6 +2460,41 @@ fn tags_ir_inference_failures_with_structured_diagnostics() {
         Some("add an explicit element type annotation, e.g. local xs: {i32} = {}")
     );
     assert_eq!(error.span(), None);
+}
+
+#[test]
+fn rejects_generic_browser_exports_without_a_concrete_wasm_signature() {
+    let program =
+        waluau_parser::parse("export function identity<T>(value: T): T\n    return value\nend\n")
+            .expect("generic export should parse");
+    let typed =
+        waluau_hir::type_check_and_infer(&program).expect("generic export should type-check");
+    let error = super::build(&typed).expect_err("generic browser export needs a concrete ABI");
+    assert!(
+        error
+            .to_string()
+            .contains("browser-exported function 'identity' cannot be generic")
+    );
+}
+
+#[test]
+fn rejects_browser_exports_in_the_compiler_owned_namespace() {
+    for source in [
+        "export function __waluau_main(): i32\n    return 42\nend\n",
+        "local initialized: i32 = 1\nexport function __waluau_main(): i32\n    return initialized\nend\n",
+        "export function memory(): bytes\n    return b\"bytes\"\nend\n",
+    ] {
+        let program = waluau_parser::parse(source).expect("reserved export should parse");
+        let typed =
+            waluau_hir::type_check_and_infer(&program).expect("reserved export should type-check");
+        let error = super::build(&typed).expect_err("compiler-owned export name must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("uses a compiler-owned export name"),
+            "unexpected diagnostic: {error}"
+        );
+    }
 }
 
 #[test]
@@ -3175,6 +3214,7 @@ fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
     verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
         tag_ids: std::collections::BTreeMap::new(),

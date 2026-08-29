@@ -158,10 +158,13 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
         moduleUsesDomOutput = usesDomImports(wasmModule, wasmBuffer, output?.requiredImports);
         const richSigs = output?.signatures || {};
         const wasmExports = getWasmExports(wasmBuffer);
-        const hasGeneratedMain = wasmExports.some(func => func.name === WALUAU_MAIN_EXPORT);
+        const generatedMain = wasmExports.find(func => func.name === WALUAU_MAIN_EXPORT);
         const list = wasmExports
           .filter(func => !func.name.startsWith('__waluau'))
-          .filter(func => !(hasGeneratedMain && func.name === 'main'))
+          // Hide the compatibility alias for generated initialization, but
+          // keep an authored `export function main` whose Wasm identity is
+          // distinct from the `__waluau_main` runtime entry.
+          .filter(func => !(func.name === 'main' && func.index === generatedMain?.index))
           .map(func => {
             const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
               ? richSigs.get(func.name)
