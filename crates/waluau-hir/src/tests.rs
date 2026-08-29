@@ -65,6 +65,79 @@ fn local_function_remains_a_capturing_rebindable_closure() {
 }
 
 #[test]
+fn local_function_body_uses_the_declarations_lexical_identity() {
+    let source = r#"
+        function evaluate(depth: i32): i32
+            local function recurse(value: i32): i32
+                if value == 0 then
+                    return 0
+                end
+                return recurse(value - 1)
+            end
+            return recurse(depth)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let evaluate = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "evaluate")
+        .expect("evaluate should exist");
+    let Stmt::Let {
+        symbol_id: declaration_id,
+        value: Expr::Function(function),
+        ..
+    } = &evaluate.body[0]
+    else {
+        panic!("expected lexical function declaration");
+    };
+    let Stmt::Return(Expr::Call { callee, .. }) = &function.body[1] else {
+        panic!("expected recursive call");
+    };
+    let Expr::Name(_, recursive_id, _) = callee.as_ref() else {
+        panic!("expected recursive name");
+    };
+    assert_eq!(function.symbol_id, *declaration_id);
+    assert_eq!(*recursive_id, *declaration_id);
+}
+
+#[test]
+fn lexical_function_forward_reference_remains_out_of_scope() {
+    let source = r#"
+        function evaluate(value: i32): i32
+            local function first(current: i32): i32
+                return second(current)
+            end
+            local function second(current: i32): i32
+                return current
+            end
+            return first(value)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("later lexical declaration is not visible");
+    assert_eq!(error.to_string(), "unknown name 'second'");
+}
+
+#[test]
+fn later_lexical_function_can_call_an_earlier_declaration() {
+    let source = r#"
+        function evaluate(value: i32): i32
+            local function first(current: i32): i32
+                return current + 1
+            end
+            local function second(current: i32): i32
+                return first(current) + 1
+            end
+            return second(value)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("earlier lexical declaration should be visible");
+}
+
+#[test]
 fn const_function_remains_a_non_rebindable_lexical_closure() {
     let source = r#"
         function evaluate(seed: i32): i32

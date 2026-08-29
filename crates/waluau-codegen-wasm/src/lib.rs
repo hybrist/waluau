@@ -1794,12 +1794,20 @@ fn emit_inner(
             .symbol_id
             .and_then(|symbol_id| module.authored_function_exports.get(&symbol_id));
         let tooling_export = options.expose_all_functions_for_tooling
-            && is_tooling_exposable_function(&function.name)
+            && function
+                .symbol_id
+                .and_then(|symbol_id| module.tooling_function_exports.get(&symbol_id))
+                .is_some()
             && !(start_thunk.is_some() && function.name == MAIN_EXPORT);
-        if let Some(export_name) = authored_export
-            .map(String::as_str)
-            .or_else(|| tooling_export.then_some(function.name.as_str()))
-        {
+        if let Some(export_name) = authored_export.map(String::as_str).or_else(|| {
+            tooling_export.then(|| {
+                function
+                    .symbol_id
+                    .and_then(|symbol_id| module.tooling_function_exports.get(&symbol_id))
+                    .expect("tooling export was selected from the explicit IR plan")
+                    .as_str()
+            })
+        }) {
             exports.export(
                 export_name,
                 ExportKind::Func,
@@ -2628,10 +2636,6 @@ fn split_code_image(wasm: &[u8]) -> Result<CodeImage, Diagnostic> {
     Err(Diagnostic::new("emitted Wasm has no code section"))
 }
 
-fn is_tooling_exposable_function(name: &str) -> bool {
-    name != "__waluau_top_level_init" && !name.starts_with("__waluau_") && !name.contains("$lambda")
-}
-
 #[derive(Default)]
 struct HostMarshallingNeeds {
     record_type_keys: BTreeSet<String>,
@@ -2659,7 +2663,9 @@ impl HostMarshallingNeeds {
                 .symbol_id
                 .is_some_and(|symbol_id| module.authored_function_exports.contains_key(&symbol_id));
             let tooling = expose_all_functions_for_tooling
-                && is_tooling_exposable_function(&function.name)
+                && function.symbol_id.is_some_and(|symbol_id| {
+                    module.tooling_function_exports.contains_key(&symbol_id)
+                })
                 && !(module.start.is_some() && function.name == MAIN_EXPORT);
             if authored || tooling {
                 for ty in function

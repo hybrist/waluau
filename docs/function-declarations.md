@@ -39,6 +39,18 @@ const function score_label(score: i32): string
 end
 ```
 
+Both lexical forms bind their name before resolving the function body, so
+self-recursion goes through that lexical binding. A `local function` may be
+rebound; calls made by the original closure then observe the binding's current
+function value. A `const function` has the same self-recursion shape but its
+binding cannot be rebound. “Constant” describes the binding only: the closure
+and values captured through that binding are not frozen.
+
+Lexical function declarations still follow declaration order. A function body
+cannot refer to a later `local function` or `const function` declaration in the
+same scope. Use hoisted module functions for direct mutual recursion; a later
+lexical function may call an earlier one.
+
 Use `export function` for a named public value:
 
 ```waluau

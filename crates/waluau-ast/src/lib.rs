@@ -1333,6 +1333,7 @@ impl Resolver {
         function: &mut Function,
     ) -> Result<(), Diagnostic> {
         for stmt in &mut function.body {
+            let lexical_function_declaration = stmt.lexical_function_declaration().is_some();
             match stmt {
                 Stmt::Let {
                     name,
@@ -1340,6 +1341,9 @@ impl Resolver {
                     value,
                     ..
                 } => {
+                    if lexical_function_declaration && self.lookup(name).is_none() {
+                        self.declare(name);
+                    }
                     self.resolve_expr(value)?;
                     *symbol_id = Some(self.lookup(name).ok_or_else(|| {
                         Diagnostic::new(format!("unknown module binding '{name}'"))
@@ -1362,9 +1366,9 @@ impl Resolver {
     }
 
     fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Diagnostic> {
-        let declaration_facts = stmt
+        let lexical_function_class = stmt
             .lexical_function_declaration()
-            .map(|declaration| declaration.class.facts());
+            .map(|declaration| declaration.class);
         match stmt {
             Stmt::Let {
                 name,
@@ -1372,7 +1376,12 @@ impl Resolver {
                 value,
                 ..
             } => {
-                let id = if declaration_facts.is_some_and(|facts| facts.hoisted) {
+                let id = if lexical_function_class.is_some() {
+                    // A lexical function declaration introduces one binding:
+                    // the declaration and references from its body share this
+                    // identity. It is visible to the function body, but no
+                    // earlier statement can see it because resolution remains
+                    // ordered.
                     let id = self.declare(name);
                     self.resolve_expr(value)?;
                     id
@@ -1680,7 +1689,19 @@ impl Resolver {
             Expr::Function(function) => {
                 self.enter_scope();
                 if let Some(name) = &function.name {
-                    let id = self.declare(name);
+                    let lexical_declaration = matches!(
+                        function.declaration_class,
+                        Some(FunctionDeclarationClass::Local | FunctionDeclarationClass::Const)
+                    );
+                    let id = if lexical_declaration {
+                        let id = self.lookup(name).ok_or_else(|| {
+                            Diagnostic::new(format!("unknown lexical function binding '{name}'"))
+                        })?;
+                        self.bind_existing(name, id);
+                        id
+                    } else {
+                        self.declare(name)
+                    };
                     function.symbol_id = Some(id);
                 }
                 for param in &mut function.params {

@@ -338,6 +338,26 @@ describe('browser conformance', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('calls a dependency local function exported through a legacy trailing return', async () => {
+    const helper = `
+      local function recurse(depth: i32): i32
+          if depth == 0 then
+              return 11
+          end
+          return recurse(depth - 1) + 1
+      end
+
+      return recurse
+    `;
+    const main = `
+      local recurse = require("./helper")
+      assert(recurse(3) == 14)
+    `;
+    await expect(
+      compileAndInstantiate({ '/helper.walu': helper, '/main.walu': main }, '/main.walu'),
+    ).resolves.toBeUndefined();
+  });
+
   it('passes modules imported through single-quoted require paths', async () => {
     const ops = `
       function add(a: i32, b: i32): i32

@@ -76,6 +76,11 @@ impl FunctionSourceMap {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub functions: Vec<Function>,
+    /// Non-generic authored module functions that browser tooling may expose,
+    /// keyed by resolved declaration identity. This is a compiler-produced
+    /// export plan: code generation must not reconstruct authored status from
+    /// generated names.
+    pub tooling_function_exports: BTreeMap<SymbolId, String>,
     /// Entry-file `export function` declarations keyed by resolved function
     /// identity. Code generation uses the authored name as the stable browser
     /// Wasm export name; linked dependency declarations never enter this map.

@@ -250,7 +250,10 @@ fn compile_typed_program(typed_program: &waluau_ast::Program) -> Result<CompileR
 
     let mut signatures = std::collections::HashMap::new();
     for function in &module.functions {
-        if !function.name.starts_with("__waluau_") {
+        if let Some(export_name) = function
+            .symbol_id
+            .and_then(|symbol_id| module.tooling_function_exports.get(&symbol_id))
+        {
             let params = function
                 .params
                 .iter()
@@ -258,7 +261,7 @@ fn compile_typed_program(typed_program: &waluau_ast::Program) -> Result<CompileR
                 .collect();
             let returns = get_returns_json(&function.return_type, &emit_res.record_type_indices);
             signatures.insert(
-                function.name.clone(),
+                export_name.clone(),
                 FunctionSignatureJson { params, returns },
             );
         }
