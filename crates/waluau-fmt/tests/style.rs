@@ -140,12 +140,6 @@ fn formats_literal_union_type_declarations() {
         fmt("type CardColor=\"red\"|\"black\"\n"),
         "type CardColor = \"red\" | \"black\"\n"
     );
-    assert_eq!(fmt("type Volume=0|1|2\n"), "type Volume = 0 | 1 | 2\n");
-    assert_eq!(fmt("type Direction=-1|1\n"), "type Direction = -1 | 1\n");
-    assert_eq!(
-        fmt("type Speed=0.5|1.0|2.0\n"),
-        "type Speed = 0.5 | 1.0 | 2.0\n"
-    );
 }
 
 #[test]

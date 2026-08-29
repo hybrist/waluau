@@ -49,7 +49,7 @@ pub(crate) fn wasm_type(
         Type::Named { .. } | Type::Opaque { .. } => {
             unreachable!("source-only types must be erased before wasm lowering")
         }
-        Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => {
+        Type::StringLiteralUnion(_) => {
             unreachable!("literal unions must be erased before wasm lowering")
         }
         // Array values are the growable wrapper struct `{storage, len}`, not the

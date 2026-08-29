@@ -2010,8 +2010,7 @@ impl Rewriter<'_> {
             | Type::TypeParam(_)
             | Type::TypedArray(_)
             | Type::Thread
-            | Type::StringLiteralUnion(_)
-            | Type::NumberLiteralUnion(_) => {}
+            | Type::StringLiteralUnion(_) => {}
         }
     }
 

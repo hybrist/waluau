@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use waluau_ast::{Expr, NumberLiteral, NumberLiteralUnion, NumberUnionMember, NumericType, Type};
+use waluau_ast::{Expr, NumberLiteral, NumericType, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::{Binding, FnSignature, inference_diagnostic};
@@ -44,7 +44,7 @@ pub(super) fn infer_numeric_common_type(
     active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
-    let expected_numeric = match expected.map(numeric_view) {
+    let expected_numeric = match expected {
         Some(Type::Numeric(numeric)) => Some(numeric),
         _ => None,
     };
@@ -90,7 +90,7 @@ pub(super) fn infer_numeric_common_type(
                 vars,
                 fn_signatures,
                 active_type_params,
-                Some(numeric_view(right_ty.clone())),
+                Some(right_ty.clone()),
             )
             .map(super::expressions::first_of_multi)?;
             common_numeric_type(left_ty, right_ty)
@@ -104,7 +104,7 @@ pub(super) fn infer_numeric_common_type(
                 vars,
                 fn_signatures,
                 active_type_params,
-                Some(numeric_view(left_ty.clone())),
+                Some(left_ty.clone()),
             )
             .map(super::expressions::first_of_multi)?;
             common_numeric_type(left_ty, right_ty)
@@ -170,20 +170,7 @@ pub(super) fn infer_numeric_for_loop_type(
     Ok(loop_ty)
 }
 
-/// A number literal union (bare or behind its nominal alias wrapper) reads
-/// as its underlying numeric type in numeric contexts (arithmetic,
-/// comparisons, and as the expectation typing an untyped literal operand).
-/// Membership is enforced only where a value of the union type is produced,
-/// not where one is read.
-pub(super) fn numeric_view(ty: Type) -> Type {
-    match ty.number_literal_union() {
-        Some(union) => Type::Numeric(union.numeric),
-        None => ty,
-    }
-}
-
 pub(super) fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
-    let (left, right) = (numeric_view(left), numeric_view(right));
     match (left, right) {
         (Type::Numeric(left), Type::Numeric(right)) => {
             left.common(right).map(Type::Numeric).ok_or_else(|| {
@@ -491,22 +478,6 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 Type::StringLiteralUnion(expected_members)
             ))),
         },
-        Some(Type::NumberLiteralUnion(expected_union)) => match actual.number_literal_union() {
-            Some(actual_union)
-                if actual_union.numeric == expected_union.numeric
-                    && actual_union
-                        .members
-                        .iter()
-                        .all(|member| expected_union.contains(*member)) =>
-            {
-                Ok(Type::NumberLiteralUnion(expected_union))
-            }
-            _ => Err(Diagnostic::new(format!(
-                "cannot implicitly convert {actual} to {}; use a member \
-                 literal or an explicit cast",
-                Type::NumberLiteralUnion(expected_union)
-            ))),
-        },
         Some(Type::Opaque {
             name: expected_name,
             ty: expected_ty,
@@ -619,11 +590,8 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             // An inline literal union value (from an un-aliased annotation
             // like `c: "red" | "black"`) flows into a nominal alias whose
             // underlying union accepts its members.
-            Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_)
-                if matches!(
-                    expected_ty.as_ref(),
-                    Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_)
-                ) =>
+            Type::StringLiteralUnion(_)
+                if matches!(expected_ty.as_ref(), Type::StringLiteralUnion(_)) =>
             {
                 let inner = coerce_type(actual, Some(expected_ty.as_ref().clone()))?;
                 Ok(Type::Opaque {
@@ -715,14 +683,6 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Named { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
             ))),
-            // A constrained numeric alias reads as its underlying type.
-            ref union_ty @ Type::Opaque { .. }
-                if union_ty.number_literal_union().is_some_and(|union| {
-                    union.numeric.can_implicitly_widen_to(expected_numeric)
-                }) =>
-            {
-                Ok(Type::Numeric(expected_numeric))
-            }
             Type::Opaque { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
             ))),
@@ -750,16 +710,6 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             ))),
             Type::Unknown => Err(Diagnostic::new(format!(
                 "cannot implicitly convert unknown to {expected_numeric}; use an explicit cast",
-            ))),
-            // A constrained numeric alias reads as its underlying type.
-            Type::NumberLiteralUnion(union)
-                if union.numeric.can_implicitly_widen_to(expected_numeric) =>
-            {
-                Ok(Type::Numeric(expected_numeric))
-            }
-            Type::NumberLiteralUnion(union) => Err(Diagnostic::new(format!(
-                "cannot implicitly convert {} to {expected_numeric}",
-                union.numeric,
             ))),
             Type::StringLiteralUnion(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {actual} to {expected_numeric}",
@@ -982,11 +932,8 @@ fn extern_opaque_is_subtype(
 }
 
 pub(super) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Diagnostic> {
-    // Number literal unions cast like their numeric representation, giving
-    // computed values an explicit route back into the constrained alias
-    // (`(volume + 1) :: Volume`). String literal unions deliberately do not
-    // appear here: no cast connects them to `string`.
-    let (actual, target) = (numeric_view(actual), numeric_view(target));
+    // String literal unions deliberately do not appear here: no cast
+    // connects them to `string`.
     match (&actual, &target) {
         (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
         // Numeric-backed nominal enums may be explicitly viewed as any
@@ -1018,19 +965,6 @@ pub(super) fn resolve_number_literal(
     value: &NumberLiteral,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
-    // A member literal is the only expression form (besides an explicit
-    // cast) that produces a number literal union value; the union may sit
-    // behind its nominal alias wrapper and a nullable.
-    if let Some(expected_ty) = &expected {
-        let union_inner = match expected_ty {
-            Type::Nullable(inner) => inner.number_literal_union(),
-            other => other.number_literal_union(),
-        };
-        if let Some(union) = union_inner {
-            require_number_union_member(value, false, union)?;
-            return Ok(expected_ty.clone());
-        }
-    }
     match expected {
         Some(Type::Numeric(numeric)) => {
             validate_numeric_literal(value, numeric)?;
@@ -1050,10 +984,6 @@ pub(super) fn resolve_number_literal(
         Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),
         Some(Type::Nullable(inner)) => match Arc::unwrap_or_clone(inner) {
             Type::Numeric(numeric) => Ok(Type::Nullable(Arc::new(Type::Numeric(numeric)))),
-            Type::NumberLiteralUnion(union) => {
-                require_number_union_member(value, false, &union)?;
-                Ok(Type::Nullable(Arc::new(Type::NumberLiteralUnion(union))))
-            }
             other => Err(Diagnostic::new(format!(
                 "numeric literal is not assignable to {other}?",
             ))),
@@ -1092,43 +1022,10 @@ pub(super) fn resolve_number_literal(
         Some(Type::TaggedVariant(_)) | Some(Type::TaggedUnion(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to tagged union type",
         )),
-        Some(Type::NumberLiteralUnion(union)) => {
-            require_number_union_member(value, false, &union)?;
-            Ok(Type::NumberLiteralUnion(union))
-        }
         Some(expected @ Type::StringLiteralUnion(_)) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {expected}",
         ))),
         None => Ok(Type::number()),
-    }
-}
-
-/// Checks that a number literal (negated when it sits under unary minus)
-/// names a member of `union`. Values compare exactly: integers as integers,
-/// floats by their f64 value.
-pub(super) fn require_number_union_member(
-    value: &NumberLiteral,
-    negated: bool,
-    union: &NumberLiteralUnion,
-) -> Result<(), Diagnostic> {
-    let member = match union.numeric {
-        NumericType::F32 | NumericType::F64 => value
-            .float_value()
-            .map(|value| NumberUnionMember::float(if negated { -value } else { value })),
-        _ => value.int_value().and_then(|value| {
-            let value = if negated { -value } else { value };
-            i64::try_from(value).ok().map(NumberUnionMember::Int)
-        }),
-    };
-    if member.is_some_and(|member| union.contains(member)) {
-        Ok(())
-    } else {
-        Err(Diagnostic::new(format!(
-            "{}{} is not a member of {}",
-            if negated { "-" } else { "" },
-            value.raw,
-            Type::NumberLiteralUnion(union.clone())
-        )))
     }
 }
 

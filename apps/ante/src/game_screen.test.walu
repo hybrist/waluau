@@ -8,7 +8,7 @@ local city_map = require("./city_map")
 local game_screen = require("./game_screen")
 local render = require("./render")
 
-local function card(rank: i32, suit: game.Suit): game.Card
+local function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
 end
 

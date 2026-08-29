@@ -1134,7 +1134,7 @@ function trick_scoring(trick: game.Trick): {bool}
     if trick.winner == 0 then
         return {false, false, false, false, false, false, false}
     end
-    local winner: game.TrickSide = trick:side(trick.winner::game.Side)
+    local winner: game.TrickSide = trick:side(trick.winner)
     return game.formation_marks(
         {
             trick.middle[0],

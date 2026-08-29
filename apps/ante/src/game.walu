@@ -3,12 +3,13 @@
 -- five-card hand, exchange, wager, and trick rules remain unchanged.
 local spells = require("./spells/spell")
 
-export type Suit = 0 | 1 | 2 | 3
 type SpellKind = spells.SpellKind
-type Winner = -1 | 0 | 1
-export type Side = -1 | 1
 
-export type Card = { rank: i32, suit: Suit }
+-- Suits, winners, and sides are plain i32s. A suit is 0..3 (MIN_SUIT to
+-- MAX_SUIT), a winner is -1 (Opponent), 0 (tie), or 1 (player), and a side
+-- is -1 (Opponent) or 1 (player). Snapshot restore checks these domains in
+-- valid_trick and State.restore.
+export type Card = { rank: i32, suit: i32 }
 export type PairChoice = { first: i32, second: i32, value: i32, formation: {Card} }
 export type SwapChoice = {
     hand_indices: {i32},
@@ -17,7 +18,7 @@ export type SwapChoice = {
     hand_value: i32
 }
 export type SwapOutcome = {
-    winner: Winner,
+    winner: i32,
     hand_indices: {i32},
     middle_indices: {i32},
     outgoing: {Card},
@@ -53,12 +54,12 @@ export type Trick = {
     computer_second: i32,
     player_value: i32,
     computer_value: i32,
-    winner: Winner,
+    winner: i32,
     points: i32,
     pot: i32,
     player_wager: i32,
     computer_wager: i32,
-    swap_winner: Winner,
+    swap_winner: i32,
     swap_count: i32
 }
 -- `boss` selects the boss battle variant: both sides start with seven cards
@@ -84,14 +85,14 @@ export opaque type State = {
     computer_tricks: i32,
     last_player_value: i32,
     last_computer_value: i32,
-    last_winner: Winner,
+    last_winner: i32,
     swap_open: bool,
     pot: i32,
     player_wager: i32,
     computer_wager: i32,
     player_swap_max: i32,
     computer_swap_max: i32,
-    swap_winner: Winner,
+    swap_winner: i32,
     swap_count: i32,
     swap_hand_indices: {i32},
     swap_middle_indices: {i32},
@@ -117,7 +118,7 @@ export type View = {
     computer_wager: i32,
     player_swap_max: i32,
     computer_swap_max: i32,
-    swap_winner: Winner,
+    swap_winner: i32,
     swap_count: i32,
     swap_hand_indices: {i32},
     swap_middle_indices: {i32},
@@ -173,7 +174,7 @@ function make_deck(): {Card}
     local deck: {Card} = {}
     for suit = MIN_SUIT, MAX_SUIT do
         for rank = MIN_RANK, MAX_RANK do
-            table.insert(deck, { rank = rank, suit = suit::Suit })
+            table.insert(deck, { rank = rank, suit = suit })
         end
     end
     return deck
@@ -410,7 +411,7 @@ function change_card_count(
     card: Card,
     amount: i32
 ): unit
-    local suit: i32 = card.suit::i32
+    local suit: i32 = card.suit
     rank_counts[card.rank] += amount
     suit_counts[suit] += amount
     suit_rank_counts[suit][card.rank] += amount
@@ -739,7 +740,7 @@ function swap_priority(
     player_community: i32,
     computer_wager: i32,
     computer_community: i32
-): Winner
+): i32
     if player_wager <= 0 and computer_wager <= 0 then
         return 0
     end
@@ -1219,10 +1220,9 @@ end
 -- result when the rules state changes — a payload from a differently shaped
 -- build fails to unpack, and the schema marker rejects one whose shape
 -- happens to survive — rather than turning this into a long-lived save-game
--- format. Unpacking already validates the shape; literal-union fields such
--- as Suit and Winner decode as their base numeric type, so their domains are
--- checked below with the rest of the semantics a well-shaped payload can
--- still get wrong.
+-- format. Unpacking already validates the shape; suit and winner fields are
+-- plain i32s, so their domains are checked below with the rest of the
+-- semantics a well-shaped payload can still get wrong.
 type Snapshot = { schema: string, state: State }
 
 function State:snapshot(): string
@@ -1235,7 +1235,7 @@ function valid_winner(value: i32): bool
 end
 
 function valid_card(card: Card): bool
-    return card.rank >= MIN_RANK and card.rank <= MAX_RANK and (card.suit::i32) >= MIN_SUIT and (card.suit::i32) <= MAX_SUIT
+    return card.rank >= MIN_RANK and card.rank <= MAX_RANK and card.suit >= MIN_SUIT and card.suit <= MAX_SUIT
 end
 
 function valid_cards(cards: {Card}): bool
@@ -1297,7 +1297,7 @@ function valid_trick(trick: Trick): bool
     if trick.player_first == trick.player_second or trick.computer_first == trick.computer_second then
         return false
     end
-    if not valid_winner(trick.winner::i32) or not valid_winner(trick.swap_winner::i32) then
+    if not valid_winner(trick.winner) or not valid_winner(trick.swap_winner) then
         return false
     end
     if trick.winner == 1 and trick.player_value <= trick.computer_value then
@@ -1366,9 +1366,7 @@ function State.restore(snapshot_value: string): State?
     if restored.player_points < 0 or restored.player_tricks < 0 or restored.computer_tricks < 0 then
         return nil
     end
-    if not valid_winner(
-        restored.last_winner::i32
-    ) or not valid_winner(restored.swap_winner::i32) then
+    if not valid_winner(restored.last_winner) or not valid_winner(restored.swap_winner) then
         return nil
     end
     if restored.pot < 0 or restored.player_wager < 0 or restored.computer_wager < 0 or restored.pot ~= restored.player_wager + restored.computer_wager then
@@ -1662,7 +1660,7 @@ end
 -- side of a decisive trick. Consumers resolve "the winner's pair" or "the
 -- loser's slots" once instead of re-selecting player_/computer_ fields at
 -- every use. owner 0 names no side and is a caller error.
-function Trick:side(owner: Side): TrickSide
+function Trick:side(owner: i32): TrickSide
     if owner > 0 then
         return {
             cards = self.player_cards,
@@ -1683,7 +1681,7 @@ function Trick:side(owner: Side): TrickSide
     }
 end
 
-function opposite_side(owner: Side): Side
+function opposite_side(owner: i32): i32
     if owner == 1 then
         return -1
     end
@@ -1692,7 +1690,7 @@ end
 
 -- The same owner selection over a live board view: the side's current hand,
 -- each slot carrying its own watched mark.
-function View:side(owner: Side): {HandSlot}
+function View:side(owner: i32): {HandSlot}
     if owner > 0 then
         return self.player_hand
     end
