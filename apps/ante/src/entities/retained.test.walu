@@ -3,6 +3,10 @@ require("waluau:vitest")
 local capsule = require("./capsule")
 local card = require("./card")
 local hand_fan = require("./hand_fan")
+local shop_entity = require("./shop")
+local run_ = require("../run")
+local shop_ = require("../shop_new")
+local spells = require("../spells/spell")
 
 describe(
     "retained presentation",
@@ -48,6 +52,32 @@ describe(
                 local after_width: f64 = root:measure(nil).preferred_width
 
                 expect(after_width):toBeGreaterThan(before_width)
+            end
+        )
+
+        it(
+            "routes shop pointers through its presented retained rows",
+            function(): unit
+                math.randomseed(173)
+                local run: run_.State = run_.State.new(spells.SpellKind.Firebolt, false)
+                local shop: shop_.State = shop_.State.new(run)
+                local view: shop_entity.Stateful = shop_entity.Stateful.new(shop, run)
+                local size = view.root:measure(nil)
+                view.root:arrange(10.0, 20.0, size.preferred_width, size.preferred_height)
+
+                local first = view.row_nodes[0]:bounds()
+                expect(view:hit(first.x + 1.0, first.y + 1.0)):toBe(0)
+                expect(view:hit(first.x + 1.0, first.y + 59.0)):toBe(-1)
+
+                shop.slots = {}
+                shop.cursor = 0
+                view:present(shop, run)
+                size = view.root:measure(nil)
+                view.root:arrange(10.0, 20.0, size.preferred_width, size.preferred_height)
+
+                local leave = view.row_nodes[0]:bounds()
+                expect(view:hit(leave.x + 1.0, leave.y + 1.0)):toBe(0)
+                expect(view.row_nodes[1]:bounds().height):toBe(0.0)
             end
         )
     end
