@@ -87,6 +87,7 @@ describe(
                 expect(tostring(state:keypressed("Enter"))):toBe("none")
                 expect(state.help:is_visible()):toBe(true)
                 expect(state.router:focused()):not:toBe(state.main_targets[2].key)
+
                 state:mousepressed(10.0, 10.0, 1)
                 expect(tostring(state:mousereleased(10.0, 10.0, 1))):toBe("none")
                 expect(state.help:is_visible()):toBe(false)
