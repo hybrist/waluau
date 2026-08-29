@@ -3,8 +3,6 @@ type declarations
 ================================================================================
 
 type Kind = "on" | "off"
-type Volume = 0 | 1 | 2
-type Direction = -1 | 1
 type Result = Count(i32) | Ratio(f64)
 type UIEvent = extern extends Event
 type Handle = i32
@@ -26,23 +24,6 @@ type Alias = game.State
       (literal_type
         (string
           (string_content)))))
-  (type_declaration
-    (identifier)
-    (union_type
-      (union_type
-        (literal_type
-          (number))
-        (literal_type
-          (number)))
-      (literal_type
-        (number))))
-  (type_declaration
-    (identifier)
-    (union_type
-      (literal_type
-        (number))
-      (literal_type
-        (number))))
   (type_declaration
     (identifier)
     (union_type

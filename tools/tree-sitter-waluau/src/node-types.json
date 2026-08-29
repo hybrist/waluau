@@ -3992,10 +3992,6 @@
       "required": true,
       "types": [
         {
-          "type": "number",
-          "named": true
-        },
-        {
           "type": "string",
           "named": true
         }

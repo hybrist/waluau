@@ -668,11 +668,9 @@ module.exports = grammar({
       $._type,
     )),
 
-    // `"red"`, `0`, `-1`, `0.5` in type position (literal unions).
-    literal_type: $ => choice(
-      $.string,
-      seq(optional('-'), $.number),
-    ),
+    // `"red"` in type position (string literal unions). Number literal
+    // types were removed from the language (#620).
+    literal_type: $ => $.string,
 
     // Return annotations may list several types: `: (bool, i32)` or `: bool, i32`.
     _return_type: $ => choice($._type, $.return_type_list),
