@@ -1,6 +1,6 @@
 -- Compound assignment is a reassignment, so it is also rejected on a
 -- `const` binding (RFC #166: applies to all assignment forms).
--- conformance: error=cannot rebind const local 'x'
+-- conformance: error=cannot rebind immutable lexical binding 'x'
 function entry(): f64
     const x = 1.0
     x += 1.0
