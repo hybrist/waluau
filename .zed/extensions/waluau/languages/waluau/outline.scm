@@ -1,50 +1,58 @@
 (comment) @annotation
 
-(local_variable_declaration
+(local_declaration
   "local" @context
-  (binding_list
-    (binding
-      name: (identifier) @name
-      (#match? @name "^[A-Z][A-Z][A-Z_0-9]*$")) @item))
+  (binding
+    name: (identifier) @name
+    (#match? @name "^[A-Z][A-Z][A-Z_0-9]*$")) @item)
 
-(const_variable_declaration
+(const_declaration
   "const" @context
-  (binding_list
-    (binding name: (identifier) @name) @item))
+  (binding name: (identifier) @name) @item)
 
-(type_alias_declaration
+(type_declaration
   "export"? @context
+  "opaque"? @context
   "type" @context
-  name: (type_identifier) @name) @item
+  name: (identifier) @name) @item
 
-(type_function_declaration
+(enum_declaration
   "export"? @context
-  "type" @context
-  "function" @context
-  name: (type_identifier) @name) @item
+  "enum" @context
+  name: (identifier) @name) @item
 
 (function_declaration
+  "export"? @context
   "function" @context
   name: (_) @name
-  (parameters "(" @context ")" @context)) @item
+  parameters: (parameters "(" @context ")" @context)) @item
 
 (local_function_declaration
   "local" @context
   "function" @context
   name: (_) @name
-  (parameters "(" @context ")" @context)) @item
+  parameters: (parameters "(" @context ")" @context)) @item
 
 (const_function_declaration
   "const" @context
   "function" @context
   name: (_) @name
-  (parameters "(" @context ")" @context)) @item
+  parameters: (parameters "(" @context ")" @context)) @item
 
-(declare_global_declaration
-  "declare" @context
-  name: (identifier) @name) @item
-
-(declare_global_function_declaration
+(declare_function_declaration
   "declare" @context
   "function" @context
+  name: (_) @name
+  parameters: (parameters "(" @context ")" @context)) @item
+
+(declare_property_declaration
+  "declare" @context
+  "property" @context
+  receiver: (identifier) @name
+  ":" @name
   name: (identifier) @name) @item
+
+(declare_const_declaration
+  "declare" @context
+  "const" @context
+  name: (dotted_name) @name) @item

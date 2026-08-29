@@ -13,9 +13,11 @@ languages = ["Waluau"]
 [language_servers.waluau-lsp.language_ids]
 Waluau = "waluau"
 
-# Waluau is syntactically descended from typed Luau. This parser is the
-# foundation for Zed's structural features; the language definition and
-# queries in this extension are Waluau-specific.
-[grammars.luau]
-repository = "https://github.com/4teapo/tree-sitter-luau"
-commit = "4f09f79945de3d5575b079103d86a515030c62ab"
+# The Waluau grammar lives in this repository (tools/tree-sitter-waluau)
+# and is written against the compiler's own lexer and parser. Zed fetches
+# the repository at `commit` and compiles the grammar from `path`, so bump
+# `commit` after landing a grammar change.
+[grammars.waluau]
+repository = "https://github.com/hybrist/waluau"
+commit = "8071ffcd62c4749fafc2fb5cf2f32c3e93d14125"
+path = "tools/tree-sitter-waluau"
