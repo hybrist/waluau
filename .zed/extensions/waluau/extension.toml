@@ -19,5 +19,5 @@ Waluau = "waluau"
 # `commit` after landing a grammar change.
 [grammars.waluau]
 repository = "https://github.com/hybrist/waluau"
-commit = "PIN-AFTER-PUSH"
+commit = "eef6911e1d61f46f60f6522f25f1027921db3409"
 path = "tools/tree-sitter-waluau"
