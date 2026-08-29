@@ -24,7 +24,7 @@ end
 function SpellScroll:base_price(run: run_module.State): number
     -- if the player already knows the spell, we increase the level.
     -- otherwise, we learn a new spell at the first open slot.
-    return 5
+    return 4
 end
 
 function SpellScroll.new(kind: spells.SpellKind, level: number): SpellScroll

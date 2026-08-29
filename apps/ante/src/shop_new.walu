@@ -56,6 +56,7 @@ function State:confirm_choice(run: RunState): bool
     local item = slot.item
     if not slot.sold and item:can_use(run) then
         item:use(run)
+        run.gold -= slot.price::i32
         slot.sold = true
     end
     return false
