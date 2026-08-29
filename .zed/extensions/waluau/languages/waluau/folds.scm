@@ -1,0 +1,15 @@
+[
+  (do_statement)
+  (while_statement)
+  (repeat_statement)
+  (if_statement)
+  (for_statement)
+  (function_declaration)
+  (local_function_declaration)
+  (const_function_declaration)
+  (function_definition)
+  (type_function_declaration)
+  (table_constructor)
+  (table_type)
+  (comment)
+] @fold
