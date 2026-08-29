@@ -2451,8 +2451,10 @@ impl Rewriter<'_> {
 
     fn rewrite_stmt(&mut self, stmt: &mut Stmt, bound: &mut HashSet<String>) {
         self.rewrite_stmt_types(stmt);
+        let lexical_function_declaration = stmt.lexical_function_declaration().is_some();
         match stmt {
             Stmt::Let { name, value, .. } => {
+                let original_name = name.clone();
                 let is_type_namespace_require =
                     matches!(&*value, Expr::Require(..)) && self.type_namespaces.contains_key(name);
                 if let Expr::Require(path, _) = &*value {
@@ -2495,7 +2497,11 @@ impl Rewriter<'_> {
                     }
                     _ => false,
                 };
-                self.rewrite_expr(value, bound);
+                let mut initializer_bound = bound.clone();
+                if lexical_function_declaration {
+                    initializer_bound.insert(original_name.clone());
+                }
+                self.rewrite_expr(value, &initializer_bound);
                 if registers_namespace {
                     if let Expr::TableLiteral { fields, .. } = &*value {
                         let mut field_map = BTreeMap::new();
@@ -2998,10 +3004,20 @@ fn rename_stmt(
     available: &mut HashSet<String>,
     shadowed: &mut HashSet<String>,
 ) {
+    let lexical_function_declaration = stmt.lexical_function_declaration().is_some();
     match stmt {
         Stmt::Let { name, value, .. } => {
             let original_name = name.clone();
-            rename_expr(value, renames, available, shadowed);
+            let mut initializer_available = available.clone();
+            if lexical_function_declaration {
+                initializer_available.insert(original_name.clone());
+                if let Expr::Function(function) = value
+                    && let Some(renamed) = renames.get(&original_name)
+                {
+                    function.name = Some(renamed.clone());
+                }
+            }
+            rename_expr(value, renames, &initializer_available, shadowed);
             if let Some(renamed) = renames.get(&original_name) {
                 *name = renamed.clone();
             }

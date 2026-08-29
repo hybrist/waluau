@@ -76,7 +76,14 @@ pub(crate) fn collect_captures(
         .iter()
         .filter_map(|param| param.symbol_id)
         .collect();
-    if let Some(symbol_id) = function.symbol_id {
+    let has_private_self_binding = !matches!(
+        function.declaration_class,
+        Some(
+            waluau_ast::FunctionDeclarationClass::Local
+                | waluau_ast::FunctionDeclarationClass::Const
+        )
+    );
+    if has_private_self_binding && let Some(symbol_id) = function.symbol_id {
         bound.insert(symbol_id);
     }
     let mut captures = BTreeSet::new();

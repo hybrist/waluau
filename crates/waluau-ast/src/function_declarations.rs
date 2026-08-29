@@ -110,6 +110,15 @@ impl Function {
         ));
         self.declaration_class
     }
+
+    /// Whether this declaration came directly from Waluau source.
+    ///
+    /// Compiler-generated functions deliberately have no authored definition
+    /// span. Callers use this semantic query instead of inferring provenance
+    /// from reserved names or storage position.
+    pub const fn is_authored_declaration(&self) -> bool {
+        self.span.is_some()
+    }
 }
 
 impl Program {

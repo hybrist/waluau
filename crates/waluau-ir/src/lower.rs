@@ -353,6 +353,7 @@ fn build_inner(
         program.clone()
     };
     waluau_ast::resolve_symbols(&mut resolved)?;
+    let tooling_function_exports = collect_tooling_function_exports(&resolved)?;
     stage_hash("resolved", &resolved);
     let resolved_at = started.elapsed();
     let incremental_index = hinted_index.or_else(|| cache.as_deref().and_then(|cache| {
@@ -583,6 +584,7 @@ fn build_inner(
 
     let module = Module {
         functions,
+        tooling_function_exports,
         authored_function_exports,
         globals,
         declared_imports,
@@ -670,6 +672,31 @@ fn collect_authored_function_exports(
             let symbol_id = function.symbol_id.ok_or_else(|| {
                 Diagnostic::new(format!(
                     "exported function '{}' must have a symbol ID resolved",
+                    function.name
+                ))
+            })?;
+            Ok((symbol_id, function.name.to_string()))
+        })
+        .collect()
+}
+
+fn collect_tooling_function_exports(
+    program: &Program,
+) -> Result<BTreeMap<SymbolId, String>, Diagnostic> {
+    program
+        .functions
+        .iter()
+        .filter(|function| {
+            function.declaration_class().facts().binding
+                == waluau_ast::FunctionBindingClass::Module
+                && function.type_params.is_empty()
+                && function.is_authored_declaration()
+                && function.file_path == program.entry_file_path
+        })
+        .map(|function| {
+            let symbol_id = function.symbol_id.ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "authored module function '{}' must have a symbol ID resolved",
                     function.name
                 ))
             })?;
@@ -841,6 +868,9 @@ fn try_build_incremental(
     if collect_authored_function_exports(&monomorphic)?
         != previous_module.authored_function_exports
     {
+        return Ok(None);
+    }
+    if collect_tooling_function_exports(resolved)? != previous_module.tooling_function_exports {
         return Ok(None);
     }
     let Some(module_index) = previous_module
@@ -3102,6 +3132,38 @@ impl Builder<'_> {
                         other => other,
                     }
                 };
+                let lexical_function_declaration = stmt.lexical_function_declaration().is_some();
+                if lexical_function_declaration && !self.globals.contains_key(&symbol_id) {
+                    // A non-global closure captures its own lexical binding.
+                    // Allocate that binding's cell first, then append the
+                    // closure after it has captured the cell. Rebinding updates
+                    // the same cell observed by calls from the original
+                    // closure. Module-visible bindings use the existing global
+                    // path below, which provides the same shared-storage
+                    // semantics across top-level and module functions.
+                    self.cell_names.insert(symbol_id);
+                    let cell = self.emit(Instruction::ArrayNew {
+                        element_ty: to_runtime_type(&inferred_ty),
+                        elements: Vec::new(),
+                    });
+                    env.insert(symbol_id, cell);
+                    types.insert(symbol_id, inferred_ty.clone());
+                    self.symbol_storage_types
+                        .insert(symbol_id, inferred_ty.clone());
+                    self.function.value_symbols.insert(cell, symbol_id);
+
+                    let value =
+                        self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
+                    let index0 = self.emit_i32_const(0);
+                    self.emit(Instruction::ArraySet {
+                        array: cell,
+                        index: index0,
+                        value,
+                        element_ty: to_runtime_type(&inferred_ty),
+                    });
+                    self.function.value_symbols.insert(value, symbol_id);
+                    return Ok(());
+                }
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
                 if let Some((global, _)) = self.globals.get(&symbol_id) {
                     self.emit(Instruction::GlobalSet {
@@ -7462,7 +7524,14 @@ impl Builder<'_> {
             discriminants: HashMap::new(),
             symbol_storage_types,
         };
-        if let Some(_name) = &function.name {
+        let has_private_self_binding = !matches!(
+            function.declaration_class,
+            Some(
+                waluau_ast::FunctionDeclarationClass::Local
+                    | waluau_ast::FunctionDeclarationClass::Const
+            )
+        );
+        if has_private_self_binding && function.name.is_some() {
             let symbol_id = function.symbol_id.expect("resolved symbol_id");
             let capture_param_values = captures
                 .iter()

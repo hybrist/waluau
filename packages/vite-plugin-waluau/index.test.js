@@ -213,9 +213,11 @@ test('selects authored-only production exports and explicit tooling exports else
       return JSON.parse(await readFile(invocation, 'utf8'));
     };
 
+    const productionArgs = await compiledArgs('build', 'main.walu');
     assert.ok(
-      (await compiledArgs('build', 'main.walu')).includes('--minimal-exports'),
-      'a production game build should use the authored-only surface',
+      !productionArgs.includes('--minimal-exports')
+        && !productionArgs.includes('--tooling-exports'),
+      'a production game build should use the authored-only default',
     );
     // The dev server, vitest, and story builds opt into instrumentation:
     // private test functions and story args are reached through it.

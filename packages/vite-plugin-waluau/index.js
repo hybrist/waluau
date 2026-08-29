@@ -444,11 +444,11 @@ export function waluau(options = {}) {
   // runtime entries. Dev, test, and story modules deliberately request the
   // broader tooling surface because their private functions are called by the
   // browser host. Tests and stories keep it in `vite build` (build-storybook).
-  function usesMinimalExports(entryPath) {
+  function usesToolingExports(entryPath) {
     return (
-      productionBuild
-      && !entryPath.endsWith('.test.walu')
-      && !entryPath.endsWith('.stories.walu')
+      !productionBuild
+      || entryPath.endsWith('.test.walu')
+      || entryPath.endsWith('.stories.walu')
     );
   }
 
@@ -458,9 +458,7 @@ export function waluau(options = {}) {
       ? []
       : ['--manifest', resolve(appRoot, options.manifest)];
     const reportArgs = ['--report', reportOutput];
-    const exportArgs = usesMinimalExports(entryPath)
-      ? ['--minimal-exports']
-      : ['--tooling-exports'];
+    const exportArgs = usesToolingExports(entryPath) ? ['--tooling-exports'] : [];
     return [
       entryPath,
       '-o', wasmOutput,

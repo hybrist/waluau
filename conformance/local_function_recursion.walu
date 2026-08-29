@@ -1,0 +1,70 @@
+-- `local function` recursion reads the declaration's lexical binding. The
+-- closure does not retain a separate private self binding: after rebinding,
+-- calls made by the original closure observe the current value in that cell.
+function local_recursion_observes_rebinding(): i32
+    local function recurse(depth: i32): i32
+        if depth == 0 then
+            return 1
+        end
+        return recurse(depth - 1) + 1
+    end
+    local original = recurse
+    recurse = function(depth: i32): i32
+        return 40 + depth
+    end
+    return original(1)
+end
+
+assert(local_recursion_observes_rebinding() == 41)
+
+-- `const function` uses the same lexical recursion model, but its binding
+-- cannot be rebound. This says nothing about freezing the closure or values
+-- captured by it.
+function const_recursion_uses_constant_binding(): i32
+    local calls: i32 = 0
+    const function recurse(depth: i32): i32
+        calls += 1
+        if depth == 0 then
+            return calls
+        end
+        return recurse(depth - 1)
+    end
+    return recurse(2)
+end
+
+assert(const_recursion_uses_constant_binding() == 3)
+
+-- A top-level lexical helper used by a module function is stored in its
+-- compiler-owned module global. Its recursive name reads that same global.
+local function top_level_recurse(depth: i32): i32
+    if depth == 0 then
+        return 7
+    end
+    return top_level_recurse(depth - 1) + 1
+end
+
+function call_top_level_recurse(): i32
+    return top_level_recurse(2)
+end
+
+assert(call_top_level_recurse() == 9)
+
+-- Lexical declarations are ordered. A later lexical function may call one
+-- already declared in the same scope; the inverse is a forward reference and
+-- remains invalid. Hoisted module functions are the direct form for mutual
+-- recursion.
+function earlier(value: i32): i32
+    if value == 0 then
+        return 0
+    end
+    return later(value - 1)
+end
+
+function later(value: i32): i32
+    if value == 0 then
+        return 1
+    end
+    return earlier(value - 1)
+end
+
+assert(earlier(3) == 1)

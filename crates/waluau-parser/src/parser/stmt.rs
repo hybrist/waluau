@@ -507,10 +507,10 @@ impl Parser {
     }
 
     /// `local function f(...) ... end` declares a local binding whose name is
-    /// visible inside its own body. Desugars to a `let` of a *named* function
-    /// expression: the resolver and IR lowering already bind a named function
-    /// expression's own name inside its body, which is exactly Luau's
-    /// recursion semantics for `local function`.
+    /// visible inside its own body. Desugars to a `let` of a named function
+    /// expression carrying lexical-declaration metadata; resolution gives the
+    /// declaration and body one binding identity, and lowering stores the
+    /// closure in that binding's shared cell.
     fn parse_local_function_decl(&mut self) -> Result<Stmt, Diagnostic> {
         let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::Function, "expected 'function' after 'local'")?;

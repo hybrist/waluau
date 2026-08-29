@@ -1600,6 +1600,7 @@ fn rejects_non_bool_branch_condition() {
     let err = verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        tooling_function_exports: std::collections::BTreeMap::new(),
         authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
@@ -1641,6 +1642,7 @@ fn rejects_return_type_mismatch() {
     let err = verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        tooling_function_exports: std::collections::BTreeMap::new(),
         authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
@@ -1760,6 +1762,7 @@ fn rejects_phi_predecessor_order_mismatch() {
     let err = verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        tooling_function_exports: std::collections::BTreeMap::new(),
         authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
@@ -2004,6 +2007,52 @@ fn lowers_named_function_expression_recursion() {
 }
 
 #[test]
+fn lowers_local_function_recursion_through_the_lexical_cell() {
+    let source = r#"
+        function entry(): i32
+            local function recurse(depth: i32): i32
+                if depth == 0 then
+                    return 1
+                end
+                return recurse(depth - 1) + 1
+            end
+            local original = recurse
+            recurse = function(depth: i32): i32
+                return 40 + depth
+            end
+            return original(1)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function");
+    assert!(entry.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(instruction, Instruction::ArrayNew { elements, .. } if elements.is_empty())
+        })
+    }));
+    let recursive = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry$lambda0")
+        .expect("lifted recursive closure");
+    assert_eq!(recursive.capture_count, 1);
+    assert!(recursive.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::ArrayGet { .. }))
+    }));
+}
+
+#[test]
 fn verifies_loop_with_break_and_continue() {
     let source = r#"
         function entry(xs: {i32}, len: i32): i32
@@ -2070,6 +2119,7 @@ fn verifies_loop_with_break_and_continue() {
     let module = super::Module {
         globals: Vec::new(),
         functions,
+        tooling_function_exports: std::collections::BTreeMap::new(),
         authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
@@ -3214,6 +3264,7 @@ fn verifies_null_test_naming_a_nested_union_by_its_source_type() {
     verify(&Module {
         globals: Vec::new(),
         functions: vec![function],
+        tooling_function_exports: std::collections::BTreeMap::new(),
         authored_function_exports: std::collections::BTreeMap::new(),
         declared_imports: Vec::new(),
         start: None,
