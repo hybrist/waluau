@@ -14,6 +14,8 @@ pub(super) struct GenericScheme {
     pub(super) type_params: Vec<String>,
     pub(super) params: Vec<Type>,
     pub(super) return_type: Type,
+    /// True only for an authored `function` / `export function` binding.
+    pub(super) authored_module: bool,
 }
 
 /// One overload of a declared host function. `name` is the unique internal
@@ -47,6 +49,9 @@ pub(super) enum FnSignature {
         /// the pack (`Type::Unknown` for an unannotated `...`).
         vararg: Option<Type>,
         return_type: Type,
+        /// Binding classification used for rebinding diagnostics; host and
+        /// generated functions remain false.
+        authored_module: bool,
     },
     Generic(GenericScheme),
     /// A set of declared host function overloads sharing one source-level
@@ -692,6 +697,7 @@ pub(super) fn infer_top_level_function_return_type(
                         .collect(),
                     vararg: function.vararg.clone(),
                     return_type: Type::String,
+                    authored_module: false,
                 },
             );
         }
@@ -811,6 +817,7 @@ pub(super) fn infer_generic_function_expr_call(
             .map(|param| param.ty.clone())
             .collect(),
         return_type: return_ty,
+        authored_module: false,
     };
     infer_generic_call(
         &scheme,

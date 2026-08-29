@@ -13,6 +13,7 @@ import {
 } from '../utils/wasm.js';
 import { getWaluauCompilerClient } from '../utils/waluauCompilerClient.js';
 import { withTypedAssetModule } from '../utils/typedAssets.js';
+import { selectPlaygroundFunctions } from './playgroundExports.js';
 
 export default function useWaluauCompiler({ files, entryFile, assetManifest = null }) {
   const compilerFiles = useMemo(
@@ -158,13 +159,7 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
         moduleUsesDomOutput = usesDomImports(wasmModule, wasmBuffer, output?.requiredImports);
         const richSigs = output?.signatures || {};
         const wasmExports = getWasmExports(wasmBuffer);
-        const generatedMain = wasmExports.find(func => func.name === WALUAU_MAIN_EXPORT);
-        const list = wasmExports
-          .filter(func => !func.name.startsWith('__waluau'))
-          // Hide the compatibility alias for generated initialization, but
-          // keep an authored `export function main` whose Wasm identity is
-          // distinct from the `__waluau_main` runtime entry.
-          .filter(func => !(func.name === 'main' && func.index === generatedMain?.index))
+        const list = selectPlaygroundFunctions(wasmExports, WALUAU_MAIN_EXPORT)
           .map(func => {
             const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
               ? richSigs.get(func.name)

@@ -26,16 +26,14 @@ pub enum FunctionBindingClass {
     Lexical,
 }
 
-/// Current compatibility exposure of a function declaration.
+/// Authored exposure of a function declaration.
 ///
-/// This is deliberately distinct from an authored module interface. Module
-/// functions are still private declarations, but editor tooling currently
-/// presents them as module members and non-minimal entry builds export them
-/// for debugging. Lexical declarations have no such compatibility exposure.
+/// Tooling-only browser exports are a compiler option, not part of this
+/// language fact. Legacy trailing returns select private declarations through
+/// [`Program::module_interface`] rather than changing their exposure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FunctionExposure {
     Private,
-    PrivateWithCompatibilityExposure,
     Exported,
 }
 
@@ -69,7 +67,7 @@ impl FunctionDeclarationClass {
                 binding: FunctionBindingClass::Module,
                 hoisted: true,
                 rebindability: Rebindability::Const,
-                exposure: FunctionExposure::PrivateWithCompatibilityExposure,
+                exposure: FunctionExposure::Private,
             },
             Self::Export => FunctionDeclarationFacts {
                 binding: FunctionBindingClass::Module,
@@ -220,7 +218,7 @@ mod tests {
                 binding: FunctionBindingClass::Module,
                 hoisted: true,
                 rebindability: Rebindability::Const,
-                exposure: FunctionExposure::PrivateWithCompatibilityExposure,
+                exposure: FunctionExposure::Private,
             }
         );
         assert_eq!(

@@ -132,7 +132,7 @@ fn initialize_reports_full_document_sync() {
 fn did_open_publishes_every_error_with_ranges() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
-    let source = "function first(x: i32): bool\n    return x\nend\nfunction second(x: i32): i32\n    if x then\n        return x\n    end\n    return x\nend\n";
+    let source = "export function first(x: i32): bool\n    return x\nend\nexport function second(x: i32): i32\n    if x then\n        return x\n    end\n    return x\nend\n";
     std::fs::write(&path, source).expect("write fixture");
 
     let mut server = LspServer::new();
@@ -159,6 +159,67 @@ fn did_open_publishes_every_error_with_ranges() {
         }),
         "expected the if-condition diagnostic on its own line: {diagnostics:?}"
     );
+}
+
+#[test]
+fn module_rebinding_diagnostic_points_at_the_assignment_value() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let source =
+        "function answer(): i32\n    return 42\nend\nanswer = function(): i32\n    return 0\nend\n";
+    std::fs::write(&path, source).expect("write fixture");
+
+    let mut server = LspServer::new();
+    let messages = open(&mut server, &path, source);
+    let diagnostics = diagnostics_for(&messages, "main.walu").expect("diagnostics published");
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["message"] == "cannot rebind module function 'answer'")
+        .expect("module rebinding diagnostic");
+    assert_eq!(
+        diagnostic["range"]["start"],
+        json!({"line": 3, "character": 9})
+    );
+    assert_ne!(
+        diagnostic["range"]["start"],
+        json!({"line": 0, "character": 0})
+    );
+}
+
+#[test]
+fn export_interface_parser_errors_are_published_once_without_lsp_duplicates() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (file, source, expected) in [
+        (
+            "qualified.walu",
+            "export function State.run(): i32\n    return 1\nend\n",
+            "`export function` requires a simple function name",
+        ),
+        (
+            "mixed.walu",
+            "export function answer(): i32\n    return 42\nend\nreturn answer\n",
+            "a module cannot combine `export function` declarations with a trailing return",
+        ),
+        (
+            "nested.walu",
+            "do\n    export function answer(): i32\n        return 42\n    end\nend\n",
+            "`export function` is only valid at module top level",
+        ),
+    ] {
+        let path = dir.path().join(file);
+        std::fs::write(&path, source).expect("write fixture");
+        let mut server = LspServer::new();
+        let messages = open(&mut server, &path, source);
+        let diagnostics = diagnostics_for(&messages, file).expect("diagnostics published");
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic["message"] == expected)
+                .count(),
+            1,
+            "{expected}: {diagnostics:?}"
+        );
+    }
 }
 
 fn formatting_request(server: &mut LspServer, method: &str, path: &Path, range: Value) -> Value {
@@ -252,7 +313,7 @@ fn range_formatting_only_touches_overlapping_lines() {
 fn did_change_clears_fixed_diagnostics() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
-    let broken = "function bad(x: i32): bool\n    return x\nend\n";
+    let broken = "export function bad(x: i32): bool\n    return x\nend\n";
     std::fs::write(&path, broken).expect("write fixture");
 
     let mut server = LspServer::new();
@@ -262,7 +323,7 @@ fn did_change_clears_fixed_diagnostics() {
         Some(1)
     );
 
-    let fixed = "function bad(x: i32): bool\n    return x > 0\nend\n";
+    let fixed = "export function bad(x: i32): bool\n    return x > 0\nend\n";
     let messages = change(&mut server, &path, fixed);
     assert_eq!(
         diagnostics_for(&messages, "main.walu").map(Vec::len),
@@ -295,14 +356,17 @@ fn unsynced_editor_buffer_wins_over_disk() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
     // Disk copy is broken; the freshly-opened buffer is fixed but unsaved.
-    std::fs::write(&path, "function bad(x: i32): bool\n    return x\nend\n")
-        .expect("write fixture");
+    std::fs::write(
+        &path,
+        "export function bad(x: i32): bool\n    return x\nend\n",
+    )
+    .expect("write fixture");
 
     let mut server = LspServer::new();
     let messages = open(
         &mut server,
         &path,
-        "function bad(x: i32): bool\n    return x > 0\nend\n",
+        "export function bad(x: i32): bool\n    return x > 0\nend\n",
     );
     assert!(
         diagnostics_for(&messages, "main.walu").is_none_or(|diagnostics| diagnostics.is_empty()),
@@ -467,7 +531,7 @@ fn definition_shadowing_picks_the_innermost_binding() {
 fn definition_crosses_into_required_modules() {
     let dir = tempfile::tempdir().expect("tempdir");
     let lib = dir.path().join("lib.walu");
-    let lib_text = "function double(x: i32): i32\n    return x * 2\nend\nreturn double\n";
+    let lib_text = "export function double(x: i32): i32\n    return x * 2\nend\n";
     std::fs::write(&lib, lib_text).expect("write fixture");
     let main = dir.path().join("main.walu");
     let main_text = "local m = require(\"./lib\")\nlocal y: i32 = m.double(4)\n";
@@ -497,6 +561,56 @@ fn definition_crosses_into_required_modules() {
     let contents = hover["contents"]["value"].as_str().expect("hover text");
     assert!(
         contents.contains("function double(x: i32): i32"),
+        "{contents}"
+    );
+}
+
+#[test]
+fn private_module_functions_do_not_support_imported_navigation_or_hover() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("lib.walu");
+    let lib_text = "function private_helper(): i32\n    return 0\nend\n\
+export function answer(): i32\n    return private_helper()\nend\n";
+    std::fs::write(&lib, lib_text).expect("write fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local m = require(\"./lib\")\nlocal leaked = m.private_helper()\n";
+    std::fs::write(&main, main_text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+    let (line, character) = position_of(main_text, "private_helper");
+
+    let definition = request(
+        &mut server,
+        "textDocument/definition",
+        &main,
+        line,
+        character,
+    );
+    assert!(definition.is_null(), "{definition:?}");
+
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    assert!(hover.is_null(), "{hover:?}");
+}
+
+#[test]
+fn callable_legacy_module_preserves_the_returned_function_type() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("increment.walu");
+    let lib_text =
+        "function increment(value: i32): i32\n    return value + 1\nend\nreturn increment\n";
+    std::fs::write(&lib, lib_text).expect("write fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local increment = require(\"./increment\")\nlocal value = increment(41)\n";
+    std::fs::write(&main, main_text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+    let (line, character) = position_of(main_text, "increment(41)");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(
+        contents.contains("local increment: (i32) -> i32"),
         "{contents}"
     );
 }
@@ -620,7 +734,7 @@ fn completion_lists_visible_scope_and_keywords() {
     assert!(labels.contains(&"math"), "{labels:?}");
     assert!(labels.contains(&"function"), "{labels:?}");
 
-    // At the file tail, function-scoped names are gone but globals remain.
+    // At the file tail, function-scoped names are gone but module bindings remain.
     let last_line = text.matches('\n').count() as u32;
     let result = request(&mut server, "textDocument/completion", &path, last_line, 0);
     let labels: Vec<&str> = result
@@ -645,7 +759,8 @@ type Hidden = { value: i32 }\n\
 export enum Direction { north, south }\n\
 local function local_hidden(): i32\n    return 1\nend\n\
 const function const_hidden(): i32\n    return 2\nend\n\
-function double(x: i32): i32\n    return x * 2\nend\nreturn double\n",
+function module_hidden(): i32\n    return 3\nend\n\
+export function double(x: i32): i32\n    return x * 2\nend\n",
     )
     .expect("write fixture");
     let main = dir.path().join("main.walu");
@@ -694,6 +809,408 @@ function double(x: i32): i32\n    return x * 2\nend\nreturn double\n",
     assert!(!labels.contains(&"Hidden"), "{labels:?}");
     assert!(!labels.contains(&"local_hidden"), "{labels:?}");
     assert!(!labels.contains(&"const_hidden"), "{labels:?}");
+    assert!(!labels.contains(&"module_hidden"), "{labels:?}");
+}
+
+#[test]
+fn legacy_table_surface_exposes_only_selected_fields_and_preserves_alias_navigation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("lib.walu");
+    let lib_text = "function selected(): i32\n    return 42\nend\n\
+function private_helper(): i32\n    return 0\nend\n\
+return { answer = selected }\n";
+    std::fs::write(&lib, lib_text).expect("write fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local m = require(\"./lib\")\nlocal value = m.answer()\n";
+    std::fs::write(&main, main_text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+    let extended = format!("{main_text}m.");
+    change(&mut server, &main, &extended);
+    let last_line = extended.matches('\n').count() as u32;
+    let completion = request(&mut server, "textDocument/completion", &main, last_line, 2);
+    let labels = completion
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"answer"), "{labels:?}");
+    assert!(!labels.contains(&"selected"), "{labels:?}");
+    assert!(!labels.contains(&"private_helper"), "{labels:?}");
+
+    let (line, character) = position_of(main_text, "answer");
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &main,
+        line,
+        character,
+    );
+    assert!(
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("lib.walu")),
+        "{location:?}"
+    );
+    assert_eq!(location["range"]["start"]["line"], json!(0));
+
+    send(
+        &mut server,
+        json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"rootUri": format!("file://{}", dir.path().display())},
+        }),
+    );
+    let references = references_request(&mut server, &main, line, character, true);
+    assert_eq!(
+        references,
+        vec![
+            ("lib.walu".to_string(), 0, 9),
+            ("lib.walu".to_string(), 6, 18),
+            ("main.walu".to_string(), 1, 16),
+        ]
+    );
+
+    let (definition_line, definition_character) = position_of(lib_text, "selected");
+    let references = references_request(
+        &mut server,
+        &lib,
+        definition_line,
+        definition_character,
+        true,
+    );
+    assert_eq!(
+        references,
+        vec![
+            ("lib.walu".to_string(), 0, 9),
+            ("lib.walu".to_string(), 6, 18),
+            ("main.walu".to_string(), 1, 16),
+        ],
+        "legacy aliases must resolve symmetrically from the declaration"
+    );
+}
+
+#[test]
+fn legacy_surface_keeps_literals_inline_functions_and_dependency_reexports() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ops = dir.path().join("ops.walu");
+    let ops_text = "export function add(a: i32, b: i32): i32\n    return a + b\nend\n";
+    std::fs::write(&ops, ops_text).expect("write ops fixture");
+    let bundle = dir.path().join("bundle.walu");
+    let bundle_text = "local ops = require(\"./ops\")\n\
+return { version = \"v1\", sum = ops.add, inline = function(value: i32): i32\n\
+    return value + 1\n\
+end }\n";
+    std::fs::write(&bundle, bundle_text).expect("write bundle fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local bundle = require(\"./bundle\")\n\
+local version = bundle.version\n\
+local sum = bundle.sum(1, 2)\n\
+local incremented = bundle.inline(41)\n";
+    std::fs::write(&main, main_text).expect("write main fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+
+    let extended = format!("{main_text}bundle.");
+    change(&mut server, &main, &extended);
+    let last_line = extended.matches('\n').count() as u32;
+    let completion = request(
+        &mut server,
+        "textDocument/completion",
+        &main,
+        last_line,
+        "bundle.".len() as u32,
+    );
+    let labels = completion
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(labels, vec!["inline", "sum", "version"]);
+
+    let (line, character) = position_of(main_text, "version");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("version: string"), "{contents}");
+
+    let (line, character) = position_of(main_text, "inline");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("inline: (i32) -> i32"), "{contents}");
+
+    let (line, character) = position_of(main_text, "sum(1");
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &main,
+        line,
+        character,
+    );
+    assert!(
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("ops.walu")),
+        "{location:?}"
+    );
+    assert_eq!(location["range"]["start"]["line"], json!(0));
+
+    let (line, character) = position_of(main_text, "incremented");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("local incremented: i32"), "{contents}");
+}
+
+#[test]
+fn direct_legacy_values_keep_scalar_and_reexported_function_types() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ops = dir.path().join("ops.walu");
+    std::fs::write(
+        &ops,
+        "export function add(a: i32, b: i32): i32\n    return a + b\nend\n",
+    )
+    .expect("write ops fixture");
+    let callable = dir.path().join("callable.walu");
+    std::fs::write(
+        &callable,
+        "local ops = require(\"./ops\")\nreturn ops.add\n",
+    )
+    .expect("write callable fixture");
+    let version = dir.path().join("version.walu");
+    std::fs::write(&version, "return \"v1\"\n").expect("write version fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local add = require(\"./callable\")\nlocal version = require(\"./version\")\nlocal result = add(1, 2)\nlocal copy = version\n";
+    std::fs::write(&main, main_text).expect("write main fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+    for (needle, expected) in [
+        ("result", "local result: i32"),
+        ("version =", "local version: string"),
+    ] {
+        let (line, character) = position_of(main_text, needle);
+        let hover = request(&mut server, "textDocument/hover", &main, line, character);
+        let contents = hover["contents"]["value"].as_str().expect("hover text");
+        assert!(contents.contains(expected), "{needle}: {contents}");
+    }
+}
+
+#[test]
+fn same_named_exported_type_and_function_resolve_by_usage_context() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("lib.walu");
+    let lib_text =
+        "export type answer = { value: i32 }\nexport function answer(): i32\n    return 42\nend\n";
+    std::fs::write(&lib, lib_text).expect("write lib fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local m = require(\"./lib\")\n\
+local value = m.answer()\n\
+local direct: m.answer = { value = 1 }\n\
+local grouped: (m.answer) = direct\n\
+local array: {m.answer} = { direct }\n\
+local callable: (m.answer) -> unit\n\
+local comparison = value < m.answer\n";
+    std::fs::write(&main, main_text).expect("write main fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+    for (needle, expected_line) in [
+        ("answer()", 1),
+        ("answer =", 0),
+        ("answer) = direct", 0),
+        ("answer} =", 0),
+        ("answer) ->", 0),
+        ("answer\n", 1),
+    ] {
+        let (line, character) = position_of(main_text, needle);
+        let location = request(
+            &mut server,
+            "textDocument/definition",
+            &main,
+            line,
+            character,
+        );
+        assert_eq!(
+            location["range"]["start"]["line"],
+            json!(expected_line),
+            "{needle}: {location:?}"
+        );
+    }
+}
+
+#[test]
+fn same_file_type_and_value_names_resolve_by_usage_context() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("module.walu");
+    let text = "export type answer = { value: i32 }\n\
+export function answer(): i32\n\
+    return 42\n\
+end\n\
+local direct: (answer) = { value = 1 }\n\
+local result = answer()\n";
+    std::fs::write(&path, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, text);
+    for (needle, expected_line) in [("answer) =", 0), ("answer()\n", 1)] {
+        let (line, character) = position_of(text, needle);
+        let location = request(
+            &mut server,
+            "textDocument/definition",
+            &path,
+            line,
+            character,
+        );
+        assert_eq!(
+            location["range"]["start"]["line"],
+            json!(expected_line),
+            "{needle}: {location:?}"
+        );
+    }
+}
+
+#[test]
+fn references_follow_chained_expression_reexport_aliases_from_the_origin() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ops = dir.path().join("ops.walu");
+    let ops_text = "export function add(a: i32, b: i32): i32\n    return a + b\nend\n";
+    std::fs::write(&ops, ops_text).expect("write ops fixture");
+    let bundle = dir.path().join("bundle.walu");
+    let bundle_text = "local ops = require(\"./ops\")\nreturn { sum = ops.add }\n";
+    std::fs::write(&bundle, bundle_text).expect("write bundle fixture");
+    let facade = dir.path().join("facade.walu");
+    let facade_text = "local bundle = require(\"./bundle\")\nreturn { total = bundle.sum }\n";
+    std::fs::write(&facade, facade_text).expect("write facade fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local facade = require(\"./facade\")\nlocal value = facade.total(1, 2)\n";
+    std::fs::write(&main, main_text).expect("write main fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &ops, ops_text);
+    open(&mut server, &main, main_text);
+    send(
+        &mut server,
+        json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"rootUri": format!("file://{}", dir.path().display())},
+        }),
+    );
+    let (line, character) = position_of(ops_text, "add");
+    let references = references_request(&mut server, &ops, line, character, true);
+    assert_eq!(
+        references,
+        vec![
+            ("bundle.walu".to_string(), 1, 19),
+            ("facade.walu".to_string(), 1, 24),
+            ("main.walu".to_string(), 1, 21),
+            ("ops.walu".to_string(), 0, 16),
+        ]
+    );
+}
+
+#[test]
+fn callable_legacy_surface_retains_exported_type_namespace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("callable.walu");
+    let lib_text = "export type Public = { value: i32 }\n\
+return function(value: i32): i32\n\
+    return value + 1\n\
+end\n";
+    std::fs::write(&lib, lib_text).expect("write fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local callable = require(\"./callable\")\n\
+local answer = callable(41)\n\
+local value: callable.Public = { value = answer }\n";
+    std::fs::write(&main, main_text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+
+    let (line, character) = position_of(main_text, "callable(41)");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(
+        contents.contains("local callable: (i32) -> i32"),
+        "{contents}"
+    );
+
+    let (line, character) = position_of(main_text, "Public");
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &main,
+        line,
+        character,
+    );
+    assert!(
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("callable.walu")),
+        "{location:?}"
+    );
+    assert_eq!(location["range"]["start"]["line"], json!(0));
+
+    let extended = format!("{main_text}callable.");
+    change(&mut server, &main, &extended);
+    let last_line = extended.matches('\n').count() as u32;
+    let completion = request(
+        &mut server,
+        "textDocument/completion",
+        &main,
+        last_line,
+        "callable.".len() as u32,
+    );
+    let labels = completion
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(labels, vec!["Public"]);
+}
+
+#[test]
+fn module_surface_selection_respects_export_identity_and_legacy_shadowing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let explicit = dir.path().join("explicit.walu");
+    let explicit_text = "do\n    local function answer(): i32\n        return 0\n    end\nend\n\
+export function answer(): i32\n    return 42\nend\n";
+    std::fs::write(&explicit, explicit_text).expect("write explicit fixture");
+    let legacy = dir.path().join("legacy.walu");
+    let legacy_text = "function selected(): i32\n    return 0\nend\n\
+local function selected(): i32\n    return 42\nend\n\
+return { answer = selected }\n";
+    std::fs::write(&legacy, legacy_text).expect("write legacy fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local explicit = require(\"./explicit\")\n\
+local legacy = require(\"./legacy\")\n\
+local first = explicit.answer()\n\
+local second = legacy.answer()\n";
+    std::fs::write(&main, main_text).expect("write main fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+    for (needle, expected_line) in [("explicit.answer", 5), ("legacy.answer", 3)] {
+        let (_, member) = needle.split_once('.').expect("member access");
+        let start = main_text.find(needle).expect("needle") as u32;
+        let offset = start + needle.find(member).expect("member") as u32;
+        let (line, character) = lsp_position(main_text, offset);
+        let location = request(
+            &mut server,
+            "textDocument/definition",
+            &main,
+            line,
+            character,
+        );
+        assert_eq!(
+            location["range"]["start"]["line"],
+            json!(expected_line),
+            "{needle}: {location:?}"
+        );
+    }
 }
 
 #[test]
@@ -846,10 +1363,9 @@ const GAME_MODULE: &str = "type Card = { rank: i32, suit: i32 }\n\
 export type State = { middle: {Card}, round: i32 }\n\
 function State:play(first: i32, second: i32): unit\n\
 end\n\
-function new(): State\n\
+export function new(): State\n\
     return { middle = {}, round = 1 }\n\
-end\n\
-return new\n";
+end\n";
 
 const GAME_TEST: &str = "local game = require(\"./game\")\n\
 local state = game.new()\n\
@@ -1279,7 +1795,7 @@ fn definition_resolves_functions_and_methods_through_every_receiver_shape() {
             vec![
                 (
                     "lib.walu",
-                    "function <def>double</def>(x: i32): i32\n    return x * 2\nend\n",
+                    "export function <def>double</def>(x: i32): i32\n    return x * 2\nend\n",
                 ),
                 (
                     "main.walu",
@@ -1329,10 +1845,13 @@ fn definition_resolves_functions_and_methods_through_every_receiver_shape() {
         (
             "same function name in two modules",
             vec![
-                ("a.walu", "function shared(): i32\n    return 1\nend\n"),
+                (
+                    "a.walu",
+                    "export function shared(): i32\n    return 1\nend\n",
+                ),
                 (
                     "b.walu",
-                    "function <def>shared</def>(): i32\n    return 2\nend\n",
+                    "export function <def>shared</def>(): i32\n    return 2\nend\n",
                 ),
                 (
                     "main.walu",
@@ -1345,7 +1864,7 @@ fn definition_resolves_functions_and_methods_through_every_receiver_shape() {
             vec![
                 (
                     "sub/lib.walu",
-                    "function <def>double</def>(x: i32): i32\n    return x * 2\nend\n",
+                    "export function <def>double</def>(x: i32): i32\n    return x * 2\nend\n",
                 ),
                 (
                     "main.walu",
@@ -1612,21 +2131,23 @@ fn unused_local_variables_warn_with_the_unnecessary_tag() {
 }
 
 #[test]
-fn unused_local_functions_warn_but_top_level_functions_and_params_do_not() {
+fn unused_functions_warn_for_private_lexical_and_module_declarations() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("main.walu");
-    let source = "local function helper(): i32\n    return 1\nend\ndo\n    const function fixed(): i32\n        return 2\n    end\nend\nfunction add(a: i32, b: i32): i32\n    return a\nend\n";
+    let source = "local function helper(): i32\n    return 1\nend\ndo\n    const function fixed(): i32\n        return 2\n    end\nend\nfunction private_add(a: i32, b: i32): i32\n    return a\nend\nexport function public_add(a: i32, b: i32): i32\n    return a\nend\n";
     std::fs::write(&path, source).expect("write fixture");
 
     let mut server = LspServer::new();
     let messages = open(&mut server, &path, source);
     let diagnostics = diagnostics_for(&messages, "main.walu").expect("warnings published");
-    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
     assert_eq!(diagnostics[0]["message"], "unused function `helper`");
     assert_eq!(diagnostics[0]["code"], "lint/unused-function");
     assert_eq!(diagnostics[0]["severity"], 2);
     assert_eq!(diagnostics[1]["message"], "unused function `fixed`");
     assert_eq!(diagnostics[1]["code"], "lint/unused-function");
+    assert_eq!(diagnostics[2]["message"], "unused function `private_add`");
+    assert_eq!(diagnostics[2]["code"], "lint/unused-function");
 }
 
 #[test]

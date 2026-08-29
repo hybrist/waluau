@@ -4,6 +4,7 @@ use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
 use super::{Parser, tokens::is_linker_internal_identifier};
+use crate::TypeReference;
 
 /// The parsed entries of a parenthesized type list (`(self, a: i32, b: i32)`).
 ///
@@ -270,6 +271,7 @@ impl Parser {
             .with_span(span));
         }
 
+        let name_span = self.peek().map(|token| token.span);
         let token = self.advance();
         match token.map(|t| t.kind.clone()) {
             Some(TokenKind::Str(value)) => Ok(Type::StringLiteralUnion(vec![value])),
@@ -330,13 +332,23 @@ impl Parser {
                 // A dotted name (`game.State`) references a type alias
                 // exported by a required module; the linker resolves the
                 // namespace against the module's require bindings.
-                let name = if self.check_simple(&TokenKind::Dot) {
+                let (name, span) = if self.check_simple(&TokenKind::Dot) {
                     self.advance();
-                    let member = self.expect_identifier()?;
-                    format!("{name}.{member}")
+                    let (member, member_span) = self.expect_identifier_spanned()?;
+                    (
+                        format!("{name}.{member}"),
+                        waluau_ast::Span {
+                            start: name_span.map(|span| span.start).unwrap_or(member_span.start),
+                            end: member_span.end,
+                        },
+                    )
                 } else {
-                    name
+                    (name, name_span.unwrap_or_default())
                 };
+                self.type_references.push(TypeReference {
+                    name: name.clone(),
+                    span,
+                });
                 let type_args = if self.check_simple(&TokenKind::Less) {
                     self.parse_type_arg_list()?
                 } else {

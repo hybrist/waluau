@@ -65,7 +65,7 @@ fn local_function_remains_a_capturing_rebindable_closure() {
 }
 
 #[test]
-fn const_function_remains_an_immutable_lexical_closure() {
+fn const_function_remains_a_non_rebindable_lexical_closure() {
     let source = r#"
         function evaluate(seed: i32): i32
             const function apply(value: i32): i32
@@ -79,7 +79,80 @@ fn const_function_remains_an_immutable_lexical_closure() {
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("const function must reject rebinding");
-    assert_eq!(error.to_string(), "cannot rebind const local 'apply'");
+    assert_eq!(
+        error.to_string(),
+        "cannot rebind constant lexical binding 'apply'"
+    );
+}
+
+#[test]
+fn module_function_rebinding_reports_its_non_rebindable_semantics() {
+    let program = parse(
+        r#"
+        function answer(): i32
+            return 42
+        end
+        answer = function(): i32
+            return 0
+        end
+        "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("module functions cannot be rebound");
+    assert_eq!(error.to_string(), "cannot rebind module function 'answer'");
+}
+
+#[test]
+fn module_rebinding_classification_survives_an_earlier_unrelated_error() {
+    let program = parse(
+        r#"
+        function answer(): i32
+            return 42
+        end
+        function entry(): unit
+            missing()
+            answer = function(): i32
+                return 0
+            end
+        end
+        "#,
+    )
+    .expect("parse should succeed");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("program is invalid");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.to_string().contains("unknown name 'missing'")),
+        "earlier error remains visible: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| { error.to_string() == "cannot rebind module function 'answer'" }),
+        "later rebinding keeps its authored classification: {errors:?}"
+    );
+}
+
+#[test]
+fn non_module_function_rebinding_is_not_mislabeled_as_a_module_function() {
+    for (source, expected) in [
+        (
+            "print = function(value: string): unit\nend\n",
+            "unknown lexical binding 'print'",
+        ),
+        (
+            "declare function host(value: string): unit\nhost = function(value: string): unit\nend\n",
+            "cannot rebind declared or builtin function 'host'",
+        ),
+    ] {
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("function binding cannot be rebound");
+        assert_eq!(error.to_string(), expected);
+        assert!(
+            !error.to_string().contains("module function"),
+            "non-module diagnostics must not claim authored module semantics"
+        );
+    }
 }
 
 #[test]
@@ -2036,7 +2109,10 @@ fn rejects_rebinding_const_local() {
 
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(error.to_string(), "cannot rebind const local 'y'");
+    assert_eq!(
+        error.to_string(),
+        "cannot rebind constant lexical binding 'y'"
+    );
 }
 
 #[test]

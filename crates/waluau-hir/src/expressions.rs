@@ -618,6 +618,7 @@ fn infer_expr_inner(
                 params,
                 vararg,
                 return_type,
+                ..
             }) = fn_signatures.get(name)
             {
                 Type::Function {
@@ -1021,6 +1022,7 @@ fn infer_expr_inner(
                     params,
                     vararg: Some(vararg),
                     return_type,
+                    ..
                 }) = fn_signatures.get(name)
                 {
                     if args.len() > 1 {
@@ -1194,6 +1196,7 @@ fn infer_expr_inner(
                                 params,
                                 vararg: None,
                                 return_type,
+                                ..
                             }) => {
                                 if !call_arity_matches(params, args.len()) {
                                     return Err(Diagnostic::new(format!(

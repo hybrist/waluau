@@ -7,7 +7,7 @@ use waluau_ast::{
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
-use crate::{DefinitionKind, DefinitionSite};
+use crate::{DefinitionKind, DefinitionSite, TypeReference};
 
 mod expr;
 mod stmt;
@@ -22,6 +22,8 @@ pub(super) struct Parser {
     type_param_scope: Vec<String>,
     /// Definition side table for editor tooling; see [`DefinitionSite`].
     definitions: Vec<DefinitionSite>,
+    /// Named type references for editor tooling; see [`TypeReference`].
+    type_references: Vec<TypeReference>,
     file_path: String,
     /// Locally declared nominal enums and their declaration-order variants.
     enums: HashMap<String, Vec<String>>,
@@ -58,6 +60,7 @@ impl Parser {
             diagnostics: Vec::new(),
             type_param_scope: Vec::new(),
             definitions: Vec::new(),
+            type_references: Vec::new(),
             file_path,
             enums: HashMap::new(),
             type_aliases: HashMap::new(),
@@ -189,7 +192,12 @@ impl Parser {
     pub(super) fn parse_program(
         mut self,
         source: &str,
-    ) -> (Program, Vec<Diagnostic>, Vec<DefinitionSite>) {
+    ) -> (
+        Program,
+        Vec<Diagnostic>,
+        Vec<DefinitionSite>,
+        Vec<TypeReference>,
+    ) {
         let mut functions = Vec::new();
         let mut declared_imports = Vec::new();
         let mut declared_constants = Vec::new();
@@ -309,7 +317,12 @@ impl Parser {
                 "a module cannot combine `export function` declarations with a trailing return",
             ));
         }
-        (program, self.diagnostics, self.definitions)
+        (
+            program,
+            self.diagnostics,
+            self.definitions,
+            self.type_references,
+        )
     }
 
     fn parse_function(

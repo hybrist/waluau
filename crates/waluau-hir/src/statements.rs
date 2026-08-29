@@ -1663,6 +1663,28 @@ fn attach_stmt_span(error: Diagnostic, stmt: &Stmt) -> Diagnostic {
     }
 }
 
+fn missing_assignment_binding(
+    name: &str,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Diagnostic {
+    match fn_signatures.get(name) {
+        Some(FnSignature::Mono {
+            authored_module: true,
+            ..
+        }) => Diagnostic::new(format!("cannot rebind module function '{name}'")),
+        Some(FnSignature::Generic(scheme)) if scheme.authored_module => {
+            Diagnostic::new(format!("cannot rebind module function '{name}'"))
+        }
+        Some(FnSignature::Const { .. }) => {
+            Diagnostic::new(format!("cannot rebind declared constant '{name}'"))
+        }
+        Some(_) => Diagnostic::new(format!(
+            "cannot rebind declared or builtin function '{name}'"
+        )),
+        None => Diagnostic::new(format!("unknown lexical binding '{name}'")),
+    }
+}
+
 pub(super) fn check_stmt(
     stmt: &Stmt,
     vars: &mut HashMap<String, Binding>,
@@ -1776,7 +1798,7 @@ fn check_stmt_inner(
         } => {
             let existing = vars
                 .get(name)
-                .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
+                .ok_or_else(|| missing_assignment_binding(name, fn_signatures))?;
             if let AssignOp::Compound(bin_op) = *op {
                 if !bin_op.compound_target_ok(&existing.ty) {
                     return Err(Diagnostic::new(format!(
@@ -1788,7 +1810,7 @@ fn check_stmt_inner(
             }
             if existing.rebindability == Rebindability::Const {
                 return Err(Diagnostic::new(format!(
-                    "cannot rebind const local '{}'",
+                    "cannot rebind constant lexical binding '{}'",
                     name
                 )));
             }
@@ -2421,10 +2443,10 @@ fn check_stmt_inner(
             for target in targets {
                 let binding = vars
                     .get(target)
-                    .ok_or_else(|| Diagnostic::new(format!("unknown local '{target}'")))?;
+                    .ok_or_else(|| missing_assignment_binding(target, fn_signatures))?;
                 if binding.rebindability == Rebindability::Const {
                     return Err(Diagnostic::new(format!(
-                        "cannot rebind const local '{}'",
+                        "cannot rebind constant lexical binding '{}'",
                         target
                     )));
                 }

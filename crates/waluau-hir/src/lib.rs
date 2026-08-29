@@ -789,10 +789,12 @@ fn signatures_visible_from_file(
                     params,
                     vararg,
                     return_type,
+                    authored_module,
                 } => FnSignature::Mono {
                     params: params.iter().map(|ty| visibility.visible(ty)).collect(),
                     vararg: vararg.clone(),
                     return_type: visibility.visible(return_type),
+                    authored_module: *authored_module,
                 },
                 FnSignature::Generic(scheme) => FnSignature::Generic(GenericScheme {
                     type_params: scheme.type_params.clone(),
@@ -802,6 +804,7 @@ fn signatures_visible_from_file(
                         .map(|ty| visibility.visible(ty))
                         .collect(),
                     return_type: visibility.visible(&scheme.return_type),
+                    authored_module: scheme.authored_module,
                 }),
                 FnSignature::Overloaded(variants) => FnSignature::Overloaded(
                     variants
@@ -3116,12 +3119,14 @@ fn signature_from_function_expr(function: &FunctionExpr) -> Option<FnSignature> 
             params,
             vararg: function.vararg.clone(),
             return_type,
+            authored_module: false,
         }
     } else {
         FnSignature::Generic(GenericScheme {
             type_params: function.type_params.clone(),
             params,
             return_type,
+            authored_module: false,
         })
     })
 }
@@ -4601,6 +4606,7 @@ fn type_check_and_infer_collect_raw(
                     .collect(),
                 vararg: None,
                 return_type: declared.return_type.clone(),
+                authored_module: false,
             },
         );
     }
@@ -4625,6 +4631,11 @@ fn type_check_and_infer_collect_raw(
         );
     }
     for function in &typed.functions {
+        let authored_module = matches!(
+            function.declaration_class,
+            waluau_ast::FunctionDeclarationClass::Module
+                | waluau_ast::FunctionDeclarationClass::Export
+        );
         if function.type_params.is_empty() {
             if let Some(ret) = &function.return_type {
                 fn_signatures.insert(
@@ -4637,6 +4648,7 @@ fn type_check_and_infer_collect_raw(
                             .collect(),
                         vararg: function.vararg.clone(),
                         return_type: ret.clone(),
+                        authored_module,
                     },
                 );
             }
@@ -4651,6 +4663,7 @@ fn type_check_and_infer_collect_raw(
                         .map(|param| param.ty.clone())
                         .collect(),
                     return_type: ret.clone(),
+                    authored_module,
                 }),
             );
         }
@@ -4720,6 +4733,11 @@ fn type_check_and_infer_collect_raw(
             let function_name = function.name.to_string();
             let function_vararg = function.vararg.clone();
             let function_file_path = function.file_path.clone();
+            let authored_module = matches!(
+                function.declaration_class,
+                waluau_ast::FunctionDeclarationClass::Module
+                    | waluau_ast::FunctionDeclarationClass::Export
+            );
             let function_params: Vec<Type> = function
                 .params
                 .iter()
@@ -4740,6 +4758,7 @@ fn type_check_and_infer_collect_raw(
                             params: function_params,
                             vararg: function_vararg.clone(),
                             return_type: ret,
+                            authored_module,
                         },
                     );
                     progressed = true;
@@ -4755,6 +4774,7 @@ fn type_check_and_infer_collect_raw(
                             params: function_params,
                             vararg: function_vararg.clone(),
                             return_type: Type::Unknown,
+                            authored_module,
                         },
                     );
                     progressed = true;

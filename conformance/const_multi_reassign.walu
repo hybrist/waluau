@@ -1,6 +1,6 @@
 -- Bindings introduced by a multi-binding `const` declaration are each
 -- const; a multi-assignment that targets one must fail.
--- conformance: error=cannot rebind const local
+-- conformance: error=cannot rebind constant lexical binding
 -- conformance: error='b'
 function entry(): f64
     const a, b = 1.0, 2.0

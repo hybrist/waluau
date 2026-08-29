@@ -135,6 +135,21 @@ impl Parser {
     }
 
     pub(super) fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
+        if self.is_export_function_start() {
+            let export_span = self.peek().expect("export function start").span;
+            let start_pos = export_span.start;
+            let definition_mark = self.definitions.len();
+            self.advance();
+            // Consume the complete declaration so recovery produces one
+            // targeted diagnostic rather than treating `export` and
+            // `function` as two unrelated invalid statements.
+            let _ = self.parse_function(false, start_pos)?;
+            self.definitions.truncate(definition_mark);
+            return Err(
+                Diagnostic::new("`export function` is only valid at module top level")
+                    .with_span(export_span),
+            );
+        }
         if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Identifier(keyword)) if keyword == "match")
         {
             return self.parse_match_stmt();
@@ -628,10 +643,12 @@ impl Parser {
         // dropped along with the token rewind, or the retry records them a
         // second time and the unused-binding lint sees a phantom duplicate.
         let definitions_mark = self.definitions.len();
+        let type_references_mark = self.type_references.len();
         let target = match self.parse_postfix_expr() {
             Ok(expr) => expr,
             Err(error) => {
                 self.definitions.truncate(definitions_mark);
+                self.type_references.truncate(type_references_mark);
                 self.index = checkpoint;
                 return Err(error);
             }
@@ -661,6 +678,7 @@ impl Parser {
             AssignOp::Compound(BinaryOp::Concat)
         } else {
             self.definitions.truncate(definitions_mark);
+            self.type_references.truncate(type_references_mark);
             self.index = checkpoint;
             return Ok(None);
         };
