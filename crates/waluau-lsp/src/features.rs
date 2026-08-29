@@ -14,8 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use waluau_ast::{FunctionDeclarationClass, FunctionExposure};
-use waluau_ast::{Span, Type};
+use waluau_ast::{Expr, FunctionDeclarationClass, ModuleInterface, Program, Span, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticTag, Severity};
 use waluau_lexer::{Token, TokenKind};
 use waluau_parser::{DefinitionKind, DefinitionSite};
@@ -96,9 +95,9 @@ const INTRINSIC_MEMBERS: &[&str] = &[
     "table.unpack",
 ];
 
-/// Globals the resolver pre-declares that have no prelude declaration of
-/// their own (namespaces and special forms).
-const GLOBAL_NAMES: &[&str] = &[
+/// Builtin roots the resolver pre-declares that have no prelude declaration
+/// of their own (namespaces and special forms).
+const BUILTIN_ROOT_NAMES: &[&str] = &[
     "assert",
     "bit32",
     "coroutine",
@@ -164,18 +163,115 @@ fn prelude_definitions() -> &'static [DefinitionSite] {
     })
 }
 
+/// One selected value in a module interface. A source declaration gives
+/// navigation directly; other expressions retain their syntax so tooling can
+/// still infer literals, inline functions, and dependency re-exports.
+#[derive(Clone)]
+enum SurfaceValue {
+    Definition(DefinitionSite),
+    Expression(Expr),
+}
+
+/// Dependency-facing values selected by a module's authored interface.
+///
+/// This is intentionally derived from [`Program::module_interface`] instead
+/// of declaration positions or visibility ranges. A plain module function is
+/// file-private unless a legacy trailing return selects it; an explicit
+/// `export function` is a named namespace member.
+#[derive(Clone, Default)]
+enum ModuleSurface {
+    /// No usable value interface (missing or conflicting declarations).
+    #[default]
+    Missing,
+    /// A legacy single-value interface. Its static type decides whether it is
+    /// callable; retaining every expression also preserves scalar and
+    /// dependency re-export interfaces.
+    Value(Box<SurfaceValue>),
+    /// Explicit declarations or a legacy `return { ... }` namespace.
+    Namespace(std::collections::BTreeMap<String, SurfaceValue>),
+}
+
+impl ModuleSurface {
+    fn from_program(program: &Program, definitions: &[DefinitionSite]) -> Self {
+        let exported_definition = |name: &str| {
+            definitions
+                .iter()
+                .find(|definition| {
+                    definition.name == name
+                        && definition.function_declaration == Some(FunctionDeclarationClass::Export)
+                        && binds_a_value(definition)
+                })
+                .cloned()
+        };
+        let selected_definition = |name: &str, at: u32| {
+            resolve_name(definitions, name, at).filter(|definition| binds_a_value(definition))
+        };
+        match program.module_interface() {
+            ModuleInterface::Declarations { functions } => {
+                let mut members = std::collections::BTreeMap::new();
+                for function in functions {
+                    let Some(name) = function.name.unqualified_name() else {
+                        continue;
+                    };
+                    if let Some(definition) = exported_definition(name) {
+                        members.insert(name.to_string(), SurfaceValue::Definition(definition));
+                    }
+                }
+                Self::Namespace(members)
+            }
+            ModuleInterface::Legacy(value @ Expr::Name(name, _, span)) => Self::Value(Box::new(
+                span.and_then(|span| selected_definition(name, span.start))
+                    .cloned()
+                    .map(SurfaceValue::Definition)
+                    .unwrap_or_else(|| SurfaceValue::Expression(value.clone())),
+            )),
+            ModuleInterface::Legacy(value @ Expr::Function(_)) => {
+                Self::Value(Box::new(SurfaceValue::Expression(value.clone())))
+            }
+            ModuleInterface::Legacy(Expr::TableLiteral { fields, .. }) => {
+                let mut members = std::collections::BTreeMap::new();
+                for field in fields {
+                    let value = match &field.value {
+                        Expr::Name(name, _, span) => span
+                            .and_then(|span| selected_definition(name, span.start))
+                            .cloned()
+                            .map(SurfaceValue::Definition)
+                            .unwrap_or_else(|| SurfaceValue::Expression(field.value.clone())),
+                        _ => SurfaceValue::Expression(field.value.clone()),
+                    };
+                    members.insert(field.name.clone(), value);
+                }
+                Self::Namespace(members)
+            }
+            ModuleInterface::Legacy(value) => {
+                Self::Value(Box::new(SurfaceValue::Expression(value.clone())))
+            }
+            ModuleInterface::Missing | ModuleInterface::Conflict => Self::Missing,
+        }
+    }
+}
+
 /// The analyzed shape of one document.
 struct DocumentIndex {
     tokens: Vec<Token>,
     definitions: Vec<DefinitionSite>,
+    type_reference_spans: Vec<Span>,
+    module_surface: ModuleSurface,
 }
 
 fn index_document(text: &str, path: &Path) -> DocumentIndex {
     let tokens = waluau_lexer::lex(text).unwrap_or_default();
-    let definitions = waluau_parser::parse_with_recovery(text, &path.to_string_lossy()).definitions;
+    let outcome = waluau_parser::parse_with_recovery(text, &path.to_string_lossy());
+    let module_surface = ModuleSurface::from_program(&outcome.program, &outcome.definitions);
     DocumentIndex {
         tokens,
-        definitions,
+        definitions: outcome.definitions,
+        type_reference_spans: outcome
+            .type_references
+            .into_iter()
+            .map(|reference| reference.span)
+            .collect(),
+        module_surface,
     }
 }
 
@@ -250,12 +346,17 @@ enum RefTarget {
     /// A definition site's own name.
     Definition(usize),
     /// A plain identifier reference.
-    Name { name: String, span: Span },
+    Name {
+        name: String,
+        span: Span,
+        prefer_type: bool,
+    },
     /// The member part of `receiver.member` or `receiver:member`.
     Member {
         receiver: Receiver,
         name: String,
         span: Span,
+        prefer_type: bool,
     },
     /// The string argument of a `require("...")` call.
     Require { raw: String, span: Span },
@@ -356,6 +457,24 @@ fn find_target(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
     })
 }
 
+/// Whether a qualified member is written in an unambiguous type position.
+/// Expression members default to values; annotations and generic/union type
+/// operands prefer an exported type when a module exports the same spelling
+/// in both namespaces.
+fn reference_is_type_position(index: &DocumentIndex, reference_span: Span) -> bool {
+    index
+        .type_reference_spans
+        .iter()
+        .any(|span| span.start <= reference_span.start && reference_span.end <= span.end)
+}
+
+fn bare_reference_is_type_position(index: &DocumentIndex, reference_span: Span) -> bool {
+    index
+        .type_reference_spans
+        .iter()
+        .any(|span| span.start == reference_span.start && span.end == reference_span.end)
+}
+
 fn find_target_at(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
     // Definition sites take precedence: their spans are identifier tokens
     // (or dotted token runs) and cannot overlap a distinct reference.
@@ -393,11 +512,13 @@ fn find_target_at(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
                     receiver,
                     name: name.clone(),
                     span: token.span,
+                    prefer_type: reference_is_type_position(index, token.span),
                 });
             }
             Some(RefTarget::Name {
                 name: name.clone(),
                 span: token.span,
+                prefer_type: bare_reference_is_type_position(index, token.span),
             })
         }
         TokenKind::Str(raw) => {
@@ -470,21 +591,51 @@ enum Resolved {
     },
 }
 
-/// Exported members of a required module's scope: its module function
-/// declarations plus exported type names.
-fn scope_exports(scope: &TypeScope) -> Vec<DefinitionSite> {
-    scope
-        .definitions
-        .iter()
-        .filter(|definition| {
-            (definition.function_declaration.is_some_and(|class| {
-                class.facts().exposure == FunctionExposure::PrivateWithCompatibilityExposure
-            }) && !definition.name.contains('.')
-                && !definition.name.contains(':'))
-                || (definition.kind == DefinitionKind::TypeName && definition.exported)
-        })
-        .cloned()
-        .collect()
+/// Exported members of a required module's scope: its authored value surface
+/// plus exported type names.
+fn scope_exports(scope: &TypeScope, load: Loader) -> Vec<DefinitionSite> {
+    let mut exported = match &scope.module_surface {
+        ModuleSurface::Namespace(members) => members
+            .iter()
+            .map(|(public_name, value)| {
+                if let SurfaceValue::Definition(definition) = value {
+                    let mut exported = definition.clone();
+                    exported.name = public_name.clone();
+                    return exported;
+                }
+                let ty = surface_value_static_type(value, scope, load, TYPE_CHASE_DEPTH)
+                    .map(|(ty, _)| ty)
+                    .unwrap_or(Type::Unknown);
+                DefinitionSite {
+                    name: public_name.clone(),
+                    name_span: Span { start: 0, end: 0 },
+                    kind: if matches!(ty, Type::Function { .. }) {
+                        DefinitionKind::Function
+                    } else {
+                        DefinitionKind::Local
+                    },
+                    function_declaration: None,
+                    exported: false,
+                    enum_variants: None,
+                    ty: Some(ty.clone()),
+                    detail: Some(format!("(module member) {public_name}: {ty}")),
+                    visible_from: 0,
+                    scope_end: u32::MAX,
+                    require_path: None,
+                    initializer: None,
+                }
+            })
+            .collect::<Vec<_>>(),
+        ModuleSurface::Value(_) | ModuleSurface::Missing => Vec::new(),
+    };
+    exported.extend(
+        scope
+            .definitions
+            .iter()
+            .filter(|definition| definition.kind == DefinitionKind::TypeName && definition.exported)
+            .cloned(),
+    );
+    exported
 }
 
 /// How deep the static-type engine chases initializer/type-name chains
@@ -498,6 +649,7 @@ struct TypeScope {
     /// True for the builtins prelude: definitions with no navigable file.
     prelude: bool,
     definitions: std::rc::Rc<Vec<DefinitionSite>>,
+    module_surface: ModuleSurface,
 }
 
 impl TypeScope {
@@ -506,6 +658,7 @@ impl TypeScope {
             file: path.to_path_buf(),
             prelude: false,
             definitions: std::rc::Rc::new(index.definitions.clone()),
+            module_surface: index.module_surface.clone(),
         }
     }
 
@@ -514,19 +667,159 @@ impl TypeScope {
             file: PathBuf::from("builtin:prelude"),
             prelude: true,
             definitions: std::rc::Rc::new(prelude_definitions().to_vec()),
+            module_surface: ModuleSurface::Missing,
         }
     }
 }
 
 fn module_scope(file: &Path, load: Loader) -> Option<TypeScope> {
     let text = load(file)?;
-    let definitions =
-        waluau_parser::parse_with_recovery(&text, &file.to_string_lossy()).definitions;
+    let outcome = waluau_parser::parse_with_recovery(&text, &file.to_string_lossy());
+    let module_surface = ModuleSurface::from_program(&outcome.program, &outcome.definitions);
     Some(TypeScope {
         file: file.to_path_buf(),
         prelude: false,
-        definitions: std::rc::Rc::new(definitions),
+        definitions: std::rc::Rc::new(outcome.definitions),
+        module_surface,
     })
+}
+
+fn expression_receiver(expr: &Expr) -> Option<Receiver> {
+    fn collect(expr: &Expr, accesses: &mut Vec<Access>) -> Option<String> {
+        match expr {
+            Expr::Name(name, ..) => Some(name.clone()),
+            Expr::Field { base, name, .. } => {
+                let root = collect(base, accesses)?;
+                accesses.push(Access::Field(name.clone()));
+                Some(root)
+            }
+            _ => None,
+        }
+    }
+
+    let mut accesses = Vec::new();
+    let root = collect(expr, &mut accesses)?;
+    Some(Receiver { root, accesses })
+}
+
+fn expression_static_type(
+    expr: &Expr,
+    scope: &TypeScope,
+    load: Loader,
+    depth: u8,
+) -> Option<(Type, TypeScope)> {
+    if depth == 0 {
+        return None;
+    }
+    match expr {
+        Expr::Name(name, _, span) => {
+            let definition = resolve_name(
+                &scope.definitions,
+                name,
+                span.map(|span| span.start).unwrap_or(u32::MAX),
+            )?;
+            definition_static_type(definition, scope, load, depth - 1)
+        }
+        Expr::Field { span, .. } => {
+            let receiver = expression_receiver(expr)?;
+            match receiver_standing(
+                &receiver,
+                span.map(|span| span.start).unwrap_or(u32::MAX - 1),
+                scope,
+                load,
+                depth - 1,
+            )? {
+                Standing::Value(ty, value_scope) => Some((ty, value_scope)),
+                Standing::Module(_) | Standing::Namespace(..) => None,
+            }
+        }
+        Expr::Function(function) => Some((
+            Type::Function {
+                params: function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                return_type: Arc::new(function.return_type.clone().unwrap_or(Type::Unknown)),
+                has_self: function.implicit_self.is_some(),
+            },
+            scope.clone(),
+        )),
+        Expr::Cast { ty, .. } => Some((ty.clone(), scope.clone())),
+        Expr::String(..) => Some((Type::String, scope.clone())),
+        Expr::Bytes(..) => Some((Type::Bytes, scope.clone())),
+        Expr::Bool(..) => Some((Type::Bool, scope.clone())),
+        Expr::Nil(..) => Some((Type::Nil, scope.clone())),
+        Expr::TableLiteral { fields, .. } => {
+            let fields = fields
+                .iter()
+                .map(|field| {
+                    let ty = expression_static_type(&field.value, scope, load, depth - 1)
+                        .map(|(ty, _)| ty)
+                        .unwrap_or(Type::Unknown);
+                    (field.name.clone(), ty)
+                })
+                .collect();
+            Some((Type::record(fields), scope.clone()))
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            let element = elements
+                .first()
+                .and_then(|element| expression_static_type(element, scope, load, depth - 1))
+                .map(|(ty, _)| ty)
+                .unwrap_or(Type::Unknown);
+            Some((Type::Array(Arc::new(element)), scope.clone()))
+        }
+        Expr::Number(..)
+        | Expr::Unary { .. }
+        | Expr::Binary { .. }
+        | Expr::If { .. }
+        | Expr::Call { .. }
+        | Expr::MethodCall { .. }
+        | Expr::Index { .. }
+        | Expr::IsVariant { .. }
+        | Expr::Require(..)
+        | Expr::Vararg(..) => Some((Type::Unknown, scope.clone())),
+    }
+}
+
+fn surface_value_static_type(
+    value: &SurfaceValue,
+    scope: &TypeScope,
+    load: Loader,
+    depth: u8,
+) -> Option<(Type, TypeScope)> {
+    match value {
+        SurfaceValue::Definition(definition) => {
+            definition_static_type(definition, scope, load, depth)
+        }
+        SurfaceValue::Expression(expr) => expression_static_type(expr, scope, load, depth),
+    }
+}
+
+fn surface_value_definition(
+    value: &SurfaceValue,
+    scope: &TypeScope,
+    load: Loader,
+    depth: u8,
+) -> Option<(DefinitionSite, TypeScope)> {
+    match value {
+        SurfaceValue::Definition(definition) => Some((definition.clone(), scope.clone())),
+        SurfaceValue::Expression(Expr::Field {
+            base, name, span, ..
+        }) => {
+            let receiver = expression_receiver(base)?;
+            let standing = receiver_standing(
+                &receiver,
+                span.map(|span| span.start).unwrap_or(u32::MAX - 1),
+                scope,
+                load,
+                depth - 1,
+            )?;
+            member_definition(&standing, name, load)
+        }
+        SurfaceValue::Expression(_) => None,
+    }
 }
 
 /// A definition found in some scope, mapped to a [`Resolved`] target against
@@ -695,6 +988,13 @@ fn definition_static_type(
     if let Some(ty) = &def.ty {
         return Some((ty.clone(), scope.clone()));
     }
+    if let Some(raw) = &def.require_path
+        && let Some(file) = resolve_require_path(&scope.file, raw)
+        && let Some(module) = module_scope(&file, load)
+        && let ModuleSurface::Value(value) = &module.module_surface
+    {
+        return surface_value_static_type(value, &module, load, depth - 1);
+    }
     let receiver = initializer_receiver(def.initializer.as_ref()?);
     match receiver_standing(&receiver, def.visible_from, scope, load, depth - 1)? {
         Standing::Value(ty, type_scope) => Some((ty, type_scope)),
@@ -756,11 +1056,11 @@ fn member_definition(
 ) -> Option<(DefinitionSite, TypeScope)> {
     match standing {
         Standing::Module(module) => {
-            let definition = module
-                .definitions
-                .iter()
-                .find(|definition| definition.name == name && binds_a_value(definition))?;
-            Some((definition.clone(), module.clone()))
+            let ModuleSurface::Namespace(members) = &module.module_surface else {
+                return None;
+            };
+            let value = members.get(name)?;
+            surface_value_definition(value, module, load, TYPE_CHASE_DEPTH)
         }
         Standing::Namespace(namespace, scope) => {
             let dotted = format!("{namespace}.{name}");
@@ -796,12 +1096,7 @@ fn namespace_step(standing: &Standing, name: &str) -> Option<Standing> {
             .exported
             .then(|| Standing::Namespace(name.to_string(), module.clone()));
     }
-    let dotted = format!("{name}.");
-    let method = format!("{name}:");
-    let is_namespace = module.definitions.iter().any(|definition| {
-        definition.name.starts_with(&dotted) || definition.name.starts_with(&method)
-    });
-    is_namespace.then(|| Standing::Namespace(name.to_string(), module.clone()))
+    None
 }
 
 /// Follow one postfix step of a receiver path.
@@ -812,6 +1107,14 @@ fn apply_access(standing: Standing, access: &Access, load: Loader, depth: u8) ->
                 && let Some(ty) = definition.ty
             {
                 return Some(Standing::Value(ty, definition_scope));
+            }
+            if let Standing::Module(module) = &standing
+                && let ModuleSurface::Namespace(members) = &module.module_surface
+                && let Some(value) = members.get(name)
+                && let Some((ty, value_scope)) =
+                    surface_value_static_type(value, module, load, depth - 1)
+            {
+                return Some(Standing::Value(ty, value_scope));
             }
             if let Some(next) = namespace_step(&standing, name) {
                 return Some(next);
@@ -839,6 +1142,16 @@ fn apply_access(standing: Standing, access: &Access, load: Loader, depth: u8) ->
             ))
         }
         Access::Call => {
+            if let Standing::Module(module) = &standing
+                && let ModuleSurface::Value(value) = &module.module_surface
+                && let Some((Type::Function { return_type, .. }, value_scope)) =
+                    surface_value_static_type(value, module, load, depth - 1)
+            {
+                return Some(Standing::Value(
+                    Arc::unwrap_or_clone(return_type),
+                    value_scope,
+                ));
+            }
             let Standing::Value(Type::Function { return_type, .. }, scope) = standing else {
                 return None;
             };
@@ -884,8 +1197,20 @@ fn resolve_target(
         RefTarget::Definition(position) => {
             Some(Resolved::File(index.definitions[*position].clone()))
         }
-        RefTarget::Name { name, span: _ } => {
-            if let Some(definition) = resolve_name(&index.definitions, name, offset) {
+        RefTarget::Name {
+            name, prefer_type, ..
+        } => {
+            if let Some(definition) = index
+                .definitions
+                .iter()
+                .filter(|definition| {
+                    definition.name == *name
+                        && definition.visible_from <= offset
+                        && offset < definition.scope_end
+                        && (*prefer_type == (definition.kind == DefinitionKind::TypeName))
+                })
+                .max_by_key(|definition| definition.visible_from)
+            {
                 return Some(Resolved::File(definition.clone()));
             }
             if let Some(definition) = prelude_definitions()
@@ -906,7 +1231,12 @@ fn resolve_target(
                 .any(|known| known.starts_with(&dotted_prefix));
             is_namespace.then(|| Resolved::Info(format!("(builtin namespace) {name}")))
         }
-        RefTarget::Member { receiver, name, .. } => {
+        RefTarget::Member {
+            receiver,
+            name,
+            prefer_type,
+            ..
+        } => {
             // Follow the receiver path — a name, a require alias, a call
             // chain — and look the member up in whatever it lands on.
             // Methods resolve as `T:name`/`T.name` in the type's declaring
@@ -920,7 +1250,8 @@ fn resolve_target(
                 // while chasing expressions such as `m.Point.new()`. At the
                 // final member, though, the type declaration itself is the
                 // navigation target (`m.SpellKind` in a type annotation).
-                if let Standing::Module(module) = &standing
+                if *prefer_type
+                    && let Standing::Module(module) = &standing
                     && let Some(definition) = module.definitions.iter().find(|definition| {
                         definition.kind == DefinitionKind::TypeName
                             && definition.name == *name
@@ -933,6 +1264,24 @@ fn resolve_target(
                     member_definition(&standing, name, load)
                 {
                     return Some(resolved_in_scope(&definition, &definition_scope, path));
+                }
+                if let Standing::Module(module) = &standing
+                    && let ModuleSurface::Namespace(members) = &module.module_surface
+                    && let Some(value) = members.get(name)
+                    && let Some((ty, _)) =
+                        surface_value_static_type(value, module, load, TYPE_CHASE_DEPTH)
+                {
+                    return Some(Resolved::Info(format!("(module member) {name}: {ty}")));
+                }
+                if !prefer_type
+                    && let Standing::Module(module) = &standing
+                    && let Some(definition) = module.definitions.iter().find(|definition| {
+                        definition.kind == DefinitionKind::TypeName
+                            && definition.name == *name
+                            && definition.exported
+                    })
+                {
+                    return Some(resolved_in_scope(definition, module, path));
                 }
                 if let Standing::Value(base_ty, base_scope) = &standing {
                     if let Some(record) =
@@ -1129,12 +1478,11 @@ pub struct Reference {
 struct Anchor {
     file: PathBuf,
     name_span: Span,
-    /// The identifier token an occurrence must spell: the last dotted or
-    /// method segment of the display name (`get` for a `P:get` method).
-    token: String,
+    name: String,
+    kind: DefinitionKind,
 }
 
-/// The identifier token a definition's display name ends in.
+/// The identifier token a qualified definition's display name ends in.
 fn last_segment(name: &str) -> &str {
     name.rsplit([':', '.']).next().unwrap_or(name)
 }
@@ -1160,10 +1508,11 @@ fn reference_anchor(text: &str, path: &Path, offset: u32, load: Loader) -> Optio
     let (file, def) = resolved_site(resolved, path)?;
     // A `require("./mod")` target is a whole file, not a name; it has no
     // identifier occurrences to find.
-    (def.name_span.end > def.name_span.start).then(|| Anchor {
-        token: last_segment(&def.name).to_string(),
+    (def.name_span.end > def.name_span.start).then_some(Anchor {
         file,
         name_span: def.name_span,
+        name: def.name,
+        kind: def.kind,
     })
 }
 
@@ -1171,9 +1520,9 @@ fn reference_anchor(text: &str, path: &Path, offset: u32, load: Loader) -> Optio
 ///
 /// Each candidate identifier is resolved the same way go-to-definition
 /// resolves it and kept only when it lands on the same definition site. That
-/// costs a resolve per name match, but it is what makes shadowed locals,
-/// same-named methods on different types, and module members resolve to
-/// distinct symbols instead of one text-matched blur.
+/// costs a resolve per identifier, but it is what makes re-export aliases,
+/// shadowed locals, same-named methods on different types, and module members
+/// resolve to distinct symbols instead of one text-matched blur.
 pub fn references(
     text: &str,
     path: &Path,
@@ -1195,15 +1544,15 @@ pub fn references(
             let TokenKind::Identifier(name) = &token.kind else {
                 continue;
             };
-            if name != &anchor.token {
-                continue;
-            }
             // The declaration itself: its identifier sits inside the name
             // span (`get` within a `P:get` method name).
             let is_declaration = *file == anchor.file
                 && token.span.start >= anchor.name_span.start
                 && token.span.end <= anchor.name_span.end;
             if is_declaration && !include_declaration {
+                continue;
+            }
+            if is_declaration && name != last_segment(&anchor.name) {
                 continue;
             }
             let at = token.span.start;
@@ -1216,7 +1565,11 @@ pub fn references(
             let Some((site_file, site_def)) = resolved_site(resolved, file) else {
                 continue;
             };
-            if site_file == anchor.file && site_def.name_span == anchor.name_span {
+            if site_file == anchor.file
+                && site_def.name_span == anchor.name_span
+                && site_def.name == anchor.name
+                && site_def.kind == anchor.kind
+            {
                 found.push(Reference {
                     file: file.clone(),
                     span: token.span,
@@ -1429,7 +1782,7 @@ fn standing_member_items(
     match standing {
         Some(Standing::Module(module)) => {
             if !methods_only {
-                for export in scope_exports(&module) {
+                for export in scope_exports(&module, load) {
                     let detail = Some(definition_summary(&export));
                     push_item(items, &export.name, completion_kind_for(&export), detail);
                 }
@@ -1511,7 +1864,7 @@ pub fn completion(text: &str, path: &Path, offset: u32, load: Loader) -> Vec<Com
                     );
                 }
             }
-            for name in GLOBAL_NAMES {
+            for name in BUILTIN_ROOT_NAMES {
                 push_item(&mut items, name, completion_kind::MODULE, None);
             }
             for kind in waluau_ast::TypedArrayKind::ALL {
@@ -1599,9 +1952,16 @@ pub fn unused_definitions(text: &str, path: &Path) -> Vec<Diagnostic> {
             DefinitionKind::Function
                 if matches!(
                     definition.function_declaration,
-                    Some(FunctionDeclarationClass::Local | FunctionDeclarationClass::Const)
+                    Some(
+                        FunctionDeclarationClass::Local
+                            | FunctionDeclarationClass::Const
+                            | FunctionDeclarationClass::Module
+                    )
                 ) =>
             {
+                if definition.name.contains(['.', ':']) {
+                    continue;
+                }
                 ("lint/unused-function", "function")
             }
             _ => continue,

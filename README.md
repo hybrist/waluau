@@ -79,6 +79,8 @@ pnpm dev
 ## Where the durable documentation lives
 
 - Platform target and architecture decision: [`docs/platform-target.md`](docs/platform-target.md)
+- Function declarations, module interfaces, and browser exports:
+  [`docs/function-declarations.md`](docs/function-declarations.md)
 - Engine API and contracts: [`engine/README.md`](engine/README.md)
 - Conformance test format and directives: [`conformance/README.md`](conformance/README.md)
 - Agent and contributor workflow: [`AGENTS.md`](AGENTS.md)

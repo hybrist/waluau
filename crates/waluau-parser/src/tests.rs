@@ -85,6 +85,23 @@ fn rejects_mixing_exported_functions_with_trailing_module_return() {
 }
 
 #[test]
+fn rejects_nested_exported_function_with_one_targeted_diagnostic() {
+    let source = "do\n    export function answer(): i32\n        return 42\n    end\nend\n";
+    let outcome = crate::parse_with_recovery(source, "module.walu");
+    let matching = outcome
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic
+                .to_string()
+                .contains("`export function` is only valid at module top level")
+        })
+        .count();
+    assert_eq!(matching, 1, "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.diagnostics.len(), 1, "{:?}", outcome.diagnostics);
+}
+
+#[test]
 fn rejects_reserved_linker_identifiers() {
     let error = parse("local value: __waluau_m0_Hidden = 1\n")
         .expect_err("source must not address linker-private declarations");
@@ -488,6 +505,31 @@ fn parses_namespace_member_type_references() {
             type_args: vec![],
         }
     );
+}
+
+#[test]
+fn speculative_expression_parsing_keeps_only_authored_type_references() {
+    let source = "local compared = value < m.answer\nconsume<m.answer>()\n";
+    let outcome = super::parse_with_recovery(source, "source");
+    assert!(outcome.diagnostics.is_empty(), "{:?}", outcome.diagnostics);
+
+    let reference = outcome
+        .type_references
+        .iter()
+        .find(|reference| reference.name == "m.answer")
+        .expect("generic call type argument reference");
+    assert_eq!(
+        outcome
+            .type_references
+            .iter()
+            .filter(|reference| reference.name == "m.answer")
+            .count(),
+        1,
+        "speculative parses must roll their type-reference facts back"
+    );
+    let expected_start = source.rfind("m.answer").expect("second qualified name") as u32;
+    assert_eq!(reference.span.start, expected_start);
+    assert_eq!(reference.span.end, expected_start + "m.answer".len() as u32);
 }
 
 #[test]
@@ -2858,9 +2900,7 @@ end
             assert_eq!(definition.kind, DefinitionKind::Function);
             assert_eq!(definition.function_declaration, Some(class), "{name}");
             let expected_exposure = match class {
-                FunctionDeclarationClass::Module => {
-                    FunctionExposure::PrivateWithCompatibilityExposure
-                }
+                FunctionDeclarationClass::Module => FunctionExposure::Private,
                 FunctionDeclarationClass::Export => FunctionExposure::Exported,
                 FunctionDeclarationClass::Local | FunctionDeclarationClass::Const => {
                     FunctionExposure::Private

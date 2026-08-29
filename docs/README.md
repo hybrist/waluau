@@ -12,6 +12,8 @@ Use the repository's authoritative sources instead of maintaining parallel
 status documents:
 
 - Platform target, non-goals, and testing strategy: `platform-target.md`.
+- Function declaration, module interface, and browser export semantics:
+  `function-declarations.md`.
 - Compiler and language behavior: crate tests, fixtures, and `conformance/`.
 - Conformance runner directives: `conformance/README.md`.
 - Compiler structure and runtime representations: the implementation under

@@ -1271,7 +1271,7 @@ pub enum UnaryOp {
     Len,
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use waluau_diagnostics::Diagnostic;
 
 struct Resolver {
@@ -1279,6 +1279,8 @@ struct Resolver {
     next_symbol_id: usize,
     /// Source name of every declared symbol, for Wasm debug-name emission.
     symbol_names: std::collections::BTreeMap<SymbolId, String>,
+    /// Hoisted authored module functions are immutable bindings.
+    immutable_module_functions: HashSet<SymbolId>,
 }
 
 impl Resolver {
@@ -1288,6 +1290,7 @@ impl Resolver {
             scopes: Vec::new(),
             next_symbol_id: 1,
             symbol_names: std::collections::BTreeMap::new(),
+            immutable_module_functions: HashSet::new(),
         };
 
         // Populate builtins
@@ -1357,6 +1360,25 @@ impl Resolver {
             }
         }
         None
+    }
+
+    fn reject_module_function_rebinding(
+        &self,
+        id: SymbolId,
+        name: &str,
+        span: Option<Span>,
+    ) -> Result<(), Diagnostic> {
+        if self.immutable_module_functions.contains(&id) {
+            let mut diagnostic = Diagnostic::new_with_code(
+                "binding/immutable-module-function",
+                format!("cannot rebind immutable module function '{name}'"),
+            );
+            if let Some(span) = span {
+                diagnostic = diagnostic.with_span(span);
+            }
+            return Err(diagnostic);
+        }
+        Ok(())
     }
 
     fn resolve_function(&mut self, function: &mut Function) -> Result<(), Diagnostic> {
@@ -1433,9 +1455,10 @@ impl Resolver {
                 ..
             } => {
                 self.resolve_expr(value)?;
-                let id = self
-                    .lookup(name)
-                    .ok_or_else(|| Diagnostic::new(format!("unknown local/global '{name}'")))?;
+                let id = self.lookup(name).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown lexical or module binding '{name}'"))
+                })?;
+                self.reject_module_function_rebinding(id, name, value.span())?;
                 *symbol_id = Some(id);
             }
             Stmt::LetMulti { bindings, values } => {
@@ -1452,14 +1475,19 @@ impl Resolver {
                 symbol_ids,
                 values,
             } => {
-                for value in values {
+                for value in values.iter_mut() {
                     self.resolve_expr(value)?;
                 }
                 let mut ids = Vec::new();
                 for target in targets {
                     let id = self.lookup(target).ok_or_else(|| {
-                        Diagnostic::new(format!("unknown local/global '{target}'"))
+                        Diagnostic::new(format!("unknown lexical or module binding '{target}'"))
                     })?;
+                    self.reject_module_function_rebinding(
+                        id,
+                        target,
+                        values.first().and_then(Expr::span),
+                    )?;
                     ids.push(id);
                 }
                 *symbol_ids = Some(ids);
@@ -1620,9 +1648,12 @@ impl Resolver {
                     Some(id) => id,
                     None if *op == AssignOp::Set => self.declare(name),
                     None => {
-                        return Err(Diagnostic::new(format!("unknown local/global '{name}'")));
+                        return Err(Diagnostic::new(format!(
+                            "unknown lexical or module binding '{name}'"
+                        )));
                     }
                 };
+                self.reject_module_function_rebinding(id, name, value.span())?;
                 *symbol_id = Some(id);
                 Ok(())
             }
@@ -1631,12 +1662,17 @@ impl Resolver {
                 symbol_ids,
                 values,
             } => {
-                for value in values {
+                for value in values.iter_mut() {
                     self.resolve_expr(value)?;
                 }
                 let mut ids = Vec::new();
                 for target in targets {
                     let id = self.lookup(target).unwrap_or_else(|| self.declare(target));
+                    self.reject_module_function_rebinding(
+                        id,
+                        target,
+                        values.first().and_then(Expr::span),
+                    )?;
                     ids.push(id);
                 }
                 *symbol_ids = Some(ids);
@@ -1649,9 +1685,9 @@ impl Resolver {
     fn resolve_expr(&mut self, expr: &mut Expr) -> Result<(), Diagnostic> {
         match expr {
             Expr::Name(name, symbol_id, _) => {
-                let id = self
-                    .lookup(name)
-                    .ok_or_else(|| Diagnostic::new(format!("unknown local/global '{name}'")))?;
+                let id = self.lookup(name).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown lexical or module binding '{name}'"))
+                })?;
                 *symbol_id = Some(id);
             }
             Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
@@ -1945,6 +1981,7 @@ pub fn resolve_symbols(
         }
         if let FunctionName::Simple(name) = &function.name {
             let id = resolver.declare(name);
+            resolver.immutable_module_functions.insert(id);
             function.symbol_id = Some(id);
         }
     }

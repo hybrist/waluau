@@ -16,6 +16,20 @@ pub struct ParseOutcome {
     /// AST does not carry definition-site spans, and threading them through
     /// every later compiler stage would be invasive for no compiler benefit.
     pub definitions: Vec<DefinitionSite>,
+    /// Named types referenced by source syntax, with exact spans. Keeping
+    /// this parser fact separate from the span-free semantic [`Type`] lets
+    /// editor tooling distinguish type and value namespaces even inside
+    /// grouped, array, generic, and function type expressions.
+    pub type_references: Vec<TypeReference>,
+}
+
+/// One source-level named type reference recorded while parsing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeReference {
+    /// The source spelling, including a module qualifier when present.
+    pub name: String,
+    /// Exact span of the bare or dotted name, excluding type arguments.
+    pub span: Span,
 }
 
 /// What kind of binding a [`DefinitionSite`] introduces.
@@ -147,10 +161,11 @@ pub fn parse_with_recovery(source: &str, file_path: &str) -> ParseOutcome {
                 program: empty_program(source, file_path),
                 diagnostics: vec![error.with_source(file_path, source)],
                 definitions: Vec::new(),
+                type_references: Vec::new(),
             };
         }
     };
-    let (program, diagnostics, definitions) =
+    let (program, diagnostics, definitions, type_references) =
         parser::Parser::new(tokens, file_path.to_string()).parse_program(source);
     ParseOutcome {
         program,
@@ -159,6 +174,7 @@ pub fn parse_with_recovery(source: &str, file_path: &str) -> ParseOutcome {
             .map(|diagnostic| diagnostic.with_source(file_path, source))
             .collect(),
         definitions,
+        type_references,
     }
 }
 

@@ -78,8 +78,10 @@ impl Parser {
             return None;
         }
         let checkpoint = self.index;
+        let type_references_mark = self.type_references.len();
         self.advance();
         if self.check_simple(&TokenKind::Greater) {
+            self.type_references.truncate(type_references_mark);
             self.index = checkpoint;
             return None;
         }
@@ -88,6 +90,7 @@ impl Parser {
             match self.parse_type() {
                 Ok(ty) => type_args.push(ty),
                 Err(_) => {
+                    self.type_references.truncate(type_references_mark);
                     self.index = checkpoint;
                     return None;
                 }
@@ -100,12 +103,14 @@ impl Parser {
                 self.advance();
                 break;
             }
+            self.type_references.truncate(type_references_mark);
             self.index = checkpoint;
             return None;
         }
         if self.check_simple(&TokenKind::LParen) {
             Some(type_args)
         } else {
+            self.type_references.truncate(type_references_mark);
             self.index = checkpoint;
             None
         }

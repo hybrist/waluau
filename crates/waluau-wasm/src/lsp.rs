@@ -395,13 +395,17 @@ mod tests {
             .diagnostics
             .get("file:///main.walu")
             .expect("unused-binding warning");
-        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].severity, 2);
         assert_eq!(diagnostics[0].tags, vec![1]);
         assert_eq!(diagnostics[0].message, "unused variable `unused`");
         assert_eq!(diagnostics[0].range.start.line, 0);
         assert_eq!(diagnostics[0].range.start.character, 6);
         assert_eq!(diagnostics[0].range.end.character, 12);
+        assert_eq!(diagnostics[1].severity, 2);
+        assert_eq!(diagnostics[1].tags, vec![1]);
+        assert_eq!(diagnostics[1].message, "unused function `answer`");
+        assert_eq!(diagnostics[1].range.start.line, 1);
     }
 
     #[test]
@@ -409,7 +413,7 @@ mod tests {
         let analysis = analyze_project_sources(
             &HashMap::from([(
                 "/main.walu".to_string(),
-                "function answer(): i32\n    return 42\nend\n".to_string(),
+                "export function answer(): i32\n    return 42\nend\n".to_string(),
             )]),
             "/main.walu",
         );
@@ -424,7 +428,7 @@ mod tests {
         let analysis = analyze_project_sources(
             &HashMap::from([(
                 "/main.walu".to_string(),
-                "function first(x: i32): bool\n    return x\nend\nfunction second(x: i32): i32\n    if x then\n        return x\n    end\n    return x\nend\n".to_string(),
+                "export function first(x: i32): bool\n    return x\nend\nexport function second(x: i32): i32\n    if x then\n        return x\n    end\n    return x\nend\n".to_string(),
             )]),
             "/main.walu",
         );
@@ -445,7 +449,7 @@ mod tests {
             &HashMap::from([
                 (
                     "/main.walu".to_string(),
-                    "local imported_answer = require(\"./lib\")\nfunction answer(): i32\n    return imported_answer()\nend\n"
+                    "local imported_answer = require(\"./lib\")\nexport function answer(): i32\n    return imported_answer()\nend\n"
                         .to_string(),
                 ),
                 (
@@ -454,7 +458,7 @@ mod tests {
                 ),
                 (
                     "/scratch.walu".to_string(),
-                    "function broken(value: i32): bool\n    return value\nend\n".to_string(),
+                    "export function broken(value: i32): bool\n    return value\nend\n".to_string(),
                 ),
             ]),
             "/main.walu",
@@ -479,7 +483,7 @@ mod tests {
         let messages = open(
             &mut server,
             "file:///main.walu",
-            "function first(x: i32): bool\n    return x\nend\nfunction second(x: i32): i32\n    if x then\n        return x\n    end\n    return x\nend\n",
+            "export function first(x: i32): bool\n    return x\nend\nexport function second(x: i32): i32\n    if x then\n        return x\n    end\n    return x\nend\n",
         );
         let diagnostics =
             diagnostics_for(&messages, "file:///main.walu").expect("diagnostics published");
