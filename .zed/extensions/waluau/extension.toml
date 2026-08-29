@@ -1,0 +1,21 @@
+id = "waluau"
+name = "Waluau"
+version = "0.1.0"
+schema_version = 1
+authors = ["Waluau contributors"]
+description = "Waluau language support and integration with the Waluau language server."
+repository = "https://github.com/hybrist/waluau"
+
+[language_servers.waluau-lsp]
+name = "Waluau Language Server"
+languages = ["Waluau"]
+
+[language_servers.waluau-lsp.language_ids]
+Waluau = "waluau"
+
+# Waluau is syntactically descended from typed Luau. This parser is the
+# foundation for Zed's structural features; the language definition and
+# queries in this extension are Waluau-specific.
+[grammars.luau]
+repository = "https://github.com/4teapo/tree-sitter-luau"
+commit = "4f09f79945de3d5575b079103d86a515030c62ab"
