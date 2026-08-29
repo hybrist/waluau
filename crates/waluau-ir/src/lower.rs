@@ -1072,8 +1072,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         | Type::Thread
         | Type::TypedArray(_)
         | Type::TypeParam(_)
-        | Type::StringLiteralUnion(_)
-        | Type::NumberLiteralUnion(_) => {}
+        | Type::StringLiteralUnion(_) => {}
     }
 }
 
@@ -1648,10 +1647,7 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
 /// the codegen registries.
 fn type_needs_erasure(ty: &Type) -> bool {
     match ty {
-        Type::Opaque { .. }
-        | Type::ExternSubtype(_)
-        | Type::StringLiteralUnion(_)
-        | Type::NumberLiteralUnion(_) => true,
+        Type::Opaque { .. } | Type::ExternSubtype(_) | Type::StringLiteralUnion(_) => true,
         Type::Nullable(inner) | Type::Array(inner) | Type::Variadic(inner) => {
             type_needs_erasure(inner)
         }
@@ -1680,11 +1676,9 @@ fn erase_type_opaque_types_at(ty: &Type, nested: bool) -> Type {
         }
         Type::Opaque { ty, .. } => erase_type_opaque_types_at(ty, nested),
         Type::ExternSubtype(_) => Type::Extern,
-        // Literal unions are a type-checking construct; at runtime a string
-        // literal union value is its member string and a number literal
-        // union value is its underlying numeric type.
+        // A string literal union is a type-checking construct; at runtime
+        // its value is the member string.
         Type::StringLiteralUnion(_) => Type::String,
-        Type::NumberLiteralUnion(union) => Type::Numeric(union.numeric),
         Type::Nullable(inner) => Type::Nullable(Arc::new(erase_type_opaque_types_at(inner, true))),
         Type::Array(inner) => Type::Array(Arc::new(erase_type_opaque_types_at(inner, true))),
         Type::Variadic(inner) => Type::Variadic(Arc::new(erase_type_opaque_types_at(inner, true))),
@@ -2197,7 +2191,6 @@ fn json_supported_type(ty: &Type) -> bool {
         | Type::Bytes
         | Type::Unit
         | Type::StringLiteralUnion(_)
-        | Type::NumberLiteralUnion(_)
         | Type::TypeParam(_) => true,
         Type::Opaque { ty, .. } => json_supported_type(ty),
         Type::Nullable(ty)
@@ -2285,19 +2278,6 @@ fn json_schema(ty: &Type) -> Result<String, Diagnostic> {
     let schema = match ty {
         Type::Opaque { ty, .. } => return json_schema(ty),
         Type::Numeric(numeric) => format!("{{\"t\":\"{}\"}}", json_numeric_schema_name(*numeric)),
-        Type::NumberLiteralUnion(union) => {
-            let members = union
-                .members
-                .iter()
-                .map(|member| json_quote_schema_string(&member.to_string()))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!(
-                "{{\"t\":\"number-union\",\"n\":\"{}\",\"m\":[{}]}}",
-                json_numeric_schema_name(union.numeric),
-                members
-            )
-        }
         Type::Bool => "{\"t\":\"bool\"}".to_string(),
         Type::String => "{\"t\":\"string\"}".to_string(),
         Type::StringLiteralUnion(members) => {
@@ -5916,9 +5896,6 @@ impl Builder<'_> {
                             "numeric literal is not assignable to tagged union type",
                         ));
                     }
-                    // Literal unions are erased before lowering; if one leaks
-                    // through, lower at its runtime representation.
-                    Type::NumberLiteralUnion(union) => union.numeric,
                     Type::StringLiteralUnion(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to string",
@@ -6226,7 +6203,6 @@ impl Builder<'_> {
                         let actual = self.infer_expr_type(expr, types, expected.clone())?;
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
-                            Type::NumberLiteralUnion(union) => union.numeric,
                             Type::StringLiteralUnion(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
@@ -7636,9 +7612,6 @@ impl Builder<'_> {
                 Some(Type::TaggedVariant(_)) | Some(Type::TaggedUnion(_)) => Err(
                     Diagnostic::new("numeric literal is not assignable to tagged union type"),
                 ),
-                // Literal unions are erased before lowering; if one leaks
-                // through, use its runtime representation.
-                Some(Type::NumberLiteralUnion(union)) => Ok(Type::Numeric(union.numeric)),
                 Some(Type::StringLiteralUnion(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to string",
                 )),
@@ -7830,9 +7803,6 @@ impl Builder<'_> {
                         }
                         Type::TypeParam(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
-                        }
-                        Type::NumberLiteralUnion(union) => {
-                            coerce_type(Type::Numeric(union.numeric), expected)
                         }
                         Type::Thread
                         | Type::Unknown
@@ -11436,11 +11406,6 @@ impl Builder<'_> {
                 vec![value],
                 i32_ty,
             ),
-            Type::NumberLiteralUnion(union) => self.emit_json_host_call(
-                json_pack_numeric_host(union.numeric),
-                vec![value],
-                i32_ty,
-            ),
             Type::Bool => {
                 self.emit_json_host_call(JSON_PACK_BOOL_HOST, vec![value], i32_ty)
             }
@@ -11712,11 +11677,6 @@ impl Builder<'_> {
                 json_unpack_numeric_host(*numeric),
                 vec![node],
                 Type::Numeric(*numeric),
-            ),
-            Type::NumberLiteralUnion(union) => self.emit_json_host_call(
-                json_unpack_numeric_host(union.numeric),
-                vec![node],
-                Type::Numeric(union.numeric),
             ),
             Type::Bool => {
                 self.emit_json_host_call(JSON_UNPACK_BOOL_HOST, vec![node], Type::Bool)
@@ -13865,7 +13825,7 @@ fn lua_type_name(ty: &Type) -> Option<&'static str> {
         Type::Nil => "nil",
         Type::Unit => "nil",
         Type::Bool => "boolean",
-        Type::Numeric(_) | Type::NumberLiteralUnion(_) => "number",
+        Type::Numeric(_) => "number",
         Type::String | Type::Bytes | Type::StringLiteralUnion(_) => "string",
         Type::Array(_)
         | Type::Variadic(_)
@@ -14049,15 +14009,6 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             }
             Type::Numeric(actual_numeric) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {actual_numeric} to {expected_numeric}",
-            ))),
-            Type::NumberLiteralUnion(union)
-                if union.numeric.can_implicitly_widen_to(expected_numeric) =>
-            {
-                Ok(Type::Numeric(expected_numeric))
-            }
-            Type::NumberLiteralUnion(union) => Err(Diagnostic::new(format!(
-                "cannot implicitly convert {} to {expected_numeric}",
-                union.numeric,
             ))),
             Type::StringLiteralUnion(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert string literal union to {expected_numeric}",

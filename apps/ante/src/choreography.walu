@@ -408,7 +408,7 @@ end
 
 -- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
 -- Opponent's sealed row.
-function hand_slot_kind(owner: game.Side): render.Slot
+function hand_slot_kind(owner: i32): render.Slot
     if owner > 0 then
         return render.slot_player
     end
@@ -700,7 +700,7 @@ function push_hand_shifts(
     anims: {render.Anim},
     view: game.View,
     trick: game.Trick,
-    owner: game.Side,
+    owner: i32,
     start: f64
 ): f64
     local side: game.TrickSide = trick:side(owner)
@@ -757,7 +757,7 @@ function State:record_burned_losers(trick: game.Trick): unit
     if trick.winner == 0 then
         return
     end
-    local loser: game.TrickSide = trick:side(game.opposite_side(trick.winner::game.Side))
+    local loser: game.TrickSide = trick:side(game.opposite_side(trick.winner))
     table.insert(self.session.discards, loser.cards[0])
     table.insert(self.session.discards, loser.cards[1])
 end
@@ -791,8 +791,8 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         render.row_right(layout.current())
     )
     if trick.winner ~= 0 then
-        local winner: game.TrickSide = trick:side(trick.winner::game.Side)
-        local loser: game.TrickSide = trick:side(game.opposite_side(trick.winner::game.Side))
+        local winner: game.TrickSide = trick:side(trick.winner)
+        local loser: game.TrickSide = trick:side(game.opposite_side(trick.winner))
         -- The taken hand goes the same way the burned pair already did: onto
         -- the one spent pile. Winning a round is worth points, not a keepsake.
         local spent: {game.Card} = self.session.discards
@@ -958,7 +958,7 @@ function State:swap(outcome: game.SwapOutcome): unit
         return
     end
     local player_won: bool = outcome.winner > 0
-    local hand_kind: render.Slot = hand_slot_kind(outcome.winner::game.Side)
+    local hand_kind: render.Slot = hand_slot_kind(outcome.winner)
     local last_stagger: f64 = SWAP_STEP * ((count - 1)::f64)
     local aside_start: f64 = SWAP_LEAVE_SECONDS + last_stagger + 0.05
     local place_start: f64 = aside_start + SWAP_ASIDE_SECONDS + last_stagger + 0.1

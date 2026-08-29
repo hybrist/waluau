@@ -2135,12 +2135,6 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       case 'f32':
       case 'f64':
         return validateJsonNumber(value, schema.t, path);
-      case 'number-union': {
-        const error = validateJsonNumber(value, schema.n, path);
-        if (error) return error;
-        return schema.m.some(member => Object.is(value, Number(member)))
-          ? '' : `${path}: ${value} is not a member of ${schema.m.join(' | ')}`;
-      }
       case 'bool':
         return typeof value === 'boolean' ? '' : `${path}: expected bool, got ${jsonValueKind(value)}`;
       case 'string':
