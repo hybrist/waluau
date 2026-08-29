@@ -539,6 +539,55 @@ fn exported_type_definitions_cross_module_namespace() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Type names written after an annotation `:` are plain type references,
+/// not method members of the annotated name.
+#[test]
+fn type_annotations_resolve_to_type_definitions() {
+    let cases: Vec<(&str, Vec<(&'static str, &str)>)> = vec![
+        (
+            "parameter type annotation",
+            vec![(
+                "main.walu",
+                "type Original = { x: number }\ntype <def>Alias</def> = Original\nfunction make(a: <|>Alias): Original\n    return { x = a.x }\nend\n",
+            )],
+        ),
+        (
+            "return type annotation",
+            vec![(
+                "main.walu",
+                "type <def>Original</def> = { x: number }\ntype Alias = Original\nfunction make(a: Alias): <|>Original\n    return { x = a.x }\nend\n",
+            )],
+        ),
+        (
+            "local variable annotation",
+            vec![(
+                "main.walu",
+                "type <def>Point</def> = { x: i32 }\nlocal p: <|>Point = { x = 1 }\n",
+            )],
+        ),
+        (
+            "aliased type on the right of a type declaration",
+            vec![(
+                "main.walu",
+                "type <def>Original</def> = { x: number }\ntype Alias = <|>Original\n",
+            )],
+        ),
+        (
+            "method call with string-literal sugar still resolves as a method",
+            vec![(
+                "main.walu",
+                "type P = { x: i32 }\nfunction <def>P:tag</def>(name: string): string\n    return name\nend\nlocal p: P = { x = 1 }\nlocal t = p:<|>tag\"a\"\n",
+            )],
+        ),
+    ];
+
+    let failures: Vec<String> = cases
+        .iter()
+        .filter_map(|(name, files)| definition_case(name, files))
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn completion_lists_visible_scope_and_keywords() {
     let dir = tempfile::tempdir().expect("tempdir");

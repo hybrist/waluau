@@ -283,6 +283,15 @@ fn matching_open(
     None
 }
 
+/// Whether a token can open a call's arguments: `(`, or the string/table
+/// call sugar (`f"text"`, `f{ ... }`).
+fn starts_call_arguments(kind: Option<&TokenKind>) -> bool {
+    matches!(
+        kind,
+        Some(TokenKind::LParen | TokenKind::Str(_) | TokenKind::LBrace)
+    )
+}
+
 /// Walk backwards from `end` — the last token of a receiver expression —
 /// over postfix steps down to the root identifier. A receiver need not be a
 /// bare name: `P.new()`, `items[1]` and `p:to_q()` are all chaseable. Any
@@ -308,10 +317,7 @@ fn receiver_before(tokens: &[Token], end: usize) -> Option<Receiver> {
                     // that check, the annotation in `kind: spells.SpellKind`
                     // is misread as the receiver chain `kind:spells`.
                     Some(TokenKind::Colon)
-                        if matches!(
-                            tokens.get(at + 1).map(|token| &token.kind),
-                            Some(TokenKind::LParen)
-                        ) =>
+                        if starts_call_arguments(tokens.get(at + 1).map(|token| &token.kind)) =>
                     {
                         accesses.push(Access::Method(name.clone()));
                     }
@@ -366,9 +372,20 @@ fn find_target_at(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
     match &token.kind {
         TokenKind::Identifier(name) => {
             // `receiver.name` / `receiver:name` — the member part of a
-            // namespaced or method reference.
-            if at >= 2
-                && matches!(index.tokens[at - 1].kind, TokenKind::Dot | TokenKind::Colon)
+            // namespaced or method reference. A `:` counts only when a call
+            // follows the name; otherwise the colon is a type annotation and
+            // the name in `a: Alias` or `): Original` is a plain type
+            // reference, not a method of `a`.
+            let member_separator = match at.checked_sub(1).map(|before| &index.tokens[before].kind)
+            {
+                Some(TokenKind::Dot) => true,
+                Some(TokenKind::Colon) => {
+                    starts_call_arguments(index.tokens.get(at + 1).map(|next| &next.kind))
+                }
+                _ => false,
+            };
+            if member_separator
+                && at >= 2
                 && let Some(receiver) = receiver_before(&index.tokens, at - 2)
             {
                 return Some(RefTarget::Member {
