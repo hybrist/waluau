@@ -64,8 +64,9 @@ pub struct DefinitionSite {
     /// Canonical function-declaration semantics. `None` for non-function
     /// definitions, including declared host imports.
     pub function_declaration: Option<FunctionDeclarationClass>,
-    /// Whether a type/enum declaration is visible through a required module.
-    /// Value definitions continue to use the module's trailing return table.
+    /// Whether this definition is authored into its module's public interface.
+    /// This covers explicit function, type, and enum exports; legacy value
+    /// interfaces continue to use the module's trailing return.
     pub exported: bool,
     /// Declaration-order variants when this definition names an enum.
     pub enum_variants: Option<Vec<String>>,

@@ -267,12 +267,20 @@ fn tok_kind_at(t: &Tree, i: usize) -> Option<&TokenKind> {
 // Items
 // ---------------------------------------------------------------------------
 
-/// `function name<T>(params): ret <body> end` and anonymous function exprs.
-/// Children: keyword, [name], [TypeParams], ParamList, [ReturnAnnotation],
-/// Block, `end`.
+/// `[export] function name<T>(params): ret <body> end` and anonymous function
+/// exprs. Children: [export], keyword, [name], [TypeParams], ParamList,
+/// [ReturnAnnotation], Block, `end`.
 fn function_like(t: &Tree) -> Doc {
     let mut parts = Vec::new();
     let mut idx = 0;
+    if matches!(
+        t.children.get(idx),
+        Some(Node::Token(tok)) if matches!(&tok.kind, TokenKind::Identifier(keyword) if keyword == "export")
+    ) {
+        parts.push(node(&t.children[idx]));
+        parts.push(text(" "));
+        idx += 1;
+    }
     // `function` keyword.
     parts.push(node(&t.children[idx]));
     idx += 1;

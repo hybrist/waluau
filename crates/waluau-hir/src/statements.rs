@@ -1971,6 +1971,7 @@ fn check_stmt_inner(
                         }
                         let synthetic = Function {
                             name: waluau_ast::FunctionName::Simple(method_name),
+                            declaration_class: waluau_ast::FunctionDeclarationClass::Module,
                             symbol_id: None,
                             type_params: function.type_params.clone(),
                             params: function.params.clone(),

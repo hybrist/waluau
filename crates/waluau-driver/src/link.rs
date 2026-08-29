@@ -10,20 +10,20 @@
 //! 2. Each non-entry module's top-level functions are renamed with a unique,
 //!    per-module prefix so names from different files cannot collide. The entry
 //!    module keeps its original names so its Wasm exports stay stable.
-//! 3. Every `require(...)` node is replaced with either the imported function
-//!    (single export) or a table of mangled function references (namespace
-//!    export). `m.field` member access on namespace locals is rewritten to the
-//!    corresponding mangled function name. Resolution is static regardless of
-//!    the require expression's lexical position, so requires inside functions
-//!    do not perform runtime loading.
+//! 3. Every `require(...)` node is replaced with either a legacy trailing-return
+//!    function or a namespace of explicitly exported declarations. A single
+//!    `export function` still produces a namespace. `m.field` member access on
+//!    namespace locals is rewritten to the corresponding mangled function name.
+//!    Resolution is static regardless of the require expression's lexical
+//!    position, so requires inside functions do not perform runtime loading.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use waluau_ast::{
-    DeclaredConstant, DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Span,
-    Stmt, TableField, Type, TypeDeclaration,
+    DeclaredConstant, DeclaredImport, Expr, Function, FunctionExpr, FunctionName, ModuleInterface,
+    Program, Span, Stmt, TableField, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -959,6 +959,7 @@ fn hoist_table_export_functions(
 fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     Function {
         name: waluau_ast::FunctionName::Simple(name.to_string()),
+        declaration_class: waluau_ast::FunctionDeclarationClass::Module,
         symbol_id: function.symbol_id,
         type_params: function.type_params.clone(),
         params: function.params.clone(),
@@ -1378,12 +1379,7 @@ fn compute_module_export(
     }
 
     let resolved = resolve_module_export(
-        module.program.export.as_ref(),
-        module
-            .program
-            .type_declarations
-            .iter()
-            .any(|declaration| declaration.exported),
+        module.program.module_interface(),
         &prefix,
         &top_level_names,
         &re_exports,
@@ -1953,23 +1949,49 @@ fn process_reexport_bindings(
 }
 
 fn resolve_module_export(
-    export: Option<&Expr>,
-    has_declaration_exports: bool,
+    interface: ModuleInterface<'_>,
     prefix: &str,
     top_level_names: &HashSet<String>,
     re_exports: &HashMap<String, String>,
     namespaces: &HashMap<String, ModuleNamespace>,
     constants: &HashMap<String, Expr>,
 ) -> Result<ResolvedImport, Diagnostic> {
+    let export = match interface {
+        ModuleInterface::Legacy(export) => export,
+        ModuleInterface::Declarations { functions } => {
+            let mut namespace = ModuleNamespace::default();
+            for function in functions {
+                let Some(name) = function.name.unqualified_name() else {
+                    return Err(Diagnostic::new(
+                        "`export function` requires a simple function name",
+                    ));
+                };
+                namespace
+                    .functions
+                    .insert(name.to_string(), format!("{prefix}{name}"));
+            }
+            return Ok(ResolvedImport::Namespace(namespace));
+        }
+        ModuleInterface::Conflict => {
+            return Err(Diagnostic::new(
+                "a module cannot combine `export function` declarations with a trailing return",
+            ));
+        }
+        ModuleInterface::Missing => {
+            return Err(Diagnostic::new(
+                "module has no export; add `return <function>`, `return { ... }`, or an exported declaration",
+            ));
+        }
+    };
     match export {
-        Some(Expr::Name(name, _, _)) => Ok(ResolvedImport::Function(export_function_name(
+        Expr::Name(name, _, _) => Ok(ResolvedImport::Function(export_function_name(
             name,
             prefix,
             top_level_names,
             re_exports,
             "module export",
         )?)),
-        Some(Expr::TableLiteral { fields, .. }) => {
+        Expr::TableLiteral { fields, .. } => {
             let mut namespace = ModuleNamespace::default();
             for field in fields {
                 match export_field_value(
@@ -1995,14 +2017,8 @@ fn resolve_module_export(
             }
             Ok(ResolvedImport::Namespace(namespace))
         }
-        Some(_) => Err(Diagnostic::new(
+        _ => Err(Diagnostic::new(
             "module must export a function name or table of functions",
-        )),
-        None if has_declaration_exports => {
-            Ok(ResolvedImport::Namespace(ModuleNamespace::default()))
-        }
-        None => Err(Diagnostic::new(
-            "module has no export; add `return <function>`, `return { ... }`, or an exported declaration",
         )),
     }
 }
@@ -3488,6 +3504,98 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
     use waluau_ast::{Expr, Stmt, Type};
+
+    #[test]
+    fn explicit_function_exports_form_a_namespace_and_plain_functions_stay_private() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("maths.walu"),
+            r#"
+                function hidden(x: i32): i32
+                    return x + 1
+                end
+
+                export function answer(x: i32): i32
+                    return hidden(x)
+                end
+            "#,
+        )
+        .expect("module should write");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                local maths = require("./maths")
+
+                function main(): i32
+                    return maths.answer(41)
+                end
+            "#,
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu"))
+            .expect("explicit function namespace should link");
+        waluau_hir::type_check_and_infer(&program)
+            .expect("explicit function namespace should type-check across modules");
+        let main = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "main")
+            .expect("main should remain");
+        assert!(matches!(
+            &main.body[0],
+            Stmt::Return(Expr::Call { callee, .. })
+                if matches!(&**callee, Expr::Name(name, _, _) if name.ends_with("_answer"))
+        ));
+        let answer = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string().ends_with("_answer"))
+            .expect("exported dependency function should remain");
+        assert_eq!(
+            answer.declaration_class,
+            waluau_ast::FunctionDeclarationClass::Export
+        );
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| function.name.to_string().ends_with("_hidden")
+                    && function.declaration_class == waluau_ast::FunctionDeclarationClass::Module)
+        );
+    }
+
+    #[test]
+    fn require_cannot_access_plain_module_function_when_declarations_are_exported() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("maths.walu"),
+            r#"
+                function hidden(): i32
+                    return 1
+                end
+
+                export function answer(): i32
+                    return hidden()
+                end
+            "#,
+        )
+        .expect("module should write");
+        fs::write(
+            dir.path().join("main.walu"),
+            "local maths = require(\"./maths\")\nassert(maths.hidden() == 1)\n",
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu"))
+            .expect("module graph should link before member validation");
+        let error = waluau_hir::type_check_and_infer(&program)
+            .expect_err("plain function must not be a required module member");
+        assert!(
+            error.to_string().contains("hidden"),
+            "unexpected linker error: {error}"
+        );
+    }
 
     #[test]
     fn shared_ambient_types_from_dom_and_tfjs_do_not_conflict() {

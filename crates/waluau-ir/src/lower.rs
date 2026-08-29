@@ -1281,6 +1281,7 @@ fn erase_opaque_types(program: &Program) -> Program {
 fn erase_function_opaque_types(function: &AstFunction) -> AstFunction {
     AstFunction {
         name: function.name.clone(),
+        declaration_class: function.declaration_class,
         symbol_id: function.symbol_id,
         type_params: function.type_params.clone(),
         params: function
@@ -7366,6 +7367,7 @@ impl Builder<'_> {
         // params of named functions.
         let nested_inner_captures = collect_nested_function_capture_names(&waluau_ast::Function {
             name: waluau_ast::FunctionName::Simple(function.name.clone().unwrap_or_default()),
+            declaration_class: waluau_ast::FunctionDeclarationClass::Module,
             symbol_id: function.symbol_id,
             type_params: function.type_params.clone(),
             params: function.params.clone(),

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use waluau_ast::{
     DeclaredConstant, DeclaredImport, Function, FunctionDeclarationClass, FunctionExpr,
-    FunctionName, Param, Program, Span, Stmt, Type, TypeDeclaration,
+    FunctionName, ModuleInterface, Param, Program, Span, Stmt, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -219,8 +219,13 @@ impl Parser {
                         self.synchronize_statement(&[], self.index);
                     }
                 }
-            } else if self.check_simple(&TokenKind::Function) {
-                match self.parse_function() {
+            } else if self.check_simple(&TokenKind::Function) || self.is_export_function_start() {
+                let start_pos = self.peek().map(|token| token.span.start).unwrap_or(0);
+                let exported = self.is_export_function_start();
+                if exported {
+                    self.advance();
+                }
+                match self.parse_function(exported, start_pos) {
                     Ok(function) => functions.push(function),
                     Err(error) => {
                         self.record_error(error);
@@ -299,14 +304,29 @@ impl Parser {
             )]),
             entry_file_path: self.file_path.clone(),
         };
+        if matches!(program.module_interface(), ModuleInterface::Conflict) {
+            self.record_error(Diagnostic::new(
+                "a module cannot combine `export function` declarations with a trailing return",
+            ));
+        }
         (program, self.diagnostics, self.definitions)
     }
 
-    fn parse_function(&mut self) -> Result<Function, Diagnostic> {
-        let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
+    fn parse_function(
+        &mut self,
+        authored_export: bool,
+        start_pos: u32,
+    ) -> Result<Function, Diagnostic> {
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let (name, name_span) = self.parse_function_name()?;
         let function_expr = self.parse_function_expr_tail(None, false, start_pos)?;
+        let exported = authored_export && name.unqualified_name().is_some();
+        if authored_export && !exported {
+            self.record_error(
+                Diagnostic::new("`export function` requires a simple function name")
+                    .with_span(name_span),
+            );
+        }
         // Top-level functions are referenceable from the whole file.
         let index = self.record_definition(
             name.to_string(),
@@ -315,7 +335,12 @@ impl Parser {
             Self::function_signature_type(&function_expr),
             0,
         );
-        self.definitions[index].function_declaration = Some(FunctionDeclarationClass::Module);
+        self.definitions[index].function_declaration = Some(if exported {
+            FunctionDeclarationClass::Export
+        } else {
+            FunctionDeclarationClass::Module
+        });
+        self.definitions[index].exported = exported;
         self.definitions[index].detail = Some(Self::function_signature_detail(
             &name.to_string(),
             &function_expr,
@@ -343,6 +368,11 @@ impl Parser {
         }
         Ok(Function {
             name,
+            declaration_class: if exported {
+                FunctionDeclarationClass::Export
+            } else {
+                FunctionDeclarationClass::Module
+            },
             symbol_id: None,
             type_params: function_expr.type_params,
             params: function_expr.params,
@@ -352,6 +382,17 @@ impl Parser {
             file_path: self.file_path.clone(),
             span: function_expr.span,
         })
+    }
+
+    fn is_export_function_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+            ),
+            (Some(TokenKind::Identifier(keyword)), Some(TokenKind::Function))
+                if keyword == "export"
+        )
     }
 
     fn parse_function_name(&mut self) -> Result<(FunctionName, Span), Diagnostic> {

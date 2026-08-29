@@ -6,7 +6,7 @@ pub mod metrics;
 mod module_constants;
 pub use function_declarations::{
     FunctionBindingClass, FunctionDeclarationClass, FunctionDeclarationFacts, FunctionExposure,
-    LexicalFunctionDeclaration,
+    LexicalFunctionDeclaration, ModuleInterface,
 };
 pub use lua_pattern::{
     LuaCaptureKind, lua_pattern_captures, lua_pattern_is_plain, string_find_result_types,
@@ -64,13 +64,14 @@ pub struct Program {
     /// parallel list so module initializers can be checked with the same
     /// private-type visibility as ordinary functions.
     pub top_level_file_paths: Vec<String>,
-    /// The value a module exports through a trailing top-level `return`.
+    /// The legacy value a module exports through a trailing top-level `return`.
     ///
     /// The value is a function name or a table of functions. Module linkers
-    /// consume dependency exports while resolving `require`. A trailing return
-    /// in the linked entry file does not define the Wasm export surface:
-    /// entry-file top-level functions do, so linkers discard this metadata
-    /// after hoisting any inline exported functions.
+    /// consume dependency exports while resolving `require`. Explicit named
+    /// function exports use [`FunctionDeclarationClass::Export`] and cannot be
+    /// combined with this value. A trailing return in the linked entry file does not
+    /// define the Wasm export surface, so linkers discard this metadata after
+    /// hoisting any inline exported functions.
     pub export: Option<Expr>,
     pub sources: BTreeMap<String, String>,
     pub entry_file_path: String,
@@ -192,6 +193,10 @@ pub struct TableField {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
     pub name: FunctionName,
+    /// Canonical authored declaration semantics. Functions stored directly on
+    /// a program are `Module` or `Export`; lexical declarations use
+    /// [`FunctionExpr::declaration_class`] instead.
+    pub declaration_class: FunctionDeclarationClass,
     pub symbol_id: Option<SymbolId>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
@@ -238,6 +243,16 @@ impl FunctionName {
         match self {
             Self::Simple(name) => Some(name),
             Self::Method { .. } => None,
+        }
+    }
+
+    /// Source name of an unqualified module function. Dot-named statics are
+    /// represented by `Simple` internally, so callers deciding authored
+    /// export eligibility must use this narrower query.
+    pub fn unqualified_name(&self) -> Option<&str> {
+        match self {
+            Self::Simple(name) if !name.contains('.') => Some(name),
+            Self::Simple(_) | Self::Method { .. } => None,
         }
     }
 }

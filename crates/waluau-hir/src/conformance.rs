@@ -603,6 +603,7 @@ fn conformance_wrapper(
     }
     Function {
         name: FunctionName::Simple(conformance_wrapper_name(&decl.name, interface_name)),
+        declaration_class: waluau_ast::FunctionDeclarationClass::Module,
         symbol_id: None,
         type_params: Vec::new(),
         params: vec![Param {
@@ -728,6 +729,7 @@ fn conformance_check_fn(decl: &TypeDeclaration, interface_name: &str, brand: i32
     ];
     Function {
         name: FunctionName::Simple(conformance_check_name(&decl.name, interface_name)),
+        declaration_class: waluau_ast::FunctionDeclarationClass::Module,
         symbol_id: None,
         type_params: Vec::new(),
         params: vec![Param {
@@ -813,6 +815,7 @@ fn conformance_cast_fn(decl: &TypeDeclaration, interface_name: &str) -> Function
     ];
     Function {
         name: FunctionName::Simple(conformance_cast_name(&decl.name, interface_name)),
+        declaration_class: waluau_ast::FunctionDeclarationClass::Module,
         symbol_id: None,
         type_params: Vec::new(),
         params: vec![Param {

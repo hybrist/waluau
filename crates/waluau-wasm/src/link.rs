@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use waluau_ast::{
-    DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type,
-    TypeDeclaration,
+    DeclaredImport, Expr, Function, FunctionExpr, FunctionName, ModuleInterface, Program, Stmt,
+    TableField, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -888,6 +888,7 @@ fn hoist_table_export_functions(
 fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     Function {
         name: waluau_ast::FunctionName::Simple(name.to_string()),
+        declaration_class: waluau_ast::FunctionDeclarationClass::Module,
         symbol_id: function.symbol_id,
         type_params: function.type_params.clone(),
         params: function.params.clone(),
@@ -954,12 +955,7 @@ fn compute_module_export(
     }
 
     let resolved = resolve_module_export(
-        module.program.export.as_ref(),
-        module
-            .program
-            .type_declarations
-            .iter()
-            .any(|declaration| declaration.exported),
+        module.program.module_interface(),
         &prefix,
         &top_level_names,
         &re_exports,
@@ -1558,23 +1554,45 @@ fn is_named_const(stmt: &Stmt, names: &HashSet<String>) -> bool {
 }
 
 fn resolve_module_export(
-    export: Option<&Expr>,
-    has_declaration_exports: bool,
+    interface: ModuleInterface<'_>,
     prefix: &str,
     top_level_names: &HashSet<String>,
     re_exports: &HashMap<String, String>,
     namespaces: &HashMap<String, ModuleNamespace>,
     constants: &HashMap<String, Expr>,
 ) -> Result<ResolvedImport, String> {
+    let export = match interface {
+        ModuleInterface::Legacy(export) => export,
+        ModuleInterface::Declarations { functions } => {
+            let mut namespace = ModuleNamespace::default();
+            for function in functions {
+                let Some(name) = function.name.unqualified_name() else {
+                    return Err("`export function` requires a simple function name".to_string());
+                };
+                namespace
+                    .functions
+                    .insert(name.to_string(), format!("{prefix}{name}"));
+            }
+            return Ok(ResolvedImport::Namespace(namespace));
+        }
+        ModuleInterface::Conflict => return Err(
+            "a module cannot combine `export function` declarations with a trailing return"
+                .to_string(),
+        ),
+        ModuleInterface::Missing => return Err(
+            "module has no export; add `return <function>`, `return { ... }`, or an exported declaration"
+                .to_string(),
+        ),
+    };
     match export {
-        Some(Expr::Name(name, _, _)) => Ok(ResolvedImport::Function(export_function_name(
+        Expr::Name(name, _, _) => Ok(ResolvedImport::Function(export_function_name(
             name,
             prefix,
             top_level_names,
             re_exports,
             "module export",
         )?)),
-        Some(Expr::TableLiteral { fields, .. }) => {
+        Expr::TableLiteral { fields, .. } => {
             let mut namespace = ModuleNamespace::default();
             for field in fields {
                 match export_field_value(
@@ -1600,12 +1618,7 @@ fn resolve_module_export(
             }
             Ok(ResolvedImport::Namespace(namespace))
         }
-        Some(_) => Err("module must export a function name or table of functions".to_string()),
-        None if has_declaration_exports => Ok(ResolvedImport::Namespace(ModuleNamespace::default())),
-        None => Err(
-            "module has no export; add `return <function>`, `return { ... }`, or an exported declaration"
-                .to_string(),
-        ),
+        _ => Err("module must export a function name or table of functions".to_string()),
     }
 }
 

@@ -673,6 +673,69 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_resolves_explicit_function_export_namespace() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local maths = require("./maths")
+
+                    function main(): i32
+                        return maths.answer(41)
+                    end
+                "#
+                .to_string(),
+            ),
+            (
+                "/maths.walu".to_string(),
+                r#"
+                    function hidden(x: i32): i32
+                        return x + 1
+                    end
+
+                    export function answer(x: i32): i32
+                        return hidden(x)
+                    end
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let result = super::compile_sources(&files, "/main.walu")
+            .expect("browser linker should resolve explicit function namespace");
+        assert!(result.ir.contains("__waluau_m0_answer"));
+        assert!(result.wat.contains("(export \"main\""));
+        assert!(!result.wat.contains("(export \"__waluau_m0_answer\""));
+    }
+
+    #[test]
+    fn compile_multi_rejects_plain_function_as_required_module_member() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                "local maths = require(\"./maths\")\nassert(maths.hidden() == 1)\n".to_string(),
+            ),
+            (
+                "/maths.walu".to_string(),
+                r#"
+                    function hidden(): i32
+                        return 1
+                    end
+
+                    export function answer(): i32
+                        return hidden()
+                    end
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let error = super::compile_sources(&files, "/main.walu")
+            .expect_err("plain function must stay private through require");
+        assert!(error.contains("hidden"), "unexpected linker error: {error}");
+    }
+
+    #[test]
     fn compile_multi_rewrites_module_aliases_in_declared_import_params_and_returns() {
         let files = HashMap::from([
             (
