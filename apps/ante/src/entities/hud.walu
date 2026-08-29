@@ -3,7 +3,6 @@
 -- The breach orbs sit centred in the header band across the top of the board.
 local game = require("../game")
 local run_module = require("../run")
-local box = require("../ui/layout")
 local ui = require("../ui/node")
 local orb_track = require("./orb_track")
 

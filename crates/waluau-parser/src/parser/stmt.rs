@@ -615,9 +615,17 @@ impl Parser {
 
     fn try_parse_assignment(&mut self) -> Result<Option<Stmt>, Diagnostic> {
         let checkpoint = self.index;
+        // Speculative: the target list is reparsed as a plain expression
+        // below when this turns out not to be an assignment. Any definition
+        // sites recorded while probing (e.g. a function literal nested in a
+        // call argument, `hot.register({ f = function() ... end })`) must be
+        // dropped along with the token rewind, or the retry records them a
+        // second time and the unused-binding lint sees a phantom duplicate.
+        let definitions_mark = self.definitions.len();
         let target = match self.parse_postfix_expr() {
             Ok(expr) => expr,
             Err(error) => {
+                self.definitions.truncate(definitions_mark);
                 self.index = checkpoint;
                 return Err(error);
             }
@@ -646,6 +654,7 @@ impl Parser {
         } else if self.check_simple(&TokenKind::DoubleDotEqual) {
             AssignOp::Compound(BinaryOp::Concat)
         } else {
+            self.definitions.truncate(definitions_mark);
             self.index = checkpoint;
             return Ok(None);
         };

@@ -3,7 +3,6 @@
 -- than a running y cursor, so the ledger of a three-round duel and the ledger
 -- of an empty one are the same code.
 local game = require("../game")
-local box = require("../ui/layout")
 local ui = require("../ui/node")
 local modal = require("./modal")
 local label = require("./label")

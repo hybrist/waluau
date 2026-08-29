@@ -7,8 +7,6 @@ local run = require("./run")
 local flow = require("./flow")
 local spells = require("./spells/spell")
 
-const LAST_ROUND: i32 = 3
-
 -- The framing shape the entry module packs for hot replacement, mirrored here
 -- so the atomic-restore test can exercise it without a browser session.
 type HotFrame = { schema: string, screen: string, sections: {string} }

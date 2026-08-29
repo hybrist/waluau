@@ -66,11 +66,11 @@ function new(state: game.View, run: run_module.View): State
         sample = state.middle[0]
     end
     local computer_views: {card.Stateful} = {}
-    for index = 0::i32, HAND_CAPACITY - 1 do
+    for _ = 0::i32, HAND_CAPACITY - 1 do
         table.insert(computer_views, card.Stateful.new(card.sealed(sample, false)))
     end
     local table_views: {powered_card.Stateful} = {}
-    for index = 0::i32, TABLE_CAPACITY - 1 do
+    for _ = 0::i32, TABLE_CAPACITY - 1 do
         table.insert(
             table_views,
             powered_card.Stateful.new(

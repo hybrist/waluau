@@ -1680,7 +1680,6 @@ end
 
 function draw_frame(board: Board, surface: ui.Surface, frame: Frame): unit
     local viewport: layout.State = frame.viewport
-    local state: game.View = frame.view
     local modal_kind: "none" | "history" | "help" | "final" = frame.interaction.modal
     draw_backdrop(surface, viewport)
     -- The terminal round still flips on the board, so keep the playfield up

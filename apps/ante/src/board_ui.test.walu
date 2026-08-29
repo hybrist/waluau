@@ -44,7 +44,7 @@ function prepared_board(): board_input.State
     viewport_layout.update(960.0, 720.0)
     local children: {ui.Node} = {}
     local table_nodes: {ui.Node} = {}
-    for index = 0::i32, 4::i32 do
+    for _ = 0::i32, 4::i32 do
         local node: ui.Node = ui.Node.sized(card.width, card.height, empty_paint)
         table.insert(table_nodes, node)
         table.insert(children, node)

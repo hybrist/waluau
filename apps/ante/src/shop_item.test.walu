@@ -2,7 +2,6 @@
 -- the mutable run and the selected destination, then changes only what it owns.
 require("waluau:vitest")
 
-local game = require("./game")
 local run = require("./run")
 local shop_item = require("./shop_item")
 local spells = require("./spells/spell")

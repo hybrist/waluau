@@ -47,8 +47,6 @@ const SHEET_ASH_RATE: f64 = 50.0
 const TABLE_CARD_ASH_START: f64 = 0.64
 const TABLE_CARD_ASH_END: f64 = 0.97
 const TABLE_CARD_ASH_RATE: f64 = 44.0
--- A burn reading below zero means nothing is burning at all.
-const NOT_BURNING: f64 = -1.0
 -- Past this much of a burn there is no legible sheet left, which is the cutoff
 -- a missing shader program falls back to.
 const SHEET_GONE: f64 = 0.68
@@ -336,7 +334,6 @@ function draw_reappearing_ash(surface: ui.Surface, x: f64, y: f64, progress: f64
         end
         gather = easing.in_out_cubic(gather)
         local radial_x: f64 = local_x / (card.width * 0.5)
-        local radial_y: f64 = local_y / (card.height * 0.5)
         local spread: f64 = 24.0 + burn_particles.hash(id, 4.0) * 48.0
         local source_x: f64 = local_x + radial_x * spread + (burn_particles.hash(
             id,

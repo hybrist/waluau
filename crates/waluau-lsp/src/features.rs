@@ -1541,9 +1541,22 @@ pub fn unused_definitions(text: &str, path: &Path) -> Vec<Diagnostic> {
         let TokenKind::Identifier(name) = &token.kind else {
             continue;
         };
-        // The member part of `receiver.name` / `receiver:name`, and type
-        // annotations after `:`, never reference a bare binding.
-        if at > 0 && matches!(index.tokens[at - 1].kind, TokenKind::Dot | TokenKind::Colon) {
+        // The member part of `receiver.name` never references a bare
+        // binding. `receiver:name` is the same, but only when `:` starts a
+        // method call (`recv:method(`) — a type annotation like
+        // `kind: spells.SpellKind` also puts an identifier right after `:`,
+        // and there `spells` is a real use of the import.
+        let after_dot = at > 0 && matches!(index.tokens[at - 1].kind, TokenKind::Dot);
+        let after_method_colon = at > 0
+            && matches!(index.tokens[at - 1].kind, TokenKind::Colon)
+            && matches!(
+                index.tokens.get(at + 1).map(|next| &next.kind),
+                Some(TokenKind::LParen)
+                    | Some(TokenKind::Less)
+                    | Some(TokenKind::Str(_))
+                    | Some(TokenKind::LBrace)
+            );
+        if after_dot || after_method_colon {
             continue;
         }
         let offset = token.span.start;
