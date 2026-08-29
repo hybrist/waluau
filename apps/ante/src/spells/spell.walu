@@ -45,10 +45,10 @@ function SpellKind:__tostring(): string
     end
 end
 
-export type Spell = { kind: SpellKind, cost: i32 }
+export type Spell = { kind: SpellKind, cost: i32, level: i32 }
 
-function Spell.new(kind: SpellKind): Spell
-    return { kind = kind, cost = DEFAULT_SPELL_COST }
+function Spell.new(kind: SpellKind, level: i32): Spell
+    return { kind = kind, cost = DEFAULT_SPELL_COST, level = level }
 end
 
 return { DEFAULT_SPELL_COST = DEFAULT_SPELL_COST }

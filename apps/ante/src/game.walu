@@ -157,7 +157,7 @@ const BOSS_HAND_SIZE: i32 = 3 + (MAX_ROUNDS - 1) * 2
 const STARTING_GOLD: i32 = 10
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "duel-state-v9"
+const SNAPSHOT_SCHEMA: string = "duel-state-v10"
 
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
@@ -165,7 +165,7 @@ const SNAPSHOT_SCHEMA: string = "duel-state-v9"
 function clone_spells(spells: {Spell}): {Spell}
     local copy: {Spell} = {}
     for spell in spells do
-        table.insert(copy, { kind = spell.kind, cost = spell.cost })
+        table.insert(copy, { kind = spell.kind, cost = spell.cost, level = spell.level })
     end
     return copy
 end
@@ -1382,12 +1382,16 @@ function State.restore(snapshot_value: string): State?
         return nil
     end
     -- A spell kind is bounded by the spells that exist, which the JSON shape
-    -- alone does not know; a dealt cast cost is never negative.
+    -- alone does not know; a dealt cast cost is never negative and a spell
+    -- level starts at one.
     for spell in restored.spells do
         if not spells.SpellKind.valid(spell.kind) then
             return nil
         end
         if spell.cost < 0 then
+            return nil
+        end
+        if spell.level < 1 then
             return nil
         end
     end

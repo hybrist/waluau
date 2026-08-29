@@ -18,15 +18,15 @@ end
 -- The loadout a duel that is not about spells is dealt: the one spell a fresh
 -- run sets out with, at full price.
 local function starter_loadout(): {game.Spell}
-    return {spells.Spell.new(spells.SpellKind.Firebolt)}
+    return {spells.Spell.new(spells.SpellKind.Firebolt, 1)}
 end
 
 local function loadout_of(kind: spells.SpellKind): {game.Spell}
-    return {spells.Spell.new(kind)}
+    return {spells.Spell.new(kind, 1)}
 end
 
 local function priced_spell(kind: spells.SpellKind, cost: i32): game.Spell
-    local spell: game.Spell = spells.Spell.new(kind)
+    local spell: game.Spell = spells.Spell.new(kind, 1)
     spell.cost = cost
     return spell
 end
@@ -650,6 +650,7 @@ describe(
                     ):toBe(state:view().computer_hand[0].known)
                     expect(restored:view().swap_hand_indices[0]):toBe(2)
                     expect(restored:view().swap_middle_indices[0]):toBe(0)
+                    expect(restored:view().spells[0].level):toBe(1)
                 end
 
                 expect(game.State.restore("duel-state-v0,0") == nil):toBe(true)
@@ -672,6 +673,9 @@ describe(
                 )
                 expect(invalid_winner == encoded):toBe(false)
                 expect(game.State.restore(invalid_winner) == nil):toBe(true)
+                local invalid_level: string = string.gsub(encoded, '"level":%d+', '"level":0')
+                expect(invalid_level == encoded):toBe(false)
+                expect(game.State.restore(invalid_level) == nil):toBe(true)
             end
         )
 
@@ -717,6 +721,7 @@ describe(
                     expect(decoded.sections[3]):toBe("presentation")
                     if restored_run ~= nil then
                         expect(restored_run.spells[0].kind):toBe(spells.SpellKind.Clone)
+                        expect(restored_run.spells[0].level):toBe(1)
                     end
                     if restored_ui ~= nil then
                         expect(tostring(restored_ui.modal)):toBe("help")
@@ -1023,7 +1028,7 @@ describe(
                 state:reset(
                     false,
                     {
-                        spells.Spell.new(spells.SpellKind.FreezeRay),
+                        spells.Spell.new(spells.SpellKind.FreezeRay, 4),
                         priced_spell(spells.SpellKind.Clone, 3)
                     },
                     game.starting_gold
@@ -1032,6 +1037,7 @@ describe(
                 expect(state:hand_size()):toBe(5)
                 expect(state:spell_count()):toBe(2)
                 expect(state:spell_kind(0)):toBe(spells.SpellKind.FreezeRay)
+                expect(state:view().spells[0].level):toBe(4)
                 expect(state:spell_cost(0)):toBe(game.spell_cost)
                 expect(state:spell_kind(1)):toBe(spells.SpellKind.Clone)
                 expect(state:spell_cost(1)):toBe(3)
@@ -1077,7 +1083,7 @@ describe(
                 local state = game.State.new(
                     false,
                     {
-                        spells.Spell.new(spells.SpellKind.FreezeRay),
+                        spells.Spell.new(spells.SpellKind.FreezeRay, 1),
                         priced_spell(spells.SpellKind.Clone, 2)
                     },
                     4
@@ -1097,7 +1103,7 @@ describe(
                 state:reset(
                     false,
                     {
-                        spells.Spell.new(spells.SpellKind.FreezeRay),
+                        spells.Spell.new(spells.SpellKind.FreezeRay, 1),
                         priced_spell(spells.SpellKind.Clone, 2)
                     },
                     game.spell_cost
@@ -1115,7 +1121,7 @@ describe(
                 local state = game.State.new(
                     false,
                     {
-                        spells.Spell.new(spells.SpellKind.FreezeRay),
+                        spells.Spell.new(spells.SpellKind.FreezeRay, 4),
                         priced_spell(spells.SpellKind.Firebolt, 3)
                     },
                     game.starting_gold
@@ -1126,6 +1132,7 @@ describe(
                 if restored ~= nil then
                     expect(restored:spell_count()):toBe(2)
                     expect(restored:spell_kind(0)):toBe(spells.SpellKind.FreezeRay)
+                    expect(restored:view().spells[0].level):toBe(4)
                     expect(restored:spell_kind(1)):toBe(spells.SpellKind.Firebolt)
                     expect(restored:spell_cost(1)):toBe(3)
                     expect(restored:is_frozen(2)):toBe(true)
@@ -1260,8 +1267,8 @@ describe(
                 local state = game.State.new(
                     false,
                     {
-                        spells.Spell.new(spells.SpellKind.FreezeRay),
-                        spells.Spell.new(spells.SpellKind.Firebolt)
+                        spells.Spell.new(spells.SpellKind.FreezeRay, 1),
+                        spells.Spell.new(spells.SpellKind.Firebolt, 1)
                     },
                     game.starting_gold
                 )

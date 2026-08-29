@@ -47,8 +47,8 @@ end
 
 local function slots(first_sold: bool, second_sold: bool): {Slot}
     return {
-        { item = SpellScroll.new(SpellKind.Firebolt, 1)::Item, price = 5, sold = first_sold },
-        { item = SpellScroll.new(SpellKind.Clone, 2)::Item, price = 8, sold = second_sold }
+        { item = SpellScroll.new(SpellKind.Firebolt, 2)::Item, price = 5, sold = first_sold },
+        { item = SpellScroll.new(SpellKind.Clone, 1)::Item, price = 8, sold = second_sold }
     }
 end
 
@@ -83,6 +83,22 @@ local spent_view: shop_entity.Stateful = shop_entity.Stateful.new(spent_shop, sp
 
 local function spent_node(): ui.Node
     return spent_view.root
+end
+
+local unavailable_run: RunState = make_run(SpellKind.Firebolt, 15, 3)
+unavailable_run:learn(SpellKind.Clone, 1)
+local unavailable_shop: ShopState = ShopState.new(unavailable_run)
+unavailable_shop.slots = {
+    { item = SpellScroll.new(SpellKind.Firebolt, 1)::Item, price = 4, sold = false },
+    { item = SpellScroll.new(SpellKind.FreezeRay, 1)::Item, price = 4, sold = false }
+}
+local unavailable_view: shop_entity.Stateful = shop_entity.Stateful.new(
+    unavailable_shop,
+    unavailable_run
+)
+
+local function unavailable_node(): ui.Node
+    return unavailable_view.root
 end
 
 type InteractiveSession = { run: RunState, shop: ShopState }
@@ -173,6 +189,18 @@ storybook.publish(
             book:scene(
                 {
                     node = spent_node,
+                    width = WIDTH::f64,
+                    height = HEIGHT::f64,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            )
+        ),
+        storybook.story(
+            "Unavailable stock",
+            book:scene(
+                {
+                    node = unavailable_node,
                     width = WIDTH::f64,
                     height = HEIGHT::f64,
                     scale = 1.0,

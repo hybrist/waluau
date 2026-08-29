@@ -54,7 +54,7 @@ const MIN_SPELL_COST: i32 = 2
 -- Three lost hands across the whole run. A won duel repairs nothing: health is
 -- run state, just like the purse and loadout it carries through the shop.
 const MAX_HEARTS: i32 = 3
-const SNAPSHOT_SCHEMA: string = "duel-run-v4"
+const SNAPSHOT_SCHEMA: string = "duel-run-v5"
 
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
 -- the starting spell the run sets out with, and the whole of its opening
@@ -65,7 +65,7 @@ function State.new(spell: spells.SpellKind, rush: bool): State
         gold = game.starting_gold,
         hearts = MAX_HEARTS,
         cleared = 0,
-        spells = {spells.Spell.new(spell)},
+        spells = {spells.Spell.new(spell, 1)},
         start_spell = spell,
         rush = rush
     }
@@ -332,11 +332,44 @@ function State:learn(kind: spells.SpellKind, slot: i32): bool
         return false
     end
     if slot == #self.spells then
-        table.insert(self.spells, spells.Spell.new(kind))
+        table.insert(self.spells, spells.Spell.new(kind, 1))
     else
-        self.spells[slot] = spells.Spell.new(kind)
+        self.spells[slot] = spells.Spell.new(kind, 1)
     end
     return true
+end
+
+function State:can_learn_spell(spell: spells.Spell): bool
+    if spell.level < 1 then
+        return false
+    end
+    local slot = self:slot_of(spell.kind)
+    if slot ~= -1 then
+        return self.spells[slot].level < spell.level
+    end
+    return #self.spells < MAX_SPELLS
+end
+
+function State:learn_spell(spell: spells.Spell): bool
+    if not self:can_learn_spell(spell) then
+        return false
+    end
+    local slot = self:slot_of(spell.kind)
+    if slot ~= -1 then
+        self.spells[slot].level = spell.level
+        return true
+    end
+    table.insert(self.spells, spell)
+    return true
+end
+
+function State:current_spell_level(kind: spells.SpellKind): i32
+    for spell in self.spells do
+        if spell.kind == kind then
+            return spell.level
+        end
+    end
+    return 0
 end
 
 -- The slot a newly learned spell would take by itself: the next number up while
@@ -385,6 +418,9 @@ function State.restore(snapshot_value: string): State?
     end
     for spell in restored.spells do
         if not spells.SpellKind.valid(spell.kind) then
+            return nil
+        end
+        if spell.level < 1 then
             return nil
         end
     end

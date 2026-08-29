@@ -152,6 +152,7 @@ describe(
                     expect(restored.gold):toBe(27 - run.target_at(1, true))
                     expect(restored.hearts):toBe(run.max_hearts - 1)
                     expect(restored.spells[0].kind):toBe(spells.SpellKind.RaiseCard)
+                    expect(restored.spells[0].level):toBe(1)
                     expect(restored.start_spell):toBe(spells.SpellKind.RaiseCard)
                     expect(restored.rush):toBe(true)
                     expect(restored:snapshot()):toBe(encoded)
@@ -161,7 +162,7 @@ describe(
                 -- payload carrying a stale schema marker, or one with trailing
                 -- garbage — is a normal refusal rather than a crash.
                 expect(run.State.restore("duel-run-v3,1,10,0,1,0") == nil):toBe(true)
-                local stale_schema: string = string.gsub(encoded, "duel%-run%-v4", "duel-run-v3")
+                local stale_schema: string = string.gsub(encoded, "duel%-run%-v5", "duel-run-v4")
                 expect(run.State.restore(stale_schema) == nil):toBe(true)
                 expect(run.State.restore(encoded .. ",unexpected") == nil):toBe(true)
                 -- A spell kind is bounded by the spells that exist, and health by what
@@ -172,6 +173,9 @@ describe(
                     '"start_spell":99'
                 )
                 expect(run.State.restore(unknown_spell) == nil):toBe(true)
+                state.spells[0].level = 0
+                expect(run.State.restore(state:snapshot()) == nil):toBe(true)
+                state.spells[0].level = 1
                 state.hearts = run.max_hearts + 1
                 expect(run.State.restore(state:snapshot()) == nil):toBe(true)
             end
@@ -183,7 +187,7 @@ describe(
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 state:settle(true, 30)
                 expect(state:upgrade(0)):toBe(true)
-                expect(state:learn(spells.SpellKind.Clone, state:open_slot())):toBe(true)
+                expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 3))):toBe(true)
                 local encoded: string = state:snapshot()
                 local restored: run.State? = run.State.restore(encoded)
                 expect(restored == nil):toBe(false)
@@ -191,7 +195,9 @@ describe(
                     expect(restored:spell_count()):toBe(2)
                     expect(restored.spells[0].kind):toBe(spells.SpellKind.Firebolt)
                     expect(restored.spells[0].cost):toBe(game.spell_cost - 1)
+                    expect(restored.spells[0].level):toBe(1)
                     expect(restored.spells[1].kind):toBe(spells.SpellKind.Clone)
+                    expect(restored.spells[1].level):toBe(3)
                     expect(restored:snapshot()):toBe(encoded)
                 end
 
@@ -203,11 +209,11 @@ describe(
                 local crowded: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 table.insert(
                     crowded.spells,
-                    { kind = spells.SpellKind.Clone, cost = game.spell_cost }
+                    { kind = spells.SpellKind.Clone, cost = game.spell_cost, level = 1 }
                 )
                 table.insert(
                     crowded.spells,
-                    { kind = spells.SpellKind.FreezeRay, cost = game.spell_cost }
+                    { kind = spells.SpellKind.FreezeRay, cost = game.spell_cost, level = 1 }
                 )
                 expect(run.State.restore(crowded:snapshot()) == nil):toBe(true)
             end
@@ -227,6 +233,7 @@ describe(
                 expect(state:spell_count()):toBe(2)
                 expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
                 expect(state.spells[1].cost):toBe(game.spell_cost)
+                expect(state.spells[1].level):toBe(1)
                 -- Two is as many as travel at once, so nothing is open any more and a
                 -- third spell has to name the slot it takes over.
                 expect(state:open_slot()):toBe(-1)
@@ -547,7 +554,7 @@ describe(
                 math.randomseed(71)
                 local state: game.State = game.State.new(
                     false,
-                    {spells.Spell.new(spells.SpellKind.Firebolt)},
+                    {spells.Spell.new(spells.SpellKind.Firebolt, 1)},
                     game.starting_gold
                 )
                 expect(state:is_victory()):toBe(false)
@@ -563,7 +570,7 @@ describe(
                 math.randomseed(73)
                 local state: game.State = game.State.new(
                     false,
-                    {spells.Spell.new(spells.SpellKind.Firebolt)},
+                    {spells.Spell.new(spells.SpellKind.Firebolt, 1)},
                     game.starting_gold
                 )
                 game_fixture.finish(state, 1)
