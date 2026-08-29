@@ -19,4 +19,4 @@ counter.value = 0::i32
 assert(counter.value == 0::i32)
 local result2: i32 = counter.increment_by<i32>(counter, 20::i32)
 assert(result2 == 20::i32)
-assert(counter.value == 1::i32)  -- Should work with the fix
+assert(counter.value == 1::i32) -- Should work with the fix

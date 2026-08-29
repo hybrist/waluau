@@ -1,5 +1,4 @@
 -- Every context where an empty array literal should adopt the expected type.
-
 -- 1. annotated local
 local xs: {i32} = {}
 assert(#xs == 0)

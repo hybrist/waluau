@@ -1,7 +1,6 @@
 -- Particle gallery: nine scenes built from the engine's particle system,
 -- switched with the number keys. Game code here never touches the DOM — the
 -- engine owns the canvas, and every effect is emitter configuration.
-
 local engine = require("../../engine/browser")
 local input_module = require("../../engine/input")
 local graphics_module = require("../../engine/graphics")
@@ -75,7 +74,11 @@ function install_gallery(): unit
             status = status .. "  (emitters paused)"
         end
         graphics:print(status, 16.0, HEIGHT - 34.0)
-        graphics:print("1-9 scene   arrows switch   space burst   p pause   r restart", 16.0, HEIGHT - 16.0)
+        graphics:print(
+            "1-9 scene   arrows switch   space burst   p pause   r restart",
+            16.0,
+            HEIGHT - 16.0
+        )
     end
 
     local function keypressed(key: string): unit
@@ -104,7 +107,7 @@ function install_gallery(): unit
     end
 
     local function keyreleased(key: string): unit
-        -- Every control acts on the press; nothing is held down.
+    -- Every control acts on the press; nothing is held down.
     end
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
@@ -119,23 +122,26 @@ function install_gallery(): unit
         current():pointer_moved(x, y)
     end
 
-    engine.start({
-        title = "Waluau Particles",
-        width = WIDTH::u32,
-        height = HEIGHT::u32,
-        update_hz = 60.0,
-        max_frame_seconds = 0.25,
-        background = "#05070f",
-    }, {
-        load = load,
-        update = update,
-        draw = draw,
-        keypressed = keypressed,
-        keyreleased = keyreleased,
-        mousepressed = mousepressed,
-        mousereleased = nil,
-        mousemoved = mousemoved,
-    })
+    engine.start(
+        {
+            title = "Waluau Particles",
+            width = WIDTH::u32,
+            height = HEIGHT::u32,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#05070f"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = mousepressed,
+            mousereleased = nil,
+            mousemoved = mousemoved
+        }
+    )
 end
 
 install_gallery()

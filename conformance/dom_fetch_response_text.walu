@@ -1,17 +1,19 @@
 function run_fetch_response_text(): unit
-    local co: thread = coroutine.create(function(): i32
-        local res = fetch("/test.json"):await()
-        local body = res:text():await()
+    local co: thread = coroutine.create(
+        function(): i32
+            local res = fetch("/test.json"):await()
+            local body = res:text():await()
 
-        local window = require("dom:window")
-        local document: Document = window.document
-        local output_body: HTMLElement = document.body
-        local output: Element = document:create_element("p")
-        output.id = "fetch-body"
-        output.text_content = body
-        output_body:append_child(output)
+            local window = require("dom:window")
+            local document: Document = window.document
+            local output_body: HTMLElement = document.body
+            local output: Element = document:create_element("p")
+            output.id = "fetch-body"
+            output.text_content = body
+            output_body:append_child(output)
 
-        return 0
-    end)
+            return 0
+        end
+    )
     coroutine.resume(co)
 end

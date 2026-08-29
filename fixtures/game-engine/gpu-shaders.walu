@@ -63,7 +63,9 @@ function install_gpu_shader_fixture(): unit
     local function update(dt: f64, input: input_module.Input): unit
     end
     local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
-        if drew then return end
+        if drew then
+            return
+        end
         drew = true
         assert(graphics:supports("gpu"))
         assert(graphics:supports("shaders"))
@@ -72,52 +74,80 @@ function install_gpu_shader_fixture(): unit
         assert(graphics:supports("sprite-batches"))
         assert(graphics:supports("render-targets"))
 
-        local invalid_vertex: graphics_module.ShaderResult = graphics:create_shader("not valid GLSL", PIXEL_SOURCE)
+        local invalid_vertex: graphics_module.ShaderResult = graphics:create_shader(
+            "not valid GLSL",
+            PIXEL_SOURCE
+        )
         assert(not invalid_vertex.ok and invalid_vertex.error.code == "vertex_compile")
-        local invalid_pixel: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, "not valid GLSL")
+        local invalid_pixel: graphics_module.ShaderResult = graphics:create_shader(
+            VERTEX_SOURCE,
+            "not valid GLSL"
+        )
         assert(not invalid_pixel.ok and invalid_pixel.error.code == "pixel_compile")
-        local invalid_link: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, LINK_FAILURE_PIXEL_SOURCE)
+        local invalid_link: graphics_module.ShaderResult = graphics:create_shader(
+            VERTEX_SOURCE,
+            LINK_FAILURE_PIXEL_SOURCE
+        )
         assert(not invalid_link.ok and invalid_link.error.code == "link")
 
-        local created: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, PIXEL_SOURCE)
+        local created: graphics_module.ShaderResult = graphics:create_shader(
+            VERTEX_SOURCE,
+            PIXEL_SOURCE
+        )
         assert(created.ok)
-        local missing: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
-            graphics_module.float_parameter("missing", 1.0),
-        })
+        local missing: graphics_module.ShaderBindingResult = graphics:bind_shader(
+            created.shader,
+            {graphics_module.float_parameter("missing", 1.0)}
+        )
         assert(not missing.ok and missing.error.code == "uniform_missing")
-        local mistyped: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
-            graphics_module.vec4_parameter("u_gain", 1.0, 1.0, 1.0, 1.0),
-        })
+        local mistyped: graphics_module.ShaderBindingResult = graphics:bind_shader(
+            created.shader,
+            {graphics_module.vec4_parameter("u_gain", 1.0, 1.0, 1.0, 1.0)}
+        )
         assert(not mistyped.ok and mistyped.error.code == "uniform_type")
-        local bound: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
-            graphics_module.float_parameter("u_gain", 1.0),
-            graphics_module.vec4_parameter("u_tint", 0.25, 1.0, 0.25, 1.0),
-            graphics_module.int_parameter("u_enabled", 1),
-        })
+        local bound: graphics_module.ShaderBindingResult = graphics:bind_shader(
+            created.shader,
+            {
+                graphics_module.float_parameter("u_gain", 1.0),
+                graphics_module.vec4_parameter("u_tint", 0.25, 1.0, 0.25, 1.0),
+                graphics_module.int_parameter("u_enabled", 1)
+            }
+        )
         assert(bound.ok)
         -- Binding the same declaration again reuses its cached locations.
-        local rebound: graphics_module.ShaderBindingResult = graphics:bind_shader(created.shader, {
-            graphics_module.float_parameter("u_gain", 1.0),
-            graphics_module.vec4_parameter("u_tint", 0.25, 1.0, 0.25, 1.0),
-            graphics_module.int_parameter("u_enabled", 1),
-        })
+        local rebound: graphics_module.ShaderBindingResult = graphics:bind_shader(
+            created.shader,
+            {
+                graphics_module.float_parameter("u_gain", 1.0),
+                graphics_module.vec4_parameter("u_tint", 0.25, 1.0, 0.25, 1.0),
+                graphics_module.int_parameter("u_enabled", 1)
+            }
+        )
         assert(rebound.ok)
         assert(not graphics:set_uniform_float("missing", 1.0))
 
         local original_id: i32 = created.shader.id
         local original_program: WebGLProgram? = created.shader.program
         local bad_vertex_replacement: graphics_module.ShaderResult = graphics:replace_shader(
-            created.shader, "not valid GLSL", PIXEL_SOURCE
+            created.shader,
+            "not valid GLSL",
+            PIXEL_SOURCE
         )
-        assert(not bad_vertex_replacement.ok and bad_vertex_replacement.error.code == "vertex_compile")
+        assert(
+            not bad_vertex_replacement.ok and bad_vertex_replacement.error.code == "vertex_compile"
+        )
         assert(created.shader.id == original_id and created.shader.program == original_program)
         local bad_pixel_replacement: graphics_module.ShaderResult = graphics:replace_shader(
-            created.shader, VERTEX_SOURCE, "not valid GLSL"
+            created.shader,
+            VERTEX_SOURCE,
+            "not valid GLSL"
         )
         assert(not bad_pixel_replacement.ok and bad_pixel_replacement.error.code == "pixel_compile")
         assert(created.shader.id == original_id and created.shader.program == original_program)
         local bad_link_replacement: graphics_module.ShaderResult = graphics:replace_shader(
-            created.shader, VERTEX_SOURCE, LINK_FAILURE_PIXEL_SOURCE
+            created.shader,
+            VERTEX_SOURCE,
+            LINK_FAILURE_PIXEL_SOURCE
         )
         assert(not bad_link_replacement.ok and bad_link_replacement.error.code == "link")
         assert(created.shader.id == original_id and created.shader.program == original_program)
@@ -130,7 +160,9 @@ function install_gpu_shader_fixture(): unit
         -- Replacing while active flushes the old batch, rebinds the new
         -- program on the same handle/id, and only then retires the old one.
         local replaced: graphics_module.ShaderResult = graphics:replace_shader(
-            created.shader, VERTEX_SOURCE, SECOND_PIXEL_SOURCE
+            created.shader,
+            VERTEX_SOURCE,
+            SECOND_PIXEL_SOURCE
         )
         assert(replaced.ok and replaced.shader.id == original_id)
         assert(created.shader.program ~= original_program)
@@ -140,7 +172,7 @@ function install_gpu_shader_fixture(): unit
             {
                 graphics_module.float_parameter("u_gain", 1.0),
                 graphics_module.vec4_parameter("u_tint", 1.0, 0.0, 1.0, 1.0),
-                graphics_module.int_parameter("u_enabled", 1),
+                graphics_module.int_parameter("u_enabled", 1)
             }
         )
         assert(rebound_after_replace.ok)
@@ -155,23 +187,37 @@ function install_gpu_shader_fixture(): unit
         graphics:release_shader(created.shader)
         assert(not graphics:use_shader(created.shader))
         local released_replacement: graphics_module.ShaderResult = graphics:replace_shader(
-            created.shader, VERTEX_SOURCE, PIXEL_SOURCE
+            created.shader,
+            VERTEX_SOURCE,
+            PIXEL_SOURCE
         )
         assert(not released_replacement.ok and released_replacement.error.code == "released")
     end
-    local function keypressed(key: string): unit end
-    local function keyreleased(key: string): unit end
+    local function keypressed(key: string): unit
+    end
+    local function keyreleased(key: string): unit
+    end
 
-    engine.start({
-        title = "GPU shader conformance", width = 160, height = 100,
-        update_hz = 60.0, max_frame_seconds = 0.25, background = "#000000",
-    }, {
-        load = load, update = update, draw = draw,
-        keypressed = keypressed, keyreleased = keyreleased,
-        mousepressed = nil,
-        mousereleased = nil,
-        mousemoved = nil,
-    })
+    engine.start(
+        {
+            title = "GPU shader conformance",
+            width = 160,
+            height = 100,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#000000"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
 end
 
 install_gpu_shader_fixture()

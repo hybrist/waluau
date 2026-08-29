@@ -295,6 +295,19 @@ impl BuildCache {
     }
 }
 
+/// Temporary diagnostics for byte-determinism debugging: with
+/// WALUAU_STAGE_HASH set, print a hash of each pipeline stage's Debug form.
+fn stage_hash(stage: &str, value: &impl std::fmt::Debug) {
+    if std::env::var_os("WALUAU_STAGE_HASH").is_none() {
+        return;
+    }
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // DefaultHasher::new() is seed-stable across processes.
+    format!("{value:?}").hash(&mut hasher);
+    eprintln!("stage {stage}: {:016x}", hasher.finish());
+}
+
 fn build_inner(
     program: &Program,
     mut cache: Option<&mut BuildCache>,
@@ -320,6 +333,7 @@ fn build_inner(
         program.clone()
     };
     waluau_ast::resolve_symbols(&mut resolved)?;
+    stage_hash("resolved", &resolved);
     let resolved_at = started.elapsed();
     let incremental_index = hinted_index.or_else(|| cache.as_deref().and_then(|cache| {
         let previous = cache.resolved.as_ref()?;
@@ -345,6 +359,7 @@ fn build_inner(
     } else {
         erase_opaque_types(&resolved)
     };
+    stage_hash("erased", &erased);
     let erased_at = started.elapsed();
     if let Some(cached) = cache.as_deref_mut()
         && let Some((monomorphic, module)) =
@@ -369,6 +384,7 @@ fn build_inner(
     // is deterministic and re-stamps the same ids, so this pass only exists to
     // capture the symbol-name table for Wasm debug-name emission.
     let symbol_names = waluau_ast::resolve_symbols(&mut monomorphic)?;
+    stage_hash("monomorphic", &monomorphic);
     let monomorphic_at = started.elapsed();
     let globals = collect_module_globals(&monomorphic)?;
     let global_indices = globals
@@ -568,6 +584,15 @@ fn build_inner(
         cached.resolved = Some(resolved);
         cached.erased = Some(erased);
         cached.monomorphic = Some(monomorphic);
+    }
+    stage_hash("module", &module);
+    if let Some(dump) = std::env::var_os("WALUAU_DUMP_FN") {
+        let wanted = dump.to_string_lossy();
+        for function in &module.functions {
+            if function.name.contains(wanted.as_ref()) {
+                eprintln!("=== {} ===\n{function:#?}", function.name);
+            }
+        }
     }
     Ok(module)
 }
@@ -2782,10 +2807,15 @@ impl Builder<'_> {
         phis: &HashMap<SymbolId, ValueId>,
     ) -> HashMap<SymbolId, ValueId> {
         let mut exit_phis = HashMap::new();
-        for id in phis.keys() {
+        // Sorted so exit-phi value ids are assigned in a deterministic order
+        // regardless of the map's per-process hash seed; the artifact must be
+        // byte-identical across builds.
+        let mut ids: Vec<SymbolId> = phis.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
             let exit_phi = self.emit_in(exit, Instruction::Phi(Vec::new()));
-            self.function.value_symbols.insert(exit_phi, *id);
-            exit_phis.insert(*id, exit_phi);
+            self.function.value_symbols.insert(exit_phi, id);
+            exit_phis.insert(id, exit_phi);
         }
         exit_phis
     }
@@ -4300,7 +4330,10 @@ impl Builder<'_> {
         }
 
         self.current_block = merge_block;
-        for name in env.keys().cloned().collect::<Vec<_>>() {
+        // Sorted for deterministic phi emission order (see create_exit_phis).
+        let mut merge_names: Vec<SymbolId> = env.keys().cloned().collect();
+        merge_names.sort_unstable();
+        for name in merge_names {
             let t = then_env
                 .get(&name)
                 .copied()
@@ -4489,7 +4522,10 @@ impl Builder<'_> {
         }
 
         self.current_block = merge_block;
-        for name in env.keys().cloned().collect::<Vec<_>>() {
+        // Sorted for deterministic phi emission order (see create_exit_phis).
+        let mut merge_names: Vec<SymbolId> = env.keys().cloned().collect();
+        merge_names.sort_unstable();
+        for name in merge_names {
             let t = then_env
                 .get(&name)
                 .copied()

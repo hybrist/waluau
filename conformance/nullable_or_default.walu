@@ -2,7 +2,6 @@
 -- unboxed left value when it is present and the fallback when it is nil. This
 -- is not Lua's truthiness `or`, which is why a `bool?` left operand is a
 -- compile error rather than a coin flip -- see nullable_or_ambiguous_bool.walu.
-
 type Point = { x: f64, y: f64 }
 
 local abc: string = "abc"

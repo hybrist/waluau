@@ -7,7 +7,6 @@
 -- A call's return type keeps the union's name, so `field = f()` never trips
 -- this; only a literal on the right-hand side of a field assignment does. Both
 -- the empty literal (the ante shop's `close`) and a filled one are pinned here.
-
 type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
 type Slot = { goods: Goods, price: i32 }
 type Shop = { open: bool, slots: {Slot} }
@@ -22,7 +21,7 @@ function restock(shop: Shop): unit
     shop.open = true
     shop.slots = {
         { goods = Upgrade({ kind = 1 }), price = 4 },
-        { goods = Spell({ kind = 2 }), price = 7 },
+        { goods = Spell({ kind = 2 }), price = 7 }
     }
 end
 
@@ -31,8 +30,12 @@ function empty(satchel: Satchel): unit
 end
 
 function kind_of(goods: Goods): i32
-    if Upgrade(upgrade) = goods then return upgrade.kind end
-    if Spell(spell) = goods then return 100 + spell.kind end
+    if Upgrade(upgrade) = goods then
+        return upgrade.kind
+    end
+    if Spell(spell) = goods then
+        return 100 + spell.kind
+    end
     return -1
 end
 
@@ -60,7 +63,7 @@ assert(#shop.slots == 2)
 assert(kind_of(shop.slots[1].goods) == 102)
 
 -- The union as the element type directly, without a record in between.
-local satchel: Satchel = { goods = { Spell({ kind = 9 }) } }
+local satchel: Satchel = { goods = {Spell({ kind = 9 })} }
 assert(#satchel.goods == 1)
 empty(satchel)
 assert(#satchel.goods == 0)

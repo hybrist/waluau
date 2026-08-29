@@ -2,7 +2,6 @@
 -- varargs. Explicit arguments fill the callee's fixed parameters first;
 -- missing fixed parameters are drawn from the front of the forwarded varargs
 -- and the rest become the callee's varargs.
-
 function count(...)
     return select('#', ...)
 end

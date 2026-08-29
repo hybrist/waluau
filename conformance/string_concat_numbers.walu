@@ -1,22 +1,17 @@
-enum SpellKind {
-  Firebolt,
-  FreezeRay,
-  RaiseCard,
-  Clone,
-}
+enum SpellKind { Firebolt, FreezeRay, RaiseCard, Clone }
 
 function SpellKind:__tostring(): string
-  if self == SpellKind.Firebolt then
-    return "Firebolt"
-  elseif self == SpellKind.FreezeRay then
-    return "Freeze Ray"
-  elseif self == SpellKind.RaiseCard then
-    return "Raise Card"
-  elseif self == SpellKind.Clone then
-    return "Clone"
-  else
-    return "Unknown Spell"
-  end
+    if self == SpellKind.Firebolt then
+        return "Firebolt"
+    elseif self == SpellKind.FreezeRay then
+        return "Freeze Ray"
+    elseif self == SpellKind.RaiseCard then
+        return "Raise Card"
+    elseif self == SpellKind.Clone then
+        return "Clone"
+    else
+        return "Unknown Spell"
+    end
 end
 
 assert("Hello " .. SpellKind.Firebolt::number == "Hello 0")
@@ -31,7 +26,7 @@ assert(label == "count=42")
 type Greeting = { text: string }
 
 function Greeting:__concat(suffix: string): string
-  return self.text .. suffix
+    return self.text .. suffix
 end
 
 local greeting: Greeting = { text = "Hello" }

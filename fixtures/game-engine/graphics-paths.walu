@@ -1,7 +1,6 @@
 -- Browser conformance fixture for the Graphics path API. It covers
 -- transformed closed paths, quadratic and cubic curves, multiple subpaths,
 -- and a stroke large enough to cross the renderer's implicit batch flush.
-
 local engine = require("../../engine/browser")
 local graphics_module = require("../../engine/graphics")
 local input_module = require("../../engine/input")
@@ -65,23 +64,26 @@ function install_graphics_paths_fixture(): unit
     local function keyreleased(key: string): unit
     end
 
-    engine.start({
-        title = "Graphics path conformance",
-        width = 320,
-        height = 200,
-        update_hz = 60.0,
-        max_frame_seconds = 0.25,
-        background = "#000000",
-    }, {
-        load = load,
-        update = update,
-        draw = draw,
-        keypressed = keypressed,
-        keyreleased = keyreleased,
-        mousepressed = nil,
-        mousereleased = nil,
-        mousemoved = nil,
-    })
+    engine.start(
+        {
+            title = "Graphics path conformance",
+            width = 320,
+            height = 200,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#000000"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
 end
 
 install_graphics_paths_fixture()

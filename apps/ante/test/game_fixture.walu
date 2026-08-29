@@ -1,7 +1,6 @@
 -- Deterministic test adapter for the deep rules module. Production enters
 -- through shuffled deals; tests enter through explicit card and table_card layouts
 -- without spreading mutable State setup across every scenario.
-
 local game = require("../src/game")
 
 function arrange_breach(
@@ -13,19 +12,11 @@ function arrange_breach(
     state:test_arrange_round(middle, player_hand, computer_hand)
 end
 
-function arrange_arch_mage(
-    state: game.State,
-    middle: {game.Card},
-    computer_hand: {game.Card}
-): unit
+function arrange_arch_mage(state: game.State, middle: {game.Card}, computer_hand: {game.Card}): unit
     state:test_arrange_opponent(middle, computer_hand)
 end
 
-function arrange_player(
-    state: game.State,
-    player_hand: {game.Card},
-    player_known: {bool}
-): unit
+function arrange_player(state: game.State, player_hand: {game.Card}, player_known: {bool}): unit
     state:test_arrange_player(player_hand, player_known)
 end
 
@@ -39,11 +30,7 @@ function finish(state: game.State, computer_tricks: i32): unit
     state:test_finish(computer_tricks)
 end
 
-function set_swap_trace(
-    state: game.State,
-    hand_indices: {i32},
-    middle_indices: {i32}
-): unit
+function set_swap_trace(state: game.State, hand_indices: {i32}, middle_indices: {i32}): unit
     state:test_set_swap_trace(hand_indices, middle_indices)
 end
 
@@ -53,5 +40,5 @@ return {
     arrange_player = arrange_player,
     set_player_points = set_player_points,
     set_swap_trace = set_swap_trace,
-    finish = finish,
+    finish = finish
 }

@@ -2,7 +2,6 @@
 -- Returns the 1-based inclusive (start, end) of the match, or nil when the
 -- pattern does not occur. The optional third argument is the 1-based start
 -- offset; the optional fourth selects plain (non-pattern) substring search.
-
 function find_via_namespace(): bool
     local message: string = "Welcome to Lua!"
     return string.find(message, "Lua", 1, true) == 12

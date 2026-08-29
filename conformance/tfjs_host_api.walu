@@ -93,25 +93,29 @@ function run_lifetime_checks(): unit
     local lifetime_tf = require("tfjs")
 
     local before_tidy: i32 = lifetime_tf.memory_num_tensors()
-    local tidy_result: Tensor = lifetime_tf.tidy(function(): extern
-        local a: Tensor = lifetime_tf.scalar(2.0)
-        local b: Tensor = lifetime_tf.scalar(3.0)
-        local c: Tensor = (a + b) * b
-        return c::extern
-    end)
+    local tidy_result: Tensor = lifetime_tf.tidy(
+        function(): extern
+            local a: Tensor = lifetime_tf.scalar(2.0)
+            local b: Tensor = lifetime_tf.scalar(3.0)
+            local c: Tensor = (a + b) * b
+            return c::extern
+        end
+    )
     assert(lifetime_tf.scalar_value(tidy_result) == 15.0)
     assert(lifetime_tf.memory_num_tensors() == before_tidy + 1)
     lifetime_tf.dispose(tidy_result)
     assert(lifetime_tf.memory_num_tensors() == before_tidy)
 
     local before_keep: i32 = lifetime_tf.memory_num_tensors()
-    local kept: Tensor = lifetime_tf.tidy(function(): extern
-        local value: Tensor = lifetime_tf.scalar(9.0)
-        local kept_value: Tensor = lifetime_tf.keep(value)
-        local temporary: Tensor = lifetime_tf.scalar(100.0)
-        assert(lifetime_tf.scalar_value(temporary) == 100.0)
-        return kept_value::extern
-    end)
+    local kept: Tensor = lifetime_tf.tidy(
+        function(): extern
+            local value: Tensor = lifetime_tf.scalar(9.0)
+            local kept_value: Tensor = lifetime_tf.keep(value)
+            local temporary: Tensor = lifetime_tf.scalar(100.0)
+            assert(lifetime_tf.scalar_value(temporary) == 100.0)
+            return kept_value::extern
+        end
+    )
     assert(lifetime_tf.scalar_value(kept) == 9.0)
     assert(lifetime_tf.memory_num_tensors() == before_keep + 1)
     lifetime_tf.dispose(kept)
@@ -120,12 +124,14 @@ end
 
 function run_async_readback(): unit
     local async_tf = require("tfjs")
-    local co: thread = coroutine.create(function(): i32
-        local async_scalar: Tensor = async_tf.scalar(13.0)
-        local pending_data: Promise<TensorData> = async_tf.data(async_scalar)
-        local data: TensorData = promise.await(pending_data)
-        record_tfjs_async(async_tf.data_get_f64(data, 0))
-        return 0
-    end)
+    local co: thread = coroutine.create(
+        function(): i32
+            local async_scalar: Tensor = async_tf.scalar(13.0)
+            local pending_data: Promise<TensorData> = async_tf.data(async_scalar)
+            local data: TensorData = promise.await(pending_data)
+            record_tfjs_async(async_tf.data_get_f64(data, 0))
+            return 0
+        end
+    )
     coroutine.resume(co)
 end

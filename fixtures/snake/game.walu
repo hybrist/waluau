@@ -1,8 +1,16 @@
 -- Core snake rules: grid state, movement, food, and collisions. No DOM or
 -- canvas access in this module, so the rules can be exercised headlessly.
-
 -- The state record alias; render.walu imports it as `game.State`.
-export type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }
+export type State = {
+    cols: i32,
+    rows: i32,
+    snake: {{ x: i32, y: i32 }},
+    dir: { x: i32, y: i32 },
+    next_dir: { x: i32, y: i32 },
+    food: { x: i32, y: i32 },
+    score: i32,
+    alive: bool
+}
 
 function State.new(cols: i32, rows: i32): State
     local state: State = {
@@ -13,7 +21,7 @@ function State.new(cols: i32, rows: i32): State
         next_dir = { x = 1, y = 0 },
         food = { x = 0, y = 0 },
         score = 0,
-        alive = true,
+        alive = true
     }
     state:reset()
     return state
@@ -48,7 +56,7 @@ function State:reset(): unit
     local cx: i32 = self.cols // 2
     local cy: i32 = self.rows // 2
     -- Head first: the head lives at index 0 and moves right at start.
-    self.snake = { { x = cx, y = cy }, { x = cx - 1, y = cy }, { x = cx - 2, y = cy } }
+    self.snake = {{ x = cx, y = cy }, { x = cx - 1, y = cy }, { x = cx - 2, y = cy }}
     self.dir.x = 1
     self.dir.y = 0
     self.next_dir.x = 1
@@ -102,6 +110,4 @@ function State:step(): unit
     end
 end
 
-return {
-    new = State.new,
-}
+return { new = State.new }

@@ -1,6 +1,5 @@
 -- table.pack collects its arguments into a fresh `{unknown}` array; the
 -- packed count is available both as `.n` (like Lua's packed table) and `#`.
-
 function pack_count(...)
     local t = table.pack(...)
     return t.n

@@ -7,7 +7,11 @@ local resources = require("../../engine/resources")
 
 declare function record_gpu_resource_step(step: string): unit
 
-type FixtureState = { loaded_image: resources.Resource?, load_error: resources.ResourceError?, rendered: bool }
+type FixtureState = {
+    loaded_image: resources.Resource?,
+    load_error: resources.ResourceError?,
+    rendered: bool
+}
 
 function install_gpu_resources_fixture(): unit
     local state: FixtureState = { loaded_image = nil, load_error = nil, rendered = false }
@@ -33,7 +37,9 @@ function install_gpu_resources_fixture(): unit
     end
 
     local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
-        if state.rendered or state.loaded_image == nil then return end
+        if state.rendered or state.loaded_image == nil then
+            return
+        end
         assert(state.load_error == nil)
         assert(graphics:supports("textures") and graphics:supports("sprite-batches"))
         assert(graphics:supports("render-targets"))
@@ -53,7 +59,10 @@ function install_gpu_resources_fixture(): unit
         assert(graphics:draw_sprite(texture, 8.0, 8.0, 32.0, 32.0, 0.0, 0.0, 1.0, 1.0))
         assert(graphics:draw_sprite(texture, 44.0, 8.0, 32.0, 32.0, 1.0, 0.0, 1.0, 1.0))
 
-        local target_result: graphics_module.RenderTargetResult = graphics:create_render_target(32, 32)
+        local target_result: graphics_module.RenderTargetResult = graphics:create_render_target(
+            32,
+            32
+        )
         assert(target_result.ok)
         local target: graphics_module.RenderTarget = target_result.target
         assert(graphics:set_render_target(target))
@@ -73,18 +82,30 @@ function install_gpu_resources_fixture(): unit
         state.rendered = true
     end
 
-    local function keypressed(key: string): unit end
-    local function keyreleased(key: string): unit end
-    engine.start({
-        title = "GPU resource conformance", width = 144, height = 64,
-        update_hz = 60.0, max_frame_seconds = 0.25, background = "#000000",
-    }, {
-        load = load, update = update, draw = draw,
-        keypressed = keypressed, keyreleased = keyreleased,
-        mousepressed = nil,
-        mousereleased = nil,
-        mousemoved = nil,
-    })
+    local function keypressed(key: string): unit
+    end
+    local function keyreleased(key: string): unit
+    end
+    engine.start(
+        {
+            title = "GPU resource conformance",
+            width = 144,
+            height = 64,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#000000"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = keypressed,
+            keyreleased = keyreleased,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
 end
 
 install_gpu_resources_fixture()

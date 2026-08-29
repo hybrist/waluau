@@ -2,7 +2,6 @@
 -- nil == nil is true, nil == value is false, and two present values compare
 -- by their unboxed contents. `string.byte` out of range yields nil, so it
 -- produces both present and absent nullable numbers.
-
 local abc: string = "abc"
 local abd: string = "abd"
 local empty: string = ""

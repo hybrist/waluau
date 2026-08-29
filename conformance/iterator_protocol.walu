@@ -2,7 +2,6 @@
 -- calls `f(s, control)` each iteration, stops when the first result is nil,
 -- and otherwise binds the result and feeds it back as the next control. The
 -- iterator type is `(S, C) -> (K?, V...)`; the loop binds `k: K` non-nil.
-
 local words = {"alpha", "beta", "gamma"}
 
 -- A hand-written stateless ipairs over waluau's 0-based arrays.

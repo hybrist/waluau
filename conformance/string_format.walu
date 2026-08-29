@@ -1,5 +1,4 @@
 -- string.format / string:format supports the core specifier subset.
-
 assert(string.format("%s:%d:%x", "id", 31, 31) == "id:31:1f")
 assert(string.format("%f", 1.5) == "1.500000")
 assert(string.format("%g %% %q", 12.5, "ok") == "12.5 % \"ok\"")

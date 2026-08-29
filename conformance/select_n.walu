@@ -1,6 +1,5 @@
 -- select(n, ...) returns the value at 1-based position n, like Lua;
 -- negative n counts from the end. select('#', ...) reports the count.
-
 function pick(n: i32, ...)
     return select(n, ...)
 end

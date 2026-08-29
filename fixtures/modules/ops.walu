@@ -1,5 +1,5 @@
 return {
-    add = function (a: f64, b: f64): f64
+    add = function(a: f64, b: f64): f64
         return a + b
-    end,
+    end
 }

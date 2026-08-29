@@ -69,3 +69,75 @@ fn formats_directory_recursively() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn excludes_files_and_directories_from_recursive_formatting() {
+    let dir = std::env::temp_dir().join(format!("waluau-fmt-x-{}", std::process::id()));
+    let excluded_dir = dir.join("vendor");
+    std::fs::create_dir_all(&excluded_dir).unwrap();
+    let included = dir.join("included.walu");
+    let excluded_file = dir.join("invalid.walu");
+    let excluded_nested = excluded_dir.join("vendored.walu");
+    std::fs::write(&included, "local  value=1\n").unwrap();
+    std::fs::write(&excluded_file, "local value =\n").unwrap();
+    std::fs::write(&excluded_nested, "local vendored =\n").unwrap();
+
+    run_with_args(args(&[
+        "fmt",
+        "--exclude",
+        excluded_file.to_str().unwrap(),
+        "--exclude",
+        excluded_dir.to_str().unwrap(),
+        dir.to_str().unwrap(),
+    ]))
+    .expect("excluded invalid sources do not prevent formatting");
+
+    assert_eq!(
+        std::fs::read_to_string(&included).unwrap(),
+        "local value = 1\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&excluded_file).unwrap(),
+        "local value =\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&excluded_nested).unwrap(),
+        "local vendored =\n"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn recursive_formatting_skips_dependency_and_build_directories() {
+    let dir = std::env::temp_dir().join(format!("waluau-fmt-s-{}", std::process::id()));
+    let dependency_dir = dir.join("node_modules");
+    let build_dir = dir.join("target");
+    std::fs::create_dir_all(&dependency_dir).unwrap();
+    std::fs::create_dir_all(&build_dir).unwrap();
+    std::fs::write(dir.join("source.walu"), "local  source=1\n").unwrap();
+    std::fs::write(
+        dependency_dir.join("dependency.walu"),
+        "local dependency =\n",
+    )
+    .unwrap();
+    std::fs::write(build_dir.join("generated.walu"), "local generated =\n").unwrap();
+
+    run_with_args(args(&["fmt", dir.to_str().unwrap()]))
+        .expect("ignored directories are not parsed or formatted");
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("source.walu")).unwrap(),
+        "local source = 1\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dependency_dir.join("dependency.walu")).unwrap(),
+        "local dependency =\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(build_dir.join("generated.walu")).unwrap(),
+        "local generated =\n"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

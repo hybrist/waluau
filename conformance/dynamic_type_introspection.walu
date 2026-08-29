@@ -2,7 +2,6 @@
 -- supported value to a string, and tonumber() parses with Lua coercion
 -- semantics (nil on failure, optional base 2..36). Statically-typed operands
 -- fold at compile time; unknown-boxed values classify at runtime.
-
 -- type()/typeof() on statically-typed values.
 assert(type(nil) == "nil")
 assert(type(true) == "boolean")

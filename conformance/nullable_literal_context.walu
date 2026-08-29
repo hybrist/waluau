@@ -2,7 +2,6 @@
 -- it does from a plain annotation. Number, string, and bytes literals already
 -- did; bool literals and array literals are here because they used to need a
 -- helper function to produce a present `bool?` or a typed `{T}?`.
-
 -- Bools, in every position a literal reaches an expectation.
 local set_true: bool? = true
 local set_false: bool? = false

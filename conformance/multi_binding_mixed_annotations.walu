@@ -1,7 +1,6 @@
 -- A multi-binding declaration may annotate any subset of its names, as in
 -- upstream Luau: annotated names check against their annotation, while
 -- unannotated names infer from their initializer.
-
 function first_annotated(): i32
     local a: i32, b = 10, 20.5
     assert(b == 20.5)

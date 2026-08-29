@@ -1,5 +1,4 @@
 -- Nullable extern host references use nil checks to narrow before use.
-
 type Element = extern
 
 function use_element(value: Element): i32

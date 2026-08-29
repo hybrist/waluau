@@ -7,7 +7,6 @@
 -- "set and true" -- see nullable_or_default.walu.
 -- conformance: error=whether a present 'false' takes the fallback is ambiguous
 -- conformance: error=Write 'flag == true' for set-and-true
-
 local stored: bool? = false
 local enabled: bool = stored or true
 assert(enabled == false)

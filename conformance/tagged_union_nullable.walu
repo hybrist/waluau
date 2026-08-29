@@ -2,7 +2,6 @@
 -- names the same variants as `Goods`, because constructing is the one direction
 -- in which the answer cannot be nil. Reading a nullable union is the other
 -- direction and still has to prove the value non-nil first.
-
 type Goods = Upgrade({ kind: i32 }) | Spell({ kind: i32 })
 
 -- A function returning `Goods?` constructs a variant on some paths and answers

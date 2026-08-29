@@ -6,7 +6,6 @@
 -- rejections. The caller owns the await and then passes the handle to
 -- finish_*; this keeps suspension explicit until transitive async wrappers can
 -- preserve caller continuations and aggregate locals reliably.
-
 export type Resource = { handle: i32, kind: string, path: string }
 export type ResourceError = { code: string, message: string, path: string }
 export type LoadResult = { ok: bool, resource: Resource, error: ResourceError }
@@ -47,7 +46,7 @@ function from_handle(handle: i32, kind: string, path: string): LoadResult
         return {
             ok = true,
             resource = { handle = handle, kind = kind, path = path },
-            error = { code = "", message = "", path = path },
+            error = { code = "", message = "", path = path }
         }
     end
 
@@ -57,7 +56,7 @@ function from_handle(handle: i32, kind: string, path: string): LoadResult
     return {
         ok = false,
         resource = failed_resource(kind, path),
-        error = { code = code, message = message, path = path },
+        error = { code = code, message = message, path = path }
     }
 end
 
@@ -102,12 +101,15 @@ end
 
 function typed_image_from_handle(handle: i32, path: string): ImageLoadResult
     if game_resource_ok(handle) then
-        return { resource = { lease = { handle = handle, path = path, released = false } }, error = nil }
+        return {
+            resource = { lease = { handle = handle, path = path, released = false } },
+            error = nil
+        }
     end
     local error: ResourceError = {
         code = game_resource_error_code(handle),
         message = game_resource_error_message(handle),
-        path = path,
+        path = path
     }
     game_resource_release(handle)
     return { resource = nil, error = error }
@@ -133,12 +135,15 @@ end
 
 function typed_font_from_handle(handle: i32, path: string): FontLoadResult
     if game_resource_ok(handle) then
-        return { resource = { lease = { handle = handle, path = path, released = false } }, error = nil }
+        return {
+            resource = { lease = { handle = handle, path = path, released = false } },
+            error = nil
+        }
     end
     local error: ResourceError = {
         code = game_resource_error_code(handle),
         message = game_resource_error_message(handle),
-        path = path,
+        path = path
     }
     game_resource_release(handle)
     return { resource = nil, error = error }
@@ -151,12 +156,15 @@ end
 
 function typed_sound_from_handle(handle: i32, path: string): SoundLoadResult
     if game_resource_ok(handle) then
-        return { resource = { lease = { handle = handle, path = path, released = false } }, error = nil }
+        return {
+            resource = { lease = { handle = handle, path = path, released = false } },
+            error = nil
+        }
     end
     local error: ResourceError = {
         code = game_resource_error_code(handle),
         message = game_resource_error_message(handle),
-        path = path,
+        path = path
     }
     game_resource_release(handle)
     return { resource = nil, error = error }
@@ -182,7 +190,9 @@ function own_sound(owner: Owner, resource: SoundResource): unit
 end
 
 function lease_handle(lease: Lease): i32
-    if lease.released then return 0 end
+    if lease.released then
+        return 0
+    end
     return lease.handle
 end
 
@@ -199,7 +209,9 @@ function sound_handle(resource: SoundResource): i32
 end
 
 function release_lease(lease: Lease): unit
-    if not lease.released then game_resource_release(lease.handle) end
+    if not lease.released then
+        game_resource_release(lease.handle)
+    end
     lease.released = true
 end
 
@@ -216,7 +228,9 @@ function release_sound(resource: SoundResource): unit
 end
 
 function release_owner(owner: Owner): unit
-    if owner.released then return end
+    if owner.released then
+        return
+    end
     for _, lease in owner.leases do
         release_lease(lease)
     end
@@ -277,5 +291,5 @@ return {
     text = text,
     byte_data = byte_data,
     font_family = font_family,
-    release = release,
+    release = release
 }

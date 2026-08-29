@@ -1,7 +1,6 @@
 -- Re-entrant coroutine activation frames: the same suspension-capable
 -- function active at several nested call depths must give every activation
 -- its own continuation PC and spilled locals (waluau-qsvy).
-
 -- Direct recursion that suspends on the way down and on the way back up.
 -- Every activation must resume exactly once with its own `n` and `rest`.
 function updown(n: i32): i32

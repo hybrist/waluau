@@ -2,7 +2,6 @@
 -- answers with a real Luau type name. A multi-value call in single-value
 -- position yields its first result (or nil when it returns nothing), and a
 -- nominal alias reports the name of its underlying representation.
-
 type Point = { x: number, y: number }
 
 function pair(): (number, string)
@@ -45,4 +44,4 @@ assert(type("a") == "string")
 assert(type(true) == "boolean")
 assert(type(nil) == "nil")
 assert(type(pair) == "function")
-assert(type({ 1, 2, 3 }) == "table")
+assert(type({1, 2, 3}) == "table")

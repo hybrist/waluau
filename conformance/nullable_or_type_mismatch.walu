@@ -2,7 +2,6 @@
 -- nullable the operator supplies a default rather than testing truthiness, so
 -- the fallback has to match the left operand's type.
 -- conformance: error=the fallback of 'or' must be f64 or f64? to match the nullable left operand
-
 local maybe: f64? = 1.0
 local wrong: f64 = maybe or "fallback"
 assert(wrong == 1.0)

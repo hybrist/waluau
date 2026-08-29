@@ -2,14 +2,13 @@
 -- `(a: i32, b: i32) -> i32`. Names are ignored for type checking and type
 -- identity, so named and unnamed spellings of the same shape interconvert
 -- freely.
-
 type Calculator = { apply: (a: i32, b: i32) -> i32, offset: i32 }
 
 local calc: Calculator = {
     apply = function(x: i32, y: i32): i32
         return x * 10 + y
     end,
-    offset = 7,
+    offset = 7
 }
 
 assert(calc.apply(2, 3) == 23)

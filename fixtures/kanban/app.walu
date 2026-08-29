@@ -1,7 +1,6 @@
 -- Client-side Kanban demo for the playground DOM output.
 -- Waluau owns DOM rendering, browser events, filtering, and localStorage
 -- persistence through deterministic string fields.
-
 function install_kanban(_run_once: i32): unit
     local window = require("dom:window")
     local document: Document = window.document
@@ -251,137 +250,161 @@ function install_kanban(_run_once: i32): unit
         card_visible = true
     end
 
-    add_button:add_event_listener("click", function(_event: Event): unit
-        if editor_visible == false then
-            title_input:set_attribute("value", "New task")
-            description_input.text_content = ""
-            priority_input:set_attribute("value", "Medium")
-            tags_input:set_attribute("value", "client")
-            backlog_list:append_child(editor)
-            editor_visible = true
+    add_button:add_event_listener(
+        "click",
+        function(_event: Event): unit
+            if editor_visible == false then
+                title_input:set_attribute("value", "New task")
+                description_input.text_content = ""
+                priority_input:set_attribute("value", "Medium")
+                tags_input:set_attribute("value", "client")
+                backlog_list:append_child(editor)
+                editor_visible = true
+            end
         end
-    end)
+    )
 
-    edit_button:add_event_listener("click", function(_event: Event): unit
-        if editor_visible == false then
-            backlog_list:append_child(editor)
-            editor_visible = true
+    edit_button:add_event_listener(
+        "click",
+        function(_event: Event): unit
+            if editor_visible == false then
+                backlog_list:append_child(editor)
+                editor_visible = true
+            end
         end
-    end)
+    )
 
-    save_button:add_event_listener("click", function(_event: Event): unit
-        if HTMLInputElement(title) = title_input then
-            if HTMLTextAreaElement(description) = description_input then
-                if HTMLInputElement(priority) = priority_input then
-                    if HTMLInputElement(tags) = tags_input then
-                        card_title = title.value
-                        card_description = description.value
-                        card_priority = priority.value
-                        card_tags = tags.value
-                        if card_title == "" then
-                            card_title = "Untitled card"
+    save_button:add_event_listener(
+        "click",
+        function(_event: Event): unit
+            if HTMLInputElement(title) = title_input then
+                if HTMLTextAreaElement(description) = description_input then
+                    if HTMLInputElement(priority) = priority_input then
+                        if HTMLInputElement(tags) = tags_input then
+                            card_title = title.value
+                            card_description = description.value
+                            card_priority = priority.value
+                            card_tags = tags.value
+                            if card_title == "" then
+                                card_title = "Untitled card"
+                            end
+                            if card_priority == "" then
+                                card_priority = "Medium"
+                            end
+
+                            card_status = "backlog"
+                            card_node:set_attribute("data-status", "backlog")
+                            card_node.text_content = card_title .. " " .. card_description .. " " .. card_priority .. " priority " .. card_tags
+                            card_node:append_child(card_controls)
+                            backlog_list:append_child(card_node)
+                            card_visible = true
+
+                            storage:set_item("waluau-kanban:card:0:id", "card-1")
+                            storage:set_item("waluau-kanban:card:0:title", card_title)
+                            storage:set_item("waluau-kanban:card:0:description", card_description)
+                            storage:set_item("waluau-kanban:card:0:priority", card_priority)
+                            storage:set_item("waluau-kanban:card:0:tags", card_tags)
+                            storage:set_item("waluau-kanban:card:0:status", card_status)
+                            storage:set_item("waluau-kanban:activity:0", "Updated " .. card_title)
+                            activity_log.text_content = "Updated " .. card_title
                         end
-                        if card_priority == "" then
-                            card_priority = "Medium"
-                        end
-
-                        card_status = "backlog"
-                        card_node:set_attribute("data-status", "backlog")
-                        card_node.text_content = card_title .. " " .. card_description .. " " .. card_priority .. " priority " .. card_tags
-                        card_node:append_child(card_controls)
-                        backlog_list:append_child(card_node)
-                        card_visible = true
-
-                        storage:set_item("waluau-kanban:card:0:id", "card-1")
-                        storage:set_item("waluau-kanban:card:0:title", card_title)
-                        storage:set_item("waluau-kanban:card:0:description", card_description)
-                        storage:set_item("waluau-kanban:card:0:priority", card_priority)
-                        storage:set_item("waluau-kanban:card:0:tags", card_tags)
-                        storage:set_item("waluau-kanban:card:0:status", card_status)
-                        storage:set_item("waluau-kanban:activity:0", "Updated " .. card_title)
-                        activity_log.text_content = "Updated " .. card_title
                     end
                 end
             end
         end
-    end)
+    )
 
-    next_button:add_event_listener("click", function(_event: Event): unit
-        if card_visible then
-            if card_status == "backlog" then
-                backlog_list:remove_child(card_node)
-                card_status = "doing"
-                card_node:set_attribute("data-status", "doing")
-                doing_list:append_child(card_node)
-                storage:set_item("waluau-kanban:card:0:status", "doing")
-                storage:set_item("waluau-kanban:activity:0", "Moved " .. card_title .. " to Doing")
-                activity_log.text_content = "Moved " .. card_title .. " to Doing"
-            elseif card_status == "doing" then
-                doing_list:remove_child(card_node)
-                card_status = "done"
-                card_node:set_attribute("data-status", "done")
-                done_list:append_child(card_node)
-                storage:set_item("waluau-kanban:card:0:status", "done")
-                storage:set_item("waluau-kanban:activity:0", "Moved " .. card_title .. " to Done")
-                activity_log.text_content = "Moved " .. card_title .. " to Done"
+    next_button:add_event_listener(
+        "click",
+        function(_event: Event): unit
+            if card_visible then
+                if card_status == "backlog" then
+                    backlog_list:remove_child(card_node)
+                    card_status = "doing"
+                    card_node:set_attribute("data-status", "doing")
+                    doing_list:append_child(card_node)
+                    storage:set_item("waluau-kanban:card:0:status", "doing")
+                    storage:set_item(
+                        "waluau-kanban:activity:0",
+                        "Moved " .. card_title .. " to Doing"
+                    )
+                    activity_log.text_content = "Moved " .. card_title .. " to Doing"
+                elseif card_status == "doing" then
+                    doing_list:remove_child(card_node)
+                    card_status = "done"
+                    card_node:set_attribute("data-status", "done")
+                    done_list:append_child(card_node)
+                    storage:set_item("waluau-kanban:card:0:status", "done")
+                    storage:set_item(
+                        "waluau-kanban:activity:0",
+                        "Moved " .. card_title .. " to Done"
+                    )
+                    activity_log.text_content = "Moved " .. card_title .. " to Done"
+                end
             end
         end
-    end)
+    )
 
-    delete_button:add_event_listener("click", function(_event: Event): unit
-        if card_visible then
-            if card_status == "doing" then
-                doing_list:remove_child(card_node)
-            elseif card_status == "done" then
-                done_list:remove_child(card_node)
-            else
-                backlog_list:remove_child(card_node)
+    delete_button:add_event_listener(
+        "click",
+        function(_event: Event): unit
+            if card_visible then
+                if card_status == "doing" then
+                    doing_list:remove_child(card_node)
+                elseif card_status == "done" then
+                    done_list:remove_child(card_node)
+                else
+                    backlog_list:remove_child(card_node)
+                end
+                card_visible = false
+                storage:remove_item("waluau-kanban:card:0:id")
+                storage:remove_item("waluau-kanban:card:0:title")
+                storage:remove_item("waluau-kanban:card:0:description")
+                storage:remove_item("waluau-kanban:card:0:priority")
+                storage:remove_item("waluau-kanban:card:0:tags")
+                storage:remove_item("waluau-kanban:card:0:status")
+                storage:set_item("waluau-kanban:activity:0", "Deleted " .. card_title)
+                activity_log.text_content = "Deleted " .. card_title
             end
-            card_visible = false
-            storage:remove_item("waluau-kanban:card:0:id")
-            storage:remove_item("waluau-kanban:card:0:title")
-            storage:remove_item("waluau-kanban:card:0:description")
-            storage:remove_item("waluau-kanban:card:0:priority")
-            storage:remove_item("waluau-kanban:card:0:tags")
-            storage:remove_item("waluau-kanban:card:0:status")
-            storage:set_item("waluau-kanban:activity:0", "Deleted " .. card_title)
-            activity_log.text_content = "Deleted " .. card_title
         end
-    end)
+    )
 
-    filter_input:add_event_listener("input", function(event: Event): unit
-        if HTMLInputElement(target) = event.target then
-            local value: string = target.value
-            if value == "" then
-                if seed_backlog_visible == false then
-                    backlog_list:append_child(seed_backlog)
-                    seed_backlog_visible = true
+    filter_input:add_event_listener(
+        "input",
+        function(event: Event): unit
+            if HTMLInputElement(target) = event.target then
+                local value: string = target.value
+                if value == "" then
+                    if seed_backlog_visible == false then
+                        backlog_list:append_child(seed_backlog)
+                        seed_backlog_visible = true
+                    end
+                    if seed_doing_visible == false then
+                        doing_list:append_child(seed_doing)
+                        seed_doing_visible = true
+                    end
+                    if seed_done_visible == false then
+                        done_list:append_child(seed_done)
+                        seed_done_visible = true
+                    end
+                else
+                    if seed_backlog_visible then
+                        backlog_list:remove_child(seed_backlog)
+                        seed_backlog_visible = false
+                    end
+                    if seed_doing_visible then
+                        doing_list:remove_child(seed_doing)
+                        seed_doing_visible = false
+                    end
+                    if seed_done_visible then
+                        done_list:remove_child(seed_done)
+                        seed_done_visible = false
+                    end
                 end
-                if seed_doing_visible == false then
-                    doing_list:append_child(seed_doing)
-                    seed_doing_visible = true
-                end
-                if seed_done_visible == false then
-                    done_list:append_child(seed_done)
-                    seed_done_visible = true
-                end
-            else
-                if seed_backlog_visible then
-                    backlog_list:remove_child(seed_backlog)
-                    seed_backlog_visible = false
-                end
-                if seed_doing_visible then
-                    doing_list:remove_child(seed_doing)
-                    seed_doing_visible = false
-                end
-                if seed_done_visible then
-                    done_list:remove_child(seed_done)
-                    seed_done_visible = false
-                end
+                storage:set_item("waluau-kanban:filter", value)
             end
-            storage:set_item("waluau-kanban:filter", value)
         end
-    end)
+    )
 end
 
 install_kanban(0::i32)

@@ -1,7 +1,6 @@
 -- Host imports can accept Waluau callback values for browser-style events.
 -- The browser conformance runner invokes the stored callback through
 -- __waluau_call_callback_event_unit and verifies captured state mutation.
-
 type Event = extern
 
 declare function register_event_callback(handler: (Event) -> unit): unit
@@ -9,8 +8,10 @@ declare function report_event_count(value: i32): unit
 
 function register_counter(seed: i32): unit
     local count: i32 = seed
-    register_event_callback(function(event: Event): unit
-        count = count + 1
-        report_event_count(count)
-    end)
+    register_event_callback(
+        function(event: Event): unit
+            count = count + 1
+            report_event_count(count)
+        end
+    )
 end

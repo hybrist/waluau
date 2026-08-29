@@ -1,6 +1,5 @@
 -- Coroutine payloads move through bare `coroutine.resume` as `unknown`, so
 -- callers explicitly unbox values at use sites.
-
 type Element = extern
 
 function yield_string(): i32
@@ -14,10 +13,12 @@ function yield_float(): i32
 end
 
 function yield_extern(value: Element): Element
-    local co: thread = coroutine.create(function(): i32
-        coroutine.yield(value)
-        return 11
-    end)
+    local co: thread = coroutine.create(
+        function(): i32
+            coroutine.yield(value)
+            return 11
+        end
+    )
     local ok: bool, payload: unknown = coroutine.resume(co)
     assert(ok)
     return payload::Element

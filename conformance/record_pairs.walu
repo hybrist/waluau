@@ -3,14 +3,13 @@
 -- field must share one type, since a single loop variable binds the values.
 -- The field names are compile-time constants, so the loop walks a string
 -- array with the values snapshot into a parallel array.
-
 local scores = { alice = 3, bob = 5, carol = 7 }
 
 local names = ""
 local total: i32 = 0
 for name, score in pairs(scores) do
     names = names .. name .. ";"
-    total = total + (score :: i32)
+    total = total + (score::i32)
 end
 assert(names == "alice;bob;carol;")
 assert(total == 15)
@@ -51,7 +50,7 @@ assert(calls == 1)
 local cell = { first = 1, second = 2 }
 local observed: i32 = 0
 for _, v in pairs(cell) do
-    observed = observed * 10 + (v :: i32)
+    observed = observed * 10 + (v::i32)
     cell.second = 99
 end
 assert(observed == 12)

@@ -1,7 +1,6 @@
 -- table library on growable arrays: insert (append and positional), remove
 -- (last and positional), sort (default and comparator), and getn. Positions
 -- are 0-based like all Waluau array indexing.
-
 -- table.insert(t, v) appends.
 local t: {i32} = {3, 1}
 table.insert(t, 2)
@@ -42,9 +41,12 @@ assert(u[4] == 7)
 assert(u[5] == 9)
 
 -- Comparator sort (descending).
-table.sort(u, function(a: i32, b: i32): bool
-    return a > b
-end)
+table.sort(
+    u,
+    function(a: i32, b: i32): bool
+        return a > b
+    end
+)
 assert(u[0] == 9)
 assert(u[1] == 7)
 assert(u[2] == 5)

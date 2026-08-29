@@ -1,7 +1,6 @@
 -- Promise<T> extern aliases should support fetch-style host functions and
 -- Response:text()-style host methods while erasing to externref-compatible
 -- imports.
-
 type Response = extern
 type Promise<T> = extern
 

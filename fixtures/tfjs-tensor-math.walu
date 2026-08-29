@@ -53,12 +53,14 @@ end
 function tidy_memory_delta(): i32
     local tf = require("tfjs")
     local before: i32 = tf.memory_num_tensors()
-    local kept: Tensor = tf.tidy(function(): extern
-        local a: Tensor = tf.scalar(8.0)
-        local b: Tensor = tf.scalar(4.0)
-        local c: Tensor = (a - b) / b
-        return tf.keep(c)::extern
-    end)
+    local kept: Tensor = tf.tidy(
+        function(): extern
+            local a: Tensor = tf.scalar(8.0)
+            local b: Tensor = tf.scalar(4.0)
+            local c: Tensor = (a - b) / b
+            return tf.keep(c)::extern
+        end
+    )
     local during: i32 = tf.memory_num_tensors()
     assert(tf.scalar_value(kept) == 1.0)
     tf.dispose(kept)

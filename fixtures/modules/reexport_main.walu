@@ -1,4 +1,4 @@
 function main(): f64
     local bundle = require("./reexport")
-    return bundle.add(bundle.double(2) :: f64, 1.0)
+    return bundle.add(bundle.double(2)::f64, 1.0)
 end

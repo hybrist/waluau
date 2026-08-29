@@ -118,7 +118,7 @@ describe(
                     expect(good_kind):not:toBeNil()
                     if good_kind ~= nil then
                         for kind in seen do
-                        expect(kind):not:toBe(good_kind)
+                            expect(kind):not:toBe(good_kind)
                         end
                         table.insert(seen, good_kind)
                     end

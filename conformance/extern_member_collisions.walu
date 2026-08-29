@@ -1,10 +1,9 @@
 -- Duplicate extern member names must resolve through the receiver type.
-
 type Alpha = extern
 type Beta = extern
 
-declare property Alpha:size: u32
-declare property Beta:size: u32
+declare property Alpha: size: u32
+declare property Beta: size: u32
 declare function Alpha:value(delta: i32): i32
 declare function Beta:value(delta: i32): i32
 

@@ -1,6 +1,5 @@
 -- A trailing `...` in a table constructor splats the caller's varargs after
 -- the explicit prefix; `{...}` alone is a fresh copy of the varargs.
-
 function collect(...)
     local t = {...}
     return #t

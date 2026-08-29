@@ -3,7 +3,6 @@
 -- packaged read-only asset lookup. All operations are async: local storage
 -- backs them today, and a larger-capacity store can replace it without
 -- changing game source.
-
 local resources = require("./resources")
 
 export type SaveResult = { ok: bool, error: resources.ResourceError }
@@ -92,5 +91,5 @@ return {
     finish_operation = finish_operation,
     await_write_text = await_write_text,
     await_write_bytes = await_write_bytes,
-    await_delete = await_delete,
+    await_delete = await_delete
 }

@@ -2,7 +2,6 @@
 -- the dotted name — a Lua-style static constructor with no implicit self.
 -- Together with `function State:method(...)` sugar this gives the idiomatic
 -- constructor + methods shape.
-
 type Counter = { value: i32, peak: i32 }
 
 function Counter.new(start: i32): Counter

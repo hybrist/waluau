@@ -2,7 +2,6 @@
 -- acquisition, shader compilation, linear-memory typed-array vertex upload
 -- (via dom_float32_array_view), and a draw call, verified host-side with
 -- readPixels by the conformance runner.
-
 local window = require("dom:window")
 local document: Document = window.document
 local body: HTMLElement = document.body
@@ -53,18 +52,32 @@ if HTMLCanvasElement(canvas) = element then
     gl:clear(GL_COLOR_BUFFER_BIT)
 
     local program: WebGLProgram = gl:createProgram()
-    gl:attachShader(program, compile_shader(gl, GL_VERTEX_SHADER, [[
+    gl:attachShader(
+        program,
+        compile_shader(
+            gl,
+            GL_VERTEX_SHADER,
+            [[
 attribute vec2 a_position;
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }
-]]))
-    gl:attachShader(program, compile_shader(gl, GL_FRAGMENT_SHADER, [[
+]]
+        )
+    )
+    gl:attachShader(
+        program,
+        compile_shader(
+            gl,
+            GL_FRAGMENT_SHADER,
+            [[
 precision mediump float;
 void main() {
     gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
 }
-]]))
+]]
+        )
+    )
     gl:linkProgram(program)
     local link_log: string? = gl:getProgramInfoLog(program)
     if link_log ~= nil then

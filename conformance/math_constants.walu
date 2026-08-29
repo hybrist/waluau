@@ -1,6 +1,5 @@
 -- Math constants are declared in builtins/math.walu (`declare const`) and
 -- fold to their literal value during lowering; no host import is involved.
-
 assert(math.pi > 3.14159265)
 assert(math.pi < 3.14159266)
 

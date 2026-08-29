@@ -1,8 +1,7 @@
 -- `{}` in type position is the empty record type: a record with no fields.
 -- `{T}` stays an array type and `{ x: T }` stays a fielded record.
-
 type Marker = {}
-type Spaced = { }
+type Spaced = {}
 
 function tag(m: Marker): i32
     return 7

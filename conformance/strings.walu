@@ -1,5 +1,4 @@
 -- String support: literals materialize via host imports as externref values.
-
 function string_param(s: string): bool
     return s == "hello"
 end

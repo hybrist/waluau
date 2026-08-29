@@ -2,14 +2,15 @@
 -- browser-style animation-frame APIs such as requestAnimationFrame.
 -- The browser conformance runner invokes the stored callback through
 -- __waluau_call_callback_f64_unit and verifies captured state mutation.
-
 declare function register_frame_callback(handler: (f64) -> unit): unit
 declare function report_frame_total(value: f64): unit
 
 function register_accumulator(seed: f64): unit
     local total: f64 = seed
-    register_frame_callback(function(timestamp: f64): unit
-        total = total + timestamp
-        report_frame_total(total)
-    end)
+    register_frame_callback(
+        function(timestamp: f64): unit
+            total = total + timestamp
+            report_frame_total(total)
+        end
+    )
 end
