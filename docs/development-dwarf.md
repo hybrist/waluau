@@ -23,7 +23,7 @@ cargo run -p waluau-cli -- path/to/main.walu \
 ```
 
 The command writes `main.wasm` and `main.debug.wasm`. Library callers use
-`waluau_driver::CompileOptions { development_dwarf: true }` with
+`waluau_driver::CompileOptions { development_dwarf: true, ..Default::default() }` with
 `compile_source_artifacts_with_options`, `compile_file_artifacts_with_options`,
 or `CompilerSession::build_root_with_options`; the returned artifacts contain
 the runtime Wasm, optional companion, and exact development source snapshots.

@@ -291,7 +291,7 @@ impl ArrayTypeRegistry {
     }
 }
 
-fn type_key(ty: &Type) -> String {
+pub(crate) fn type_key(ty: &Type) -> String {
     ty.to_string()
 }
 
@@ -602,7 +602,14 @@ fn insert_record_type(ty: &Type, seen: &mut SeenTypes, out: &mut Vec<Type>) {
             }
             insert_record_type(return_type, seen, out);
         }
-        Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+        Type::TaggedVariant(variant) => {
+            insert_record_type(&variant.payload, seen, out);
+            insert_record_type(&Type::canonical_tagged_union_record(), seen, out);
+        }
+        Type::TaggedUnion(variants) => {
+            for variant in variants {
+                insert_record_type(&variant.payload, seen, out);
+            }
             insert_record_type(&Type::canonical_tagged_union_record(), seen, out);
         }
         _ => {}

@@ -620,6 +620,14 @@ fn merge_with_ambient_declarations(
 
         for function in &module_functions {
             let mut lowered = function.clone();
+            // Required-module exports have already been consumed to resolve
+            // imports. Only an entry-file declaration remains authored into
+            // the browser-visible Wasm interface after linking.
+            if id != entry_id
+                && lowered.declaration_class == waluau_ast::FunctionDeclarationClass::Export
+            {
+                lowered.declaration_class = waluau_ast::FunctionDeclarationClass::Module;
+            }
             rewriter.rewrite_function_types(&mut lowered);
             let mut bound: HashSet<String> = lowered
                 .params

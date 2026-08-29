@@ -76,6 +76,10 @@ impl FunctionSourceMap {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub functions: Vec<Function>,
+    /// Entry-file `export function` declarations keyed by resolved function
+    /// identity. Code generation uses the authored name as the stable browser
+    /// Wasm export name; linked dependency declarations never enter this map.
+    pub authored_function_exports: BTreeMap<SymbolId, String>,
     pub globals: Vec<Global>,
     pub declared_imports: Vec<DeclaredImport>,
     pub start: Option<usize>,

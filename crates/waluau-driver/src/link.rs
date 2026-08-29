@@ -689,6 +689,15 @@ fn merge_with_builtins(
 
         for function in &module_functions {
             let mut lowered = function.clone();
+            // `export function` is dependency-facing metadata until linking.
+            // Only declarations authored in the entry module define the
+            // browser-visible Wasm interface; required modules have already
+            // exposed their declarations through `imports` above.
+            if id != entry_id
+                && lowered.declaration_class == waluau_ast::FunctionDeclarationClass::Export
+            {
+                lowered.declaration_class = waluau_ast::FunctionDeclarationClass::Module;
+            }
             rewriter.rewrite_function_types(&mut lowered);
             let mut bound: HashSet<String> = lowered
                 .params
@@ -3554,7 +3563,7 @@ mod tests {
             .expect("exported dependency function should remain");
         assert_eq!(
             answer.declaration_class,
-            waluau_ast::FunctionDeclarationClass::Export
+            waluau_ast::FunctionDeclarationClass::Module
         );
         assert!(
             program

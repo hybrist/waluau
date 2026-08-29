@@ -440,10 +440,10 @@ export function waluau(options = {}) {
     return resolvedShaderSources().some((source) => source.file === file);
   }
 
-  // Production game modules only need the runtime entry points; the broad
-  // per-function export surface exists for the playground, and for test and
-  // story modules whose functions are reached from the host. Tests and
-  // stories keep full exports even in `vite build` (build-storybook).
+  // Production game modules expose only authored functions and compiler-owned
+  // runtime entries. Dev, test, and story modules deliberately request the
+  // broader tooling surface because their private functions are called by the
+  // browser host. Tests and stories keep it in `vite build` (build-storybook).
   function usesMinimalExports(entryPath) {
     return (
       productionBuild
@@ -458,7 +458,9 @@ export function waluau(options = {}) {
       ? []
       : ['--manifest', resolve(appRoot, options.manifest)];
     const reportArgs = ['--report', reportOutput];
-    const exportArgs = usesMinimalExports(entryPath) ? ['--minimal-exports'] : [];
+    const exportArgs = usesMinimalExports(entryPath)
+      ? ['--minimal-exports']
+      : ['--tooling-exports'];
     return [
       entryPath,
       '-o', wasmOutput,

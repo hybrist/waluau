@@ -4,7 +4,14 @@ use wasmparser::{Operator, Parser, Payload, TypeRef, Validator};
 use wasmprinter::print_bytes;
 
 fn emit(module: &waluau_ir::Module) -> Result<Vec<u8>, waluau_diagnostics::Diagnostic> {
-    super::emit(module).map(|r| r.wasm)
+    super::emit_with_options(
+        module,
+        super::EmitOptions {
+            expose_all_functions_for_tooling: true,
+            ..Default::default()
+        },
+    )
+    .map(|r| r.wasm)
 }
 
 fn wasm_export_func_index(wasm: &[u8], name: &str) -> Option<u32> {
@@ -387,7 +394,7 @@ fn wasm_has_export_with_prefix(wasm: &[u8], prefix: &str) -> bool {
 }
 
 #[test]
-fn minimal_exports_keep_only_the_entry_points() {
+fn authored_only_exports_omit_tooling_instrumentation() {
     let source = r#"
         type Point = {x: i32, y: i32}
 
@@ -423,7 +430,7 @@ fn minimal_exports_keep_only_the_entry_points() {
     let minimal = super::emit_with_options(
         &ir,
         super::EmitOptions {
-            minimal_exports: true,
+            expose_all_functions_for_tooling: false,
             ..Default::default()
         },
     )
@@ -446,6 +453,120 @@ fn minimal_exports_keep_only_the_entry_points() {
             && wasm_export_func_index(&minimal, "__waluau_main").is_some(),
         "the runtime entry points must survive minimal-export builds"
     );
+}
+
+#[test]
+fn authored_exports_and_their_marshalling_helpers_survive_without_tooling_exports() {
+    let source = r#"
+        type Point = {x: i32, y: i32}
+        type Secret = {value: f64}
+        type Choice = Chosen({value: i32?}) | Empty(bool)
+
+        function private_helper(secret: Secret, maybe: f64?): Secret
+            return secret
+        end
+
+        export function translate(point: Point, delta: i32?): Point
+            return point
+        end
+
+        export function keep_choice(choice: Choice): Choice
+            return choice
+        end
+
+        assert(translate({x = 1, y = 2}, nil).x == 1)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let point_key = ir
+        .functions
+        .iter()
+        .find(|function| function.name == "translate")
+        .expect("authored export")
+        .params[0]
+        .1
+        .to_string();
+    let secret_key = ir
+        .functions
+        .iter()
+        .find(|function| function.name == "private_helper")
+        .expect("private helper")
+        .params[0]
+        .1
+        .to_string();
+    let choice_payload_key = match &ir
+        .functions
+        .iter()
+        .find(|function| function.name == "keep_choice")
+        .expect("tagged-union export")
+        .params[0]
+        .1
+    {
+        waluau_ast::Type::TaggedUnion(variants) => variants
+            .iter()
+            .find_map(|variant| {
+                matches!(variant.payload.as_ref(), waluau_ast::Type::Record(_))
+                    .then(|| variant.payload.to_string())
+            })
+            .expect("record payload"),
+        other => panic!("expected tagged union, got {other}"),
+    };
+    let emitted = super::emit_with_options(
+        &ir,
+        super::EmitOptions {
+            expose_all_functions_for_tooling: false,
+            ..Default::default()
+        },
+    )
+    .expect("authored-only emit should succeed");
+    let wasm = &emitted.wasm;
+
+    assert!(wasm_export_func_index(wasm, "translate").is_some());
+    assert!(wasm_export_func_index(wasm, "private_helper").is_none());
+    assert!(wasm_export_func_index(wasm, "__waluau_box_nullable_i32").is_some());
+    assert!(wasm_export_func_index(wasm, "__waluau_unbox_nullable_i32").is_some());
+    assert!(wasm_export_func_index(wasm, "__waluau_box_nullable_f64").is_none());
+    assert!(wasm_export_func_index(wasm, "__waluau_unbox_nullable_f64").is_none());
+
+    let point_idx = emitted.record_type_indices[&point_key];
+    let secret_idx = emitted.record_type_indices[&secret_key];
+    let choice_payload_idx = emitted.record_type_indices[&choice_payload_key];
+    assert!(wasm_export_func_index(wasm, &format!("__waluau_new_record_{point_idx}")).is_some());
+    assert!(wasm_export_func_index(wasm, &format!("__waluau_get_record_{point_idx}_0")).is_some());
+    assert!(wasm_export_func_index(wasm, &format!("__waluau_new_record_{secret_idx}")).is_none());
+    assert!(wasm_export_func_index(wasm, &format!("__waluau_get_record_{secret_idx}_0")).is_none());
+    assert!(
+        wasm_export_func_index(wasm, &format!("__waluau_new_record_{choice_payload_idx}"))
+            .is_some()
+    );
+}
+
+#[test]
+fn authored_main_takes_the_public_name_while_runtime_init_keeps_its_internal_export() {
+    let source = r#"
+        export function main(): i32
+            return 42
+        end
+
+        assert(main() == 42)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = super::emit_with_options(
+        &ir,
+        super::EmitOptions {
+            expose_all_functions_for_tooling: false,
+            ..Default::default()
+        },
+    )
+    .expect("authored-only emit should succeed")
+    .wasm;
+
+    let authored_main = wasm_export_func_index(&wasm, "main").expect("authored main export");
+    let runtime_main = wasm_export_func_index(&wasm, "__waluau_main").expect("runtime init export");
+    assert_ne!(authored_main, runtime_main);
 }
 
 #[test]

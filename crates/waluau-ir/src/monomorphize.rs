@@ -635,7 +635,14 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(AstFunction {
             name,
-            declaration_class: waluau_ast::FunctionDeclarationClass::Module,
+            // Non-generic entry declarations retain authored export intent.
+            // Generic specializations are compiler-owned functions and never
+            // independently define the browser Wasm interface.
+            declaration_class: if active.is_none() {
+                function.declaration_class
+            } else {
+                waluau_ast::FunctionDeclarationClass::Module
+            },
             symbol_id: None,
             type_params: Vec::new(),
             params: function

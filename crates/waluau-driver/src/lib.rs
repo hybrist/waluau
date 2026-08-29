@@ -41,18 +41,18 @@ pub mod session;
 pub use link::{LinkOutcome, ModuleProvider};
 pub use session::{Analysis, BuildOutcome, CompilerSession};
 
-pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]\n\n  --development-dwarf  Emit a referenced sibling debug Wasm for browser DevTools\n  --minimal-exports    Export only the runtime entry points so wasm-opt can remove unused code";
+pub const CLI_HELP: &str = "usage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--tooling-exports] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]\n\n  --development-dwarf  Emit a referenced sibling debug Wasm for browser DevTools\n  --tooling-exports    Expose private entry functions and marshalling helpers to browser tooling\n  --minimal-exports    Compatibility alias for the authored-only default";
 
-/// Explicit controls for compiler output. Defaults preserve the production
-/// artifact format exactly.
+/// Explicit controls for compiler output. Defaults expose only the authored
+/// browser interface and compiler-owned runtime entries.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CompileOptions {
     /// Emit external source mappings for browser DevTools development sessions.
     pub development_dwarf: bool,
-    /// Export only the runtime entry points, leaving the playground's
-    /// per-function and record-marshalling exports out so a post-link
-    /// optimizer can remove unused code.
-    pub minimal_exports: bool,
+    /// Deliberately expose all eligible entry-file functions for browser
+    /// tooling. Authored function exports and compiler-owned runtime exports
+    /// are never controlled by this instrumentation setting.
+    pub expose_all_functions_for_tooling: bool,
 }
 
 /// Compile a single source string with no module resolution.
@@ -274,7 +274,7 @@ fn compile_program_with_cache(
             cache,
             waluau_codegen_wasm::EmitOptions {
                 development_dwarf: options.development_dwarf,
-                minimal_exports: options.minimal_exports,
+                expose_all_functions_for_tooling: options.expose_all_functions_for_tooling,
             },
             &debug_file_name,
         ),
@@ -282,7 +282,7 @@ fn compile_program_with_cache(
             ir,
             waluau_codegen_wasm::EmitOptions {
                 development_dwarf: options.development_dwarf,
-                minimal_exports: options.minimal_exports,
+                expose_all_functions_for_tooling: options.expose_all_functions_for_tooling,
             },
             &debug_file_name,
         ),
@@ -393,7 +393,7 @@ where
         asset_module_source,
         CompileOptions {
             development_dwarf: options.development_dwarf,
-            minimal_exports: options.minimal_exports,
+            expose_all_functions_for_tooling: options.expose_all_functions_for_tooling,
         },
     );
     if let Some(report_path) = &options.report {
@@ -576,7 +576,7 @@ struct CliOptions {
     manifest: Option<PathBuf>,
     report: Option<PathBuf>,
     development_dwarf: bool,
-    minimal_exports: bool,
+    expose_all_functions_for_tooling: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -597,7 +597,7 @@ where
     let mut pending_path = None;
     let mut emit_js = false;
     let mut development_dwarf = false;
-    let mut minimal_exports = false;
+    let mut expose_all_functions_for_tooling = false;
 
     for arg in args {
         if let Some(pending) = pending_path.take() {
@@ -615,17 +615,18 @@ where
             Some("--report") => pending_path = Some(PendingPath::Report),
             Some("--emit-js") => emit_js = true,
             Some("--development-dwarf") => development_dwarf = true,
-            Some("--minimal-exports") => minimal_exports = true,
+            Some("--tooling-exports") => expose_all_functions_for_tooling = true,
+            Some("--minimal-exports") => expose_all_functions_for_tooling = false,
             Some(flag) if flag.starts_with('-') => {
                 return Err(Diagnostic::new(format!(
-                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]"
+                    "unsupported flag `{flag}`\n{CLI_HELP}"
                 )));
             }
             _ if input.is_none() => input = Some(PathBuf::from(arg)),
             _ => {
-                return Err(Diagnostic::new(
-                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]",
-                ));
+                return Err(Diagnostic::new(format!(
+                    "too many positional arguments\n{CLI_HELP}"
+                )));
             }
         }
     }
@@ -637,15 +638,11 @@ where
             PendingPath::Report => "--report",
         };
         return Err(Diagnostic::new(format!(
-            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]"
+            "missing path after {flag}\n{CLI_HELP}"
         )));
     }
 
-    let input = input.ok_or_else(|| {
-        Diagnostic::new(
-            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--development-dwarf] [--minimal-exports] [--manifest <waluau.assets.json>] [--report <report.json>]",
-        )
-    })?;
+    let input = input.ok_or_else(|| Diagnostic::new(format!("missing input path\n{CLI_HELP}")))?;
     let output = output.unwrap_or_else(|| default_output_path(&input));
 
     Ok(CliOptions {
@@ -655,7 +652,7 @@ where
         manifest,
         report,
         development_dwarf,
-        minimal_exports,
+        expose_all_functions_for_tooling,
     })
 }
 
@@ -4281,5 +4278,63 @@ end
         "#;
 
         super::compile_source(source).expect("branch-initialized loop-carried bool should compile");
+    }
+
+    #[test]
+    fn authored_entry_exports_survive_without_tooling_exports_and_dependencies_stay_internal() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("maths.walu"),
+            r#"
+                export function answer(): i32
+                    return 42
+                end
+            "#,
+        )
+        .expect("dependency should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local maths = require("./maths")
+
+                function private_helper(): i32
+                    return maths.answer()
+                end
+
+                export function public_answer(): i32
+                    return private_helper()
+                end
+            "#,
+        )
+        .expect("entry module should write");
+
+        let artifacts = super::compile_file_artifacts_with_options(
+            &input_path,
+            "program.wasm",
+            super::CompileOptions {
+                expose_all_functions_for_tooling: false,
+                ..Default::default()
+            },
+        )
+        .expect("authored-only linked compile should succeed");
+        let wat = wasmprinter::print_bytes(&artifacts.wasm).expect("Wasm should print");
+        assert!(wat.contains("(export \"public_answer\""));
+        assert!(!wat.contains("(export \"private_helper\""));
+        assert!(!wat.contains("(export \"__waluau_m0_answer\""));
+
+        let tooling = super::compile_file_artifacts_with_options(
+            &input_path,
+            "program.wasm",
+            super::CompileOptions {
+                expose_all_functions_for_tooling: true,
+                ..Default::default()
+            },
+        )
+        .expect("tooling-linked compile should succeed");
+        let tooling_wat = wasmprinter::print_bytes(&tooling.wasm).expect("Wasm should print");
+        assert!(tooling_wat.contains("(export \"public_answer\""));
+        assert!(tooling_wat.contains("(export \"private_helper\""));
+        assert!(!tooling_wat.contains("(export \"__waluau_m0_answer\""));
     }
 }
