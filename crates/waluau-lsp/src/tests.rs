@@ -1533,3 +1533,92 @@ local b: i32 = p:get()\n";
         "`Other:get` must not be swept in"
     );
 }
+
+#[test]
+fn unused_local_variables_warn_with_the_unnecessary_tag() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let source = "local unused = 1\nlocal _ignored = 2\nlocal used = 3\nassert(used > 0)\n";
+    std::fs::write(&path, source).expect("write fixture");
+
+    let mut server = LspServer::new();
+    let messages = open(&mut server, &path, source);
+    let diagnostics = diagnostics_for(&messages, "main.walu").expect("warnings published");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let warning = &diagnostics[0];
+    assert_eq!(warning["severity"], 2);
+    assert_eq!(warning["message"], "unused variable `unused`");
+    assert_eq!(warning["code"], "lint/unused-variable");
+    // Tag 1 (Unnecessary) is what makes editors render the name faded.
+    assert_eq!(warning["tags"], json!([1]));
+    assert_eq!(
+        warning["range"]["start"],
+        json!({"line": 0, "character": 6})
+    );
+    assert_eq!(warning["range"]["end"], json!({"line": 0, "character": 12}));
+}
+
+#[test]
+fn unused_local_functions_warn_but_top_level_functions_and_params_do_not() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let source = "local function helper(): i32\n    return 1\nend\nfunction add(a: i32, b: i32): i32\n    return a\nend\n";
+    std::fs::write(&path, source).expect("write fixture");
+
+    let mut server = LspServer::new();
+    let messages = open(&mut server, &path, source);
+    let diagnostics = diagnostics_for(&messages, "main.walu").expect("warnings published");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["message"], "unused function `helper`");
+    assert_eq!(diagnostics[0]["code"], "lint/unused-function");
+    assert_eq!(diagnostics[0]["severity"], 2);
+}
+
+#[test]
+fn shadowing_and_loop_bindings_warn_individually() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let source = "local x = 1\nassert(x > 0)\nif x > 0 then\n    local x = 2\nend\nfor i = 1, 3 do\n    print(\"loop\")\nend\n";
+    std::fs::write(&path, source).expect("write fixture");
+
+    let mut server = LspServer::new();
+    let messages = open(&mut server, &path, source);
+    let diagnostics = diagnostics_for(&messages, "main.walu").expect("warnings published");
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["message"] == "unused variable `x`"
+                && diagnostic["range"]["start"]["line"] == 3
+        }),
+        "the inner shadowing binding should warn, the used outer one not: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["message"] == "unused loop variable `i`"
+                && diagnostic["range"]["start"]["line"] == 5
+        }),
+        "the unused loop variable should warn: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn export_table_reads_count_as_uses_and_fixes_clear_warnings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let source = "local kept = 1\nlocal dropped = 2\nreturn { kept = kept }\n";
+    std::fs::write(&path, source).expect("write fixture");
+
+    let mut server = LspServer::new();
+    let messages = open(&mut server, &path, source);
+    let diagnostics = diagnostics_for(&messages, "main.walu").expect("warnings published");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["message"], "unused variable `dropped`");
+
+    let fixed = "local kept = 1\nlocal dropped = 2\nreturn { kept = kept, dropped = dropped }\n";
+    let messages = change(&mut server, &path, fixed);
+    assert_eq!(
+        diagnostics_for(&messages, "main.walu").map(Vec::len),
+        Some(0),
+        "using the binding should clear the warning: {messages:?}"
+    );
+}

@@ -497,6 +497,9 @@ export default function useMonacoEditor({ files, setActiveFile, entryFile, expor
           severity: item.severity === 2
             ? monacoInstance.MarkerSeverity.Warning
             : monacoInstance.MarkerSeverity.Error,
+          // Diagnostic tags share Monaco's MarkerTag numbering; tag 1
+          // (Unnecessary) renders the range faded, e.g. unused variables.
+          ...(item.tags?.length ? { tags: item.tags } : {}),
         }));
         monacoInstance.editor.setModelMarkers(targetModel, 'waluau', markers);
       }

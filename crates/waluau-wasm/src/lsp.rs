@@ -34,6 +34,9 @@ struct ProjectDiagnostic {
     severity: u8,
     source: &'static str,
     message: String,
+    /// LSP/Monaco diagnostic tags (1 = Unnecessary, rendered faded).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -237,6 +240,20 @@ fn analyze_project_sources(files: &HashMap<String, String>, entry_path: &str) ->
         }
     }
 
+    // Single-file lint warnings for every project file. These never gate
+    // compilation or the entry error message; they only add markers.
+    for (path, source) in files {
+        let path = normalized_project_path(path);
+        // Files a failed link never registered still need their text for
+        // span-to-position conversion below.
+        sources
+            .entry(path.clone())
+            .or_insert_with(|| source.clone());
+        for diagnostic in waluau_lsp::unused_definitions(source, Path::new(&path)) {
+            all_diagnostics.push(diagnostic.with_source(&path, source));
+        }
+    }
+
     ProjectAnalysis {
         output,
         error_msg,
@@ -291,6 +308,13 @@ fn diagnostics_by_uri(
                 },
                 source: "waluau",
                 message: diagnostic.to_string(),
+                tags: diagnostic
+                    .tag()
+                    .map(|tag| match tag {
+                        waluau_diagnostics::DiagnosticTag::Unnecessary => 1,
+                    })
+                    .into_iter()
+                    .collect(),
             });
     }
     by_uri
@@ -350,6 +374,34 @@ mod tests {
                 .then(|| message["params"]["diagnostics"].as_array())
                 .flatten()
         })
+    }
+
+    #[test]
+    fn project_analysis_reports_unused_bindings_as_faded_warnings() {
+        let analysis = analyze_project_sources(
+            &HashMap::from([(
+                "/main.walu".to_string(),
+                "local unused = 1\nfunction answer(): i32\n    return 42\nend\n".to_string(),
+            )]),
+            "/main.walu",
+        );
+
+        assert!(
+            analysis.output.is_some(),
+            "warnings must not block compilation"
+        );
+        assert!(analysis.error_msg.is_empty());
+        let diagnostics = analysis
+            .diagnostics
+            .get("file:///main.walu")
+            .expect("unused-binding warning");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, 2);
+        assert_eq!(diagnostics[0].tags, vec![1]);
+        assert_eq!(diagnostics[0].message, "unused variable `unused`");
+        assert_eq!(diagnostics[0].range.start.line, 0);
+        assert_eq!(diagnostics[0].range.start.character, 6);
+        assert_eq!(diagnostics[0].range.end.character, 12);
     }
 
     #[test]

@@ -17,6 +17,8 @@ use waluau_fmt::{FormatConfig, format_source};
 
 mod features;
 
+pub use features::unused_definitions;
+
 /// Diagnostics an [`AnalysisBackend`] produced for one analysis root.
 pub struct BackendAnalysis {
     pub diagnostics: Vec<Diagnostic>,
@@ -263,6 +265,23 @@ impl<B: AnalysisBackend> LspServer<B> {
                 }
             }
         }
+        // Single-file lint warnings for every open buffer, keyed like backend
+        // diagnostics (canonical paths) so a file's errors and warnings land
+        // in one publish.
+        for (path, text) in &self.open_documents {
+            let file = path
+                .canonicalize()
+                .unwrap_or_else(|_| path.clone())
+                .to_string_lossy()
+                .into_owned();
+            for diagnostic in features::unused_definitions(text, path) {
+                let diagnostic = diagnostic.with_file_path(&file);
+                let entries = per_file.entry(file.clone()).or_default();
+                if !entries.contains(&diagnostic) {
+                    entries.push(diagnostic);
+                }
+            }
+        }
 
         let mut messages = Vec::new();
         let mut published_now = HashSet::new();
@@ -302,7 +321,7 @@ impl<B: AnalysisBackend> LspServer<B> {
             .unwrap_or_else(|| {
                 json!({"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}})
             });
-        json!({
+        let mut value = json!({
             "range": range,
             "severity": match diagnostic.severity() {
                 Severity::Error => 1,
@@ -310,7 +329,18 @@ impl<B: AnalysisBackend> LspServer<B> {
             },
             "source": "waluau",
             "message": diagnostic.to_string(),
-        })
+        });
+        if let Some(code) = diagnostic.code() {
+            value["code"] = json!(code);
+        }
+        if let Some(tag) = diagnostic.tag() {
+            // LSP `DiagnosticTag`: 1 = Unnecessary, which editors render by
+            // fading the range (the standard unused-symbol treatment).
+            value["tags"] = json!([match tag {
+                waluau_diagnostics::DiagnosticTag::Unnecessary => 1,
+            }]);
+        }
+        value
     }
 
     fn file_text(&self, path: &Path) -> Option<String> {

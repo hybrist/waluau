@@ -20,6 +20,14 @@ pub enum Severity {
     Error,
 }
 
+/// Presentation hints for a diagnostic's span, mapping onto LSP
+/// `DiagnosticTag`. `Unnecessary` makes editors render the range faded, the
+/// standard treatment for unused code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticTag {
+    Unnecessary,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Diagnostic {
     message: String,
@@ -30,6 +38,7 @@ pub struct Diagnostic {
     file_path: Option<String>,
     source_location: Option<(u32, u32)>,
     action: Option<String>,
+    tag: Option<DiagnosticTag>,
 }
 
 impl Diagnostic {
@@ -44,6 +53,7 @@ impl Diagnostic {
             file_path: None,
             source_location: None,
             action: None,
+            tag: None,
         }
     }
 
@@ -59,6 +69,7 @@ impl Diagnostic {
             file_path: None,
             source_location: None,
             action: None,
+            tag: None,
         }
     }
 
@@ -123,6 +134,11 @@ impl Diagnostic {
         self
     }
 
+    pub fn with_tag(mut self, tag: DiagnosticTag) -> Self {
+        self.tag = Some(tag);
+        self
+    }
+
     /// Transform the human message while preserving its code, severity, span,
     /// source location, and suggested action.
     pub fn map_message(mut self, map: impl FnOnce(String) -> String) -> Self {
@@ -157,6 +173,10 @@ impl Diagnostic {
 
     pub fn action(&self) -> Option<&str> {
         self.action.as_deref()
+    }
+
+    pub fn tag(&self) -> Option<DiagnosticTag> {
+        self.tag
     }
 
     /// Render a diagnostic for a user-facing compiler surface.
