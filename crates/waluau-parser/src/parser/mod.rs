@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use waluau_ast::{
-    DeclaredConstant, DeclaredImport, Function, FunctionExpr, FunctionName, Param, Program, Span,
-    Stmt, Type, TypeDeclaration,
+    DeclaredConstant, DeclaredImport, Function, FunctionDeclarationClass, FunctionExpr,
+    FunctionName, Param, Program, Span, Stmt, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -84,6 +84,7 @@ impl Parser {
             name: name.into(),
             name_span,
             kind,
+            function_declaration: None,
             exported: false,
             enum_variants: None,
             ty,
@@ -314,6 +315,7 @@ impl Parser {
             Self::function_signature_type(&function_expr),
             0,
         );
+        self.definitions[index].function_declaration = Some(FunctionDeclarationClass::Module);
         self.definitions[index].detail = Some(Self::function_signature_detail(
             &name.to_string(),
             &function_expr,
@@ -325,6 +327,7 @@ impl Parser {
                 name: "self".to_string(),
                 name_span,
                 kind: DefinitionKind::Param,
+                function_declaration: None,
                 exported: false,
                 enum_variants: None,
                 ty: Some(Type::Named {
@@ -962,6 +965,7 @@ impl Parser {
         let end_pos = self.peek().map(|t| t.span.start).unwrap_or(start_pos);
         Ok(FunctionExpr {
             name,
+            declaration_class: None,
             symbol_id: None,
             implicit_self: None,
             type_params,
@@ -1068,6 +1072,7 @@ impl Parser {
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(FunctionExpr {
             name,
+            declaration_class: None,
             symbol_id: None,
             implicit_self: None,
             type_params,

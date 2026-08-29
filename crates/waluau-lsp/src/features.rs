@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use waluau_ast::{FunctionDeclarationClass, FunctionExposure};
 use waluau_ast::{Span, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticTag, Severity};
 use waluau_lexer::{Token, TokenKind};
@@ -469,15 +470,16 @@ enum Resolved {
     },
 }
 
-/// Exported members of a required module's scope: its file-visible
-/// functions plus exported type names.
+/// Exported members of a required module's scope: its module function
+/// declarations plus exported type names.
 fn scope_exports(scope: &TypeScope) -> Vec<DefinitionSite> {
     scope
         .definitions
         .iter()
         .filter(|definition| {
-            (definition.kind == DefinitionKind::Function
-                && !definition.name.contains('.')
+            (definition.function_declaration.is_some_and(|class| {
+                class.facts().exposure == FunctionExposure::PrivateWithCompatibilityExposure
+            }) && !definition.name.contains('.')
                 && !definition.name.contains(':'))
                 || (definition.kind == DefinitionKind::TypeName && definition.exported)
         })
@@ -1025,6 +1027,7 @@ fn resolve_target(
                     name: raw.clone(),
                     name_span: Span { start: 0, end: 0 },
                     kind: DefinitionKind::Local,
+                    function_declaration: None,
                     exported: false,
                     enum_variants: None,
                     ty: None,
@@ -1593,10 +1596,12 @@ pub fn unused_definitions(text: &str, path: &Path) -> Vec<Diagnostic> {
         let (code, what) = match definition.kind {
             DefinitionKind::Local => ("lint/unused-variable", "variable"),
             DefinitionKind::LoopVar => ("lint/unused-variable", "loop variable"),
-            // `visible_from == 0` marks a top-level `function`, which is
-            // callable from the host and from requiring modules; only
-            // `local function` / `const function` bindings are file-local.
-            DefinitionKind::Function if definition.visible_from > 0 => {
+            DefinitionKind::Function
+                if matches!(
+                    definition.function_declaration,
+                    Some(FunctionDeclarationClass::Local | FunctionDeclarationClass::Const)
+                ) =>
+            {
                 ("lint/unused-function", "function")
             }
             _ => continue,

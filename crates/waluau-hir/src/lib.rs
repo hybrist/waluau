@@ -207,17 +207,24 @@ fn collect_module_bindings(
         match stmt {
             Stmt::Let {
                 name,
-                rebindability,
+                rebindability: _,
                 ty,
                 value,
                 ..
             } => {
+                // Function declaration syntax carries canonical binding facts
+                // even though its behavior-preserving AST form is a let of a
+                // named closure. Keep module-binding construction tied to
+                // those facts rather than rediscovering local versus const.
+                let rebindability = stmt
+                    .declaration_rebindability()
+                    .expect("matched a single-binding declaration");
                 let ty = match ty {
                     Some(ty) => ty.clone(),
                     None => infer_expr(value, &bindings, fn_signatures, &HashSet::new(), None)
                         .unwrap_or(Type::Unknown),
                 };
-                bindings.insert(name.clone(), binding_for(ty, *rebindability));
+                bindings.insert(name.clone(), binding_for(ty, rebindability));
             }
             Stmt::LetMulti { bindings: lets, .. } => {
                 for binding in lets {
@@ -993,10 +1000,11 @@ fn annotate_inferred_stmt_locals(
     active_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     for stmt in body {
+        let declaration_rebindability = stmt.declaration_rebindability();
         match stmt {
             Stmt::Let {
                 name,
-                rebindability,
+                rebindability: _,
                 ty,
                 value,
                 ..
@@ -1021,7 +1029,13 @@ fn annotate_inferred_stmt_locals(
                     *ty = Some(inferred.clone());
                     inferred
                 };
-                vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
+                vars.insert(
+                    name.clone(),
+                    binding_for(
+                        inferred_ty,
+                        declaration_rebindability.expect("matched a single-binding declaration"),
+                    ),
+                );
             }
             Stmt::If {
                 condition,
@@ -2870,6 +2884,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                         resolved_name: None,
                         value: Expr::Function(FunctionExpr {
                             name: None,
+                            declaration_class: None,
                             symbol_id: None,
                             implicit_self: Some(table.clone()),
                             type_params: function.type_params.clone(),
@@ -3504,6 +3519,7 @@ fn annotate_stmt_resolved_members(
     fn_signatures: &HashMap<String, FnSignature>,
     active_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    let declaration_rebindability = stmt.declaration_rebindability();
     match stmt {
         Stmt::Match { value, arms, .. } => {
             annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
@@ -3518,7 +3534,7 @@ fn annotate_stmt_resolved_members(
         }
         Stmt::Let {
             name,
-            rebindability,
+            rebindability: _,
             ty,
             value,
             ..
@@ -3539,7 +3555,13 @@ fn annotate_stmt_resolved_members(
                 infer_expr(value, vars, fn_signatures, active_type_params, None)
                     .unwrap_or(Type::Unknown)
             };
-            vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
+            vars.insert(
+                name.clone(),
+                binding_for(
+                    inferred_ty,
+                    declaration_rebindability.expect("matched a single-binding declaration"),
+                ),
+            );
         }
         Stmt::Assign { value, .. } | Stmt::Expr(value) | Stmt::Return(value) => {
             annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;

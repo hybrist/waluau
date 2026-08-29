@@ -2640,6 +2640,9 @@ fn recovery_returns_program_and_no_diagnostics_for_valid_source() {
 
 mod definitions {
     use crate::{DefinitionKind, parse_with_recovery};
+    use waluau_ast::{
+        FunctionBindingClass, FunctionDeclarationClass, FunctionExposure, Rebindability,
+    };
 
     fn defs(source: &str) -> Vec<crate::DefinitionSite> {
         let outcome = parse_with_recovery(source, "defs.walu");
@@ -2694,6 +2697,10 @@ mod definitions {
         let definitions = defs(source);
         let add = find(&definitions, "add");
         assert_eq!(add.kind, DefinitionKind::Function);
+        assert_eq!(
+            add.function_declaration,
+            Some(FunctionDeclarationClass::Module)
+        );
         assert_eq!(add.visible_from, 0);
         assert_eq!(add.scope_end, u32::MAX);
         assert_eq!(
@@ -2746,8 +2753,109 @@ mod definitions {
         let definitions = defs(source);
         let fact = find(&definitions, "fact");
         assert_eq!(fact.kind, DefinitionKind::Function);
+        assert_eq!(
+            fact.function_declaration,
+            Some(FunctionDeclarationClass::Local)
+        );
         let recursive_call = source.rfind("fact(n - 1)").unwrap() as u32;
         assert!(fact.visible_from < recursive_call);
+    }
+
+    #[test]
+    fn function_declaration_matrix_uses_canonical_semantic_facts() {
+        let source = r#"
+function plain(): i32
+    return 1
+end
+local function local_fn(): i32
+    return plain()
+end
+const function const_fn(): i32
+    return local_fn()
+end
+function State.new(): i32
+    return const_fn()
+end
+function State:step(): i32
+    return State.new()
+end
+"#;
+        let definitions = defs(source);
+        let expected = [
+            ("plain", FunctionDeclarationClass::Module),
+            ("local_fn", FunctionDeclarationClass::Local),
+            ("const_fn", FunctionDeclarationClass::Const),
+            ("State.new", FunctionDeclarationClass::Module),
+            ("State:step", FunctionDeclarationClass::Module),
+        ];
+        for (name, class) in expected {
+            let definition = find(&definitions, name);
+            assert_eq!(definition.kind, DefinitionKind::Function);
+            assert_eq!(definition.function_declaration, Some(class), "{name}");
+            let expected_exposure = if class == FunctionDeclarationClass::Module {
+                FunctionExposure::PrivateWithCompatibilityExposure
+            } else {
+                FunctionExposure::Private
+            };
+            assert_eq!(class.facts().exposure, expected_exposure, "{name}");
+        }
+
+        let module = FunctionDeclarationClass::Module.facts();
+        assert_eq!(module.binding, FunctionBindingClass::Module);
+        assert!(module.hoisted);
+        assert_eq!(module.rebindability, Rebindability::Const);
+
+        let local = FunctionDeclarationClass::Local.facts();
+        assert_eq!(local.binding, FunctionBindingClass::Lexical);
+        assert!(!local.hoisted);
+        assert_eq!(local.rebindability, Rebindability::Rebindable);
+
+        let konst = FunctionDeclarationClass::Const.facts();
+        assert_eq!(konst.binding, FunctionBindingClass::Lexical);
+        assert!(!konst.hoisted);
+        assert_eq!(konst.rebindability, Rebindability::Const);
+    }
+
+    #[test]
+    fn nested_function_declarations_remain_ordered_and_lexically_scoped() {
+        let source = r#"local function outer(): i32
+    if true then
+        const function inner(): i32
+            return 1
+        end
+        return inner()
+    end
+    return 0
+end
+"#;
+        let definitions = defs(source);
+        let outer = find(&definitions, "outer");
+        let inner = find(&definitions, "inner");
+        assert_eq!(
+            outer.function_declaration,
+            Some(FunctionDeclarationClass::Local)
+        );
+        assert_eq!(
+            inner.function_declaration,
+            Some(FunctionDeclarationClass::Const)
+        );
+        assert!(inner.visible_from > outer.visible_from);
+        assert!(inner.scope_end < outer.scope_end);
+    }
+
+    #[test]
+    fn explicitly_named_function_value_is_not_a_function_declaration() {
+        let source = "local f = function f(): i32\n    return 1\nend\n";
+        let outcome = parse_with_recovery(source, "defs.walu");
+        assert!(outcome.diagnostics.is_empty(), "{:?}", outcome.diagnostics);
+        let definition = find(&outcome.definitions, "f");
+        assert_eq!(definition.kind, DefinitionKind::Local);
+        assert_eq!(definition.function_declaration, None);
+        assert!(
+            outcome.program.top_level[0]
+                .lexical_function_declaration()
+                .is_none()
+        );
     }
 
     #[test]

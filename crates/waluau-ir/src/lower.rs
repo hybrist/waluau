@@ -1536,6 +1536,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         },
         Expr::Function(function) => Expr::Function(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            declaration_class: function.declaration_class,
             symbol_id: function.symbol_id,
             implicit_self: function.implicit_self.clone(),
             type_params: function.type_params.clone(),

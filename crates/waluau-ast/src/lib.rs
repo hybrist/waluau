@@ -1,8 +1,13 @@
 pub use waluau_span::Span;
 
+mod function_declarations;
 mod lua_pattern;
 pub mod metrics;
 mod module_constants;
+pub use function_declarations::{
+    FunctionBindingClass, FunctionDeclarationClass, FunctionDeclarationFacts, FunctionExposure,
+    LexicalFunctionDeclaration,
+};
 pub use lua_pattern::{
     LuaCaptureKind, lua_pattern_captures, lua_pattern_is_plain, string_find_result_types,
     string_match_result_types,
@@ -211,6 +216,10 @@ pub enum FunctionName {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionExpr {
     pub name: Option<String>,
+    /// Authored function-declaration form when this expression represents a
+    /// lexical declaration. Plain function literals, including explicitly
+    /// named literals, use `None`.
+    pub declaration_class: Option<FunctionDeclarationClass>,
     pub symbol_id: Option<SymbolId>,
     pub implicit_self: Option<String>,
     pub type_params: Vec<String>,
@@ -1382,6 +1391,9 @@ impl Resolver {
     }
 
     fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Diagnostic> {
+        let declaration_facts = stmt
+            .lexical_function_declaration()
+            .map(|declaration| declaration.class.facts());
         match stmt {
             Stmt::Let {
                 name,
@@ -1389,8 +1401,14 @@ impl Resolver {
                 value,
                 ..
             } => {
-                self.resolve_expr(value)?;
-                let id = self.declare(name);
+                let id = if declaration_facts.is_some_and(|facts| facts.hoisted) {
+                    let id = self.declare(name);
+                    self.resolve_expr(value)?;
+                    id
+                } else {
+                    self.resolve_expr(value)?;
+                    self.declare(name)
+                };
                 *symbol_id = Some(id);
             }
             Stmt::Assign {
@@ -1902,8 +1920,14 @@ pub fn resolve_symbols(
 ) -> Result<std::collections::BTreeMap<SymbolId, String>, Diagnostic> {
     let mut resolver = Resolver::new();
 
-    // Declare all top-level functions first
+    // Hoisted declarations enter module scope before any body or initializer
+    // is resolved. The declaration facts own that semantic decision; the
+    // existing `Program::functions` storage remains behavior-preserving.
     for function in &mut program.functions {
+        let facts = function.declaration_class().facts();
+        if !facts.hoisted || facts.binding != FunctionBindingClass::Module {
+            continue;
+        }
         if let FunctionName::Simple(name) = &function.name {
             let id = resolver.declare(name);
             function.symbol_id = Some(id);
