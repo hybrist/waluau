@@ -11,7 +11,7 @@ local spells = require("./spells/spell")
 -- so the atomic-restore test can exercise it without a browser session.
 type HotFrame = { schema: string, screen: string, sections: {string} }
 
-local function card(rank: i32, suit: game.Suit): game.Card
+local function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
 end
 
@@ -663,7 +663,7 @@ describe(
                 )
                 expect(invalid_cast == encoded):toBe(false)
                 expect(game.State.restore(invalid_cast) == nil):toBe(true)
-                -- Winner columns are literal unions that decode as plain integers, so
+                -- Winner columns are plain integers, so
                 -- their domain is restore's to check.
                 local invalid_winner: string = string.gsub(
                     encoded,

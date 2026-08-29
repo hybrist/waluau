@@ -1,27 +1,10 @@
 use std::sync::Arc;
-use waluau_ast::{
-    NumberLiteral, NumberLiteralUnion, NumberUnionMember, NumericType, TaggedVariant, Type,
-    TypedArrayKind,
-};
+use waluau_ast::{NumericType, TaggedVariant, Type, TypedArrayKind};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
 use super::{Parser, tokens::is_linker_internal_identifier};
 use crate::TypeReference;
-
-/// The narrowest integer numeric type covering every member, mirroring the
-/// nominal-enum choice of i32 for ordinal-sized values.
-fn int_union_numeric(members: &[NumberUnionMember]) -> NumericType {
-    let all_i32 = members.iter().all(|member| match member {
-        NumberUnionMember::Int(value) => i32::try_from(*value).is_ok(),
-        NumberUnionMember::FloatBits(_) => false,
-    });
-    if all_i32 {
-        NumericType::I32
-    } else {
-        NumericType::I64
-    }
-}
 
 /// The parsed entries of a parenthesized type list (`(self, a: i32, b: i32)`).
 ///
@@ -85,7 +68,6 @@ impl Parser {
 
         let union = match first {
             Type::StringLiteralUnion(members) => self.parse_string_union_tail(members),
-            Type::NumberLiteralUnion(union) => self.parse_number_union_tail(union),
             Type::TaggedVariant(variant) => {
                 let mut variants = vec![variant];
                 while self.check_simple(&TokenKind::Pipe) {
@@ -102,8 +84,7 @@ impl Parser {
                 Ok(Type::TaggedUnion(variants))
             }
             other => Err(Diagnostic::new(format!(
-                "union member must be a tagged variant, a string literal, \
-                 or a number literal, got {other}"
+                "union member must be a tagged variant or a string literal, got {other}"
             ))),
         }?;
         if self.check_simple(&TokenKind::Ampersand) {
@@ -177,75 +158,6 @@ impl Parser {
             }
         }
         Ok(Type::StringLiteralUnion(members))
-    }
-
-    fn parse_number_union_tail(
-        &mut self,
-        mut union: NumberLiteralUnion,
-    ) -> Result<Type, Diagnostic> {
-        while self.check_simple(&TokenKind::Pipe) {
-            self.advance();
-            match self.parse_nullable_type()? {
-                Type::NumberLiteralUnion(next) if next.members.len() == 1 => {
-                    let member = next.members[0];
-                    let mixes_int_and_float = matches!(member, NumberUnionMember::Int(_))
-                        != matches!(union.members[0], NumberUnionMember::Int(_));
-                    if mixes_int_and_float {
-                        return Err(Diagnostic::new(
-                            "number literal union members must all be integers \
-                             or all be floats, not a mix",
-                        ));
-                    }
-                    if union.members.contains(&member) {
-                        return Err(Diagnostic::new(format!(
-                            "duplicate number literal union member {member}"
-                        )));
-                    }
-                    union.members.push(member);
-                }
-                other => {
-                    return Err(Diagnostic::new(format!(
-                        "number literal union member must be a number literal, got {other}"
-                    )));
-                }
-            }
-        }
-        if matches!(union.members[0], NumberUnionMember::Int(_)) {
-            union.numeric = int_union_numeric(&union.members);
-        }
-        Ok(Type::NumberLiteralUnion(union))
-    }
-
-    /// A single number literal in type position, as a one-member union.
-    /// Integer-form literals become integer members (widened union-wide to
-    /// i32 or i64 by `parse_number_union_tail`); float-form literals become
-    /// f64 members.
-    fn number_union_atom(&mut self, raw: String, negative: bool) -> Result<Type, Diagnostic> {
-        let literal = NumberLiteral { raw };
-        if let Some(value) = literal.int_value() {
-            let value = if negative { -value } else { value };
-            let value = i64::try_from(value).map_err(|_| {
-                Diagnostic::new(format!(
-                    "number literal union member {value} is out of range for i64"
-                ))
-            })?;
-            let members = vec![NumberUnionMember::Int(value)];
-            return Ok(Type::NumberLiteralUnion(NumberLiteralUnion {
-                numeric: int_union_numeric(&members),
-                members,
-            }));
-        }
-        let Some(value) = literal.float_value() else {
-            return Err(Diagnostic::new(format!(
-                "invalid number literal '{}' in type position",
-                literal.raw
-            )));
-        };
-        let value = if negative { -value } else { value };
-        Ok(Type::NumberLiteralUnion(NumberLiteralUnion {
-            numeric: NumericType::F64,
-            members: vec![NumberUnionMember::float(value)],
-        }))
     }
 
     fn parse_nullable_type(&mut self) -> Result<Type, Diagnostic> {
@@ -363,13 +275,10 @@ impl Parser {
         let token = self.advance();
         match token.map(|t| t.kind.clone()) {
             Some(TokenKind::Str(value)) => Ok(Type::StringLiteralUnion(vec![value])),
-            Some(TokenKind::Number(raw)) => self.number_union_atom(raw, false),
-            Some(TokenKind::Minus) => match self.advance().map(|t| t.kind.clone()) {
-                Some(TokenKind::Number(raw)) => self.number_union_atom(raw, true),
-                _ => Err(self.diagnostic_at_current(
-                    "expected a number literal after '-' in type position",
-                )),
-            },
+            Some(TokenKind::Number(_) | TokenKind::Minus) => Err(self.diagnostic_at_current(
+                "number literal types are not supported; use a numeric type like \
+                 i32 or declare an enum instead",
+            )),
             Some(TokenKind::NumberType | TokenKind::F64Type) => Ok(Type::number()),
             Some(TokenKind::U32Type) => Ok(Type::Numeric(NumericType::U32)),
             Some(TokenKind::U64Type) => Ok(Type::Numeric(NumericType::U64)),
@@ -448,7 +357,7 @@ impl Parser {
                 Ok(Type::Named { name, type_args })
             }
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, unknown, string, bytes, extern, thread, Tag(T), a named type, Foo<T>, {T}, { x: T }, (T1, T2) -> R, or a literal union member like \"red\" or 0)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, unknown, string, bytes, extern, thread, Tag(T), a named type, Foo<T>, {T}, { x: T }, (T1, T2) -> R, or a string literal union member like \"red\")",
             )),
         }
     }

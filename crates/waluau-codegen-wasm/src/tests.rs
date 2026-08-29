@@ -3232,7 +3232,6 @@ fn declared_import_metadata_carries_nullable_primitive_types() {
 fn literal_unions_emit_valid_wasm_at_their_representation_types() {
     let source = r#"
         type CardColor = "red" | "black"
-        type Volume = 0 | 1 | 2
 
         function flip(color: CardColor): CardColor
             if color == "red" then
@@ -3241,19 +3240,8 @@ fn literal_unions_emit_valid_wasm_at_their_representation_types() {
             return "red"
         end
 
-        function louder(volume: Volume): Volume
-            if volume < 2 then
-                return ((volume + 1) :: Volume)
-            end
-            return volume
-        end
-
         local color: CardColor = "red"
         assert(flip(color) == "black")
-        local volume: Volume = 1
-        assert(louder(volume) == 2)
-        local as_number: f64 = volume
-        assert(as_number == 1)
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");

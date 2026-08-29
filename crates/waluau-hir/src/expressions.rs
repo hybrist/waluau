@@ -16,7 +16,7 @@ use super::builtins::{
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
-    require_bool_pair, require_number_union_member, require_numeric_cast, resolve_number_literal,
+    require_bool_pair, require_numeric_cast, resolve_number_literal,
 };
 use super::signatures::{
     FnSignature, OverloadVariant, call_arity_matches, generic_diagnostic, infer_generic_call,
@@ -163,12 +163,6 @@ fn unary_operator_method(op: &UnaryOp) -> Option<&'static str> {
 }
 
 fn overload_eligible_type(ty: &Type) -> bool {
-    // A nominal alias of a number literal union reads as its numeric
-    // representation in operator positions; failing to resolve an overload
-    // for it must fall through to numeric inference, not error.
-    if ty.number_literal_union().is_some() {
-        return false;
-    }
     match ty {
         Type::Opaque { .. } | Type::Extern | Type::ExternSubtype(_) => true,
         Type::Nullable(inner) => overload_eligible_type(inner),
@@ -647,15 +641,6 @@ fn infer_expr_inner(
         }
         Expr::Unary { op, expr, .. } => match op {
             UnaryOp::Neg => {
-                // A negated number literal names a union member by its
-                // negated value (`-1` in `-1 | 1`); the bare literal under
-                // the minus would otherwise be checked un-negated.
-                if let (Some(expected_ty), Expr::Number(literal, _)) = (&expected, expr.as_ref()) {
-                    if let Some(union) = expected_ty.number_literal_union() {
-                        require_number_union_member(literal, true, union)?;
-                        return Ok(expected_ty.clone());
-                    }
-                }
                 // A nullable numeric expectation (e.g. comparing against a
                 // `tonumber` result) applies to the negation's result; the
                 // operand itself is inferred against the inner numeric type.
@@ -684,16 +669,8 @@ fn infer_expr_inner(
                         "unary '-' is not defined for {actual}"
                     )));
                 }
-                // Negating a constrained numeric value yields a plain number;
-                // membership does not survive arithmetic.
-                if let Some(union) = actual.number_literal_union() {
-                    return coerce_type(Type::Numeric(union.numeric), expected);
-                }
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
-                    Type::NumberLiteralUnion(_) => {
-                        unreachable!("handled by number_literal_union above")
-                    }
                     Type::StringLiteralUnion(_) => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
@@ -1947,7 +1924,7 @@ fn infer_expr_inner(
                             "== requires both enum operands to have the same nominal type",
                         ));
                     }
-                } else if left_ty.is_numeric() || left_ty.number_literal_union().is_some() {
+                } else if left_ty.is_numeric() {
                     let _ = infer_numeric_common_type(
                         left,
                         right,
@@ -2059,7 +2036,6 @@ pub(super) fn string_concat_operand_type(ty: &Type) -> bool {
         || ty == &Type::Unknown
         || ty.is_numeric()
         || ty.string_literal_union().is_some()
-        || ty.number_literal_union().is_some()
         || matches!(ty, Type::Nullable(inner) if inner.as_ref() == &Type::String)
 }
 

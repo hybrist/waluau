@@ -459,8 +459,7 @@ fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
         | Type::TypeParam(_)
         | Type::Thread
         | Type::Unknown
-        | Type::StringLiteralUnion(_)
-        | Type::NumberLiteralUnion(_) => {}
+        | Type::StringLiteralUnion(_) => {}
     }
 }
 
@@ -792,8 +791,8 @@ pub(crate) fn array_storage_type(
         }
         Type::TypeParam(_) => unreachable!(),
         Type::Unit => unreachable!(),
-        // Literal unions are erased to string/numeric before wasm lowering.
-        Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => {
+        // String literal unions are erased to string before wasm lowering.
+        Type::StringLiteralUnion(_) => {
             unreachable!("literal unions must be erased before wasm lowering")
         }
     }
@@ -858,8 +857,8 @@ pub(crate) fn record_storage_type(
         }
         Type::TypeParam(_) => unreachable!(),
         Type::Unit => unreachable!(),
-        // Literal unions are erased to string/numeric before wasm lowering.
-        Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => {
+        // String literal unions are erased to string before wasm lowering.
+        Type::StringLiteralUnion(_) => {
             unreachable!("literal unions must be erased before wasm lowering")
         }
     }

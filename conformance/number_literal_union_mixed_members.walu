@@ -1,2 +1,0 @@
--- conformance: error=number literal union members must all be integers or all be floats
-type Bad = 1 | 2.5
