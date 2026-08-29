@@ -94,7 +94,7 @@ describe(
             function()
                 local rules: game.State = game.State.new(
                     false,
-                    {spells.Spell.new(spells.SpellKind.Firebolt)},
+                    {spells.Spell.new(spells.SpellKind.Firebolt, 1)},
                     game.starting_gold
                 )
                 for target = 0::i32, divine.target_count - 1 do

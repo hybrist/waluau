@@ -25,7 +25,7 @@ describe(
             function(): unit
                 local state: game.State = game.State.new(
                     false,
-                    {spells.Spell.new(spells.SpellKind.Firebolt)},
+                    {spells.Spell.new(spells.SpellKind.Firebolt, 1)},
                     game.starting_gold
                 )
                 local size = ability_diamond.node(state:view()):measure(nil)

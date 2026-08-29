@@ -8,13 +8,10 @@ local ink = require("../ink")
 local label = require("./label")
 local run_module = require("../run")
 local shop_ = require("../shop_new")
-local spell_launch = require("../spell_launch")
-local scroll_ = require("../items/scroll")
 
 type ShopState = shop_.State
 type Slot = shop_.Slot
 type RunState = run_module.State
-type SpellScroll = scroll_.SpellScroll
 
 const PANEL_WIDTH: f64 = 540.0
 const PAD_X: f64 = 32.0
@@ -49,7 +46,6 @@ const FOCUS_EDGE: string = "#fbbf24"
 const DISABLED_INK: string = "#52525b"
 const DEFAULT_INK: string = "#d4d4d8"
 const PRICE_INK: string = "#fbbf24"
-const SOLD_INK: string = "#52525b"
 
 type Presentation = { state: ShopState, run: RunState }
 export type Stateful = {
@@ -59,14 +55,11 @@ export type Stateful = {
     root: ui.Node
 }
 
-function shop_slot_color(slot: Slot): string
-    if slot.sold then
+function shop_slot_color(slot: Slot, run: RunState): string
+    if slot.sold or not slot.item:can_use(run) then
         return DISABLED_INK
     end
-    if SpellScroll(scroll) = slot.item then
-        return spell_launch.color(scroll.kind)
-    end
-    return DEFAULT_INK
+    return slot.item:accent()
 end
 
 function visual_row_bounds(bounds: box.Rect): box.Rect
@@ -118,13 +111,16 @@ function draw_row(
         row_bounds.x + ROW_PAD_X,
         row_bounds.y + ROW_BASELINE,
         ROW_TEXT_SIZE,
-        shop_slot_color(slot)
+        shop_slot_color(slot, presentation.run)
     )
     local price: string = tostring(slot.price) .. " GOLD"
     local price_ink: string = PRICE_INK
     if slot.sold then
         price = "SOLD"
-        price_ink = SOLD_INK
+        price_ink = DISABLED_INK
+    elseif not slot.item:can_use(presentation.run) then
+        price = "CANNOT USE"
+        price_ink = DISABLED_INK
     end
     ink.text_right(
         surface.graphics,
@@ -246,4 +242,4 @@ function node(state: ShopState, run: RunState): ui.Node
     return Stateful.new(state, run).root
 end
 
-return { node = node, shop_slot_color = shop_slot_color }
+return { node = node }

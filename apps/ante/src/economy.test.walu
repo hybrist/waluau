@@ -39,7 +39,7 @@ type Sample = {
 }
 
 local function starter_loadout(): {game.Spell}
-    return {spells.Spell.new(spells.SpellKind.Firebolt)}
+    return {spells.Spell.new(spells.SpellKind.Firebolt, 1)}
 end
 
 -- The strongest swap this hand can propose, or nothing when the purse will not

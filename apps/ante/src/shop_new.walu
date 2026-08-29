@@ -20,8 +20,8 @@ end
 function all_scroll_items(run: RunState): {Item}
     local scrolls: {Item} = {}
     for _, kind in pairs(spell_.SpellKind) do
-        -- TODO: current level + 1 where "not known" is level 0
-        table.insert(scrolls, scroll_.SpellScroll.new(kind, 1)::Item)
+        local level = run:current_spell_level(kind) + 1
+        table.insert(scrolls, scroll_.SpellScroll.new(kind, level)::Item)
     end
     return scrolls
 end
