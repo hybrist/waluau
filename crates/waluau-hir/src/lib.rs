@@ -1313,10 +1313,9 @@ fn is_nullable_inner_type(ty: &Type) -> bool {
         | Type::Thread
         | Type::TaggedVariant(_)
         | Type::TaggedUnion(_) => true,
-        // Literal unions inherit their representation's nullability: a
-        // nullable string union is a nullable host string, a nullable number
-        // union boxes like its numeric type.
-        Type::StringLiteralUnion(_) | Type::NumberLiteralUnion(_) => true,
+        // A string literal union inherits its representation's nullability:
+        // a nullable string union is a nullable host string.
+        Type::StringLiteralUnion(_) => true,
         Type::Opaque { ty, .. } => {
             matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
                 // The finite opaque anchor at a guarded recursion edge

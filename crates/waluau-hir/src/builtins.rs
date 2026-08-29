@@ -75,7 +75,6 @@ fn json_supported_type(ty: &Type) -> bool {
         | Type::Bytes
         | Type::Unit
         | Type::StringLiteralUnion(_)
-        | Type::NumberLiteralUnion(_)
         | Type::TypeParam(_) => true,
         Type::Opaque { ty, .. } => json_supported_type(ty),
         Type::Nullable(ty) | Type::Array(ty) => json_supported_type(ty),
@@ -656,10 +655,9 @@ pub(super) fn infer_tostring_builtin_call(
 /// and nullable/unknown values dispatch at runtime.
 fn tostring_supported_type(ty: &Type) -> bool {
     ty.is_numeric()
-        // Literal union values stringify by their runtime representation:
-        // the member string, or the member number.
+        // String literal union values stringify by their runtime
+        // representation: the member string.
         || ty.string_literal_union().is_some()
-        || ty.number_literal_union().is_some()
         || matches!(
             ty,
             Type::Bool
