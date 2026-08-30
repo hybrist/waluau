@@ -285,7 +285,7 @@ end
 function selected<T>(control: Control<T>): T
     local index: i32 = control.index()
     assert(index >= 0 and index < #control.choices, "Storybook select value is outside its choices")
-    return control.choices[index].value
+    return control.choices[index + 1].value
 end
 
 function story(name: string, scene: Scene, controls: {AnyControl}?): Story
