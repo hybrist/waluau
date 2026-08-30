@@ -31,6 +31,12 @@ pub(super) const BIT32_BXOR: &str = "bit32.bxor";
 pub(super) const BIT32_BTEST: &str = "bit32.btest";
 pub(super) const BIT32_LROTATE: &str = "bit32.lrotate";
 pub(super) const BIT32_RROTATE: &str = "bit32.rrotate";
+pub(super) const BIT32_LSHIFT: &str = "bit32.lshift";
+pub(super) const BIT32_RSHIFT: &str = "bit32.rshift";
+pub(super) const BIT32_ARSHIFT: &str = "bit32.arshift";
+pub(super) const BIT32_EXTRACT: &str = "bit32.extract";
+pub(super) const BIT32_REPLACE: &str = "bit32.replace";
+pub(super) const BIT32_BYTESWAP: &str = "bit32.byteswap";
 pub(super) const BIT32_COUNTLZ: &str = "bit32.countlz";
 pub(super) const BIT32_COUNTRZ: &str = "bit32.countrz";
 pub(super) const TABLE_CONCAT: &str = "table.concat";
@@ -542,7 +548,7 @@ pub(super) fn infer_bit32_builtin_call(
     let u32_ty = Type::Numeric(NumericType::U32);
     let i32_ty = Type::Numeric(NumericType::I32);
     let result_ty = match name {
-        BIT32_BNOT | BIT32_COUNTLZ | BIT32_COUNTRZ => {
+        BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ => {
             if args.len() != 1 {
                 return Some(Err(Diagnostic::new(format!(
                     "{name} expects 1 argument, got {}",
@@ -551,10 +557,28 @@ pub(super) fn infer_bit32_builtin_call(
             }
             u32_ty.clone()
         }
-        BIT32_LROTATE | BIT32_RROTATE => {
+        BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT => {
             if args.len() != 2 {
                 return Some(Err(Diagnostic::new(format!(
                     "{name} expects 2 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            u32_ty.clone()
+        }
+        BIT32_EXTRACT => {
+            if !(2..=3).contains(&args.len()) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 2 or 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            u32_ty.clone()
+        }
+        BIT32_REPLACE => {
+            if !(3..=4).contains(&args.len()) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 3 or 4 arguments, got {}",
                     args.len()
                 ))));
             }
@@ -566,7 +590,13 @@ pub(super) fn infer_bit32_builtin_call(
     };
 
     for (index, arg) in args.iter().enumerate() {
-        let expected_arg = if matches!(name, BIT32_LROTATE | BIT32_RROTATE) && index == 1 {
+        let signed_position = matches!(
+            name,
+            BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT
+        ) && index == 1
+            || name == BIT32_EXTRACT && index >= 1
+            || name == BIT32_REPLACE && index >= 2;
+        let expected_arg = if signed_position {
             i32_ty.clone()
         } else {
             u32_ty.clone()

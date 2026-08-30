@@ -3,8 +3,9 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- This chunk contains only bitwise.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- Waluau deliberately iterates authored arrays directly; pairs(array) is
+-- reserved for enum/record iteration. The independent first-class builtin
+-- checks are preserved in bitwise.22.walu.
 --
 -- Split from conformance/luau/bitwise.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.
@@ -41,9 +42,3 @@ for _, b in pairs(c) do
     assert(bit32.lshift(b, i) == math.floor((b * 2^i) % 2^32))
   end
 end
-
-assert(not pcall(bit32.band, {}))
-assert(not pcall(bit32.bnot, "a"))
-assert(not pcall(bit32.lshift, 45))
-assert(not pcall(bit32.lshift, 45, print))
-assert(not pcall(bit32.rshift, 45, print))

@@ -2231,6 +2231,35 @@ fn pcall_emits_try_table_and_exception_tag() {
 }
 
 #[test]
+fn bit32_shift_field_and_byteswap_intrinsics_emit_checked_wasm() {
+    let source = r#"
+        function entry(value: u32, displacement: i32, field: i32, width: i32): u32
+            local shifted: u32 = bit32.lshift(value, displacement)
+            local logical: u32 = bit32.rshift(shifted, displacement)
+            local arithmetic: u32 = bit32.arshift(logical, displacement)
+            local extracted: u32 = bit32.extract(arithmetic, field, width)
+            local replaced: u32 = bit32.replace(arithmetic, extracted, field, width)
+            return bit32.byteswap(replaced)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("IR should succeed");
+    waluau_ir::verify(&ir).expect("IR should verify");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    for instruction in ["i32.shl", "i32.shr_u", "i32.shr_s"] {
+        assert!(wat.contains(instruction), "missing {instruction}:\n{wat}");
+    }
+    assert!(
+        wat.contains("throw"),
+        "field validation should throw:\n{wat}"
+    );
+}
+
+#[test]
 fn emits_valid_wasm_for_pcall_discriminated_union() {
     let source = include_str!("../../../conformance/pcall_discriminated_union.walu");
     let program = waluau_parser::parse(source).expect("parse should succeed");

@@ -27,6 +27,36 @@ fn type_checks_valid_program() {
 }
 
 #[test]
+fn type_checks_complete_bit32_intrinsic_signatures() {
+    let source = r#"
+        local a: u32 = bit32.lshift(1, -1)
+        local b: u32 = bit32.rshift(1, 32)
+        local c: u32 = bit32.arshift(0xffffffff, 1)
+        local d: u32 = bit32.extract(0x12345678, 4)
+        local e: u32 = bit32.extract(0x12345678, 4, 8)
+        local f: u32 = bit32.replace(0, 1, 4)
+        local g: u32 = bit32.replace(0, 3, 4, 2)
+        local h: u32 = bit32.byteswap(0x12345678)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("all bit32 signatures should type check");
+}
+
+#[test]
+fn rejects_invalid_bit32_intrinsic_arities() {
+    for source in [
+        "local x: u32 = bit32.lshift(1)",
+        "local x: u32 = bit32.extract(1)",
+        "local x: u32 = bit32.extract(1, 0, 1, 2)",
+        "local x: u32 = bit32.replace(1, 0)",
+        "local x: u32 = bit32.byteswap(1, 2)",
+    ] {
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect_err("invalid bit32 arity should fail");
+    }
+}
+
+#[test]
 fn module_functions_remain_hoisted_for_forward_and_mutual_calls() {
     let source = r#"
         function is_even(n: i32): bool

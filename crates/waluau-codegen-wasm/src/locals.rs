@@ -909,7 +909,16 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
     }
     matches!(
         instruction,
-        IrInstruction::Binary {
+        IrInstruction::BitwiseIntrinsic {
+            intrinsic:
+                waluau_ir::BitwiseIntrinsic::LShift
+                | waluau_ir::BitwiseIntrinsic::RShift
+                | waluau_ir::BitwiseIntrinsic::ArithmeticRShift
+                | waluau_ir::BitwiseIntrinsic::Extract
+                | waluau_ir::BitwiseIntrinsic::Replace
+                | waluau_ir::BitwiseIntrinsic::ByteSwap,
+            ..
+        } | IrInstruction::Binary {
             op: BinaryOp::FloorDiv | BinaryOp::Mod | BinaryOp::Pow,
             ..
         } | IrInstruction::DynLen { .. }

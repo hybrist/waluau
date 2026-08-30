@@ -9223,6 +9223,32 @@ impl Builder<'_> {
             BIT32_BTEST => (BitwiseIntrinsic::Test, None, Type::Bool),
             BIT32_LROTATE => (BitwiseIntrinsic::LRotate, Some(2), Type::Numeric(NumericType::U32)),
             BIT32_RROTATE => (BitwiseIntrinsic::RRotate, Some(2), Type::Numeric(NumericType::U32)),
+            BIT32_LSHIFT => (BitwiseIntrinsic::LShift, Some(2), Type::Numeric(NumericType::U32)),
+            BIT32_RSHIFT => (BitwiseIntrinsic::RShift, Some(2), Type::Numeric(NumericType::U32)),
+            BIT32_ARSHIFT => {
+                (BitwiseIntrinsic::ArithmeticRShift, Some(2), Type::Numeric(NumericType::U32))
+            }
+            BIT32_EXTRACT => {
+                if !(2..=3).contains(&args.len()) {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{name} expects 2 or 3 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                (BitwiseIntrinsic::Extract, None, Type::Numeric(NumericType::U32))
+            }
+            BIT32_REPLACE => {
+                if !(3..=4).contains(&args.len()) {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{name} expects 3 or 4 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                (BitwiseIntrinsic::Replace, None, Type::Numeric(NumericType::U32))
+            }
+            BIT32_BYTESWAP => {
+                (BitwiseIntrinsic::ByteSwap, Some(1), Type::Numeric(NumericType::U32))
+            }
             BIT32_COUNTLZ => {
                 (BitwiseIntrinsic::CountLeadingZeros, Some(1), Type::Numeric(NumericType::U32))
             }
@@ -9243,20 +9269,35 @@ impl Builder<'_> {
 
         let u32_ty = Type::Numeric(NumericType::U32);
         let i32_ty = Type::Numeric(NumericType::I32);
-        let mut lowered = Vec::with_capacity(args.len());
+        let mut lowered = Vec::with_capacity(args.len().max(match intrinsic {
+            BitwiseIntrinsic::Extract => 3,
+            BitwiseIntrinsic::Replace => 4,
+            _ => args.len(),
+        }));
         for (index, arg) in args.iter().enumerate() {
-            let expected_arg =
-                if matches!(intrinsic, BitwiseIntrinsic::LRotate | BitwiseIntrinsic::RRotate)
-                    && index == 1
-                {
-                    i32_ty.clone()
-                } else {
-                    u32_ty.clone()
-                };
+            let signed_position = matches!(
+                intrinsic,
+                BitwiseIntrinsic::LRotate
+                    | BitwiseIntrinsic::RRotate
+                    | BitwiseIntrinsic::LShift
+                    | BitwiseIntrinsic::RShift
+                    | BitwiseIntrinsic::ArithmeticRShift
+            ) && index == 1
+                || intrinsic == BitwiseIntrinsic::Extract && index >= 1
+                || intrinsic == BitwiseIntrinsic::Replace && index >= 2;
+            let expected_arg = if signed_position { i32_ty.clone() } else { u32_ty.clone() };
             match self.lower_expr(arg, scope, Some(expected_arg)) {
                 Ok(value) => lowered.push(value),
                 Err(error) => return Some(Err(error)),
             }
+        }
+        if intrinsic == BitwiseIntrinsic::Extract && lowered.len() == 2
+            || intrinsic == BitwiseIntrinsic::Replace && lowered.len() == 3
+        {
+            lowered.push(self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral { raw: "1".to_string() },
+            }));
         }
 
         let value = self.emit(Instruction::BitwiseIntrinsic {
@@ -11041,8 +11082,30 @@ impl Builder<'_> {
         types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         let (arity, result_ty) = match name {
-            BIT32_BNOT | BIT32_COUNTLZ | BIT32_COUNTRZ => (Some(1), Type::Numeric(NumericType::U32)),
-            BIT32_LROTATE | BIT32_RROTATE => (Some(2), Type::Numeric(NumericType::U32)),
+            BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ => {
+                (Some(1), Type::Numeric(NumericType::U32))
+            }
+            BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT => {
+                (Some(2), Type::Numeric(NumericType::U32))
+            }
+            BIT32_EXTRACT if (2..=3).contains(&args.len()) => {
+                (None, Type::Numeric(NumericType::U32))
+            }
+            BIT32_REPLACE if (3..=4).contains(&args.len()) => {
+                (None, Type::Numeric(NumericType::U32))
+            }
+            BIT32_EXTRACT => {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 2 or 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            BIT32_REPLACE => {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 3 or 4 arguments, got {}",
+                    args.len()
+                ))));
+            }
             BIT32_BAND | BIT32_BOR | BIT32_BXOR => (None, Type::Numeric(NumericType::U32)),
             BIT32_BTEST => (None, Type::Bool),
             _ => return None,
@@ -11060,12 +11123,13 @@ impl Builder<'_> {
         let u32_ty = Type::Numeric(NumericType::U32);
         let i32_ty = Type::Numeric(NumericType::I32);
         for (index, arg) in args.iter().enumerate() {
-            let expected_arg =
-                if matches!(name, BIT32_LROTATE | BIT32_RROTATE) && index == 1 {
-                    i32_ty.clone()
-                } else {
-                    u32_ty.clone()
-                };
+            let signed_position = matches!(
+                name,
+                BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT
+            ) && index == 1
+                || name == BIT32_EXTRACT && index >= 1
+                || name == BIT32_REPLACE && index >= 2;
+            let expected_arg = if signed_position { i32_ty.clone() } else { u32_ty.clone() };
             match self.infer_expr_type(arg, types, Some(expected_arg.clone())) {
                 Ok(ty) if ty == expected_arg => {}
                 Ok(ty) => {

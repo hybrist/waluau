@@ -1,0 +1,39 @@
+-- Focused Waluau coverage for Luau-compatible bit32 operations that require
+-- guards beyond Wasm's modulo-32 shift instructions.
+assert(bit32.lshift(0x12345678, 4) == 0x23456780)
+assert(bit32.lshift(0x12345678, -4) == 0x01234567)
+assert(bit32.lshift(0x12345678, 32) == 0)
+assert(bit32.rshift(0x12345678, 4) == 0x01234567)
+assert(bit32.rshift(0x12345678, -4) == 0x23456780)
+assert(bit32.rshift(0x12345678, -32) == 0)
+
+assert(bit32.arshift(0x80000000, 1) == 0xc0000000)
+assert(bit32.arshift(0x80000000, 32) == 0xffffffff)
+assert(bit32.arshift(0x80000000, -1) == 0)
+
+assert(bit32.extract(0x12345678, 4, 4) == 7)
+assert(bit32.extract(0xf2345679, 0, 32) == 0xf2345679)
+assert(bit32.extract(42, 1) == 1)
+assert(bit32.replace(0x12345678, 5, 28, 4) == 0x52345678)
+assert(bit32.replace(0x12345678, 0x87654321, 0, 32) == 0x87654321)
+assert(bit32.replace(0, 1, 2) == 4)
+
+assert(bit32.byteswap(0x10203040) == 0x40302010)
+assert(bit32.byteswap(0) == 0)
+assert(bit32.byteswap(-1) == 0xffffffff)
+
+local ok: bool, value: unknown = pcall(
+    function(): u32
+        return bit32.extract(0, 31, 2)
+    end
+)
+assert(not ok)
+assert(value::string == "bit field range is out of bounds")
+
+local replace_ok: bool, replace_error: unknown = pcall(
+    function(): u32
+        return bit32.replace(0, 0, -1)
+    end
+)
+assert(not replace_ok)
+assert(replace_error::string == "bit field range is out of bounds")

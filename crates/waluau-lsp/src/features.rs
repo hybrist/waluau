@@ -55,15 +55,21 @@ mod completion_kind {
 /// this table. Hover shows only the name (their signatures live in checker
 /// code, not in any declaration).
 const INTRINSIC_MEMBERS: &[&str] = &[
+    "bit32.arshift",
     "bit32.band",
     "bit32.bnot",
     "bit32.bor",
     "bit32.btest",
+    "bit32.byteswap",
     "bit32.bxor",
     "bit32.countlz",
     "bit32.countrz",
+    "bit32.extract",
     "bit32.lrotate",
+    "bit32.lshift",
+    "bit32.replace",
     "bit32.rrotate",
+    "bit32.rshift",
     "coroutine.close",
     "coroutine.create",
     "coroutine.resume",
