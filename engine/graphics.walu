@@ -503,6 +503,32 @@ function Graphics:set_logical_size(width: f64, height: f64): unit
     end
 end
 
+-- How many physical pixels the screen spends per logical pixel under the
+-- current transform: the drawing buffer's own density — its backing store is
+-- the canvas's CSS size times the device's pixel ratio — times the scale the
+-- transform stack applies. This is the density a capture must be allocated
+-- at to come back to the screen with as many texels as the screen has
+-- pixels to show them with; a capture at logical size on a dense display
+-- hands back a visibly softer card than the one that was captured.
+function Graphics:on_screen_density(): f64
+    local base: i32 = #self.transforms - 6
+    local a: f64 = self.transforms[base]
+    local b: f64 = self.transforms[base + 1]
+    local c: f64 = self.transforms[base + 2]
+    local d: f64 = self.transforms[base + 3]
+    local gl: WebGL2RenderingContext = self.gl
+    local buffer: f64 = (gl.drawingBufferWidth::f64) / self.width
+    local tall: f64 = (gl.drawingBufferHeight::f64) / self.height
+    if tall > buffer then
+        buffer = tall
+    end
+    local density: f64 = buffer * math.sqrt(math.abs(a * d - b * c))
+    if density < 1.0 then
+        return 1.0
+    end
+    return density
+end
+
 -- Resizing the canvas changes its WebGL drawing buffer but preserves the
 -- engine's logical coordinate system. Refresh both the viewport and the scale
 -- used to express fragment effects in logical pixels.

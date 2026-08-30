@@ -3899,6 +3899,46 @@ fn annotate_expr_resolved_members(
                 };
                 return Ok(());
             }
+            // `print(...)` stringifies each argument the same way `tostring`
+            // does, so arguments whose type declares `__tostring` are
+            // rewritten to dispatch through it. Multi-value results expand
+            // value-by-value in IR lowering and keep their default formatting.
+            if matches!(callee.as_ref(), Expr::Name(name, _, _) if name == "print") {
+                for arg in args.iter_mut() {
+                    let receiver_ty =
+                        match infer_expr(arg, vars, fn_signatures, active_type_params, None) {
+                            Ok(ty) => ty,
+                            // Best-effort, like the tostring rewrite above:
+                            // an argument this pass cannot re-infer keeps the
+                            // builtin's default stringification.
+                            Err(_) => continue,
+                        };
+                    if matches!(receiver_ty, Type::Multi(_)) {
+                        continue;
+                    }
+                    let Some(resolved_name) = resolved_type_method_call_name(
+                        &receiver_ty,
+                        "__tostring",
+                        &[],
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                    )?
+                    else {
+                        continue;
+                    };
+                    let arg_span = arg.span();
+                    let receiver = std::mem::replace(arg, Expr::Nil(arg_span));
+                    *arg = Expr::MethodCall {
+                        receiver: Box::new(receiver),
+                        name: "__tostring".to_string(),
+                        resolved_name: Some(resolved_name),
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                        span: arg_span,
+                    };
+                }
+            }
             // Direct calls to overloaded declared imports are rewritten to
             // the selected overload's unique internal name so IR lowering can
             // resolve the host import without re-running overload selection.

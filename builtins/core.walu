@@ -1,6 +1,9 @@
 -- Core builtin functions
 -- These are host functions that provide basic runtime functionality
--- Print a string to stdout
+-- Print values to stdout. HIR/IR lowering intercepts calls: any number of
+-- tostring-able arguments (a final multi-value result expands; earlier ones
+-- adjust to their first value, following Lua) stringify and join with tabs
+-- into the single string this host import receives.
 declare function print(message: string): unit
 
 -- Dynamic type/coercion builtins. These are recognized by HIR/IR lowering;

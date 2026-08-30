@@ -9,10 +9,10 @@ use super::builtins::{
     JSON_UNPACK, STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_GMATCH, STRING_GSUB, STRING_LEN,
     STRING_LOWER, STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SPLIT, STRING_SUB, STRING_UPPER,
     TABLE_UNPACK, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_error_builtin_call,
-    infer_json_builtin_call, infer_pcall_builtin_call, infer_promise_await_method_call,
-    infer_promise_builtin_call, infer_select_builtin_call, infer_string_builtin_call,
-    infer_table_builtin_call, infer_tonumber_builtin_call, infer_tostring_builtin_call,
-    infer_type_builtin_call,
+    infer_json_builtin_call, infer_pcall_builtin_call, infer_print_builtin_call,
+    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
+    infer_string_builtin_call, infer_table_builtin_call, infer_tonumber_builtin_call,
+    infer_tostring_builtin_call, infer_type_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -967,7 +967,18 @@ fn infer_expr_inner(
                     return result;
                 }
             }
-            // Note: print builtin is now handled via extern function declaration
+            if let Some(name) = builtin_name(callee.as_ref()) {
+                if let Some(result) = infer_print_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
             if let Expr::Name(name, _, _) = callee.as_ref() {
                 if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
                     return infer_generic_call(
@@ -2118,7 +2129,8 @@ pub(super) fn infer_expr_list(
 ) -> Result<Vec<Type>, Diagnostic> {
     let mut out = Vec::new();
     let mut out_exprs = Vec::new();
-    for expr in exprs {
+    for (expr_index, expr) in exprs.iter().enumerate() {
+        let is_last = expr_index + 1 == exprs.len();
         let remaining_expected = expected
             .and_then(|types| types.get(out.len()..))
             .filter(|types| !types.is_empty());
@@ -2171,7 +2183,18 @@ pub(super) fn infer_expr_list(
                     }
                 }
             }
-            Type::Multi(types) => {
+            Type::Multi(mut types) => {
+                // Lua adjusts a multi-value expression to its first value in
+                // every position but the last of an expression list; only the
+                // final expression expands. Packs (a leading Variadic) keep
+                // the existing forwarding behavior.
+                if !is_last
+                    && matches!(types.first(), Some(first) if !matches!(first, Type::Variadic(_)))
+                {
+                    out_exprs.push(expr);
+                    out.push(types.remove(0));
+                    continue;
+                }
                 for ty in types {
                     if let Type::Variadic(element) = ty {
                         let remaining = expected
