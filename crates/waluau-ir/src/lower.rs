@@ -10493,7 +10493,9 @@ impl Builder<'_> {
     /// are boxed into a fresh tail array. A trailing `...` forwards the
     /// caller's varargs: missing fixed parameters are drawn from the front of
     /// the forwarded varargs (trapping when too few values were passed, where
-    /// Lua would see nil) and the rest become the callee's varargs.
+    /// Lua would see nil) and the rest become the callee's varargs. A final
+    /// statically sized multi-value expression similarly fills remaining fixed
+    /// parameters, then contributes each surplus result to the vararg tail.
     fn shape_vararg_call_args(
         &mut self,
         param_types: &[Type],
@@ -10510,17 +10512,19 @@ impl Builder<'_> {
                 }
             }
         }
-        let trailing_pack_ty = args
+        let trailing_tail_ty = args
             .last()
             .map(|arg| self.infer_expr_type(arg, &scope.types, None))
             .transpose()?;
-        let has_trailing_pack = trailing_pack_ty.as_ref().is_some_and(|ty| match ty {
+        let has_expanding_tail = trailing_tail_ty.as_ref().is_some_and(|ty| match ty {
             Type::Variadic(_) => true,
-            Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
+            Type::Multi(parts) => !parts.is_empty(),
             _ => false,
         });
-        if has_trailing_pack {
-            let tail_expr = args.last().expect("pack requires a trailing expression");
+        if has_expanding_tail {
+            let tail_expr = args
+                .last()
+                .expect("expanding tail requires a trailing expression");
             let mut known = Vec::<(ValueId, Type)>::new();
             for (index, arg) in args[..args.len() - 1].iter().enumerate() {
                 let target = param_types
@@ -10532,16 +10536,27 @@ impl Builder<'_> {
                 known.push((value, target));
             }
 
-            let pack = match trailing_pack_ty.expect("checked above") {
-                Type::Variadic(element_ty) => self.lower_expr(
+            let pack = match trailing_tail_ty.expect("checked above") {
+                Type::Variadic(element_ty) => Some(self.lower_expr(
                     tail_expr,
                     scope,
                     Some(Type::Variadic(element_ty)),
-                )?,
+                )?),
                 Type::Multi(parts) => {
-                    let tuple = self.lower_expr(tail_expr, scope, None)?;
-                    let last_index = parts.len() - 1;
-                    for (index, part) in parts[..last_index].iter().enumerate() {
+                    let tuple = self.lower_expr(
+                        tail_expr,
+                        scope,
+                        Some(Type::Multi(parts.clone())),
+                    )?;
+                    let fixed_len = if parts
+                        .last()
+                        .is_some_and(|part| matches!(part, Type::Variadic(_)))
+                    {
+                        parts.len() - 1
+                    } else {
+                        parts.len()
+                    };
+                    for (index, part) in parts[..fixed_len].iter().enumerate() {
                         let value = self.emit(Instruction::MultiGet {
                             value: tuple,
                             index,
@@ -10549,16 +10564,18 @@ impl Builder<'_> {
                         });
                         known.push((value, part.clone()));
                     }
-                    let Type::Variadic(element_ty) = &parts[last_index] else {
-                        unreachable!("checked trailing pack above")
-                    };
-                    self.emit(Instruction::MultiGet {
-                        value: tuple,
-                        index: last_index,
-                        ty: Type::Variadic(element_ty.clone()),
-                    })
+                    match parts.last() {
+                        Some(Type::Variadic(element_ty)) => {
+                            Some(self.emit(Instruction::MultiGet {
+                                value: tuple,
+                                index: parts.len() - 1,
+                                ty: Type::Variadic(element_ty.clone()),
+                            }))
+                        }
+                        _ => None,
+                    }
                 }
-                _ => unreachable!("checked trailing pack above"),
+                _ => unreachable!("checked expanding tail above"),
             };
 
             let mut lowered = Vec::with_capacity(param_types.len());
@@ -10570,31 +10587,45 @@ impl Builder<'_> {
                 )?);
             }
             if known.len() < fixed_count {
-                for (index, param_ty) in param_types
-                    .iter()
-                    .take(fixed_count)
-                    .enumerate()
-                    .skip(known.len())
-                {
-                    let offset = self.emit_i32_const((index - known.len()) as i32);
-                    let value = self.emit(Instruction::ArrayGet {
+                if let Some(pack) = pack {
+                    for (index, param_ty) in param_types
+                        .iter()
+                        .take(fixed_count)
+                        .enumerate()
+                        .skip(known.len())
+                    {
+                        let offset = self.emit_i32_const((index - known.len()) as i32);
+                        let value = self.emit(Instruction::ArrayGet {
+                            array: pack,
+                            index: offset,
+                            element_ty: Type::Unknown,
+                        });
+                        lowered.push(self.coerce_value(
+                            value,
+                            Type::Unknown,
+                            Some(param_ty.clone()),
+                        )?);
+                    }
+                    let start = self.emit_i32_const((fixed_count - known.len()) as i32);
+                    let tail = self.emit(Instruction::ArraySlice {
                         array: pack,
-                        index: offset,
+                        start,
                         element_ty: Type::Unknown,
                     });
-                    lowered.push(self.coerce_value(
-                        value,
-                        Type::Unknown,
-                        Some(param_ty.clone()),
-                    )?);
+                    lowered.push(tail);
+                } else {
+                    for param_ty in param_types
+                        .iter()
+                        .take(fixed_count)
+                        .skip(known.len())
+                    {
+                        lowered.push(self.emit_omitted_nullable_arg(param_ty)?);
+                    }
+                    lowered.push(self.emit(Instruction::ArrayNew {
+                        element_ty: Type::Unknown,
+                        elements: Vec::new(),
+                    }));
                 }
-                let start = self.emit_i32_const((fixed_count - known.len()) as i32);
-                let tail = self.emit(Instruction::ArraySlice {
-                    array: pack,
-                    start,
-                    element_ty: Type::Unknown,
-                });
-                lowered.push(tail);
             } else {
                 let extras = known
                     .into_iter()
@@ -10607,7 +10638,9 @@ impl Builder<'_> {
                     element_ty: Type::Unknown,
                     elements: extras,
                 });
-                self.emit_array_append_all(tail, pack);
+                if let Some(pack) = pack {
+                    self.emit_array_append_all(tail, pack);
+                }
                 lowered.push(tail);
             }
             return Ok(lowered);
