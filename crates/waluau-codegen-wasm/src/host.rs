@@ -444,6 +444,8 @@ pub const ERR_ARRAY_POP_EMPTY: &str = "attempt to pop from an empty array";
 pub const ERR_INDEX_NON_ARRAY: &str = "attempt to index a non-array value";
 /// Error message when taking `#` of an `unknown` that is not an array.
 pub const ERR_LEN_NON_ARRAY: &str = "attempt to get length of a non-array value";
+/// Error message when arithmetic dynamically receives a non-number.
+pub const ERR_ARITH_NON_NUMBER: &str = "attempt to perform arithmetic on a non-number value";
 /// Lua 5.4-compatible error message for integer division by zero.
 pub const ERR_DIV_ZERO: &str = "attempt to perform 'n//0'";
 /// Lua 5.4-compatible error message for integer modulo by zero.
@@ -493,6 +495,7 @@ pub(crate) fn runtime_error_messages(instruction: &IrInstruction) -> &'static [&
         IrInstruction::ArrayPop { .. } => &[ERR_ARRAY_POP_EMPTY],
         IrInstruction::DynIndex { .. } => &[ERR_ARRAY_OOB, ERR_INDEX_NON_ARRAY],
         IrInstruction::DynLen { .. } => &[ERR_LEN_NON_ARRAY],
+        IrInstruction::DynNumber { .. } => &[ERR_ARITH_NON_NUMBER],
         IrInstruction::BufferGet { .. } | IrInstruction::BufferSet { .. } => &[ERR_BUFFER_OOB],
         IrInstruction::LuauBufferNew { .. } => &[ERR_BUFFER_SIZE, ERR_BUFFER_ALLOC],
         IrInstruction::LuauBufferGet { .. } | IrInstruction::LuauBufferSet { .. } => {

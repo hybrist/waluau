@@ -498,6 +498,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::DynLen { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::DynIndex { .. } => Type::Unknown,
+                IrInstruction::DynNumber { .. } => Type::Numeric(NumericType::F64),
                 IrInstruction::ArrayPop { .. } => Type::Unit,
                 IrInstruction::ArraySlice { element_ty, .. } => {
                     Type::Array(Arc::new(element_ty.clone()))
@@ -940,6 +941,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         IrInstruction::ArrayLen { array } => vec![*array],
         IrInstruction::DynLen { value } => vec![*value],
         IrInstruction::DynIndex { value, index } => vec![*value, *index],
+        IrInstruction::DynNumber { value } => vec![*value],
         IrInstruction::ArrayPop { array, .. } => vec![*array],
         IrInstruction::ArraySlice { array, start, .. } => vec![*array, *start],
         IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
@@ -1077,6 +1079,7 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
             ..
         } | IrInstruction::DynLen { .. }
             | IrInstruction::DynIndex { .. }
+            | IrInstruction::DynNumber { .. }
             | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }
             | IrInstruction::ArraySlice { .. }
@@ -1136,6 +1139,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::ArraySlice { .. }
         | IrInstruction::DynLen { .. }
         | IrInstruction::DynIndex { .. } => false,
+        IrInstruction::DynNumber { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
         IrInstruction::ArrayPop { .. } => false,
         IrInstruction::BytesGet { .. } => false,

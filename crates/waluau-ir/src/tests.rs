@@ -85,6 +85,37 @@ fn lowers_unknown_pcall_with_f32_closure_result() {
 }
 
 #[test]
+fn lowers_untyped_numeric_operators_to_checked_dynamic_numbers() {
+    let program = parse(
+        r#"
+            local function subtract_one(value)
+                return value - 1
+            end
+
+            local function negate(value)
+                return -value
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+
+    let dynamic_numbers = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .filter(|(_, instruction)| matches!(instruction, Instruction::DynNumber { .. }))
+        .count();
+    assert_eq!(
+        dynamic_numbers, 2,
+        "each unknown operand is checked exactly once"
+    );
+}
+
+#[test]
 fn preserves_function_instruction_and_terminator_locations() {
     let source = "function entry(x: i32): i32\n    return x + 42\nend\n";
     let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");

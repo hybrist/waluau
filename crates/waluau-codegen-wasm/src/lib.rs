@@ -301,7 +301,7 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
                         return true;
                     }
                     // Dynamic array reads box f64/bool elements on the fly.
-                    IrInstruction::DynIndex { .. } => {
+                    IrInstruction::DynIndex { .. } | IrInstruction::DynNumber { .. } => {
                         return true;
                     }
                     // The nullable f64 result of a runtime `tonumber` is
@@ -5998,6 +5998,11 @@ impl FunctionEmission<'_> {
                     emit_dyn_index(out, ctx, operand_local, index_local)?;
                     emit_value_store(out, local_plan, *value)?;
                 }
+                IrInstruction::DynNumber { value: operand } => {
+                    let operand_local = local(local_plan, *operand)?;
+                    emit_dyn_number(out, ctx, operand_local)?;
+                    emit_value_store(out, local_plan, *value)?;
+                }
                 IrInstruction::ArrayPop { array, element_ty } => {
                     let array_local = local(local_plan, *array)?;
                     let growable_struct_index =
@@ -7604,6 +7609,39 @@ fn emit_dyn_len(
     for _ in wrappers {
         out.instruction(&Instruction::End);
     }
+    Ok(())
+}
+
+/// Narrow an `unknown` value to the canonical Luau number type. Unknown
+/// numbers use either an i31 for small integers or `$boxed_f64`; every other
+/// representation raises the Lua error tag so `pcall` can observe the error.
+fn emit_dyn_number(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    operand_local: u32,
+) -> Result<(), Diagnostic> {
+    let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefTestNonNull(i31_heap_type()));
+    out.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
+    out.instruction(&Instruction::I31GetS);
+    out.instruction(&Instruction::F64ConvertI32S);
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(boxed_f64)));
+    out.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(boxed_f64)));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: boxed_f64,
+        field_index: 0,
+    });
+    out.instruction(&Instruction::Else);
+    emit_throw_message(out, ctx, host::ERR_ARITH_NON_NUMBER)?;
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::End);
     Ok(())
 }
 

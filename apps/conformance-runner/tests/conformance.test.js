@@ -245,6 +245,13 @@ const cases = Object.entries(conformanceModules)
   })
   .sort((a, b) => a.name.localeCompare(b.name));
 
+// Intentional Luau VM/JIT stress chunks that are outside Waluau's Wasm-GC
+// target. Keep this exact-name set narrow: unlike fixable pending gaps, these
+// files should not be compiled by the standard browser suite. native.53's
+// enormous register-spill expression takes roughly 90 seconds once dynamic
+// numeric inference succeeds, only to reach its irrelevant `is_native` check.
+const INTENTIONAL_VM_JIT_EXCLUSIONS = new Set(['luau/native.53.walu']);
+
 // Cases that have a dedicated test below (async DOM entry points that need
 // the iframe to stay alive until the async work completes).
 const DEDICATED_ASYNC_DOM_CASES = new Set(['top_level_fetch.walu']);
@@ -299,6 +306,36 @@ describe('browser conformance', () => {
     expect(exports.binary_u32() >>> 0).toBe(0xffffffff);
   });
 
+  it('checks arithmetic on untyped parameters across both number boxes', async () => {
+    const source = `
+      local function subtract_one(value)
+        return value - 1
+      end
+
+      local function negate(value)
+        return -value
+      end
+
+      local small: i32 = 7
+      local precise: number = 2.5
+      assert(subtract_one(small) == 6)
+      assert(subtract_one(precise) == 1.5)
+      assert(negate(small) == -7)
+      assert(negate(precise) == -2.5)
+
+      local sub_ok, sub_error = pcall(subtract_one, "bad")
+      local neg_ok, neg_error = pcall(negate, false)
+      assert(not sub_ok)
+      assert(not neg_ok)
+      assert(sub_error::string == "attempt to perform arithmetic on a non-number value")
+      assert(neg_error::string == "attempt to perform arithmetic on a non-number value")
+    `;
+
+    await expect(
+      compileAndInstantiate({ '/main.walu': source }, '/main.walu'),
+    ).resolves.toBeUndefined();
+  });
+
   for (const { name, source } of cases) {
     if (DEDICATED_ASYNC_DOM_CASES.has(name)) continue;
 
@@ -306,7 +343,9 @@ describe('browser conformance', () => {
     const fullSource = sourceForCase({ name, source });
     const options = optionsForCase(name);
 
-    if (expectedErrors.length > 0 && pending) {
+    if (INTENTIONAL_VM_JIT_EXCLUSIONS.has(name)) {
+      it.skip(`excluded ${name} (intentional deviation)`, () => {});
+    } else if (expectedErrors.length > 0 && pending) {
       // Fail test that is also pending: the expected failure is not produced
       // yet, so verify the actual outcome does NOT match it. When the bug is
       // fixed and the expected failure appears, this test breaks, prompting

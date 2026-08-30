@@ -172,6 +172,13 @@ pub(super) fn infer_numeric_for_loop_type(
 
 pub(super) fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
+        // Untyped Lua parameters retain `unknown` until a numeric operator
+        // gives them a runtime contract. Luau has one number type, so checked
+        // dynamic operands specialize to f64. This remains local to numeric
+        // operators; equality and other `unknown` uses stay dynamic.
+        (Type::Unknown, Type::Unknown)
+        | (Type::Unknown, Type::Numeric(_))
+        | (Type::Numeric(_), Type::Unknown) => Ok(Type::number()),
         (Type::Numeric(left), Type::Numeric(right)) => {
             left.common(right).map(Type::Numeric).ok_or_else(|| {
                 inference_diagnostic(
