@@ -44,7 +44,7 @@ describe(
                     "A"
                 }
                 for index, key in keys do
-                    expect(state:keypressed(key)):toBe(index == 9)
+                    expect(state:keypressed(key)):toBe(index == 10)
                 end
                 expect(state.active):toBe(true)
             end
@@ -83,7 +83,7 @@ describe(
                 local touched: {i32} = state:update(divine.total_seconds)
                 expect(#touched):toBe(5)
                 for index, target in touched do
-                    expect(target):toBe(index)
+                    expect(target):toBe(index - 1)
                 end
                 expect(state.active):toBe(false)
             end

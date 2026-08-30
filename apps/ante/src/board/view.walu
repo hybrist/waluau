@@ -191,7 +191,7 @@ end
 
 function State:present_computer(index: i32, value: card.Look, hidden: bool): unit
     table.insert(self.computer_hidden, hidden)
-    self.computer_views[index]:present(value)
+    self.computer_views[index + 1]:present(value)
 end
 
 function State:present_input(frame: input_module.Frame): unit
@@ -212,7 +212,7 @@ function State:present_table(
     hidden: bool
 ): unit
     table.insert(self.table_hidden, hidden)
-    self.table_views[index]:present(value, kind, clock, ash, dust)
+    self.table_views[index + 1]:present(value, kind, clock, ash, dust)
 end
 
 function State:present_modal(
@@ -291,14 +291,14 @@ function State:paint_panel(bounds: box.Rect): unit
 end
 
 function State:paint_table(index: i32, bounds: box.Rect): unit
-    if not self.table_hidden[index] then
-        self:paint_node(self.table_nodes[index], bounds)
+    if not self.table_hidden[index + 1] then
+        self:paint_node(self.table_nodes[index + 1], bounds)
     end
 end
 
 function State:paint_computer(index: i32, bounds: box.Rect): unit
-    if not self.computer_hidden[index] then
-        self:paint_node(self.computer_nodes[index], bounds)
+    if not self.computer_hidden[index + 1] then
+        self:paint_node(self.computer_nodes[index + 1], bounds)
     end
 end
 

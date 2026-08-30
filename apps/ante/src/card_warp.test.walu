@@ -29,7 +29,7 @@ function built(pose: card_warp.Pose): card_warp.Mesh
 end
 
 function at(column: i32, row: i32): i32
-    return row * (COLUMNS + 1) + column
+    return row * (COLUMNS + 1) + column + 1
 end
 
 function held_corner(): i32
@@ -107,7 +107,7 @@ describe(
             "is lit as though none of this were happening to it",
             function(): unit
                 local mesh: card_warp.Mesh = built(rest())
-                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                for index = 1::i32, card_warp.point_count(COLUMNS, ROWS) do
                     expect(mesh.shades[index]):toBeCloseTo(1.0, 6)
                 end
             end
@@ -160,7 +160,7 @@ describe(
                 local count: i32 = card_warp.point_count(COLUMNS, ROWS)
                 local moved_x: f64 = 0.0
                 local moved_y: f64 = 0.0
-                for index = 0::i32, count - 1 do
+                for index = 1::i32, count do
                     moved_x += mesh.xs[index] - resting.xs[index]
                     moved_y += mesh.ys[index] - resting.ys[index]
                 end
@@ -227,7 +227,7 @@ describe(
             function(): unit
                 local mesh: card_warp.Mesh = built(pulled(1.0, 60.0))
                 local resting: card_warp.Mesh = built(rest())
-                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                for index = 1::i32, card_warp.point_count(COLUMNS, ROWS) do
                     expect(mesh.xs[index]):toBeCloseTo(resting.xs[index], 6)
                     expect(mesh.ys[index]):toBeCloseTo(resting.ys[index], 6)
                 end
@@ -281,7 +281,7 @@ describe(
                 local mesh: card_warp.Mesh = built(raised)
                 expect(mesh.xs[held_corner()] - mesh.xs[far_corner()]):toBeGreaterThan(WIDTH)
                 expect(mesh.ys[held_corner()] - mesh.ys[far_corner()]):toBeGreaterThan(HEIGHT)
-                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                for index = 1::i32, card_warp.point_count(COLUMNS, ROWS) do
                     expect(mesh.shades[index]):toBeCloseTo(1.0, 6)
                 end
             end

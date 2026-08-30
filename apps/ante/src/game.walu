@@ -184,9 +184,9 @@ function shuffle(deck: {Card}): unit
     local i: i32 = #deck - ONE
     while i >= ONE do
         local j: i32 = math.random(i + ONE) - ONE
-        local card: Card = deck[i]
-        deck[i] = deck[j]
-        deck[j] = card
+        local card: Card = deck[i + 1]
+        deck[i + 1] = deck[j + 1]
+        deck[j + 1] = card
         i -= ONE
     end
 end
@@ -280,10 +280,10 @@ end
 -- Return a lexicographically sortable score for exactly five cards. Category
 -- occupies the most significant base-15 digit, followed by poker kickers.
 function swap_if_lower(ranks: {i32}, left: i32, right: i32): unit
-    if ranks[left] < ranks[right] then
-        local value: i32 = ranks[left]
-        ranks[left] = ranks[right]
-        ranks[right] = value
+    if ranks[left + 1] < ranks[right + 1] then
+        local value: i32 = ranks[left + 1]
+        ranks[left + 1] = ranks[right + 1]
+        ranks[right + 1] = value
     end
 end
 
@@ -367,7 +367,13 @@ function best_five(cards: {Card}): PairChoice
             for c = b + ONE, #cards - 3 do
                 for d = c + ONE, #cards - 2 do
                     for e = d + ONE, #cards - 1 do
-                        local candidate: {Card} = {cards[a], cards[b], cards[c], cards[d], cards[e]}
+                        local candidate: {Card} = {
+                            cards[a + 1],
+                            cards[b + 1],
+                            cards[c + 1],
+                            cards[d + 1],
+                            cards[e + 1]
+                        }
                         local value: i32 = rank_five(candidate)
                         if value > best.value then
                             best.value = value
@@ -390,7 +396,7 @@ function straight_high_from_counts(counts: {i32}): i32
             return high
         end
     end
-    if counts[15] > 0 and counts[6] > 0 and counts[5] > 0 and counts[4] > 0 and counts[3] > 0 then
+    if counts[14] > 0 and counts[5] > 0 and counts[4] > 0 and counts[3] > 0 and counts[2] > 0 then
         return 5
     end
     return 0
@@ -413,14 +419,14 @@ function change_card_count(
 ): unit
     local suit: i32 = card.suit
     rank_counts[card.rank] += amount
-    suit_counts[suit] += amount
-    suit_rank_counts[suit][card.rank] += amount
+    suit_counts[suit + 1] += amount
+    suit_rank_counts[suit + 1][card.rank] += amount
 end
 
 function score_counts(rank_counts: {i32}, suit_counts: {i32}, suit_rank_counts: {{i32}}): i32
     for suit = 0::i32, 3::i32 do
-        if suit_counts[suit] >= 5 then
-            local straight_flush: i32 = straight_high_from_counts(suit_rank_counts[suit])
+        if suit_counts[suit + 1] >= 5 then
+            local straight_flush: i32 = straight_high_from_counts(suit_rank_counts[suit + 1])
             if straight_flush > 0 then
                 return pack(8, straight_flush, 0, 0, 0, 0)
             end
@@ -456,7 +462,7 @@ function score_counts(rank_counts: {i32}, suit_counts: {i32}, suit_rank_counts: 
     end
 
     for suit = 0::i32, 3::i32 do
-        if suit_counts[suit] >= 5 then
+        if suit_counts[suit + 1] >= 5 then
             local first: i32 = 0
             local second: i32 = 0
             local third: i32 = 0
@@ -464,7 +470,7 @@ function score_counts(rank_counts: {i32}, suit_counts: {i32}, suit_rank_counts: 
             local fifth: i32 = 0
             local found: i32 = 0
             for rank = 14::i32, 2::i32, -1::i32 do
-                local copies: i32 = suit_rank_counts[suit][rank]
+                local copies: i32 = suit_rank_counts[suit + 1][rank]
                 while copies > 0 and found < 5 do
                     if found == 0 then
                         first = rank
@@ -588,15 +594,15 @@ end
 
 function formation_for_pair(hand: {Card}, middle: {Card}, first: i32, second: i32): PairChoice
     local available: {Card} = clone_cards(middle)
-    table.insert(available, hand[first])
-    table.insert(available, hand[second])
+    table.insert(available, hand[first + 1])
+    table.insert(available, hand[second + 1])
     return best_five(available)
 end
 
 function value_for_pair(hand: {Card}, middle: {Card}, first: i32, second: i32): i32
     local available: {Card} = clone_cards(middle)
-    table.insert(available, hand[first])
-    table.insert(available, hand[second])
+    table.insert(available, hand[first + 1])
+    table.insert(available, hand[second + 1])
     return best_five_value(available)
 end
 
@@ -610,11 +616,11 @@ function best_pair_indices(hand: {Card}, middle: {Card}): PairChoice
     local best: PairChoice = { first = 0, second = 1, value = -1, formation = {} }
     for first = ZERO, #hand - TWO do
         for second = first + ONE, #hand - ONE do
-            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[first], 1)
-            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[second], 1)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[first + 1], 1)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[second + 1], 1)
             local value: i32 = score_counts(rank_counts, suit_counts, suit_rank_counts)
-            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[first], -1)
-            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[second], -1)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[first + 1], -1)
+            change_card_count(rank_counts, suit_counts, suit_rank_counts, hand[second + 1], -1)
             if value > best.value then
                 best.first = first
                 best.second = second
@@ -656,9 +662,9 @@ end
 function exchange(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle_indices: {i32}): unit
     assert(#hand_indices == #middle_indices)
     for i = ZERO, #hand_indices - ONE do
-        local card: Card = hand[hand_indices[i]]
-        hand[hand_indices[i]] = middle[middle_indices[i]]
-        middle[middle_indices[i]] = card
+        local card: Card = hand[hand_indices[i + 1] + 1]
+        hand[hand_indices[i + 1] + 1] = middle[middle_indices[i + 1] + 1]
+        middle[middle_indices[i + 1] + 1] = card
     end
 end
 
@@ -674,9 +680,9 @@ function exchange_live(
 ): unit
     assert(#hand_indices == #middle_indices)
     for i = ZERO, #hand_indices - ONE do
-        local outgoing: Card = hand[hand_indices[i]].card
-        hand[hand_indices[i]] = { card = middle[middle_indices[i]], known = true }
-        middle[middle_indices[i]] = outgoing
+        local outgoing: Card = hand[hand_indices[i + 1] + 1].card
+        hand[hand_indices[i + 1] + 1] = { card = middle[middle_indices[i + 1] + 1], known = true }
+        middle[middle_indices[i + 1] + 1] = outgoing
     end
 end
 
@@ -725,7 +731,9 @@ function community_value(cards: {Card}): i32
     for first = ZERO, #cards - 3 do
         for second = first + ONE, #cards - 2 do
             for third = second + ONE, #cards - 1 do
-                local value: i32 = rank_three({cards[first], cards[second], cards[third]})
+                local value: i32 = rank_three(
+                    {cards[first + 1], cards[second + 1], cards[third + 1]}
+                )
                 if value > best then
                     best = value
                 end
@@ -841,7 +849,7 @@ function best_available_swap(
         for middle_indices in middle_options do
             local available: bool = true
             for index in middle_indices do
-                if frozen_middle[index] then
+                if frozen_middle[index + 1] then
                     available = false
                 end
             end
@@ -911,15 +919,15 @@ function State:rotate_middle(): unit
         if self.frozen_middle[index] then
             retained = card
             has_retained = true
-            retained_index = index
+            retained_index = index - 1
             if retained_index >= OPENING_COMMUNITY_SIZE then
                 retained_index = OPENING_COMMUNITY_SIZE - 1
             end
         end
     end
     local next_middle: {Card} = {}
-    for index = 0::i32, OPENING_COMMUNITY_SIZE - 1 do
-        if has_retained and index == retained_index then
+    for index = 1::i32, OPENING_COMMUNITY_SIZE do
+        if has_retained and index == retained_index + 1 then
             table.insert(next_middle, retained)
         else
             table.insert(next_middle, draw(self.deck))
@@ -937,7 +945,7 @@ end
 
 function State:middle_indices_available(indices: {i32}): bool
     for index in indices do
-        if index < 0 or index >= #self.middle or self.frozen_middle[index] then
+        if index < 0 or index >= #self.middle or self.frozen_middle[index + 1] then
             return false
         end
     end
@@ -955,7 +963,7 @@ function State:sort_player_hand(by_color: bool): {i32}
     local order: {i32} = {}
     local keys: {i32} = {}
     for index, slot in self.player_hand do
-        table.insert(order, index)
+        table.insert(order, index - 1)
         if by_color then
             table.insert(keys, slot.card.suit * 15 + (MAX_RANK - slot.card.rank))
         else
@@ -967,22 +975,22 @@ function State:sort_player_hand(by_color: bool): {i32}
     for i = ZERO, #order - TWO do
         local smallest: i32 = i
         for j = i + ONE, #order - ONE do
-            if keys[j] < keys[smallest] then
+            if keys[j + 1] < keys[smallest + 1] then
                 smallest = j
             end
         end
         if smallest ~= i then
-            local key: i32 = keys[i]
-            keys[i] = keys[smallest]
-            keys[smallest] = key
-            local slot: i32 = order[i]
-            order[i] = order[smallest]
-            order[smallest] = slot
+            local key: i32 = keys[i + 1]
+            keys[i + 1] = keys[smallest + 1]
+            keys[smallest + 1] = key
+            local slot: i32 = order[i + 1]
+            order[i + 1] = order[smallest + 1]
+            order[smallest + 1] = slot
         end
     end
     local sorted_hand: {HandSlot} = {}
     for slot in order do
-        table.insert(sorted_hand, self.player_hand[slot])
+        table.insert(sorted_hand, self.player_hand[slot + 1])
     end
     self.player_hand = sorted_hand
     return order
@@ -994,12 +1002,15 @@ end
 -- The changed cards are known because the Opponent watches the miracle too.
 function State:divine_intervention(target: i32): bool
     if target >= 0 and target < 3 then
-        self.middle[target] = { rank = 10 + target, suit = 0 }
+        self.middle[target + 1] = { rank = 10 + target, suit = 0 }
         return true
     end
     local hand_index: i32 = target - 3
     if hand_index >= 0 and hand_index < 2 and hand_index < #self.player_hand then
-        self.player_hand[hand_index] = { card = { rank = 13 + hand_index, suit = 0 }, known = true }
+        self.player_hand[hand_index + 1] = {
+            card = { rank = 13 + hand_index, suit = 0 },
+            known = true
+        }
         return true
     end
     return false
@@ -1086,13 +1097,13 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
     local incoming: {Card} = {}
     if self.swap_winner ~= 0 then
         for k = 0::i32, self.swap_count - 1 do
-            local hand_index: i32 = self.swap_hand_indices[k]
-            local middle_index: i32 = self.swap_middle_indices[k]
-            table.insert(outgoing, self.middle[middle_index])
+            local hand_index: i32 = self.swap_hand_indices[k + 1]
+            local middle_index: i32 = self.swap_middle_indices[k + 1]
+            table.insert(outgoing, self.middle[middle_index + 1])
             if self.swap_winner > 0 then
-                table.insert(incoming, self.player_hand[hand_index].card)
+                table.insert(incoming, self.player_hand[hand_index + 1].card)
             else
-                table.insert(incoming, self.computer_hand[hand_index].card)
+                table.insert(incoming, self.computer_hand[hand_index + 1].card)
             end
         end
     end
@@ -1156,10 +1167,10 @@ function State:play(first: i32, second: i32): Trick?
         -- replacement cards do not appear until their deal animation starts.
         player_hand = clone_slots(self.player_hand),
         computer_hand = clone_slots(self.computer_hand),
-        player_cards = {self.player_hand[first].card, self.player_hand[second].card},
+        player_cards = {self.player_hand[first + 1].card, self.player_hand[second + 1].card},
         computer_cards = {
-            self.computer_hand[computer.first].card,
-            self.computer_hand[computer.second].card
+            self.computer_hand[computer.first + 1].card,
+            self.computer_hand[computer.second + 1].card
         },
         player_formation = player.formation,
         computer_formation = computer.formation,
@@ -1592,25 +1603,25 @@ function State:spell_kind(slot: i32): SpellKind?
     if slot < 0 or slot >= #self.spells then
         return nil
     end
-    return self.spells[slot].kind
+    return self.spells[slot + 1].kind
 end
 
 function State:spell_cost(slot: i32): i32
     if slot < 0 or slot >= #self.spells then
         return 0
     end
-    return self.spells[slot].cost
+    return self.spells[slot + 1].cost
 end
 
 function State:spell_level(slot: i32): i32
     if slot < 0 or slot >= #self.spells then
         return 0
     end
-    return self.spells[slot].level
+    return self.spells[slot + 1].level
 end
 
 function State:is_frozen(table_card: i32): bool
-    return table_card >= 0 and table_card < #self.frozen_middle and self.frozen_middle[table_card]
+    return table_card >= 0 and table_card < #self.frozen_middle and self.frozen_middle[table_card + 1]
 end
 
 -- Whether the spell in that loadout slot could be cast right now: the run is
@@ -1621,7 +1632,7 @@ function State:can_cast(slot: i32): bool
     if self.finished or slot < 0 or slot >= #self.spells then
         return false
     end
-    return self.player_points >= self.spells[slot].cost
+    return self.player_points >= self.spells[slot + 1].cost
 end
 
 -- Pay for one cast of the spell in that slot. Returns false — charging
@@ -1631,12 +1642,12 @@ function State:cast_spell(slot: i32, table_card: i32): bool
     if not self:can_cast(slot) or table_card < 0 or table_card >= #self.middle then
         return false
     end
-    local spell: Spell = self.spells[slot]
+    local spell: Spell = self.spells[slot + 1]
     self.player_points -= spell.cost
     self.cast_kind = spell.kind
     if spell.kind == spells.SpellKind.FreezeRay then
         self:clear_frozen()
-        self.frozen_middle[table_card] = true
+        self.frozen_middle[table_card + 1] = true
     end
     return true
 end
@@ -1654,8 +1665,8 @@ function State:resolve_firebolt(target: i32): Card?
     if target < 0 or target >= #self.middle or #self.deck == 0 then
         return nil
     end
-    local discarded: Card = self.middle[target]
-    self.middle[target] = draw(self.deck)
+    local discarded: Card = self.middle[target + 1]
+    self.middle[target + 1] = draw(self.deck)
     return discarded
 end
 

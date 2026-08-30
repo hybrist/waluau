@@ -123,11 +123,11 @@ function target_at(duel: i32, rush: bool): i32
         return table_values[1]
     end
     if duel <= length then
-        return table_values[duel - 1]
+        return table_values[duel]
     end
     -- Past the table the demand climbs by a step that itself grows, so the gap
     -- between what a duel pays and what it costs to leave widens every time.
-    local target: i32 = table_values[length - 1]
+    local target: i32 = table_values[length]
     for step = 1::i32, duel - length do
         target += ENDLESS_STEP + step
     end
@@ -286,7 +286,7 @@ end
 function State:slot_of(kind: spells.SpellKind): i32
     for slot, spell in self.spells do
         if spell.kind == kind then
-            return slot
+            return slot - 1
         end
     end
     return -1
@@ -308,7 +308,7 @@ function State:can_learn_spell(spell: spells.Spell): bool
     end
     local slot = self:slot_of(spell.kind)
     if slot ~= -1 then
-        return self.spells[slot].level < spell.level
+        return self.spells[slot + 1].level < spell.level
     end
     return #self.spells < MAX_SPELLS
 end
@@ -319,7 +319,7 @@ function State:learn_spell(spell: spells.Spell): bool
     end
     local slot = self:slot_of(spell.kind)
     if slot ~= -1 then
-        self.spells[slot].level = spell.level
+        self.spells[slot + 1].level = spell.level
         return true
     end
     table.insert(self.spells, spell)
@@ -377,7 +377,7 @@ function State.restore(snapshot_value: string): State?
         if spell.level < 1 then
             return nil
         end
-        for previous = 0::i32, index - 1 do
+        for previous = 1::i32, index - 1 do
             if restored.spells[previous].kind == spell.kind then
                 return nil
             end
