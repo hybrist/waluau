@@ -2129,7 +2129,8 @@ pub(super) fn infer_expr_list(
 ) -> Result<Vec<Type>, Diagnostic> {
     let mut out = Vec::new();
     let mut out_exprs = Vec::new();
-    for expr in exprs {
+    for (expr_index, expr) in exprs.iter().enumerate() {
+        let is_last = expr_index + 1 == exprs.len();
         let remaining_expected = expected
             .and_then(|types| types.get(out.len()..))
             .filter(|types| !types.is_empty());
@@ -2182,7 +2183,18 @@ pub(super) fn infer_expr_list(
                     }
                 }
             }
-            Type::Multi(types) => {
+            Type::Multi(mut types) => {
+                // Lua adjusts a multi-value expression to its first value in
+                // every position but the last of an expression list; only the
+                // final expression expands. Packs (a leading Variadic) keep
+                // the existing forwarding behavior.
+                if !is_last
+                    && matches!(types.first(), Some(first) if !matches!(first, Type::Variadic(_)))
+                {
+                    out_exprs.push(expr);
+                    out.push(types.remove(0));
+                    continue;
+                }
                 for ty in types {
                     if let Type::Variadic(element) = ty {
                         let remaining = expected

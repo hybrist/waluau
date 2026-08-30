@@ -158,14 +158,14 @@ fn lowers_numeric_concat_and_tostring_metamethod() {
 }
 
 #[test]
-fn lowers_print_multi_arg_spread_into_one_tab_joined_message() {
+fn lowers_print_with_lua_multi_value_adjustment() {
     let source = r#"
         function multi(): (i32, string)
             return 7, "mid"
         end
 
         function entry(): unit
-            print("start", multi(), true)
+            print("start", multi(), multi())
         end
     "#;
     let program = parse(source).expect("parse should succeed");
@@ -194,32 +194,34 @@ fn lowers_print_multi_arg_spread_into_one_tab_joined_message() {
             .count(),
         1
     );
-    // The multi-value result expands value-by-value.
-    assert!(
+    // Lua's adjustment rule: the mid-position multi() contributes only its
+    // first value (one MultiGet), the final multi() expands into both (two
+    // MultiGets).
+    assert_eq!(
         instructions
             .iter()
-            .any(|instruction| matches!(instruction, Instruction::MultiGet { .. }))
+            .filter(|instruction| matches!(instruction, Instruction::MultiGet { .. }))
+            .count(),
+        3
     );
-    // Non-string pieces stringify: multi's i32 first value and the bool.
-    assert!(instructions.iter().any(|instruction| {
-        matches!(
-            instruction,
-            Instruction::ToString {
-                from: Type::Numeric(NumericType::I32),
-                ..
-            }
-        )
-    }));
-    assert!(instructions.iter().any(|instruction| {
-        matches!(
-            instruction,
-            Instruction::ToString {
-                from: Type::Bool,
-                ..
-            }
-        )
-    }));
-    // Four pieces join with tab separators: (4 - 1) * 2 concats.
+    // Both i32 first values stringify; the final multi's string second value
+    // passes through untouched.
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| {
+                matches!(
+                    instruction,
+                    Instruction::ToString {
+                        from: Type::Numeric(NumericType::I32),
+                        ..
+                    }
+                )
+            })
+            .count(),
+        2
+    );
+    // Four pieces ("start", 7, 7, "mid") join with tabs: (4 - 1) * 2 concats.
     assert_eq!(
         instructions
             .iter()

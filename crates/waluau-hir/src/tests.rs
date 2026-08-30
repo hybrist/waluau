@@ -3780,6 +3780,47 @@ fn type_checks_print_with_mixed_arguments_and_multi_spread() {
 }
 
 #[test]
+fn adjusts_non_final_multi_value_to_first_value_in_expression_lists() {
+    let source = r#"
+        function multi(): (i32, i32)
+            return 2, 5
+        end
+
+        function add(a: i32, b: i32): i32
+            return a + b
+        end
+
+        function pair(): (i32, i32)
+            return multi(), 100
+        end
+
+        function check(): unit
+            local sum = add(multi(), 100)
+            local a, b = multi(), 100
+            local p, q, r = 100, multi()
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_return_list_relying_on_non_final_multi_expansion() {
+    let source = r#"
+        function multi(): (i32, i32)
+            return 2, 5
+        end
+
+        function triple(): (i32, i32, i32)
+            return multi(), 100
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "return expects 3 values, got 2");
+}
+
+#[test]
 fn rejects_print_of_unit_value() {
     let source = r#"
         function noop(): unit

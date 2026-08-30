@@ -673,9 +673,11 @@ pub(super) fn infer_print_builtin_call(
     if name != PRINT {
         return None;
     }
-    // `print` stringifies any number of arguments; a multi-value result
-    // expands in place, contributing one printed piece per value.
-    for arg in args {
+    // `print` stringifies any number of arguments. Following Lua's
+    // adjustment rule, a multi-value result expands only in the last
+    // argument position; anywhere else it contributes its first value.
+    for (arg_index, arg) in args.iter().enumerate() {
+        let is_last = arg_index + 1 == args.len();
         let arg_ty = match super::expressions::infer_expr(
             arg,
             vars,
@@ -687,7 +689,12 @@ pub(super) fn infer_print_builtin_call(
             Err(error) => return Some(Err(error)),
         };
         if let Type::Multi(parts) = &arg_ty {
-            for part in parts {
+            let printed = if is_last {
+                parts.as_slice()
+            } else {
+                &parts[..1.min(parts.len())]
+            };
+            for part in printed {
                 if !tostring_supported_type(part) {
                     return Some(Err(Diagnostic::new(format!(
                         "{PRINT} cannot convert a {part} value",
@@ -1632,13 +1639,24 @@ pub(super) fn infer_string_builtin_call(
         }
         STRING_CHAR => {
             let mut arg_types = Vec::new();
-            for arg in args {
+            for (arg_index, arg) in args.iter().enumerate() {
+                let is_last = arg_index + 1 == args.len();
+                // Calls are inferred without an expectation first so a
+                // multi-value result stays visible; an i32 expectation would
+                // collapse it to its first value before the adjustment rule
+                // below can see it.
+                let is_call = matches!(arg, Expr::Call { .. } | Expr::MethodCall { .. });
+                let (first_expected, fallback_expected) = if is_call {
+                    (None, Some(i32_ty.clone()))
+                } else {
+                    (Some(i32_ty.clone()), None)
+                };
                 let arg_ty = match super::expressions::infer_expr(
                     arg,
                     vars,
                     fn_signatures,
                     active_type_params,
-                    Some(i32_ty.clone()),
+                    first_expected,
                 ) {
                     Ok(ty) => ty,
                     Err(_) => match super::expressions::infer_expr(
@@ -1646,15 +1664,18 @@ pub(super) fn infer_string_builtin_call(
                         vars,
                         fn_signatures,
                         active_type_params,
-                        None,
+                        fallback_expected,
                     ) {
-                        Ok(Type::Multi(types)) => Type::Multi(types),
                         Ok(ty) => ty,
                         Err(error) => return Some(Err(error)),
                     },
                 };
                 match arg_ty {
-                    Type::Multi(types) => arg_types.extend(types),
+                    // Lua's adjustment rule: only the last argument expands
+                    // its multi-value result; earlier ones keep their first
+                    // value.
+                    Type::Multi(types) if is_last => arg_types.extend(types),
+                    Type::Multi(types) => arg_types.extend(types.into_iter().take(1)),
                     ty => arg_types.push(ty),
                 }
             }
