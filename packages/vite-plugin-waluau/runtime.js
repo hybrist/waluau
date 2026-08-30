@@ -10,7 +10,7 @@ export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
 export const WALUAU_MAIN_EXPORT = '__waluau_main';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-export const WALUAU_HOST_IMPORT_COUNT = 26;
+export const WALUAU_HOST_IMPORT_COUNT = 29;
 const PROMISE_RESUME_TRAMPOLINE_EXPORT = '__waluau_resume_promise_await';
 const PROMISE_RESET_ACTIVE_EXPORT = '__waluau_reset_active_coroutine';
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT = '__waluau_call_callback_unit_extern';
@@ -2190,6 +2190,31 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
   };
+  // Luau strings are byte strings while Waluau strings cross the browser ABI
+  // as JavaScript text. Buffer conversion uses an explicit one-byte projection:
+  // each UTF-16 code unit U+0000..U+00FF maps to the same byte. Higher code
+  // units are rejected by returning -1 so guest code can throw its Lua tag.
+  const bufferStringLength = (value) => {
+    const text = String(value);
+    for (let i = 0; i < text.length; i += 1) {
+      if (text.charCodeAt(i) > 0xff) return -1;
+    }
+    return text.length;
+  };
+  const bufferStringRead = (pointer, count) => {
+    const bytes = new Uint8Array(wasmMemory.buffer, Number(pointer) >>> 0, Number(count) >>> 0);
+    let text = '';
+    const chunkSize = 0x8000;
+    for (let start = 0; start < bytes.length; start += chunkSize) {
+      text += String.fromCharCode(...bytes.subarray(start, start + chunkSize));
+    }
+    return text;
+  };
+  const bufferStringWrite = (value, pointer, count) => {
+    const text = String(value);
+    const bytes = new Uint8Array(wasmMemory.buffer, Number(pointer) >>> 0, Number(count) >>> 0);
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = text.charCodeAt(i);
+  };
   // math.random state (mulberry32). Seeded randomly per instance so
   // unseeded runs differ; math.randomseed(x) resets it deterministically.
   let prngState = (Math.random() * 0x100000000) >>> 0;
@@ -2691,6 +2716,9 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       if (a.length > b.length) return 1;
       return 0;
     },
+    buffer_string_len: bufferStringLength,
+    buffer_string_read: bufferStringRead,
+    buffer_string_write: bufferStringWrite,
   };
   for (const wasmImport of wasmImports) {
     if (
