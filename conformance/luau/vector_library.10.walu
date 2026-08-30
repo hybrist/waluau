@@ -60,3 +60,4 @@ if vector_size == 4 then
 	assert(vector.create(1, 2, 3, 4).w == 4)
 	assert(vector.create(1, 2, 3, 4).W == 4)
 	assert(vector.create(1, 2, 3, 4)['W'] == 4)
+end
