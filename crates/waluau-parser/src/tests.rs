@@ -3324,9 +3324,22 @@ fn desugars_enum_pairs_loop_into_variant_name_array() {
     let Expr::Cast { expr, ty, .. } = value else {
         panic!("the enum value should be a cast of the loop ordinal, got {value:?}");
     };
+    let Expr::Binary {
+        op: BinaryOp::Sub,
+        left,
+        right,
+        ..
+    } = &**expr
+    else {
+        panic!("the enum ordinal should translate from the one-based array key");
+    };
     assert!(
-        matches!(&**expr, Expr::Name(ordinal, _, _) if ordinal == waluau_ast::ENUM_PAIRS_ORDINAL)
+        matches!(&**left, Expr::Name(ordinal, _, _) if ordinal == waluau_ast::ENUM_PAIRS_ORDINAL)
     );
+    assert!(matches!(
+        &**right,
+        Expr::Number(literal, _) if literal.raw == "1"
+    ));
     assert!(matches!(ty, Type::Named { name, .. } if name == "SpellKind"));
 }
 

@@ -58,7 +58,7 @@ local typed_copy, typed_error = json.unpack<Float32Array>(json.pack(typed))
 assert(typed_error == "")
 if typed_copy ~= nil then
     assert(#typed_copy == 3)
-    assert(typed_copy[2] == -2.25)
+    assert(typed_copy[1] == -2.25)
 else
     error(typed_error)
 end
