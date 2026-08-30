@@ -12,6 +12,7 @@
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
+local plate = require("../plate")
 
 const LABEL_SIZE: f64 = 9.0
 const PAD_X: f64 = 11.0
@@ -45,11 +46,7 @@ function gated(text: string, shown: () -> bool): ui.Node
                 return
             end
             local graphics = surface.graphics
-            graphics:set_color(FILL)
-            graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
-            graphics:set_color(EDGE)
-            graphics:set_line_width(1.0)
-            graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            plate.draw(graphics, bounds.x, bounds.y, bounds.width, bounds.height, FILL, EDGE, 1.0)
             ink.text_centered(
                 graphics,
                 text,

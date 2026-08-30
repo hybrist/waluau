@@ -1,0 +1,166 @@
+-- The material every panel in the vault is cut from: a blackened iron plate,
+-- lit from above, with its edges bevelled and its border etched.
+--
+-- Ante's chrome used to be line art — one flat fill and one hairline
+-- rectangle, repeated at six sites. Flat fill plus hairline reads as a
+-- wireframe of a UI rather than as an object standing in the same room as the
+-- cards, which are textured and shaded. A plate is that same box given a light
+-- source: the face carries a vertical gradient, the top inner edge catches a
+-- highlight, the bottom inner edge falls into shadow, and the border is
+-- brighter along the lit side than the shaded one.
+--
+-- The gradient is emitted rather than approximated with stacked strips.
+-- `emit_shaded_vertex` multiplies a per-vertex brightness into the colour the
+-- batch already carries, so one quad of six vertices is a true linear ramp and
+-- costs exactly what a `fill_rectangle` costs.
+local engine = require("waluau:engine")
+
+type Graphics = engine.Graphics
+
+-- How much lighter the top of a face is than its bottom. Small on purpose:
+-- these are dark surfaces, and a ramp wide enough to see as a gradient reads
+-- as a button from a different game.
+const FACE_TOP: f64 = 1.34
+const FACE_BOTTOM: f64 = 0.72
+-- The bevel: a hairline of the face's own colour, brightened along the lit
+-- edge and dropped along the shaded one, so the plate has a thickness.
+const BEVEL_LIGHT: f64 = 2.1
+const BEVEL_DARK: f64 = 0.34
+const BEVEL_WEIGHT: f64 = 1.0
+-- The border is the plate's edge seen from outside, so it follows the same
+-- light: the top rail is the caller's colour at full strength and the bottom
+-- rail is that colour sunk into shadow.
+const EDGE_TOP: f64 = 1.15
+const EDGE_BOTTOM: f64 = 0.55
+const EDGE_SIDE: f64 = 0.82
+-- Corner brackets: the short arms that a cut plate shows where two etched
+-- rails meet. Length is capped against the plate so a small chip keeps its
+-- corners distinct instead of drawing four rails twice.
+const BRACKET_ARM: f64 = 9.0
+const BRACKET_INSET: f64 = 4.0
+const BRACKET_WEIGHT: f64 = 1.0
+
+-- A rectangle whose brightness ramps from `top` at its top edge to `bottom` at
+-- its bottom, in the colour currently set on the batch.
+function gradient_rectangle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    top: f64,
+    bottom: f64
+): unit
+    if width <= 0.0 or height <= 0.0 then
+        return
+    end
+    graphics:ensure_capacity(6)
+    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top)
+    graphics:emit_shaded_vertex(x + width, y, 1.0, 0.0, 0.0, top)
+    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom)
+    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top)
+    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom)
+    graphics:emit_shaded_vertex(x, y + height, 0.0, 1.0, 0.0, bottom)
+end
+
+-- One rail of the border at a fraction of the edge colour's brightness.
+function rail(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, shade: f64): unit
+    gradient_rectangle(graphics, x, y, width, height, shade, shade)
+end
+
+-- The lit face: gradient body, a highlight along the top inside edge, a
+-- shadow along the bottom one. `fill` is the plate's own colour.
+function face(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string): unit
+    graphics:set_color(fill)
+    gradient_rectangle(graphics, x, y, width, height, FACE_TOP, FACE_BOTTOM)
+    if height <= BEVEL_WEIGHT * 2.0 then
+        return
+    end
+    rail(graphics, x, y, width, BEVEL_WEIGHT, BEVEL_LIGHT)
+    rail(graphics, x, y + height - BEVEL_WEIGHT, width, BEVEL_WEIGHT, BEVEL_DARK)
+end
+
+-- The etched border, drawn as four rails so the light can differ per side.
+function border(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    edge: string,
+    weight: f64
+): unit
+    graphics:set_color(edge)
+    rail(graphics, x, y, width, weight, EDGE_TOP)
+    rail(graphics, x, y + height - weight, width, weight, EDGE_BOTTOM)
+    rail(graphics, x, y + weight, weight, height - weight * 2.0, EDGE_SIDE)
+    rail(graphics, x + width - weight, y + weight, weight, height - weight * 2.0, EDGE_SIDE)
+end
+
+-- Short arms inside each corner, in the edge colour. What separates a plate
+-- that was cut and fitted from a rectangle that was merely outlined.
+function brackets(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, edge: string): unit
+    local arm: f64 = math.min(BRACKET_ARM, math.min(width, height) * 0.25)
+    if arm < 3.0 then
+        return
+    end
+    local left: f64 = x + BRACKET_INSET
+    local right: f64 = x + width - BRACKET_INSET - arm
+    local top: f64 = y + BRACKET_INSET
+    local bottom: f64 = y + height - BRACKET_INSET - BRACKET_WEIGHT
+    graphics:set_color(edge)
+    rail(graphics, left, top, arm, BRACKET_WEIGHT, EDGE_TOP)
+    rail(graphics, left, top, BRACKET_WEIGHT, arm, EDGE_TOP)
+    rail(graphics, right, top, arm, BRACKET_WEIGHT, EDGE_TOP)
+    rail(graphics, x + width - BRACKET_INSET - BRACKET_WEIGHT, top, BRACKET_WEIGHT, arm, EDGE_TOP)
+    rail(graphics, left, bottom, arm, BRACKET_WEIGHT, EDGE_BOTTOM)
+    rail(graphics, left, y + height - BRACKET_INSET - arm, BRACKET_WEIGHT, arm, EDGE_BOTTOM)
+    rail(graphics, right, bottom, arm, BRACKET_WEIGHT, EDGE_BOTTOM)
+    rail(
+        graphics,
+        x + width - BRACKET_INSET - BRACKET_WEIGHT,
+        y + height - BRACKET_INSET - arm,
+        BRACKET_WEIGHT,
+        arm,
+        EDGE_BOTTOM
+    )
+end
+
+-- The plate every piece of Ante chrome is: lit face inside an etched border.
+function draw(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    fill: string,
+    edge: string,
+    weight: f64
+): unit
+    face(graphics, x, y, width, height, fill)
+    border(graphics, x, y, width, height, edge, weight)
+end
+
+-- A plate large enough to be a page, so it also carries corner brackets.
+function panel(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    fill: string,
+    edge: string,
+    weight: f64
+): unit
+    draw(graphics, x, y, width, height, fill, edge, weight)
+    brackets(graphics, x, y, width, height, edge)
+end
+
+return {
+    draw = draw,
+    panel = panel,
+    face = face,
+    border = border,
+    brackets = brackets,
+    gradient_rectangle = gradient_rectangle
+}

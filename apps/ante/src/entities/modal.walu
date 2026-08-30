@@ -15,6 +15,7 @@
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local label = require("./label")
+local plate = require("../plate")
 
 const PAD_X: f64 = 34.0
 const PAD_TOP: f64 = 25.0
@@ -44,12 +45,16 @@ function shell(): ui.Node
             box.set_fixed(into, 0.0, 0.0)
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
-            local graphics = surface.graphics
-            graphics:set_color(SHELL_FILL)
-            graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
-            graphics:set_color(SHELL_EDGE)
-            graphics:set_line_width(3.0)
-            graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            plate.panel(
+                surface.graphics,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                SHELL_FILL,
+                SHELL_EDGE,
+                3.0
+            )
         end
     )
 end
