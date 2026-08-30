@@ -6,7 +6,8 @@
 -- This chunk retains checks from the upstream source that still fail in
 -- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/basic.walu in original source order.
--- Upstream source lines 11-27.
+-- Upstream source lines 175-181.
+-- Required upstream helper setup from line 11-19 is repeated for standalone execution.
 
 print("testing language/library basics")
 
@@ -18,10 +19,9 @@ function concat(head, ...)
     end
 end
 
-assert(tostring(nil) == "nil")
+-- this makes sure a - 4 doesn't clobber a (which would happen if the lifetime of locals inside the repeat..until block is contained within
+-- the block and ends before the condition is evaluated
+assert((function() repeat local a = 5 until a - 4 < 0 or a - 4 >= 0 end)() == nil)
 
--- empty return
-assert(select('#', (function() end)()) == 0)
-assert(select('#', (function() return end)()) == 0)
-
--- locals
+-- numeric for
+-- basic tests with positive/negative step sizes

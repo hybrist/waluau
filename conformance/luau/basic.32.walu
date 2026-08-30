@@ -2,11 +2,8 @@
 -- tests/conformance/basic.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk retains checks from the upstream source that still fail in
--- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/basic.walu in original source order.
--- Upstream source lines 11-27.
+-- Upstream source lines 11-22.
 
 print("testing language/library basics")
 
@@ -18,10 +15,5 @@ function concat(head, ...)
     end
 end
 
-assert(tostring(nil) == "nil")
+assert(tostring(-0) == "-0")
 
--- empty return
-assert(select('#', (function() end)()) == 0)
-assert(select('#', (function() return end)()) == 0)
-
--- locals

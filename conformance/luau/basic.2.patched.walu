@@ -2,8 +2,9 @@
 -- tests/conformance/basic.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- This is a PATCHED companion to basic.2.walu (which stays verbatim and
--- pending): every check that can be expressed in Waluau's typed subset is
+-- This is a PATCHED companion to the source-ordered verbatim chunks
+-- basic.2.walu through basic.28.walu (whose blocked chunks stay pending):
+-- every check that can be expressed in Waluau's typed subset is
 -- kept, with the minimal edit needed to compile and pass. Each edit carries a
 -- `-- PATCHED:` marker; checks that need features Waluau deliberately lacks
 -- (metatables, pcall, _G, nil-typed locals, value-semantics and/or, string

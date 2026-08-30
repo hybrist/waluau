@@ -6,7 +6,8 @@
 -- This chunk retains checks from the upstream source that still fail in
 -- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/basic.walu in original source order.
--- Upstream source lines 11-27.
+-- Upstream source lines 385-391.
+-- Required upstream helper setup from line 11-19 is repeated for standalone execution.
 
 print("testing language/library basics")
 
@@ -17,11 +18,10 @@ function concat(head, ...)
         return tostring(head) .. "," .. concat(...)
     end
 end
+assert((function() local t = {6, 9, 7} return t[0] end)() == nil)
+assert((function() local t = {6, 9, 7} return t[4] end)() == nil)
+assert((function() local t = {6, 9, 7} return t[4.5] end)() == nil)
+assert((function() local t = {6, 9, 7, [4.5]=11} return t[4.5] end)() == 11)
+assert((function() local t = {6, 9, 7, a=11} return t['a'] end)() == 11)
+assert((function() local t = {6, 9, 7} setmetatable(t, { __index = function(t,i) return i * 10 end }) return concat(t[2],t[5]) end)() == "9,50")
 
-assert(tostring(nil) == "nil")
-
--- empty return
-assert(select('#', (function() end)()) == 0)
-assert(select('#', (function() return end)()) == 0)
-
--- locals

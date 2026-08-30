@@ -1,0 +1,12 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/strconv.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from conformance/luau/strconv.walu in original source order.
+-- Upstream source lines 20-24.
+
+-- specials
+assert(tostring(1/0) == "inf")
+assert(tostring(-1/0) == "-inf")
+assert(tostring(0/0) == "nan")
+

@@ -1,0 +1,26 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/basic.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from conformance/luau/basic.walu in original source order.
+-- Upstream source lines 182-190.
+-- Required upstream helper setup from line 11-19 is repeated for standalone execution.
+
+print("testing language/library basics")
+
+function concat(head, ...)
+    if select('#', ...) == 0 then
+        return tostring(head)
+    else
+        return tostring(head) .. "," .. concat(...)
+    end
+end
+assert((function() local a = 1 for b=1,9 do a = a * 2 end return a end)() == 512)
+assert((function() local a = 1 for b=1,9,2 do a = a * 2 end return a end)() == 32)
+assert((function() local a = 1 for b=1,9,-2 do a = a * 2 end return a end)() == 1)
+assert((function() local a = 1 for b=9,1,-2 do a = a * 2 end return a end)() == 32)
+
+-- make sure break works
+assert((function() local a = 1 for b=1,9 do a = a * 2 if a == 128 then break end end return a end)() == 128)
+assert((function() local a = 1 for b=1,9 do a = a * 2 if a == 128 then break else end end return a end)() == 128)
+

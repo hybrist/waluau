@@ -913,7 +913,7 @@ fn loop_header(function: &Function) -> &BasicBlock {
 // user phis. Each `continue` site must contribute an incoming edge to all of
 // those phis (advancing the index), otherwise the header phis are malformed and
 // the module fails to verify. Regression test for the continue phi bug surfaced
-// by conformance/luau/basic.6.walu.
+// by conformance/luau/basic.34.walu.
 #[test]
 fn numeric_for_continue_completes_loop_header_phis() {
     let source = r#"
@@ -3583,7 +3583,7 @@ fn lowers_captured_tagged_union_parameter_narrowing() {
 // loop *header* phis, resurrecting start-of-iteration values on break paths
 // (e.g. `local a = 1 for b = 1, 9 do a = a * 2 if a == 128 then break end end`
 // left `a == 64`). Regression tests for the break phi bug surfaced by
-// conformance/luau/basic.2.walu.
+// conformance/luau/basic.19.walu.
 //
 // The structural property checked: the value returned after the loop is
 // defined in the block that returns it (the exit block phi), not in the loop
