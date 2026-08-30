@@ -2437,14 +2437,80 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     },
     'math.cos': Math.cos,
     'math.sin': Math.sin,
+    'math.tan': Math.tan,
+    'math.acos': Math.acos,
+    'math.asin': Math.asin,
+    'math.atan': Math.atan,
+    'math.cosh': Math.cosh,
+    'math.sinh': Math.sinh,
+    'math.tanh': Math.tanh,
+    'math.deg': (x) => x / (Math.PI / 180),
+    'math.rad': (x) => x * (Math.PI / 180),
+    'math.exp': Math.exp,
+    'math.log10': Math.log10,
+    'math.log': (x, base) => {
+      if (base === undefined) return Math.log(x);
+      if (base === 2) return Math.log2(x);
+      if (base === 10) return Math.log10(x);
+      return Math.log(x) / Math.log(base);
+    },
     // Lua/C argument order: the vertical component comes first.
     'math.atan2': (y, x) => Math.atan2(y, x),
-    'math.min': Math.min,
-    'math.max': Math.max,
+    // Luau compares each later argument to the first/current result. This is
+    // observably different from Math.min/Math.max for ordered NaNs.
+    'math.min': (...values) => values.slice(1).reduce(
+      (result, value) => (value < result ? value : result), values[0],
+    ),
+    'math.max': (...values) => values.slice(1).reduce(
+      (result, value) => (value > result ? value : result), values[0],
+    ),
     'math.copysign': (magnitude, sign) => {
       const negative = sign < 0 || Object.is(sign, -0);
       return negative ? -Math.abs(magnitude) : Math.abs(magnitude);
     },
+    'math.fmod': (x, y) => x % y,
+    'math.pow': Math.pow,
+    'math.modf': (x) => {
+      const integral = Math.trunc(x);
+      let fractional = Number.isFinite(x) ? x - integral : Math.sign(x) * 0;
+      if (fractional === 0 && (x < 0 || Object.is(x, -0))) fractional = -0;
+      return [integral, fractional];
+    },
+    'math.frexp': (x) => {
+      if (x === 0 || !Number.isFinite(x)) return [x, 0];
+      const exponent = Math.floor(Math.log2(Math.abs(x))) + 1;
+      // Math.log2 rounds Number.MAX_VALUE up to 1024 and 2**1024 itself
+      // overflows. Scale in two exact binary steps at that boundary.
+      if (exponent >= 1024) return [(x / (2 ** 1023)) / 2, 1024];
+      return [x / (2 ** exponent), exponent];
+    },
+    'math.ldexp': (x, exponent) => {
+      if (exponent > 1023) return (x * (2 ** 1023)) * (2 ** (exponent - 1023));
+      if (exponent < -1022) return (x * (2 ** -1022)) * (2 ** (exponent + 1022));
+      return x * (2 ** exponent);
+    },
+    'math.sign': (x) => (x > 0 ? 1 : x < 0 ? -1 : 0),
+    'math.clamp': (x, minimum, maximum) => {
+      if (!(minimum <= maximum)) {
+        throw new Error('math.clamp max must be greater than or equal to min');
+      }
+      const aboveMinimum = x < minimum ? minimum : x;
+      return aboveMinimum > maximum ? maximum : aboveMinimum;
+    },
+    'math.round': (x) => {
+      // Avoid adding 0.5 below the half threshold: for the representable
+      // value immediately above -0.5, `x - 0.5` rounds to -1 in JavaScript
+      // even though C/Luau round returns signed zero.
+      if (Math.abs(x) < 0.5) return x * 0;
+      return x >= 0 ? Math.floor(x + 0.5) : Math.ceil(x - 0.5);
+    },
+    'math.map': (x, inMin, inMax, outMin, outMax) => (
+      outMin + ((x - inMin) * (outMax - outMin)) / (inMax - inMin)
+    ),
+    'math.lerp': (a, b, t) => (t === 1 ? b : a + ((b - a) * t)),
+    'math.isnan': Number.isNaN,
+    'math.isinf': (x) => x === Infinity || x === -Infinity,
+    'math.isfinite': Number.isFinite,
     // Lua-style math.random / math.randomseed. The generator (mulberry32) is
     // host-owned, per-instance state: unseeded runs start from a random
     // seed, and math.randomseed(x) makes the following sequence fully

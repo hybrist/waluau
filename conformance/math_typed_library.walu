@@ -1,0 +1,77 @@
+-- Typed deterministic math library coverage. These checks pin Waluau's
+-- browser-hosted implementation to Luau's observable scalar semantics while
+-- keeping dynamic string-to-number coercion out of the typed API.
+local function close(a: f64, b: f64, limit: f64): bool
+    return math.abs(a - b) <= limit
+end
+
+assert(math.huge > 1e300)
+assert(-math.huge < -1e300)
+assert(math.nan ~= math.nan)
+assert(math.pi * 2 == math.tau)
+assert(math.sqrt(2) == math.sqrt2)
+assert(math.exp(1) == math.e)
+assert((1 + math.sqrt(5)) / 2 == math.phi)
+
+assert(close(math.tan(math.pi / 4), 1, 1e-12))
+assert(close(math.atan(1), math.pi / 4, 1e-12))
+assert(close(math.acos(0), math.pi / 2, 1e-12))
+assert(close(math.asin(1), math.pi / 2, 1e-12))
+assert(close(math.deg(math.pi / 2), 90, 1e-12))
+assert(close(math.rad(90), math.pi / 2, 1e-12))
+assert(math.log(2, 2) == 1)
+assert(math.log(100, 10) == 2)
+assert(close(math.log10(2), math.log(2) / math.log(10), 1e-12))
+assert(math.exp(0) == 1)
+assert(close(math.tanh(3.5), math.sinh(3.5) / math.cosh(3.5), 1e-12))
+
+local integral, fractional = math.modf(3.5)
+assert(integral == 3 and fractional == 0.5)
+local mantissa, exponent = math.frexp(math.pi)
+assert(math.ldexp(mantissa, exponent) == math.pi)
+
+local nan: f64 = 0 / 0
+assert(math.min(nan, 2) ~= math.min(nan, 2))
+assert(math.min(1, nan) == 1)
+assert(math.max(nan, 2) ~= math.max(nan, 2))
+assert(math.max(1, nan) == 1)
+assert(math.min(1, 2, -1, -2) == -2)
+assert(math.max(1, 2, -1, -2) == 2)
+
+assert(math.sign(0) == 0)
+assert(math.sign(42) == 1)
+assert(math.sign(-42) == -1)
+assert(math.sign(nan) == 0)
+assert(math.clamp(-1, 0, 1) == 0)
+assert(math.clamp(0.5, 0, 1) == 0.5)
+assert(math.clamp(2, 0, 1) == 1)
+assert(math.round(0.5) == 1)
+assert(math.round(-0.5) == -1)
+assert(math.round(math.huge) == math.huge)
+assert(math.fmod(-3, 2) == -1)
+assert(math.pow(4, 0.5) == 2)
+assert(math.map(2.5, 1, 4, 0, 2) == 1)
+assert(math.lerp(1, 5, 0.5) == 3)
+assert(math.lerp(-math.sqrt(3), math.sqrt(2), 1) == math.sqrt(2))
+
+assert(math.isnan(nan))
+assert(not math.isnan(math.huge))
+assert(math.isinf(math.huge))
+assert(math.isinf(-math.huge))
+assert(not math.isinf(nan))
+assert(math.isfinite(123.45))
+assert(not math.isfinite(math.huge))
+assert(not math.isfinite(nan))
+
+local function typed_narrow(x: f32): f32
+    return math.round(math.lerp(math.clamp(x, -1.0::f32, 1.0::f32), 3.0::f32, 0.5::f32))
+end
+
+local function typed_integer(x: i32): i32
+    local minimum: i32 = -2
+    local maximum: i32 = 2
+    return math.max(math.sign(x), math.clamp(x, minimum, maximum), math.round(x))
+end
+
+assert(typed_narrow(0.5::f32) == 2.0::f32)
+assert(typed_integer(-7) == -1)

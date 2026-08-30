@@ -1965,6 +1965,68 @@ mod tests {
     }
 
     #[test]
+    fn compiles_complete_typed_scalar_math_surface() {
+        let source = r#"
+            function scalar(x: f64, y: f64): f64
+                local integral, fractional = math.modf(x)
+                local mantissa, exponent = math.frexp(y)
+                local finite: bool = math.isfinite(x)
+                local special: bool = math.isnan(math.nan) and math.isinf(math.huge)
+                assert(finite or special)
+                local trig = math.acos(x) + math.asin(x) + math.atan(x) + math.tan(x)
+                local hyperbolic = math.cosh(x) + math.sinh(x) + math.tanh(x)
+                local transforms = math.deg(x) + math.rad(x) + math.exp(x)
+                local logarithms = math.log10(x) + math.log(x) + math.log(x, y)
+                local decomposition = math.fmod(x, y) + math.pow(x, y)
+                    + math.ldexp(mantissa, exponent) + integral + fractional
+                local luau = math.sign(x) + math.clamp(x, 0, 1) + math.round(x)
+                    + math.map(x, 0, 1, 2, 3) + math.lerp(x, y, 0.5)
+                local constants = math.e + math.phi + math.sqrt2 + math.tau
+                return trig + hyperbolic + transforms + logarithms
+                    + decomposition + luau + constants
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("typed math surface should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        for import in [
+            "math.acos",
+            "math.asin",
+            "math.atan",
+            "math.tan",
+            "math.cosh",
+            "math.sinh",
+            "math.tanh",
+            "math.deg",
+            "math.rad",
+            "math.exp",
+            "math.log10",
+            "math.log",
+            "math.fmod",
+            "math.pow",
+            "math.modf",
+            "math.frexp",
+            "math.ldexp",
+            "math.sign",
+            "math.clamp",
+            "math.round",
+            "math.map",
+            "math.lerp",
+            "math.isnan",
+            "math.isinf",
+            "math.isfinite",
+        ] {
+            assert!(
+                wat.contains(&format!("(import \"waluau\" \"{import}\"")),
+                "expected {import} import:\n{wat}"
+            );
+        }
+        assert!(
+            wat.contains("(result f64 f64)") && wat.contains("(result f64 i32)"),
+            "modf/frexp should use Wasm multi-value imports:\n{wat}"
+        );
+    }
+
+    #[test]
     fn compiles_immediately_invoked_function_expression() {
         // Anonymous functions that omit a return type annotation now have it
         // inferred (and backfilled onto the AST) so they lower to wasm. This is

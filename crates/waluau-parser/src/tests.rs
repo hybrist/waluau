@@ -518,6 +518,14 @@ fn parses_declared_namespace_constant() {
 }
 
 #[test]
+fn parses_declared_nan_constant() {
+    let program = parse("declare const math.nan: f64 = nan\n").expect("parse");
+    assert_eq!(program.declared_constants.len(), 1);
+    assert_eq!(program.declared_constants[0].name, "math.nan");
+    assert_eq!(program.declared_constants[0].value.raw, "NaN");
+}
+
+#[test]
 fn rejects_declared_constant_with_non_numeric_type() {
     let source = r#"
         declare const math.name: string = 1

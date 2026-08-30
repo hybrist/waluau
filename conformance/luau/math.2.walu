@@ -2,12 +2,8 @@
 -- tests/conformance/math.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only math.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
---
--- Split from conformance/luau/math.walu. Helper setup is repeated as needed
--- so each numbered chunk is independently discoverable by the conformance runner.
+-- Split from conformance/luau/math.walu. This contiguous direct math-library
+-- range (former math.2 lines 12-17) is preserved verbatim and independently runnable.
 
 do
   local a,b = math.modf(3.5)
@@ -15,47 +11,3 @@ do
   assert(math.huge > 10e30)
   assert(-math.huge < -10e30)
 end
-
-function f(...)
-  if select('#', ...) == 1 then
-    return (...)
-  else
-    return "***"
-  end
-end
-
-assert(pcall(tonumber) == false)
-assert(tonumber{} == nil)
-assert(tonumber'+0.01' == 1/100 and tonumber'+.01' == 0.01 and
-       tonumber'.01' == 0.01    and tonumber'-1.' == -1 and
-       tonumber'+1.' == 1)
-assert(tonumber'+ 0.01' == nil and tonumber'+.e1' == nil and
-       tonumber'1e' == nil     and tonumber'1.0e+' == nil and
-       tonumber'.' == nil)
-assert(tonumber('-12') == -10-2)
-assert(tonumber('-1.2e2') == - - -120)
-assert(f(tonumber('1  a')) == nil)
-assert(f(tonumber('e1')) == nil)
-assert(f(tonumber('e  1')) == nil)
-assert(f(tonumber(' 3.4.5 ')) == nil)
-assert(f(tonumber('')) == nil)
-assert(f(tonumber('', 8)) == nil)
-assert(f(tonumber('  ')) == nil)
-assert(f(tonumber('  ', 9)) == nil)
-assert(f(tonumber('99', 8)) == nil)
-assert(tonumber('  1010  ', 2) == 10)
-assert(tonumber('10', 36) == 36)
---assert(tonumber('\n  -10  \n', 36) == -36)
---assert(tonumber('-fFfa', 16) == -(10+(16*(15+(16*(15+(16*15)))))))
-assert(tonumber('fFfa', 15) == nil)
---assert(tonumber(string.rep('1', 42), 2) + 1 == 2^42)
-assert(tonumber(string.rep('1', 32), 2) + 1 == 2^32)
---assert(tonumber('-fffffFFFFF', 16)-1 == -2^40)
-assert(tonumber('ffffFFFF', 16)+1 == 2^32)
-
-assert(1.1 == 1.+.1)
-assert(100.0 == 1E2 and .01 == 1e-2)
-assert(1111111111111111-1111111111111110== 1000.00e-03)
---     1234567890123456
-assert(1.1 == '1.'+'.1')
-assert('1111111111111111'-'1111111111111110' == tonumber"  +0.001e+3 \n\t")

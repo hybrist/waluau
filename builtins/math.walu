@@ -7,6 +7,12 @@
 -- Math constants. `declare const` names a compile-time constant: reads fold
 -- to the literal during lowering, so nothing is imported from the host.
 declare const math.pi: f64 = 3.141592653589793
+declare const math.huge: f64 = 1e309
+declare const math.nan: f64 = nan
+declare const math.e: f64 = 2.718281828459045
+declare const math.phi: f64 = 1.618033988749895
+declare const math.sqrt2: f64 = 1.4142135623730951
+declare const math.tau: f64 = 6.283185307179586
 
 declare function math.abs(x: f32): f32
 declare function math.abs(x: f64): f64
@@ -26,6 +32,32 @@ declare function math.cos(x: f32): f32
 declare function math.cos(x: f64): f64
 declare function math.sin(x: f32): f32
 declare function math.sin(x: f64): f64
+declare function math.tan(x: f32): f32
+declare function math.tan(x: f64): f64
+declare function math.acos(x: f32): f32
+declare function math.acos(x: f64): f64
+declare function math.asin(x: f32): f32
+declare function math.asin(x: f64): f64
+declare function math.atan(x: f32): f32
+declare function math.atan(x: f64): f64
+declare function math.cosh(x: f32): f32
+declare function math.cosh(x: f64): f64
+declare function math.sinh(x: f32): f32
+declare function math.sinh(x: f64): f64
+declare function math.tanh(x: f32): f32
+declare function math.tanh(x: f64): f64
+declare function math.deg(x: f32): f32
+declare function math.deg(x: f64): f64
+declare function math.rad(x: f32): f32
+declare function math.rad(x: f64): f64
+declare function math.exp(x: f32): f32
+declare function math.exp(x: f64): f64
+declare function math.log10(x: f32): f32
+declare function math.log10(x: f64): f64
+declare function math.log(x: f32): f32
+declare function math.log(x: f64): f64
+declare function math.log(x: f32, base: f32): f32
+declare function math.log(x: f64, base: f64): f64
 
 -- Signed angle of the vector (x, y) in radians, in (-pi, pi]. The argument
 -- order follows Lua's and C's `atan2(y, x)`, so a vector's own components
@@ -33,12 +65,66 @@ declare function math.sin(x: f64): f64
 declare function math.atan2(y: f32, x: f32): f32
 declare function math.atan2(y: f64, x: f64): f64
 
+-- Luau folds min/max from the first argument, so a later NaN is ignored while
+-- a first-position NaN remains the result. Fixed arities keep calls statically
+-- typed without introducing an untyped variadic host boundary.
+declare function math.min(a: f32): f32
+declare function math.min(a: f64): f64
+declare function math.min(a: i32): i32
 declare function math.min(a: f32, b: f32): f32
 declare function math.min(a: f64, b: f64): f64
+declare function math.min(a: i32, b: i32): i32
+declare function math.min(a: f32, b: f32, c: f32): f32
+declare function math.min(a: f64, b: f64, c: f64): f64
+declare function math.min(a: i32, b: i32, c: i32): i32
+declare function math.min(a: f32, b: f32, c: f32, d: f32): f32
+declare function math.min(a: f64, b: f64, c: f64, d: f64): f64
+declare function math.min(a: i32, b: i32, c: i32, d: i32): i32
+declare function math.max(a: f32): f32
+declare function math.max(a: f64): f64
+declare function math.max(a: i32): i32
 declare function math.max(a: f32, b: f32): f32
 declare function math.max(a: f64, b: f64): f64
+declare function math.max(a: i32, b: i32): i32
+declare function math.max(a: f32, b: f32, c: f32): f32
+declare function math.max(a: f64, b: f64, c: f64): f64
+declare function math.max(a: i32, b: i32, c: i32): i32
+declare function math.max(a: f32, b: f32, c: f32, d: f32): f32
+declare function math.max(a: f64, b: f64, c: f64, d: f64): f64
+declare function math.max(a: i32, b: i32, c: i32, d: i32): i32
 declare function math.copysign(a: f32, b: f32): f32
 declare function math.copysign(a: f64, b: f64): f64
+
+declare function math.fmod(x: f32, y: f32): f32
+declare function math.fmod(x: f64, y: f64): f64
+declare function math.pow(x: f32, y: f32): f32
+declare function math.pow(x: f64, y: f64): f64
+declare function math.modf(x: f32): (f32, f32)
+declare function math.modf(x: f64): (f64, f64)
+declare function math.frexp(x: f32): (f32, i32)
+declare function math.frexp(x: f64): (f64, i32)
+declare function math.ldexp(x: f32, exponent: i32): f32
+declare function math.ldexp(x: f64, exponent: i32): f64
+
+declare function math.sign(x: f32): f32
+declare function math.sign(x: f64): f64
+declare function math.sign(x: i32): i32
+declare function math.clamp(x: f32, minimum: f32, maximum: f32): f32
+declare function math.clamp(x: f64, minimum: f64, maximum: f64): f64
+declare function math.clamp(x: i32, minimum: i32, maximum: i32): i32
+declare function math.round(x: f32): f32
+declare function math.round(x: f64): f64
+declare function math.round(x: i32): i32
+declare function math.map(x: f32, in_min: f32, in_max: f32, out_min: f32, out_max: f32): f32
+declare function math.map(x: f64, in_min: f64, in_max: f64, out_min: f64, out_max: f64): f64
+declare function math.lerp(a: f32, b: f32, t: f32): f32
+declare function math.lerp(a: f64, b: f64, t: f64): f64
+declare function math.isnan(x: f32): bool
+declare function math.isnan(x: f64): bool
+declare function math.isinf(x: f32): bool
+declare function math.isinf(x: f64): bool
+declare function math.isfinite(x: f32): bool
+declare function math.isfinite(x: f64): bool
 
 -- Pseudo-random numbers, following Lua's math.random family. The host owns
 -- the generator state; math.randomseed makes the sequence deterministic.

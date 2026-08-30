@@ -521,9 +521,16 @@ impl Parser {
                 self.advance();
                 waluau_ast::NumberLiteral { raw }
             }
+            // Builtin declarations need a way to spell the IEEE-754 NaN
+            // constant. It is deliberately accepted only here, not as a
+            // general source expression.
+            Some(TokenKind::Identifier(name)) if name.eq_ignore_ascii_case("nan") => {
+                self.advance();
+                waluau_ast::NumberLiteral { raw: "NaN".into() }
+            }
             _ => {
                 return Err(Diagnostic::new(format!(
-                    "declared constant '{name}' must be initialized with a number literal"
+                    "declared constant '{name}' must be initialized with a number literal or nan"
                 )));
             }
         };

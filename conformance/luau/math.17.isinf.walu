@@ -1,0 +1,10 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/math.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from former math.17 lines 232-235; this contiguous body is preserved.
+
+assert(math.isinf(math.huge))
+assert(math.isinf(-math.huge))
+assert(math.isinf(10) == false)
+assert(math.isinf(0/0) == false)

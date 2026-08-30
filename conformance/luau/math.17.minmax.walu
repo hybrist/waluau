@@ -1,0 +1,17 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/math.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from former math.17 lines 58-68; this contiguous body is preserved.
+
+-- min/max
+assert(math.min(1) == 1)
+assert(math.min(1, 2) == 1)
+assert(math.min(1, 2, -1) == -1)
+assert(math.min(1, -1, 2) == -1)
+assert(math.min(1, -1, 2, -2) == -2)
+assert(math.max(1) == 1)
+assert(math.max(1, 2) == 2)
+assert(math.max(1, 2, -1) == 2)
+assert(math.max(1, -1, 2) == 2)
+assert(math.max(1, -1, 2, -2) == 2)
