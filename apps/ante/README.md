@@ -30,7 +30,7 @@ A vault is one heist inside a longer roguelike run of nine, and clearing one
 costs its ante: the vault takes a cut of the mana the robbers are holding, and
 what is left is what the next vault is dealt with. The pool is the run's, not
 the vault's, and every cast spends from it for good. Between two vaults the run
-stops at the fence, where that same mana buys spell upgrades.
+stops at the shop, where that same mana buys spell scrolls.
 
 A run also starts with three hearts. Every hand the Arch Mage wins removes one,
 including a hand inside a vault the player ultimately clears. Hearts travel
@@ -57,19 +57,15 @@ vault, so an endless run walks on out of whatever surplus it arrived with and no
 further.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
-once, on keys 1 and 2. A visit to the fence stocks exactly two offers, drawn
-without replacement from everything the run could be sold: one mana off a spell
-it carries — four mana for the first step, then six, then eight, and never below
-two per cast — or a spell it does not, priced at seven. Buying an offer marks
-that line sold and nothing takes its place; what restocks the fence is reaching
-the next one. A learned spell takes the next free key at full price; once both
-keys are taken, learning a third asks which spell it trades away, and the one
-traded out is gone. An offer names the spell it is about rather than the key, so
-trading a spell away closes an offer to sharpen it instead of redirecting it.
-Losing a vault ends the run and everything it bought with it: a fresh run sets
-out with its starting spell at full price again. The fence prints the next
-vault's ante under the purse, because it informs rather than refuses — the ante
-is charged on the way out and there is a whole heist in between to earn it.
+once, on keys 1 and 2. A visit to the shop stocks exactly two spell scrolls,
+drawn without replacement. A scroll for a known spell carries its next level;
+a scroll for a new kind starts at level one and takes the next free key. There
+is no separate learn-or-upgrade product and no trade prompt: once both keys are
+taken, a scroll for another kind is unavailable rather than forgetting a spell
+the run already carries. Every scroll costs four mana. Buying one marks that
+line sold and nothing takes its place; reaching the next shop is what restocks
+the offers. Losing a vault ends the run and everything it bought with it, so a
+fresh run sets out with its starting spell at level one again.
 
 Every third vault of a run is a boss battle: both sides are dealt seven relics
 up front and spent pairs are never replaced from the draw pile, so the hands
@@ -229,9 +225,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `city_map_render.walu` | WebGL2 primitive drawing for the city, its walked and upcoming route, the last authored vault's landmark house, and the colored street streak, all at one opacity. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `run.walu` | DOM-free run state: the vault sequence, its boss cadence and ante table, the finish line and endless tail, the spell loadout, and the mana and hearts carried between vaults. |
-| `shop.walu` | DOM-free intermission between vaults: the two offers a visit stocks, what they charge, which are spent, and which the cursor holds. |
-| `shop_item.walu` | DOM-free bought-item seam: one `use` method receiving the mutable run and a selected destination, with concrete spell-learning and sharpening effects. |
-| `shop_render.walu` | Where the fence's offer list sits on the city map, at the map's own opacity, and the pointer's row lookup for it. |
+| `shop.walu` | DOM-free intermission between vaults: behavior-bearing item stock, quoted prices, spent offers, cursor input, and hot-replacement snapshots. |
+| `items/` | The common item behavior/snapshot seam, its restore catalog, and concrete spell scrolls that teach or raise a spell without replacing the loadout. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and presentation snapshots. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
@@ -256,13 +251,13 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence, ante table and endless tail, persistent hearts, mana carryover, the carried loadout, and run outcomes. |
 | `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how a run ends, played from a shuffled deck by a reference policy — the numbers the ante table is priced against. |
-| `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
-| `shop_item.test.walu` | Deterministic Vitest assertions that independent item effects can mutate gold, health, and the spell loadout through the bought-item seam. |
+| `shop.test.walu` | Deterministic Vitest assertions for item stock, spending, spell levels, full-loadout refusal, lifecycle, and snapshots. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
 | `ui/node.test.walu` | Headless assertions for retained identity, layout, arrangement, hit order, and controlled presentation. |
 | `ui/presentation.test.walu` | Headless assertions for composition and the type-sized retained presenters. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |
 | `hand.stories.walu` | Storybook controls for the live hand-fan entity across card counts, selections, and focus positions. |
+| `entities/shop.stories.walu` | Storybook states and an interactive session for the retained shop entity. |
 | `ui/layout.stories.walu` | Storybook stories for the retained layout solver itself, on synthetic leaves. |
 | `.storybook/main.js` | Storybook configuration: the story glob and the compiler options stories are built with. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |

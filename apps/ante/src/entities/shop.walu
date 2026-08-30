@@ -7,7 +7,7 @@ local ui = require("../ui/node")
 local ink = require("../ink")
 local label = require("./label")
 local run_module = require("../run")
-local shop_ = require("../shop_new")
+local shop_ = require("../shop")
 
 type ShopState = shop_.State
 type Slot = shop_.Slot
@@ -52,11 +52,12 @@ export type Stateful = {
     presentation: Presentation,
     gold: label.Stateful,
     row_nodes: {ui.Node},
+    pressed_row: i32,
     root: ui.Node
 }
 
 function shop_slot_color(slot: Slot, run: RunState): string
-    if slot.sold or not slot.item:can_use(run) then
+    if slot.sold or slot.price > run.gold or not slot.item:can_use(run) then
         return DISABLED_INK
     end
     return slot.item:accent()
@@ -118,8 +119,7 @@ function draw_row(
     if slot.sold then
         price = "SOLD"
         price_ink = DISABLED_INK
-    elseif not slot.item:can_use(presentation.run) then
-        price = "CANNOT USE"
+    elseif not state:slot_available(presentation.run, index) then
         price_ink = DISABLED_INK
     end
     ink.text_right(
@@ -224,6 +224,7 @@ function Stateful.new(state: ShopState, run: RunState): Stateful
         presentation = presentation,
         gold = gold,
         row_nodes = rows,
+        pressed_row = -1,
         root = root
     }
     sync(view, state, run)
@@ -236,6 +237,47 @@ end
 
 function Stateful:hit(x: f64, y: f64): i32
     return self.root:hit(x, y)
+end
+
+function Stateful:draw(surface: ui.Surface, width: f64, height: f64): unit
+    local size: box.Intrinsic = self.root:measure(surface.graphics)
+    local x: f64 = (width - size.preferred_width) * 0.5
+    local y: f64 = (height - size.preferred_height) * 0.5
+    self.root:draw(surface, x, y, size.preferred_width, size.preferred_height)
+end
+
+function Stateful:mousemoved(x: f64, y: f64): unit
+    local row: i32 = self:hit(x, y)
+    if row >= 0 then
+        self.presentation.state.cursor = row
+    end
+end
+
+function Stateful:mousepressed(x: f64, y: f64, button: i32): unit
+    self.pressed_row = -1
+    if button ~= 1 then
+        return
+    end
+    local row: i32 = self:hit(x, y)
+    if row >= 0 then
+        self.presentation.state.cursor = row
+        self.pressed_row = row
+    end
+end
+
+-- Returns true when a complete click chose the way out.
+function Stateful:mousereleased(x: f64, y: f64, button: i32): bool
+    local pressed: i32 = self.pressed_row
+    self.pressed_row = -1
+    if button ~= 1 or pressed < 0 or self:hit(x, y) ~= pressed then
+        return false
+    end
+    self.presentation.state.cursor = pressed
+    return self.presentation.state:confirm_choice(self.presentation.run)
+end
+
+function Stateful:pointer_leave(): unit
+    self.pressed_row = -1
 end
 
 function node(state: ShopState, run: RunState): ui.Node

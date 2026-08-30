@@ -80,7 +80,7 @@ function install_ante_magic(): unit
         if screen == "menu" then
             menu_state:update(city, dt)
         else
-            duel:steer_city(city, dt)
+            duel:steer_city(city)
             if assets:can_update() then
                 play_flip_cues(assets, duel:update(city, dt))
             end

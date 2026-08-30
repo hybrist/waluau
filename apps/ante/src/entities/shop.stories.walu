@@ -2,7 +2,7 @@ local storybook = require("waluau:engine/storybook")
 local ui = require("../ui/node")
 local ui_story = require("../ui/story")
 local run_ = require("../run")
-local shop_ = require("../shop_new")
+local shop_ = require("../shop")
 local shop_entity = require("./shop")
 local spells = require("../spells/spell")
 local scroll_ = require("../items/scroll")
@@ -86,7 +86,7 @@ local function spent_node(): ui.Node
 end
 
 local unavailable_run: RunState = make_run(SpellKind.Firebolt, 15, 3)
-unavailable_run:learn(SpellKind.Clone, 1)
+unavailable_run:learn_spell(spells.Spell.new(SpellKind.Clone, 1))
 local unavailable_shop: ShopState = ShopState.new(unavailable_run)
 unavailable_shop.slots = {
     { item = SpellScroll.new(SpellKind.Firebolt, 1)::Item, price = 4, sold = false },
@@ -142,24 +142,17 @@ local function interactive_keypressed(key: string): unit
 end
 
 local function interactive_mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
-    local row: i32 = interactive_view:hit(x, y)
-    if row >= 0 then
-        interactive.shop.cursor = row
-    end
+    interactive_view:mousemoved(x, y)
 end
 
 local function interactive_mousepressed(x: f64, y: f64, button: i32): unit
-    if button ~= 1 then
-        return
-    end
-    local row: i32 = interactive_view:hit(x, y)
-    if row >= 0 then
-        interactive.shop.cursor = row
-        local done: bool = interactive.shop:confirm_choice(interactive.run)
-        if done then
-            interactive.run.duel += 1
-            reset_interactive()
-        end
+    interactive_view:mousepressed(x, y, button)
+end
+
+local function interactive_mousereleased(x: f64, y: f64, button: i32): unit
+    if interactive_view:mousereleased(x, y, button) then
+        interactive.run.duel += 1
+        reset_interactive()
     end
 end
 
@@ -218,6 +211,7 @@ storybook.publish(
                     keypressed = interactive_keypressed,
                     mousemoved = interactive_mousemoved,
                     mousepressed = interactive_mousepressed,
+                    mousereleased = interactive_mousereleased,
                     width = WIDTH::f64,
                     height = HEIGHT::f64,
                     scale = 1.0,

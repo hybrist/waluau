@@ -1584,8 +1584,8 @@ function State:spell_count(): i32
     return #self.spells
 end
 
--- The kind and price of one loadout slot. A slot the loadout does not have
--- answers nil and a price of zero, which `can_cast` refuses either way:
+-- The kind, cast price, and level of one loadout slot. A slot the loadout does
+-- not have answers nil and numeric zeroes, which `can_cast` refuses either way:
 -- the input layer binds a fixed key per slot, so asking about an empty one is
 -- ordinary rather than a caller error.
 function State:spell_kind(slot: i32): SpellKind?
@@ -1600,6 +1600,13 @@ function State:spell_cost(slot: i32): i32
         return 0
     end
     return self.spells[slot].cost
+end
+
+function State:spell_level(slot: i32): i32
+    if slot < 0 or slot >= #self.spells then
+        return 0
+    end
+    return self.spells[slot].level
 end
 
 function State:is_frozen(table_card: i32): bool

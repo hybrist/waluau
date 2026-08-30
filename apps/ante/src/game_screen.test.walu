@@ -83,3 +83,38 @@ describe(
         )
     end
 )
+
+describe(
+    "Ante Magic shop screen wiring",
+    function()
+        it(
+            "starts closed and restores an open item visit",
+            function()
+                math.randomseed(149)
+                local screen: game_screen.State = game_screen.State.new()
+                expect(screen.shop.open):toBe(false)
+                expect(#screen.shop.slots):toBe(0)
+
+                screen.shop:open_for(screen.run)
+                screen.shop.cursor = 1
+                screen.shop.slots[0].sold = true
+                local sections: {string} = screen:snapshot()
+                local restored: game_screen.State? = game_screen.State.restore(
+                    sections[0],
+                    sections[1],
+                    sections[2],
+                    sections[3],
+                    sections[4]
+                )
+                expect(restored == nil):toBe(false)
+                if restored ~= nil then
+                    local live: game_screen.State = restored::game_screen.State
+                    expect(live.shop.open):toBe(true)
+                    expect(live.shop.cursor):toBe(1)
+                    expect(live.shop.slots[0].sold):toBe(true)
+                    expect(live.shop:snapshot()):toBe(sections[4])
+                end
+            end
+        )
+    end
+)

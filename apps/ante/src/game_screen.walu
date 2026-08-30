@@ -26,7 +26,7 @@ local choreography = require("./choreography")
 local city_map = require("./city_map")
 local flow = require("./flow")
 local shop = require("./shop")
-local shop_render = require("./shop_render")
+local shop_entity = require("./entities/shop")
 local layout = require("./layout")
 local ui = require("./ui/node")
 local divine_intervention = require("./divine_intervention")
@@ -38,10 +38,9 @@ export type State = {
     presentation: choreography.State,
     board: render.Board,
     shop: shop.State,
-    shop_ui: shop_render.View,
+    shop_ui: shop_entity.Stateful,
     intervention: divine_intervention.State,
-    leaving_fence: bool,
-    fence_fade: f64
+    leaving_fence: bool
 }
 
 type ScreenAction = "none" | "exit"
@@ -116,7 +115,8 @@ end
 function State.new(): State
     local run: run_module.State = run_module.State.new(spells.SpellKind.Firebolt, false)
     local rules: game.State = game.State.new(run:boss(), run.spells, run.gold)
-    local intermission: shop.State = shop.State.new()
+    local intermission: shop.State = shop.State.new(run)
+    intermission:close()
     return {
         run = run,
         rules = rules,
@@ -124,10 +124,9 @@ function State.new(): State
         presentation = choreography.State.new(),
         board = render.Board.new(rules:view(), run:view("none")),
         shop = intermission,
-        shop_ui = shop_render.View.new(intermission, run),
+        shop_ui = shop_entity.Stateful.new(intermission, run),
         intervention = divine_intervention.State.new(),
-        leaving_fence = false,
-        fence_fade = 0.0
+        leaving_fence = false
     }
 end
 
@@ -223,49 +222,23 @@ function State:city_stop(): i32
     return city_map.duel_stop(self.run.duel)
 end
 
--- How much of the offer list is on the screen. Leaving a shop takes it down
--- before the walk to the next house is under way, and the map's own `street`
--- keeps it from arriving while the camera is still inside the last duel: a
--- list about where the duel is standing waits until it is standing there.
-const FENCE_FADE_SECONDS: f64 = 0.28
-
-function fade_toward(value: f64, goal: f64, step: f64): f64
-    if value < goal then
-        local next: f64 = value + step
-        if next > goal then
-            return goal
-        end
-        return next
-    end
-    local next: f64 = value - step
-    if next < goal then
-        return goal
-    end
-    return next
-end
-
 -- Aim the map at where the run stands and say whether the map or the duel is
 -- the picture. Called every frame, resources loaded or not, so the walk between
 -- two stops keeps time with the run rather than with the asset loader.
-function State:steer_city(city: city_map.State, dt: f64): unit
+function State:steer_city(city: city_map.State): unit
     city:follow(self:city_stop())
-    local standing: f64 = 0.0
     if self:on_map() then
         city:show()
-        standing = 1.0
     else
         city:hide()
     end
-    self.fence_fade = fade_toward(self.fence_fade, standing, dt / FENCE_FADE_SECONDS)
 end
 
 -- The same aim, with the travel and the dive already finished: for a run that
 -- is being set down rather than played into place, which is what a development
 -- snapshot coming back is.
 function State:place_city(city: city_map.State): unit
-    -- A whole fade's worth of time in one step is how this asks for the aim to
-    -- have already arrived, offers included.
-    self:steer_city(city, FENCE_FADE_SECONDS)
+    self:steer_city(city)
     city:warp(self:city_stop())
     city:settle()
 end
@@ -421,11 +394,14 @@ function State:draw_vault(surface: ui.Surface): unit
     )
 end
 
--- The shop's offers, at the opacity of the street they are laid out on: they
--- arrive as the camera comes back out of the last duel, and are gone before
--- the walk to the next house begins.
+-- The shop's offers arrive once the street under them is visible and are gone
+-- before the walk to the next house begins.
 function State:draw_fence(city: city_map.State, viewport: layout.State, surface: ui.Surface): unit
-    self.shop_ui:draw(viewport, surface, self.fence_fade * city.street)
+    if city.street <= 0.0 then
+        return
+    end
+    self.shop_ui:present(self.shop, self.run)
+    self.shop_ui:draw(surface, viewport.width, viewport.height)
 end
 
 function State:submit_swap(): unit
@@ -569,7 +545,7 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     if self:on_map() then
         if control == Key.restart then
             self:reset(city, self.run.rush, self.run.start_spell)
-        elseif self.shop_ui:keypressed(key) == "leave" then
+        elseif self.shop:keypressed(self.run, key) then
             self:leave_shop()
         end
         return "none"
@@ -744,11 +720,11 @@ function State:mousepressed(city: city_map.State, x: f64, y: f64, button: i32): 
     self.board:pointer_down(x, y, button)
 end
 
--- Both shop and board controls commit through the retained router only when
--- release lands on the same target that received the press.
+-- Both shop and board controls commit only when release lands on the same
+-- retained target that received the press.
 function State:mousereleased(city: city_map.State, x: f64, y: f64, button: i32): unit
     if self:on_map() then
-        if self.shop_ui:mousereleased(x, y, button) == "leave" then
+        if self.shop_ui:mousereleased(x, y, button) then
             self:leave_shop()
         end
         return
@@ -817,13 +793,12 @@ function State.restore(
         presentation = presentation::choreography.State,
         board = render.Board.new(restored_rules:view(), restored_run:view("none")),
         shop = restored_shop,
-        shop_ui = shop_render.View.new(restored_shop, restored_run),
+        shop_ui = shop_entity.Stateful.new(restored_shop, restored_run),
         intervention = divine_intervention.State.new(),
         -- Leaving a shop is a moment of movement, not a phase of the run. A
         -- snapshot lands on one side of it: an open shop comes back standing,
         -- and `place_city` puts the map and the offers where that leaves the
         -- run.
-        leaving_fence = false,
-        fence_fade = 0.0
+        leaving_fence = false
     }
 end

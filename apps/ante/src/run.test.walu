@@ -186,7 +186,6 @@ describe(
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 state:settle(true, 30)
-                expect(state:upgrade(0)):toBe(true)
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 3))):toBe(true)
                 local encoded: string = state:snapshot()
                 local restored: run.State? = run.State.restore(encoded)
@@ -194,7 +193,7 @@ describe(
                 if restored ~= nil then
                     expect(restored:spell_count()):toBe(2)
                     expect(restored.spells[0].kind):toBe(spells.SpellKind.Firebolt)
-                    expect(restored.spells[0].cost):toBe(game.spell_cost - 1)
+                    expect(restored.spells[0].cost):toBe(game.spell_cost)
                     expect(restored.spells[0].level):toBe(1)
                     expect(restored.spells[1].kind):toBe(spells.SpellKind.Clone)
                     expect(restored.spells[1].level):toBe(3)
@@ -225,24 +224,23 @@ describe(
     "Ante Magic run loadout",
     function()
         it(
-            "gives a learned spell the next cast key while there is room",
+            "adds a new spell while there is room and refuses to forget one when full",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                expect(state:open_slot()):toBe(1)
-                expect(state:learn(spells.SpellKind.Clone, 1)):toBe(true)
+                expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 1))):toBe(true)
                 expect(state:spell_count()):toBe(2)
                 expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
                 expect(state.spells[1].cost):toBe(game.spell_cost)
                 expect(state.spells[1].level):toBe(1)
-                -- Two is as many as travel at once, so nothing is open any more and a
-                -- third spell has to name the slot it takes over.
-                expect(state:open_slot()):toBe(-1)
-                expect(state:learn(spells.SpellKind.RaiseCard, 2)):toBe(false)
-                expect(state:learn(spells.SpellKind.RaiseCard, 0)):toBe(true)
+                -- Two is as many as travel at once. A third kind cannot silently
+                -- replace either spell already bound to a cast key.
+                expect(
+                    state:learn_spell(spells.Spell.new(spells.SpellKind.RaiseCard, 1))
+                ):toBe(false)
                 expect(state:spell_count()):toBe(2)
-                expect(state.spells[0].kind):toBe(spells.SpellKind.RaiseCard)
-                expect(state:carries(spells.SpellKind.Firebolt)):toBe(false)
+                expect(state:carries(spells.SpellKind.Firebolt)):toBe(true)
                 expect(state:carries(spells.SpellKind.Clone)):toBe(true)
+                expect(state:carries(spells.SpellKind.RaiseCard)):toBe(false)
             end
         )
 
@@ -250,24 +248,10 @@ describe(
             "refuses a spell the loadout already carries",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                expect(state:learn(spells.SpellKind.Firebolt, 1)):toBe(false)
+                expect(
+                    state:learn_spell(spells.Spell.new(spells.SpellKind.Firebolt, 1))
+                ):toBe(false)
                 expect(state:spell_count()):toBe(1)
-            end
-        )
-
-        it(
-            "sharpens a spell down to a floor and no further",
-            function()
-                local state: run.State = run.State.new(spells.SpellKind.FreezeRay, false)
-                local steps: i32 = game.spell_cost - run.min_spell_cost
-                for _ = 1, steps do
-                    expect(state:can_sharpen(0)):toBe(true)
-                    expect(state:upgrade(0)):toBe(true)
-                end
-                expect(state.spells[0].cost):toBe(run.min_spell_cost)
-                expect(state:can_sharpen(0)):toBe(false)
-                expect(state:upgrade(0)):toBe(false)
-                expect(state:upgrade(1)):toBe(false)
             end
         )
 
@@ -287,16 +271,16 @@ describe(
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 state:settle(true, 26)
-                expect(state:learn(spells.SpellKind.Clone, state:open_slot())):toBe(true)
-                expect(state:upgrade(1)):toBe(true)
+                expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 1))):toBe(true)
+                expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 2))):toBe(true)
                 state:settle(true, 19)
-                -- The next duel is dealt the upgraded pair: the loadout belongs to the
+                -- The next duel is dealt the levelled pair: the loadout belongs to the
                 -- run, not to the duel that bought it.
                 expect(state:spell_count()):toBe(2)
-                expect(state.spells[1].cost):toBe(game.spell_cost - 1)
+                expect(state.spells[1].level):toBe(2)
                 local dealt: game.State = game.State.new(state:boss(), state.spells, state.gold)
                 expect(dealt:spell_count()):toBe(2)
-                expect(dealt:spell_cost(1)):toBe(game.spell_cost - 1)
+                expect(dealt:spell_level(1)):toBe(2)
 
                 -- The Opponent taking the duel ends the run, and everything the run
                 -- bought goes with it: a fresh run sets out with its starting spell at
@@ -315,9 +299,9 @@ describe(
                 local dealt: game.State = game.State.new(state:boss(), state.spells, state.gold)
                 -- The duel holds a reading of the loadout. Nothing a duel does to its
                 -- own copy — and nothing done to the run's afterwards — crosses over.
-                expect(state:upgrade(0)):toBe(true)
-                expect(dealt:spell_cost(0)):toBe(game.spell_cost)
-                expect(state.spells[0].cost):toBe(game.spell_cost - 1)
+                expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Firebolt, 2))):toBe(true)
+                expect(dealt:spell_level(0)):toBe(1)
+                expect(state.spells[0].level):toBe(2)
             end
         )
     end

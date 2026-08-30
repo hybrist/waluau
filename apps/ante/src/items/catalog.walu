@@ -1,0 +1,20 @@
+-- The item catalog is the one place persisted item data becomes live behavior.
+-- The shop stores only the common Item interface and delegates reconstruction
+-- here, so adding another item does not add a purchase branch to the shop.
+local item_ = require("./item")
+local scroll_ = require("./scroll")
+
+type Item = item_.Item
+type Snapshot = item_.Snapshot
+
+function restore(snapshot: Snapshot): Item?
+    if snapshot.kind == "spell-scroll" then
+        local scroll: scroll_.SpellScroll? = scroll_.SpellScroll.restore(snapshot.payload)
+        if scroll ~= nil then
+            return scroll::Item
+        end
+    end
+    return nil
+end
+
+return { restore = restore }
