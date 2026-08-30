@@ -1,0 +1,28 @@
+-- `print` accepts any number of tostring-able arguments: values stringify
+-- like `tostring` (including `__tostring` dispatch), multi-value results
+-- expand in place, and the pieces join with tabs into one console line.
+function multi(): (i32, string)
+    return 7, "mid"
+end
+
+enum Color { Red, Blue }
+
+function Color:__tostring(): string
+    if self == Color.Red then
+        return "red"
+    end
+    return "blue"
+end
+
+print()
+print(42)
+print("a", 1, true, nil)
+print(multi())
+print("start", multi(), Color.Blue)
+
+local maybe: string? = nil
+print(maybe, 1.5)
+
+-- print stays a unit-typed expression usable in statement position only;
+-- reaching this assert proves every call above ran without trapping.
+assert(true)

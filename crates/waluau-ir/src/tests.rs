@@ -158,6 +158,86 @@ fn lowers_numeric_concat_and_tostring_metamethod() {
 }
 
 #[test]
+fn lowers_print_multi_arg_spread_into_one_tab_joined_message() {
+    let source = r#"
+        function multi(): (i32, string)
+            return 7, "mid"
+        end
+
+        function entry(): unit
+            print("start", multi(), true)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function");
+    let instructions: Vec<_> = entry
+        .blocks
+        .values()
+        .flat_map(|block| {
+            block
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction)
+        })
+        .collect();
+    // One host print call carries the whole joined message.
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| matches!(instruction, Instruction::Print { .. }))
+            .count(),
+        1
+    );
+    // The multi-value result expands value-by-value.
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::MultiGet { .. }))
+    );
+    // Non-string pieces stringify: multi's i32 first value and the bool.
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            instruction,
+            Instruction::ToString {
+                from: Type::Numeric(NumericType::I32),
+                ..
+            }
+        )
+    }));
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            instruction,
+            Instruction::ToString {
+                from: Type::Bool,
+                ..
+            }
+        )
+    }));
+    // Four pieces join with tab separators: (4 - 1) * 2 concats.
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| {
+                matches!(
+                    instruction,
+                    Instruction::Binary {
+                        op: waluau_ast::BinaryOp::Concat,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        6
+    );
+}
+
+#[test]
 fn preserves_files_for_linked_and_lifted_functions() {
     let alpha_source = "function alpha(): i32\n    return 11\nend\n";
     let beta_source = concat!(
