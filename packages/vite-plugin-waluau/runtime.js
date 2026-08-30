@@ -154,6 +154,25 @@ function formatExponent(value, specifier, precision) {
   return `${mantissa}${specifier}${sign}${digits}`;
 }
 
+function formatFixed(value, precision) {
+  const number = Number(value);
+  const fractionDigits = precision ?? 6;
+  const formatted = number.toFixed(fractionDigits);
+
+  // Number.prototype.toFixed switches back to exponential notation for
+  // magnitudes >= 1e21. Every finite f64 at that magnitude is integral, so a
+  // BigInt conversion recovers the exact represented integer for fixed-point
+  // rendering. Keep the native result for ordinary values and specials so
+  // their existing rounding, negative-zero, NaN, and infinity behavior stays
+  // unchanged.
+  if (!Number.isFinite(number) || !/[eE]/.test(formatted)) return formatted;
+
+  const integer = BigInt(number).toString();
+  return fractionDigits === 0
+    ? integer
+    : `${integer}.${'0'.repeat(fractionDigits)}`;
+}
+
 function formatNumber(value, specifier, precision) {
   const number = Number(value);
   switch (specifier) {
@@ -169,7 +188,7 @@ function formatNumber(value, specifier, precision) {
     case 'X':
       return BigInt.asUintN(64, BigInt(Math.trunc(number))).toString(16).toUpperCase();
     case 'f':
-      return number.toFixed(precision ?? 6);
+      return formatFixed(number, precision);
     case 'e':
     case 'E':
       return formatExponent(number, specifier, precision);
