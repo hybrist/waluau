@@ -457,13 +457,63 @@ function State:submit_round(): unit
     self.presentation:begin_reveal(resolved.winner ~= 0)
 end
 
-function State:perform_board_action(city: city_map.State, action: render.BoardAction): unit
-    if action.kind == "none" then
+-- Arming a spell is a toggle: asking for the one already aimed calls it off,
+-- and asking for another swings the aim over to it. The cast keys and the
+-- ability sockets both come through here, so a run played with a finger arms
+-- exactly what a run played with the number row does.
+function State:arm_spell(slot: i32): unit
+    local ui: flow.State = self.ui
+    if ui.modal ~= "none" or ui.revealing or self:vault_finished() then
         return
+    end
+    if ui.cast_slot == slot then
+        ui.cast_slot = nil
+        return
+    end
+    if not self.rules:can_cast(slot) then
+        return
+    end
+    -- The cast should respond on the first gesture. If the opening deal is
+    -- still running, settle it before targeting begins so the table cards are
+    -- visibly present for the aim cursor.
+    if self.presentation:is_animating() then
+        self.presentation:skip()
+    end
+    ui.cast_slot = slot
+    self.board:focus_table(0)
+end
+
+-- "exit" is the way back to the menu, which only the control bar's own MENU
+-- produces; every other action is answered here and leaves the screen where it
+-- stands.
+function State:perform_board_action(city: city_map.State, action: render.BoardAction): ScreenAction
+    if action.kind == "none" then
+        return "none"
+    end
+    if action.kind == "menu" then
+        return "exit"
+    end
+    -- The bar's remaining controls are the gestures behind the keys printed on
+    -- them, so they take the same route through the phase gate.
+    if action.kind == "help" then
+        self:consume_gate(city, "help")
+        return "none"
+    end
+    if action.kind == "history" then
+        self:consume_gate(city, "history")
+        return "none"
+    end
+    if action.kind == "restart" then
+        self:consume_gate(city, "restart")
+        return "none"
+    end
+    if action.kind == "spell" then
+        self:arm_spell(action.index)
+        return "none"
     end
     if action.kind == "modal" then
         self:consume_gate(city, "primary")
-        return
+        return "none"
     end
     local ui: flow.State = self.ui
     local rules: game.State = self.rules
@@ -487,6 +537,7 @@ function State:perform_board_action(city: city_map.State, action: render.BoardAc
             self:submit_round()
         end
     end
+    return "none"
 end
 
 function State:consume_gate(city: city_map.State, command: flow.Command): bool
@@ -573,26 +624,7 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     end
     local cast_slot: i32 = cast_slot_for(key, rules:spell_count())
     if cast_slot >= 0 then
-        if ui.modal ~= "none" or ui.revealing or self:vault_finished() then
-            return "none"
-        end
-        -- A cast key toggles: pressing the aimed spell's own key again calls it
-        -- off, while the other spell's key swings the aim over to that one.
-        if ui.cast_slot == cast_slot then
-            ui.cast_slot = nil
-            return "none"
-        end
-        if not rules:can_cast(cast_slot) then
-            return "none"
-        end
-        -- The cast should respond on the first gesture. If the opening deal
-        -- is still running, settle it before targeting begins so the table cards
-        -- are visibly present for the aim cursor.
-        if presentation:is_animating() then
-            presentation:skip()
-        end
-        ui.cast_slot = cast_slot
-        self.board:focus_table(0)
+        self:arm_spell(cast_slot)
         return "none"
     end
     local aimed_slot: i32? = ui.cast_slot
@@ -707,32 +739,40 @@ function State:mousepressed(city: city_map.State, x: f64, y: f64, button: i32): 
         self.shop_ui:mousepressed(x, y, button)
         return
     end
-    if self.intervention.active then
-        return
-    end
-    if self.presentation:firebolt_pending() then
-        return
-    end
-    if self.presentation:is_animating() then
-        self:consume_gate(city, "primary")
-        return
+    -- The board's standing controls are reached ahead of the phase gate, the
+    -- same way the keys printed on them are: the control bar answers wherever
+    -- the duel has got to, and a socket arms on the first gesture rather than
+    -- spending it settling the deal. Everything else is board input and waits
+    -- its turn behind whatever is in flight.
+    local standing: "none" | "chrome" | "spell" = self.board:standing_at(x, y)
+    if standing ~= "chrome" then
+        if self.intervention.active then
+            return
+        end
+        if self.presentation:firebolt_pending() then
+            return
+        end
+        if standing ~= "spell" and self.presentation:is_animating() then
+            self:consume_gate(city, "primary")
+            return
+        end
     end
     self.board:pointer_down(x, y, button)
 end
 
 -- Both shop and board controls commit only when release lands on the same
 -- retained target that received the press.
-function State:mousereleased(city: city_map.State, x: f64, y: f64, button: i32): unit
+function State:mousereleased(city: city_map.State, x: f64, y: f64, button: i32): ScreenAction
     if self:on_map() then
         if self.shop_ui:mousereleased(x, y, button) then
             self:leave_shop()
         end
-        return
+        return "none"
     end
     if button ~= 1 then
-        return
+        return "none"
     end
-    self:perform_board_action(city, self.board:pointer_up(x, y, button))
+    return self:perform_board_action(city, self.board:pointer_up(x, y, button))
 end
 
 -- Five independently versioned development-snapshot payloads, in the same

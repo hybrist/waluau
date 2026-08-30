@@ -20,7 +20,20 @@ function fan_band(viewport: viewport_layout.State): box.Rect
     )
 end
 
-function present_board(board: board_input.State, parts: {f64}): unit
+const SPELL_COUNT: i32 = 2
+const CHROME_COUNT: i32 = 4
+-- The strip's own leaves are laid out by the footer entity, so this headless
+-- board stands them in a row of its own at a known place instead.
+const STRIP_Y: f64 = 700.0
+const STRIP_WIDTH: f64 = 70.0
+const STRIP_HEIGHT: f64 = 22.0
+
+function present_board(
+    board: board_input.State,
+    parts: {f64},
+    touch_minimum: f64,
+    casting: bool
+): unit
     local viewport: viewport_layout.State = viewport_layout.current()
     board:prepare_headless(
         {
@@ -32,15 +45,35 @@ function present_board(board: board_input.State, parts: {f64}): unit
             table_count = 3,
             frozen_table = {false, false, false},
             swap_open = true,
-            casting = false,
+            casting = casting,
             modal_open = false,
             finished = false,
-            play_pick_count = 0
+            play_pick_count = 0,
+            spell_count = SPELL_COUNT,
+            touch_minimum = touch_minimum
         }
     )
+    place_strip()
 end
 
-function prepared_board(): board_input.State
+function strip_rect(index: i32): box.Rect
+    return box.rect((index::f64) * (STRIP_WIDTH + 10.0), STRIP_Y, STRIP_WIDTH, STRIP_HEIGHT)
+end
+
+-- Sockets and standing controls are placed by the entities that own them in
+-- the live board. `prepare_headless` arranges only the fan and the modal
+-- shield and gives every other leaf the root's own box, so this stands them
+-- in a row of their own after each presentation.
+local strip: {ui.Node} = {}
+
+function place_strip(): unit
+    for index, node in strip do
+        local bounds: box.Rect = strip_rect(index - 1)
+        node:arrange(bounds.x, bounds.y, bounds.width, bounds.height)
+    end
+end
+
+function prepared_board(touch_minimum: f64): board_input.State
     viewport_layout.update(960.0, 720.0)
     local children: {ui.Node} = {}
     local table_nodes: {ui.Node} = {}
@@ -51,8 +84,29 @@ function prepared_board(): board_input.State
     end
     local commit: ui.Node = ui.Node.sized(120.0, 30.0, empty_paint)
     table.insert(children, commit)
-    local board: board_input.State = board_input.new(children, table_nodes, commit)
-    present_board(board, {0.0, 0.0, 0.0, 0.0, 0.0})
+    strip = {}
+    local spells: {ui.Node} = {}
+    local chrome: {ui.Node} = {}
+    for index = 0::i32, SPELL_COUNT + CHROME_COUNT - 1 do
+        local node: ui.Node = ui.Node.sized(STRIP_WIDTH, STRIP_HEIGHT, empty_paint)
+        table.insert(strip, node)
+        table.insert(children, node)
+        if index < SPELL_COUNT then
+            table.insert(spells, node)
+        else
+            table.insert(chrome, node)
+        end
+    end
+    local board: board_input.State = board_input.new(
+        {
+            visuals = children,
+            tables = table_nodes,
+            commit = commit,
+            spells = spells,
+            chrome = chrome
+        }
+    )
+    present_board(board, {0.0, 0.0, 0.0, 0.0, 0.0}, touch_minimum, false)
     return board
 end
 
@@ -62,12 +116,12 @@ describe(
         it(
             "keeps node identity across presentations",
             function(): unit
-                local board: board_input.State = prepared_board()
+                local board: board_input.State = prepared_board(0.0)
                 board:focus_hand(2)
                 board:set_hand_enabled(0, false)
                 local before_x: f64 = board:hand_bounds(2).x
 
-                present_board(board, {-0.1, 0.0, 0.2, 0.1, 0.1})
+                present_board(board, {-0.1, 0.0, 0.2, 0.1, 0.1}, 0.0, false)
 
                 expect(board:focused_hand()):toBe(2)
                 expect(board:hand_bounds(2).x == before_x):toBe(false)
@@ -78,7 +132,7 @@ describe(
         it(
             "routes pointer and keyboard activation to the same board action",
             function(): unit
-                local board: board_input.State = prepared_board()
+                local board: board_input.State = prepared_board(0.0)
                 local bounds = board:hand_bounds(1)
                 local x: f64 = bounds.x + bounds.width * 0.5
                 local y: f64 = bounds.y + bounds.height * 0.5
@@ -97,7 +151,7 @@ describe(
         it(
             "uses reverse paint order and the rotated fan's custom shape",
             function(): unit
-                local board: board_input.State = prepared_board()
+                local board: board_input.State = prepared_board(0.0)
                 local band: box.Rect = fan_band(viewport_layout.current())
                 local first = hand_fan.slot_rect(band, 0, 0.0, 5)
                 local x: f64 = first.x + first.width - 4.0
@@ -113,7 +167,7 @@ describe(
         it(
             "keeps table navigation in its row when the focused card freezes",
             function(): unit
-                local board: board_input.State = prepared_board()
+                local board: board_input.State = prepared_board(0.0)
                 board:focus_table(1)
                 board:set_table_enabled(1, false)
 
@@ -124,9 +178,74 @@ describe(
         )
 
         it(
+            "answers ability sockets and footer controls with their own actions",
+            function(): unit
+                local board: board_input.State = prepared_board(0.0)
+                local socket: box.Rect = strip_rect(1)
+                local x: f64 = socket.x + socket.width * 0.5
+                local y: f64 = socket.y + socket.height * 0.5
+                board:pointer_down(x, y, 1)
+                local cast: board_input.Action = board:pointer_up(x, y, 1)
+                expect(tostring(cast.kind)):toBe("spell")
+                expect(cast.index):toBe(1)
+                expect(tostring(board:standing_at(x, y))):toBe("spell")
+
+                local control: box.Rect = strip_rect(SPELL_COUNT + 2)
+                x = control.x + control.width * 0.5
+                y = control.y + control.height * 0.5
+                board:pointer_down(x, y, 1)
+                local history: board_input.Action = board:pointer_up(x, y, 1)
+                expect(tostring(history.kind)):toBe("history")
+                expect(tostring(board:standing_at(x, y))):toBe("chrome")
+            end
+        )
+
+        it(
+            "leaves standing controls out of the focus ring",
+            function(): unit
+                local board: board_input.State = prepared_board(0.0)
+                local socket: box.Rect = strip_rect(0)
+                board:pointer_down(socket.x + socket.width * 0.5, socket.y + socket.height * 0.5, 1)
+                -- Focus stays where the board put it, so the arrow keys keep
+                -- walking the cards after a socket has been tapped.
+                expect(board:focused_hand()):toBe(0)
+            end
+        )
+
+        it(
+            "grows a footer control's hit area to the touch minimum",
+            function(): unit
+                local board: board_input.State = prepared_board(0.0)
+                local control: box.Rect = strip_rect(SPELL_COUNT)
+                local x: f64 = control.x + control.width * 0.5
+                local above: f64 = control.y - 10.0
+                expect(tostring(board:standing_at(x, above))):toBe("none")
+
+                board = prepared_board(60.0)
+                expect(tostring(board:standing_at(x, above))):toBe("chrome")
+                -- Only the height grows: neighbours in the row keep the gap
+                -- between them to themselves.
+                expect(tostring(board:standing_at(control.x - 6.0, control.y + 2.0))):toBe("none")
+            end
+        )
+
+        it(
+            "stops the commit capsule answering while a spell is aimed",
+            function(): unit
+                local board: board_input.State = prepared_board(0.0)
+                -- Aiming takes the action band away, so the capsule stops being
+                -- painted and stops being re-arranged; a target left standing
+                -- would answer for the whole box the root laid it out in.
+                present_board(board, {0.0, 0.0, 0.0, 0.0, 0.0}, 0.0, true)
+                local control: box.Rect = strip_rect(SPELL_COUNT)
+                expect(tostring(board:standing_at(control.x + 4.0, control.y + 4.0))):toBe("chrome")
+            end
+        )
+
+        it(
             "confines activation to modal focus while a modal is active",
             function(): unit
-                local board: board_input.State = prepared_board()
+                local board: board_input.State = prepared_board(0.0)
                 local action: board_input.Action = board:activate_modal()
                 expect(tostring(action.kind)):toBe("modal")
                 expect(board:focused_hand()):toBe(-1)

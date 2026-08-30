@@ -21,7 +21,25 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      testIgnore: /touch\.spec\.js/,
+    },
+    {
+      // A tablet-shaped canvas with a touchscreen: the only input this project
+      // can give is the pointer events a finger produces.
+      name: 'touch',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1024, height: 768 },
+        hasTouch: true,
+        isMobile: true,
+      },
+      testMatch: /touch\.spec\.js/,
+    },
+  ],
   webServer: {
     command: skipBuild ? previewCommand : `pnpm build && ${previewCommand}`,
     env: { ...process.env, NO_COLOR: 'true' },

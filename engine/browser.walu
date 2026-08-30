@@ -34,9 +34,11 @@ export type Game = {
     draw: (graphics_module.Graphics, f64) -> unit,
     keypressed: (string) -> unit,
     keyreleased: ((string) -> unit)?,
-    -- Mouse callbacks receive logical canvas coordinates and Love2D-style
-    -- button numbers (1 = left, 2 = right, 3 = middle); mousemoved carries
-    -- the move's delta in the same space.
+    -- Every pointing device the DOM reports — mouse, pen, and touch — arrives
+    -- through these callbacks, in logical canvas coordinates and with
+    -- Love2D-style button numbers (1 = left, 2 = right, 3 = middle); a finger
+    -- or a pen tip presses button 1. mousemoved carries the move's delta in
+    -- the same space.
     mousepressed: ((f64, f64, i32) -> unit)?,
     mousereleased: ((f64, f64, i32) -> unit)?,
     mousemoved: ((f64, f64, f64, f64) -> unit)?
@@ -59,8 +61,9 @@ export type Session = {
     suspend: () -> unit
 }
 
--- Browsers number mouse buttons 0/1/2 = left/middle/right; game code sees
--- the Love2D-style 1/2/3 = left/right/middle numbering instead.
+-- Browsers number pointer buttons 0/1/2 = left/middle/right, and a finger or
+-- pen tip reports 0 like a left click; game code sees the Love2D-style
+-- 1/2/3 = left/right/middle numbering instead.
 function mouse_button_number(dom_button: i32): i32
     if dom_button == 0 then
         return 1
@@ -168,9 +171,12 @@ function start(config: Config, game: Game): Session
     local config_width: u32 = config.width or page_width
     local config_height: u32 = config.height or page_height
     if owns_page then
+        -- overscroll-behavior stops a swipe that misses the canvas from
+        -- rubber-banding or pull-to-refreshing the page out from under a game
+        -- that fills the window.
         body:set_attribute(
             "style",
-            "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";"
+            "margin:0;min-height:100vh;overflow:hidden;overscroll-behavior:none;background:" .. config.background .. ";"
         )
     end
     local previous_root: Element? = document:get_element_by_id("walua-game")
@@ -229,6 +235,17 @@ function start(config: Config, game: Game): Session
         style:setProperty("display", "block")
         style:setProperty("background-color", config.background)
         style:setProperty("image-rendering", "pixelated")
+        -- The canvas is the game, so it keeps every gesture that lands on it
+        -- rather than letting the browser read one as page navigation.
+        -- touch-action also retires the tap delay browsers otherwise hold to
+        -- see whether a tap was the first half of a double-tap zoom; the rest
+        -- suppress the text selection, callout menu and tap flash a long press
+        -- on a canvas would otherwise raise.
+        style:setProperty("touch-action", "none")
+        style:setProperty("user-select", "none")
+        style:setProperty("-webkit-user-select", "none")
+        style:setProperty("-webkit-touch-callout", "none")
+        style:setProperty("-webkit-tap-highlight-color", "transparent")
 
         -- The logical viewport is config's to begin with and the session's
         -- from then on, so a resize is what the frame loop reads next.
@@ -279,10 +296,13 @@ function start(config: Config, game: Game): Session
         document:add_event_listener("keydown", on_keydown)
         document:add_event_listener("keyup", on_keyup)
 
-        -- offsetX/offsetY are CSS pixels relative to the canvas, so scaling
-        -- by the logical-to-CSS ratio lands in game coordinates no matter how
-        -- the canvas is currently fitted to the viewport. DOM test hosts do
-        -- no layout, so a zero clientWidth falls back to the unscaled offset.
+        -- Pointer events carry mouse, pen and touch contacts on one stream, and
+        -- a PointerEvent is a MouseEvent, so one set of handlers serves every
+        -- device. offsetX/offsetY are CSS pixels relative to the canvas, so
+        -- scaling by the logical-to-CSS ratio lands in game coordinates no
+        -- matter how the canvas is currently fitted to the viewport. DOM test
+        -- hosts do no layout, so a zero clientWidth falls back to the unscaled
+        -- offset.
         local function mouse_logical_x(mouse_event: MouseEvent): f64
             local css_width: f64 = game_canvas.clientWidth::f64
             if css_width <= 0.0 then
@@ -298,11 +318,11 @@ function start(config: Config, game: Game): Session
             return mouse_event.offsetY * (viewport.height::f64) / css_height
         end
 
-        local function on_mousedown(event: Event): unit
-            if MouseEvent(mouse_event) = event then
-                local x: f64 = mouse_logical_x(mouse_event)
-                local y: f64 = mouse_logical_y(mouse_event)
-                local button: i32 = mouse_button_number(mouse_event.button)
+        local function on_pointerdown(event: Event): unit
+            if MouseEvent(pointer_event) = event then
+                local x: f64 = mouse_logical_x(pointer_event)
+                local y: f64 = mouse_logical_y(pointer_event)
+                local button: i32 = mouse_button_number(pointer_event.button)
                 input:set_mouse_position(x, y)
                 input:set_mouse_button(button, true)
                 local mousepressed: ((f64, f64, i32) -> unit)? = game.mousepressed
@@ -311,11 +331,11 @@ function start(config: Config, game: Game): Session
                 end
             end
         end
-        local function on_mouseup(event: Event): unit
-            if MouseEvent(mouse_event) = event then
-                local x: f64 = mouse_logical_x(mouse_event)
-                local y: f64 = mouse_logical_y(mouse_event)
-                local button: i32 = mouse_button_number(mouse_event.button)
+        local function on_pointerup(event: Event): unit
+            if MouseEvent(pointer_event) = event then
+                local x: f64 = mouse_logical_x(pointer_event)
+                local y: f64 = mouse_logical_y(pointer_event)
+                local button: i32 = mouse_button_number(pointer_event.button)
                 input:set_mouse_position(x, y)
                 input:set_mouse_button(button, false)
                 local mousereleased: ((f64, f64, i32) -> unit)? = game.mousereleased
@@ -324,10 +344,10 @@ function start(config: Config, game: Game): Session
                 end
             end
         end
-        local function on_mousemove(event: Event): unit
-            if MouseEvent(mouse_event) = event then
-                local x: f64 = mouse_logical_x(mouse_event)
-                local y: f64 = mouse_logical_y(mouse_event)
+        local function on_pointermove(event: Event): unit
+            if MouseEvent(pointer_event) = event then
+                local x: f64 = mouse_logical_x(pointer_event)
+                local y: f64 = mouse_logical_y(pointer_event)
                 -- Input keeps the pointer's last place, so the previous
                 -- position does not need a second home just for the delta.
                 local dx: f64 = x - input.mouse_x
@@ -339,9 +359,19 @@ function start(config: Config, game: Game): Session
                 end
             end
         end
-        game_canvas:add_event_listener("mousedown", on_mousedown)
-        game_canvas:add_event_listener("mouseup", on_mouseup)
-        game_canvas:add_event_listener("mousemove", on_mousemove)
+        -- A cancelled gesture has no release to report — the browser took the
+        -- contact away rather than the player lifting it — so the buttons are
+        -- put back up without a game callback. A press that never came back up
+        -- would otherwise read as held for the rest of the session.
+        local function on_pointercancel(event: Event): unit
+            for button = 1::i32, 3::i32 do
+                input:set_mouse_button(button, false)
+            end
+        end
+        game_canvas:add_event_listener("pointerdown", on_pointerdown)
+        game_canvas:add_event_listener("pointerup", on_pointerup)
+        game_canvas:add_event_listener("pointermove", on_pointermove)
+        game_canvas:add_event_listener("pointercancel", on_pointercancel)
 
         game.load()
         local stopped: bool = false
@@ -394,9 +424,10 @@ function start(config: Config, game: Game): Session
                 window:cancelAnimationFrame(frame_handle)
                 document:remove_event_listener("keydown", on_keydown)
                 document:remove_event_listener("keyup", on_keyup)
-                game_canvas:remove_event_listener("mousedown", on_mousedown)
-                game_canvas:remove_event_listener("mouseup", on_mouseup)
-                game_canvas:remove_event_listener("mousemove", on_mousemove)
+                game_canvas:remove_event_listener("pointerdown", on_pointerdown)
+                game_canvas:remove_event_listener("pointerup", on_pointerup)
+                game_canvas:remove_event_listener("pointermove", on_pointermove)
+                game_canvas:remove_event_listener("pointercancel", on_pointercancel)
             end
             if remove_root then
                 local mounted_root: Element? = document:get_element_by_id(root.id)

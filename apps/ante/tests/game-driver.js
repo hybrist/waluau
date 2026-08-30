@@ -62,20 +62,37 @@ export function countDesignInk(canvas, rect, color, tolerance) {
   }, { rect, color, tolerance });
 }
 
-export async function clickDesignPoint(page, canvas, x, y) {
-  const point = await canvas.evaluate((node, designPoint) => {
+// Where a point in Ante's live logical coordinates lands on the page. The
+// anchors mirror countDesignInk's: centerOffsetX, rightOffsetX and
+// bottomOffsetY follow the board's own edges, which is where the standing
+// controls and the ability sockets sit.
+export function designPoint(canvas, spec) {
+  return canvas.evaluate((node, point) => {
     const bounds = node.getBoundingClientRect();
     const scale = Math.min(bounds.width / 700, bounds.height / 600);
-    return {
-      x: bounds.x + designPoint.x * scale,
-      y: bounds.y + designPoint.y * scale,
-    };
-  }, { x, y });
+    const logicalWidth = bounds.width / scale;
+    const logicalHeight = bounds.height / scale;
+    let x = point.x ?? 0;
+    let y = point.y ?? 0;
+    if (point.centerOffsetX !== undefined) x = logicalWidth * 0.5 + point.centerOffsetX;
+    if (point.rightOffsetX !== undefined) x = logicalWidth + point.rightOffsetX;
+    if (point.bottomOffsetY !== undefined) y = logicalHeight + point.bottomOffsetY;
+    return { x: bounds.x + x * scale, y: bounds.y + y * scale };
+  }, spec);
+}
+
+export async function clickDesignPoint(page, canvas, x, y) {
+  const point = await designPoint(canvas, { x, y });
   await page.mouse.click(point.x, point.y);
 }
 
-export async function clickMenuItem(page, canvas, index = 0) {
-  const point = await canvas.evaluate((node, itemIndex) => {
+export async function tapDesignPoint(page, canvas, spec) {
+  const point = await designPoint(canvas, spec);
+  await page.touchscreen.tap(point.x, point.y);
+}
+
+function menuItemPoint(canvas, index) {
+  return canvas.evaluate((node, itemIndex) => {
     const bounds = node.getBoundingClientRect();
     const scale = Math.min(bounds.width / 700, bounds.height / 600);
     const logicalHeight = bounds.height / scale;
@@ -84,8 +101,28 @@ export async function clickMenuItem(page, canvas, index = 0) {
       y: bounds.y + (logicalHeight * 0.51 + itemIndex * 60 + 26) * scale,
     };
   }, index);
+}
+
+export async function clickMenuItem(page, canvas, index = 0) {
+  const point = await menuItemPoint(canvas, index);
   await page.mouse.click(point.x, point.y);
 }
+
+export async function tapMenuItem(page, canvas, index = 0) {
+  const point = await menuItemPoint(canvas, index);
+  await page.touchscreen.tap(point.x, point.y);
+}
+
+// The standing controls take the header band's right corner in two rows, each
+// row ending at the board's own right margin, so a point just inside that
+// margin is the rightmost control of its row: HELP above, RESTART below.
+export const HELP_CONTROL = { rightOffsetX: -52, y: 36 };
+export const RESTART_CONTROL = { rightOffsetX: -52, y: 64 };
+
+// The first ability socket, at the South position of the diamond standing in
+// the board's bottom-right corner. A run always carries the spell it started
+// with, so this socket is always occupied.
+export const FIRST_SOCKET = { rightOffsetX: -79, bottomOffsetY: -32 };
 
 // Card-back ink on the draw pile: only the heist screen draws the deck, so a
 // positive count both proves the packaged asset decoded and that the menu has
@@ -96,6 +133,31 @@ export function countCardBackInk(canvas) {
     { x: 56, wardOffsetY: 0, width: 92, height: 128 },
     [232, 223, 189],
     [35, 35, 35],
+  );
+}
+
+// The aim prompt that replaces the phase prompt above the table cards while a
+// spell is targeting, written in that spell's own colour. Firebolt's is red,
+// and the amber prompt it replaces is far enough away in green and blue to
+// tell the two apart inside this tolerance.
+export function countAimPromptInk(canvas) {
+  return countDesignInk(
+    canvas,
+    { centerOffsetX: -160, wardOffsetY: -51, width: 320, height: 16 },
+    [239, 68, 68],
+    [30, 30, 30],
+  );
+}
+
+// The gold heading of whichever modal is up, in the panel's top-left corner.
+// The board underneath writes no gold into that band: the live round's amber
+// orb ring is centred, well right of it.
+export function countModalHeadingInk(canvas) {
+  return countDesignInk(
+    canvas,
+    { centerOffsetX: -300, y: 30, width: 180, height: 40 },
+    [251, 191, 36],
+    [20, 20, 20],
   );
 }
 

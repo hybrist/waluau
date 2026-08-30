@@ -69,6 +69,13 @@ const TABLE_CARD_BIAS: f64 = 12.0
 -- never brushes the deck or the spent pile.
 const HAND_SEAM: f64 = 72.0
 
+-- The smallest control a fingertip lands on reliably, in CSS pixels. The
+-- board scales with the canvas, so on a phone the chrome around the cards
+-- shrinks well under a finger's worth of screen while the cards themselves
+-- stay comfortable. Hit tests read this to grow to it; what is painted stays
+-- the size the board wants it.
+const TOUCH_TARGET: f64 = 40.0
+
 function min_board_width(): f64
     return (BOARD_MARGIN + CARD_WIDTH + COLUMN_SEAM) * 2.0 + TABLE_CARD_ROW_SPAN
 end
@@ -143,6 +150,12 @@ function current(): State
     return current_state
 end
 
+-- TOUCH_TARGET in board units at the live scale, for a hit test that wants to
+-- be at least a fingertip wide however far the board has scaled down.
+function touch_minimum(): f64
+    return TOUCH_TARGET / current_state.scale
+end
+
 function canvas_x(value: f64): f64
     return value / current_state.scale
 end
@@ -151,4 +164,10 @@ function canvas_y(value: f64): f64
     return value / current_state.scale
 end
 
-return { update = update, current = current, canvas_x = canvas_x, canvas_y = canvas_y }
+return {
+    update = update,
+    current = current,
+    touch_minimum = touch_minimum,
+    canvas_x = canvas_x,
+    canvas_y = canvas_y
+}

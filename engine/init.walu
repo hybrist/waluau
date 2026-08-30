@@ -14,7 +14,7 @@ export type ParticleSystem = particles_module.ParticleSystem
 export type ParticleColor = particles_module.Color
 export type ParticleQuad = particles_module.Quad
 
-local VERSION <const>: string = "1.5.0"
+local VERSION <const>: string = "1.6.0"
 
 return {
     VERSION = VERSION,

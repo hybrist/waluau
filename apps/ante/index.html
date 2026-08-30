@@ -2,7 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The board is the whole viewport and reflows to it, so the page has
+         nothing to zoom into: a pinch or a double tap on a tablet or a phone
+         should be play, not page navigation. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>Ante</title>
   </head>
   <body>

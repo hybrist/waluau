@@ -1,8 +1,10 @@
--- Small keyboard and mouse state machine. It is deliberately string-keyed
+-- Small keyboard and pointer state machine. It is deliberately string-keyed
 -- rather than a closed enum, so a game can query any key the DOM reports
--- ("ArrowLeft", "a", "Space", ...) without an engine change. Mouse buttons use
--- the Love2D-style numbering browser.walu
--- feeds in: 1 = left, 2 = right, 3 = middle.
+-- ("ArrowLeft", "a", "Space", ...) without an engine change. The mouse fields
+-- carry whichever pointing device the player is using — browser.walu feeds
+-- mouse, pen and touch contacts into them alike — using the Love2D-style
+-- button numbering it translates to: 1 = left, 2 = right, 3 = middle, and a
+-- finger or pen tip on button 1.
 type Button = { key: string, down: bool, pressed: bool, released: bool }
 export type Input = { buttons: {Button}, mouse_buttons: {Button}, mouse_x: f64, mouse_y: f64 }
 

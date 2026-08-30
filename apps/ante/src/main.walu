@@ -188,7 +188,9 @@ function install_ante_magic(): unit
             menu_action(menu_state:mousereleased(x, y, button))
             return
         end
-        duel:mousereleased(city, x, y, button)
+        if duel:mousereleased(city, x, y, button) == "exit" then
+            leave_run()
+        end
     end
 
     -- No configured viewport: the canvas takes the browser's space and the

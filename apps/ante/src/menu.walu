@@ -12,6 +12,7 @@ local viewport_layout = require("./layout")
 local ui = require("./ui/node")
 local ui_layout = require("./ui/layout")
 local interaction = require("./ui/interaction")
+local control_chip = require("./entities/control_chip")
 
 export type MenuAction = "none" | "start" | "start-rush"
 
@@ -33,6 +34,7 @@ export type State = {
     root: ui.Node,
     main_list: ui.Node,
     spell_list: ui.Node,
+    back: ui.Node,
     help: ui.Node,
     router: interaction.Router,
     main_scope: i32,
@@ -47,6 +49,7 @@ const ITEM_BOSS_RUSH: i32 = 1
 const ITEM_HOW_TO_PLAY: i32 = 2
 const ITEM_COUNT: i32 = 3
 const SPELL_COUNT: i32 = 4
+const BACK_INSET: f64 = 16.0
 const ITEM_W: f64 = 380.0
 const ITEM_H: f64 = 52.0
 const ITEM_PITCH: f64 = 60.0
@@ -74,6 +77,16 @@ function start_action(model: Model): MenuAction
         return "start-rush"
     end
     return "start"
+end
+
+-- Backing out of the spell list returns to whichever run the list was opened
+-- from, so the choice that led here is still the one under the cursor.
+function leave_spell_stage(model: Model): unit
+    model.stage = "main"
+    model.cursor = ITEM_NEW_RUN
+    if model.rush_choice then
+        model.cursor = ITEM_BOSS_RUSH
+    end
 end
 
 function activate_main(model: Model, item: i32): unit
@@ -322,7 +335,18 @@ function State.new(): State
             end
         end
     )
-    local root: ui.Node = ui.Node.layer({chrome, main_list, spell_list, help})
+    -- The way back off the spell list, in the corner rather than in the list:
+    -- a fifth row would push the list off the bottom of a phone-sized board,
+    -- and this is chrome rather than one of the choices. Escape still does the
+    -- same thing, so the chip carries that key on its face.
+    local back: ui.Node = control_chip.gated(
+        "ESC BACK",
+        function(): bool
+            return model.stage == "spell" and not model.help_open
+        end
+    ):padded(BACK_INSET, BACK_INSET)
+    local back_layer: ui.Node = ui.Node.across({ justify = "start", align = "end" }, {back})
+    local root: ui.Node = ui.Node.layer({chrome, main_list, spell_list, back_layer, help})
     local router: interaction.Router = interaction.Router.new(root)
     local main_scope: i32 = router:add_scope("column", true)
     local spell_scope: i32 = router:add_scope("column", true)
@@ -341,6 +365,13 @@ function State.new(): State
             router:add(row, spell_scope, true, row_handlers(model, "spell", index - 1))
         )
     end
+    -- Out of the focus ring: the arrow keys walk the spells, and Escape is
+    -- already the key this stands for.
+    local back_callbacks: interaction.Handlers = interaction.handlers()
+    back_callbacks.on_activate = function(): unit
+        leave_spell_stage(model)
+    end
+    router:add(back, spell_scope, false, back_callbacks)
     local help_callbacks: interaction.Handlers = interaction.handlers()
     help_callbacks.on_activate = function(): unit
         model.help_open = false
@@ -348,6 +379,7 @@ function State.new(): State
     router:add(help, help_scope, true, help_callbacks)
     main_list:set_visible(true)
     spell_list:set_visible(false)
+    back:set_visible(false)
     help:set_visible(false)
     router:activate_scope(main_scope)
     return {
@@ -356,6 +388,7 @@ function State.new(): State
         root = root,
         main_list = main_list,
         spell_list = spell_list,
+        back = back,
         help = help,
         router = router,
         main_scope = main_scope,
@@ -370,6 +403,7 @@ function State:sync_scope(): unit
     local model: Model = self.model
     self.main_list:set_visible(not model.help_open and model.stage == "main")
     self.spell_list:set_visible(not model.help_open and model.stage == "spell")
+    self.back:set_visible(not model.help_open and model.stage == "spell")
     self.help:set_visible(model.help_open)
     if model.help_open then
         self.router:activate_scope(self.help_scope)
@@ -439,11 +473,7 @@ function State:keypressed(key: string): MenuAction
         return "none"
     end
     if model.stage == "spell" and key == "Escape" then
-        model.stage = "main"
-        model.cursor = ITEM_NEW_RUN
-        if model.rush_choice then
-            model.cursor = ITEM_BOSS_RUSH
-        end
+        leave_spell_stage(model)
         self:sync_scope()
         return "none"
     end

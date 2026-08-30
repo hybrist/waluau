@@ -3,6 +3,7 @@ require("waluau:vitest")
 
 local game = require("./game")
 local spells = require("./spells/spell")
+local box = require("./ui/layout")
 local ability_diamond = require("./entities/ability_diamond")
 
 describe(
@@ -33,6 +34,41 @@ describe(
                 expect(size.preferred_width):toBe(ability_diamond.width)
                 expect(size.preferred_height):toBe(ability_diamond.height)
                 expect(ability_diamond.short_name(spells.SpellKind.Firebolt)):toBe("FIRE")
+            end
+        )
+
+        it(
+            "divides the whole diamond between the four sockets",
+            function(): unit
+                local bounds: box.Rect = box.rect(
+                    0.0,
+                    0.0,
+                    ability_diamond.width,
+                    ability_diamond.height
+                )
+                -- Each position claims the box around it, so a socket is a far
+                -- larger thing to hit than the ring drawn for it.
+                for slot = 0::i32, ability_diamond.slot_count - 1 do
+                    expect(
+                        ability_diamond.nearest_slot(
+                            bounds,
+                            ability_diamond.slot_x(slot),
+                            ability_diamond.slot_y(slot)
+                        )
+                    ):toBe(slot)
+                end
+                -- Well outside every ring, and still the socket it is nearest:
+                -- the box's own edges belong to the position facing them.
+                local center_x: f64 = ability_diamond.width * 0.5
+                local center_y: f64 = ability_diamond.height * 0.5
+                expect(ability_diamond.nearest_slot(bounds, center_x, 1.0)):toBe(2)
+                expect(
+                    ability_diamond.nearest_slot(bounds, center_x, ability_diamond.height - 1.0)
+                ):toBe(0)
+                expect(ability_diamond.nearest_slot(bounds, 1.0, center_y)):toBe(1)
+                expect(
+                    ability_diamond.nearest_slot(bounds, ability_diamond.width - 1.0, center_y)
+                ):toBe(3)
             end
         )
     end

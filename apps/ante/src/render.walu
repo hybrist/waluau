@@ -494,7 +494,9 @@ function Board:begin_frame(frame: Frame): unit
             casting = frame.interaction.casting,
             modal_open = modal_open,
             finished = frame.interaction.finished,
-            play_pick_count = #frame.interaction.play_picks
+            play_pick_count = #frame.interaction.play_picks,
+            spell_count = #frame.view.spells,
+            touch_minimum = layout.touch_minimum()
         }
     )
     self.view:present_modal(frame.interaction.modal, frame.view, frame.run)
@@ -554,6 +556,10 @@ end
 
 function Board:apply_hand_order(order: {i32}): unit
     self.view:apply_hand_order(order)
+end
+
+function Board:standing_at(x: f64, y: f64): "none" | "chrome" | "spell"
+    return self.view:standing_at(x, y)
 end
 
 function Board:pointer_move(x: f64, y: f64): i32
@@ -1062,6 +1068,21 @@ end
 
 function draw_hud(board: Board, surface: ui.Surface, viewport: layout.State): unit
     board.view:paint_hud(header_band(board.view:hud_height(surface.graphics), viewport))
+end
+
+-- The standing controls take the header band's right corner, alongside the
+-- round orbs centred in it rather than inside them: the bar is as wide as its
+-- own labels, and the orbs stay where the board has always put them.
+function draw_controls(board: Board, surface: ui.Surface, viewport: layout.State): unit
+    local size: box.Intrinsic = board.view:control_size(surface.graphics)
+    board.view:paint_controls(
+        box.rect(
+            viewport.width - BOARD_EDGE - size.preferred_width,
+            HEADER_TOP,
+            size.preferred_width,
+            size.preferred_height
+        )
+    )
 end
 
 function draw_footer(board: Board, surface: ui.Surface, viewport: layout.State): unit
@@ -1573,7 +1594,9 @@ function draw_action_band(board: Board, surface: ui.Surface, frame: Frame): unit
         centered_line(
             surface,
             viewport,
-            "ARROWS MOVE   ENTER CASTS " .. tostring(aimed.cost) .. " GOLD   ESC CANCELS",
+            "ARROWS MOVE   ENTER OR CLICK CASTS " .. tostring(
+                aimed.cost
+            ) .. " GOLD   THE SOCKET AGAIN CANCELS",
             viewport.action_y + PROMPT_DROP,
             action_bar.prompt_size,
             "#fbbf24"
@@ -1690,6 +1713,9 @@ function draw_frame(board: Board, surface: ui.Surface, frame: Frame): unit
     else
         draw_hud(board, surface, viewport)
     end
+    -- The bar is standing chrome: it is drawn in every state the board can be
+    -- in, over the playfield and under whatever modal is up.
+    draw_controls(board, surface, viewport)
     if modal_kind ~= "none" then
         board.view:paint_modal(surface, board_rect(viewport))
     end
