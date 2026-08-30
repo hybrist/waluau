@@ -280,12 +280,12 @@ after provenance splitting:
 | `tables.luau` | `tables.1` (the remaining coarse table-layout source) |
 | `vararg.luau` | `vararg` (whole source; mixed `{ n = count, ... }` packs and nil holes) |
 
-That audited mapping is **11 current chunks**. Two additional complete chunks
-were independently browser-probed during the compiler audit: `pcall.1` traps
-because `table.pack` is a mixed array plus `n` field, and `iter.13` requires an
-interior nil hole. They remain pending for the same scope decision. These
-chunks commonly contain other blockers; split out passing contiguous ranges,
-but do not implement sparse/mixed/hash behavior under this conformance epic.
+That audited mapping is **11 current chunks**. One additional complete chunk,
+`iter.13`, was independently browser-probed during the compiler audit and
+requires an interior nil hole, so it remains pending for the same scope
+decision. These chunks commonly contain other blockers; split out passing
+contiguous ranges, but do not implement sparse/mixed/hash behavior under this
+conformance epic.
 
 ### Dense-array `ipairs`
 

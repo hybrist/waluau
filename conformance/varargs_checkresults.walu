@@ -18,3 +18,19 @@ function forward(e, ...)
 end
 
 forward({"x", 7}, "x", 7)
+
+function ordinary_pair()
+    return "left", 7
+end
+
+function protected_value(): i32
+    return 42
+end
+
+-- A statically sized multi-result expands in the final argument position and
+-- survives another variadic forwarding hop before table.pack consumes it.
+forward({"left", 7}, ordinary_pair())
+forward({true, 42}, pcall(protected_value))
+
+-- The same multi-result collapses to its first value before a later argument.
+forward({"left", "tail"}, ordinary_pair(), "tail")
