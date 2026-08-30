@@ -17,11 +17,11 @@ end
 
 function ensure_button(list: {Button}, key: string): i32
     local index: i32 = find_button(list, key)
-    if index >= 0 then
+    if index >= 1 then
         return index
     end
     table.insert(list, { key = key, down = false, pressed = false, released = false })
-    return #list - 1
+    return #list
 end
 
 function set_button(list: {Button}, key: string, down: bool): unit
@@ -53,17 +53,17 @@ end
 
 function Input:is_down(key: string): bool
     local index: i32 = find_button(self.buttons, key)
-    return index >= 0 and self.buttons[index].down
+    return index >= 1 and self.buttons[index].down
 end
 
 function Input:was_pressed(key: string): bool
     local index: i32 = find_button(self.buttons, key)
-    return index >= 0 and self.buttons[index].pressed
+    return index >= 1 and self.buttons[index].pressed
 end
 
 function Input:was_released(key: string): bool
     local index: i32 = find_button(self.buttons, key)
-    return index >= 0 and self.buttons[index].released
+    return index >= 1 and self.buttons[index].released
 end
 
 -- The pointer's last known place, in logical canvas coordinates.
@@ -78,17 +78,17 @@ end
 
 function Input:is_mouse_down(button: i32): bool
     local index: i32 = find_button(self.mouse_buttons, tostring(button))
-    return index >= 0 and self.mouse_buttons[index].down
+    return index >= 1 and self.mouse_buttons[index].down
 end
 
 function Input:was_mouse_pressed(button: i32): bool
     local index: i32 = find_button(self.mouse_buttons, tostring(button))
-    return index >= 0 and self.mouse_buttons[index].pressed
+    return index >= 1 and self.mouse_buttons[index].pressed
 end
 
 function Input:was_mouse_released(button: i32): bool
     local index: i32 = find_button(self.mouse_buttons, tostring(button))
-    return index >= 0 and self.mouse_buttons[index].released
+    return index >= 1 and self.mouse_buttons[index].released
 end
 
 -- Edge transitions last until one simulation update consumes them.
