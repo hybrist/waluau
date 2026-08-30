@@ -2096,10 +2096,10 @@ enum CarryUpdate {
 
 /// How `lower_indexed_for_in` binds the loop variables for each element.
 enum IndexedLoopBindings {
-    /// `for v in arr` / `for i, v in arr`: the element, or the 0-based index
+    /// `for v in arr` / `for i, v in arr`: the element, or the 1-based index
     /// plus the element.
     Array,
-    /// `for i[, v] in next, arr`: the 0-based index plus, when bound, the
+    /// `for i[, v] in next, arr`: the 1-based index plus, when bound, the
     /// element — `next` yields keys first, so one variable binds the index.
     ArrayNext,
     /// `for name in pairs(rec)` / `for name, value in pairs(rec)`: the

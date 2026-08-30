@@ -14,7 +14,7 @@
 --   * untyped lambda params get explicit types (`function(a: f64)`)
 --   * globals become locals; `function foo()` in a body becomes
 --     `local foo = function...` (Waluau has no global environment)
---   * array indices shift to Waluau's documented 0-based indexing
+--   * unsupported `ipairs`/`pairs` calls become direct array iteration
 --   * `concat(...)` on bools becomes `tostring(...)` joins (bools box as i31
 --     and would stringify as 0/1 through the unknown path)
 
@@ -224,9 +224,8 @@ assert((function() local c = 0 for i=huge,huge,-huge do c += 1 end return c end)
 -- generic for
 -- ipairs
 -- PATCHED: `ipairs(t)` becomes Waluau's array for-in (`for k, v in t`);
--- indices are 0-based, so the key strings shift accordingly, and number
--- values go through tostring for concatenation.
-assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(k) end return a end)() == "012")
+-- and number values go through tostring for concatenation.
+assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(k) end return a end)() == "123")
 assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(v) end return a end)() == "567")
 
 -- DROPPED: ipairs with gaps ({5, 6, 7, nil, 8}) — array literals cannot
@@ -234,7 +233,7 @@ assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(v) en
 
 -- pairs on array
 -- PATCHED: same array for-in adaptation as ipairs above.
-assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(k) end return a end)() == "012")
+assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(k) end return a end)() == "123")
 assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(v) end return a end)() == "567")
 
 -- DROPPED: pairs on hash tables, mixed array/hash tables, pairs-with-gaps,
@@ -251,14 +250,13 @@ assert((function() local a = 1 for _ in {1,2,3} do a = a * 2 if a == 4 then brea
 
 -- make sure custom iterators work! example is from PIL 7.1
 -- PATCHED: Waluau's iterator protocol returns (continue: bool, value); Luau
--- iterators signal termination by returning nil instead. table.getn -> #t,
--- and the array read is 0-based.
+-- iterators signal termination by returning nil instead. table.getn -> #t.
 function list_iter(t: {f64}): () -> (bool, f64)
     local i: i32 = 0
     local n = #t
     return function(): (bool, f64)
         i = i + 1
-        if i <= n then return true, t[i - 1] end
+        if i <= n then return true, t[i] end
         return false, 0
     end
 end
@@ -276,8 +274,7 @@ assert((function() local f = function(): {f64} return {5,6,7} end local a = '' f
 assert((function() local t: {f64} = {} return #t end)() == 0)
 
 assert((function() local t = {1, 2} return #t end)() == 2)
--- PATCHED: 1-based reads -> 0-based.
-assert((function() local t = {1, 2} return t[0] + t[1] end)() == 3)
+assert((function() local t = {1, 2} return t[1] + t[2] end)() == 3)
 
 assert((function() local t = {data = 4} return t.data end)() == 4)
 -- DROPPED: computed keys (`[1+2] = 4`) — table literals support only array
@@ -308,13 +305,12 @@ assert((function() local f = function(): (f64, f64) return 2, 3 end local a, b, 
 -- `{...}` packing) — vararg packs do not spread yet (see waluau issue).
 
 -- table access
--- PATCHED: reads shifted to 0-based indexing.
-assert((function() local t = {6, 9, 7} return t[1] end)() == 9)
+assert((function() local t = {6, 9, 7} return t[2] end)() == 9)
 -- DROPPED: out-of-bounds reads returning nil, fractional keys, string keys
 -- on arrays, and __index/__newindex metamethods.
 
-assert((function() local t = {6, 9, 7} t[1] = 10 return t[1] end)() == 10)
-assert((function() local t = {6, 9, 7} t[0] = 5 return t[0] end)() == 5)
+assert((function() local t = {6, 9, 7} t[2] = 10 return t[2] end)() == 10)
+assert((function() local t = {6, 9, 7} t[1] = 5 return t[1] end)() == 5)
 
 -- DROPPED: userdata access via newproxy (no userdata), and/or with table
 -- and global operands, fake OOP via metatables, evil indexers, fast-path
@@ -350,24 +346,21 @@ assert((function() local cmp = function(a: string, b: string): string return tos
 assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('a', '\200') end)() == "true,true,false,false")
 
 -- array access
--- PATCHED: reads shifted to 0-based indexing; nil-hole and metatable
--- variants dropped.
-assert((function() local a = {4,5,6} return a[2] end)() == 6)
-assert((function() local a = {4,5,6} a[2] = 8 return a[2] end)() == 8)
+-- PATCHED: nil-hole and metatable variants dropped.
+assert((function() local a = {4,5,6} return a[3] end)() == 6)
+assert((function() local a = {4,5,6} a[3] = 8 return a[3] end)() == 8)
 
 -- DROPPED: loadstring error text (no loadstring), and the many-arguments &
 -- locals stress function (untyped 50-parameter signatures with uninitialized
 -- locals are not expressible).
 
 -- upvalues & loops (validates timely closing)
--- PATCHED: `res[#res+1] = ...` becomes the 0-based append `res[#res] = ...`
--- on a typed empty function array (growable arrays make the append idiom
--- work directly).
+-- PATCHED: the empty function array needs a type annotation.
 assert((function()
     local res: {() -> f64} = {}
 
     for i=1,5 do
-        res[#res] = (function(): f64 return i end)
+        res[#res + 1] = (function(): f64 return i end)
     end
 
     local sum = 0
@@ -395,7 +388,7 @@ assert((function()
     local i = 0
     while i <= 5 do
         local j = i
-        res[#res] = (function(): f64 return j end)
+        res[#res + 1] = (function(): f64 return j end)
         i = i + 1
     end
 
@@ -411,7 +404,7 @@ assert((function()
     local i = 0
     repeat
         local j = i
-        res[#res] = (function(): f64 return j end)
+        res[#res + 1] = (function(): f64 return j end)
         i = i + 1
     until i > 5
 
@@ -426,7 +419,7 @@ assert((function()
     local res: {() -> f64} = {}
 
     for i=1,10 do
-        res[#res] = (function(): f64 return i end)
+        res[#res + 1] = (function(): f64 return i end)
         if i == 5 then
             break
         end
@@ -460,7 +453,7 @@ assert((function()
     local i = 0
     while i < 10 do
         local j = i
-        res[#res] = (function(): f64 return j end)
+        res[#res + 1] = (function(): f64 return j end)
         if i == 5 then
             break
         end
@@ -479,7 +472,7 @@ assert((function()
     local i = 0
     repeat
         local j = i
-        res[#res] = (function(): f64 return j end)
+        res[#res + 1] = (function(): f64 return j end)
         if i == 5 then
             break
         end

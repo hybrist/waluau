@@ -1659,8 +1659,8 @@ fn lowers_array_literals_indexing_length_and_mutation() {
     let source = r#"
         function score_count(): i32
             local scores: {number} = {100, 250, 300}
-            local first: number = scores[0]
-            scores[1] = first + 1
+            local first: number = scores[1]
+            scores[2] = first + 1
             return #scores
         end
     "#;
@@ -1673,6 +1673,41 @@ fn lowers_array_literals_indexing_length_and_mutation() {
             .iter()
             .any(|(_, instruction)| matches!(instruction, Instruction::ArrayNew { .. }))
     }));
+
+    let instruction = |needle: ValueId| {
+        function
+            .blocks
+            .values()
+            .flat_map(|block| block.instructions.iter())
+            .find_map(|(value, instruction)| (*value == needle).then_some(instruction))
+            .expect("instruction value should exist")
+    };
+    let authored_indices = function
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::ArrayGet { index, .. } | Instruction::ArraySet { index, .. } => {
+                Some(*index)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(authored_indices.len(), 2);
+    for index in authored_indices {
+        let Instruction::Binary {
+            op: BinaryOp::Sub,
+            right,
+            ..
+        } = instruction(index)
+        else {
+            panic!("authored array access should subtract the source index origin");
+        };
+        assert!(matches!(
+            instruction(*right),
+            Instruction::Number { literal, .. } if literal.raw == "1"
+        ));
+    }
     assert!(function.blocks.values().any(|block| {
         block
             .instructions
@@ -2056,9 +2091,9 @@ fn lowers_local_function_recursion_through_the_lexical_cell() {
 fn verifies_loop_with_break_and_continue() {
     let source = r#"
         function entry(xs: {i32}, len: i32): i32
-            local i: i32 = 0
+            local i: i32 = 1
             local acc: i32 = 0
-            while i < len do
+            while i <= len do
                 local x: i32 = xs[i]
                 if x < 0 then
                     i += 1
