@@ -260,6 +260,37 @@ interior nil hole. They remain pending for the same scope decision. These
 chunks commonly contain other blockers; split out passing contiguous ranges,
 but do not implement sparse/mixed/hash behavior under this conformance epic.
 
+### Dense-array `ipairs`
+
+Waluau supports `ipairs(array)` as a compile-time special form only in the
+iterator position of a generic `for`. It evaluates the array expression once
+and yields 1-based indices followed by the corresponding values from a dense,
+contiguous array. A call returning multiple values is adjusted to its first
+result before iteration, as in Luau.
+
+This support does not make the builtin a first-class iterator factory: manual
+`local inext = ipairs(t)` triples are not provided, and `getfenv` cannot replace
+the builtin. Interior nil holes and mixed/hash table parts remain excluded by
+the table model above. An authored lexical binding named `ipairs` still behaves
+as an ordinary iterator factory and shadows the special form.
+
+The implementation enables exact upstream chunks
+`basic.22.ipairs_dense` and `basic.22.ipairs_multret`. Every other pending
+chunk containing an `ipairs` call was browser-probed and remains pending for an
+independent reason:
+
+| Pending chunk(s) | Independent blocker after dense `ipairs` support |
+| --- | --- |
+| `basic.22` | nil-hole/manual-iterator checks plus sparse, mixed, and hash-table assertions |
+| `basic.28`, `basic.34` | broader VM/metatable/environment cases and array `pairs` checks surrounding the `ipairs` assertions |
+| `iter.9` | the array contains an interior nil hole |
+| `iter_fenv` | runtime environment substitution through `getfenv` |
+| `calls.{33,34,35,37,38,39}` | recursive dynamic `unpack`/multi-value helpers and their individual call-shape assertions |
+| `tpack.{11,12}` | binary `string.pack`/`string.unpack` APIs |
+| `closure.12` | coroutine status/yield/resume behavior and dynamic varargs |
+| `clear`, `coverage` | hash-table clearing/iteration and VM coverage instrumentation, respectively |
+| `native.39` | native/JIT-focused iterator-protocol coverage |
+
 ## Fixable gaps remain tracked work
 
 The categories above must not become a blanket excuse for unrelated failures.
@@ -272,7 +303,7 @@ The audits linked bounded implementation work where Waluau intends to converge:
 | Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |
 | Builtin functions as values | `waluau-390t` | Higher-order library checks outside native harness families |
-| Array iteration compatibility | `waluau-uxuf` | `ipairs` checks over contiguous arrays; nil-hole cases remain excluded |
+| Dense-array `ipairs` (completed) | `waluau-uxuf` | Exact dense assertions are enabled as `basic.22.ipairs_dense` and `basic.22.ipairs_multret`; the remaining occurrence audit is classified above |
 | String/number coercion and pattern replacements | `waluau-dbyy` | Remaining `pm.*` cases after protected-call and parser gaps |
 
 Completed children of `waluau-q7qg` already enabled scientific notation,

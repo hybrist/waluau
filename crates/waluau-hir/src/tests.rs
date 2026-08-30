@@ -6468,6 +6468,29 @@ fn iterator_protocol_factory_loop_type_checks() {
 }
 
 #[test]
+fn lexical_ipairs_binding_shadows_the_builtin_special_form() {
+    let source = r#"
+        function step(a: {i32}, i: i32): (i32?, i32)
+            return nil, 0
+        end
+
+        function ipairs(a: {i32}): (({i32}, i32) -> (i32?, i32), {i32}, i32)
+            return step, a, 0
+        end
+
+        function total(nums: {i32}): i32
+            local sum: i32 = 0
+            for i, value in ipairs(nums) do
+                sum = sum + value
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("lexical ipairs should remain an ordinary iterator factory");
+}
+
+#[test]
 fn next_over_record_and_array_type_checks() {
     let source = r#"
         function scan(): i32
