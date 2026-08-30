@@ -10238,6 +10238,16 @@ impl Builder<'_> {
             Err(error) => return Some(Err(error)),
         };
 
+        if count_marker && arg_ty == Type::Unit {
+            // Preserve the side effects of the zero-result expression before
+            // materializing the result-pack count.
+            if let Err(error) = self.lower_expr(&args[1], scope, Some(Type::Unit)) {
+                return Some(Err(error));
+            }
+            let value = self.emit_i32_const(0);
+            return Some(self.coerce_value(value, Type::Numeric(NumericType::I32), expected));
+        }
+
         let Some(element_ty) = arg_ty.element_type() else {
             return Some(Err(Diagnostic::new(format!(
                 "{SELECT} expects an array, got {arg_ty}"
@@ -10651,14 +10661,23 @@ impl Builder<'_> {
         Some(self.coerce_value(value, Type::TypedArray(kind), expected))
     }
 
-    fn lower_buffer_offset(
+    fn lower_luau_buffer_i32(
         &mut self,
         expr: &Expr,
         scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
+        // Untyped function parameters arrive as boxed Luau numbers (f64).
+        // Convert through i64 so values through 2^32 can retain their low
+        // bits instead of trapping in a direct f64-to-i32 conversion.
+        let f64_ty = Type::Numeric(NumericType::F64);
         let i32_ty = Type::Numeric(NumericType::I32);
         let i64_ty = Type::Numeric(NumericType::I64);
-        let wide = self.lower_numeric_to(expr, &i64_ty, scope)?;
+        let number = self.lower_numeric_to(expr, &f64_ty, scope)?;
+        let wide = self.emit(Instruction::Cast {
+            value: number,
+            from: f64_ty,
+            to: i64_ty.clone(),
+        });
         Ok(self.emit(Instruction::Cast {
             value: wide,
             from: i64_ty,
@@ -10681,7 +10700,7 @@ impl Builder<'_> {
                     args.len()
                 ))));
             }
-            let len = match self.lower_index_to_i32(&args[0], scope) {
+            let len = match self.lower_luau_buffer_i32(&args[0], scope) {
                 Ok(value) => value,
                 Err(error) => return Some(Err(error)),
             };
@@ -10723,25 +10742,40 @@ impl Builder<'_> {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
-        let offset = match self.lower_buffer_offset(&args[1], scope) {
+        let offset = match self.lower_luau_buffer_i32(&args[1], scope) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
         if write {
             let stored = match kind {
                 TypedArrayKind::F32 | TypedArrayKind::F64 => {
-                    let target = Type::Numeric(kind.element_numeric_type());
-                    match self.lower_numeric_to(&args[2], &target, scope) {
-                        Ok(value) => value,
-                        Err(error) => return Some(Err(error)),
-                    }
-                }
-                _ => {
-                    let i64_ty = Type::Numeric(NumericType::I64);
-                    let wide = match self.lower_numeric_to(&args[2], &i64_ty, scope) {
+                    let f64_ty = Type::Numeric(NumericType::F64);
+                    let number = match self.lower_numeric_to(&args[2], &f64_ty, scope) {
                         Ok(value) => value,
                         Err(error) => return Some(Err(error)),
                     };
+                    if kind == TypedArrayKind::F32 {
+                        self.emit(Instruction::Cast {
+                            value: number,
+                            from: f64_ty,
+                            to: Type::Numeric(NumericType::F32),
+                        })
+                    } else {
+                        number
+                    }
+                }
+                _ => {
+                    let f64_ty = Type::Numeric(NumericType::F64);
+                    let i64_ty = Type::Numeric(NumericType::I64);
+                    let number = match self.lower_numeric_to(&args[2], &f64_ty, scope) {
+                        Ok(value) => value,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    let wide = self.emit(Instruction::Cast {
+                        value: number,
+                        from: f64_ty,
+                        to: i64_ty.clone(),
+                    });
                     self.emit(Instruction::Cast {
                         value: wide,
                         from: i64_ty,
@@ -12094,6 +12128,10 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
+
+        if count_marker && arg_ty == Type::Unit {
+            return Some(Ok(Type::Numeric(NumericType::I32)));
+        }
 
         let Some(element_ty) = arg_ty.element_type() else {
             return Some(Err(Diagnostic::new(format!(

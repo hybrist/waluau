@@ -150,6 +150,8 @@ pub(super) fn intrinsic_function_value_type(
             "function type {expected_ty} does not match builtin '{name}'"
         )))
     })
+}
+
 fn buffer_scalar_kind(member: &str) -> Option<waluau_ast::TypedArrayKind> {
     use waluau_ast::TypedArrayKind;
     match member {
@@ -235,7 +237,6 @@ fn json_supported_type(ty: &Type) -> bool {
         | Type::Bool
         | Type::String
         | Type::Bytes
-        | Type::Buffer
         | Type::Unit
         | Type::StringLiteralUnion(_)
         | Type::TypeParam(_) => true,
@@ -248,6 +249,7 @@ fn json_supported_type(ty: &Type) -> bool {
             .iter()
             .all(|variant| json_tag_payload_supported(&variant.payload)),
         Type::Nil
+        | Type::Buffer
         | Type::Extern
         | Type::ExternSubtype(_)
         | Type::Named { .. }
@@ -1129,6 +1131,12 @@ pub(super) fn infer_select_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
+    // Lua expressions with no return values form an empty result pack in
+    // call position. `select('#', unit_expression)` therefore evaluates the
+    // expression and reports zero values.
+    if count_marker && arg_ty == Type::Unit {
+        return Some(coerce_type(Type::Numeric(NumericType::I32), expected));
+    }
     let Some(element_ty) = arg_ty.element_type() else {
         return Some(Err(Diagnostic::new(format!(
             "{SELECT} expects an array, got {arg_ty}"

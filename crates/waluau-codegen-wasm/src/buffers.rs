@@ -1,4 +1,4 @@
-//! Linear-memory typed arrays (`Float32Array` & friends).
+//! Linear-memory typed arrays (`Float32Array` & friends) and Luau buffers.
 //!
 //! Runtime layout: a typed-array value is an i32 pointer to its element data.
 //! Each allocation is preceded by an 8-byte header whose first 4 bytes hold
@@ -14,6 +14,11 @@
 //! `memory.init` on every evaluation, so each evaluation yields an
 //! independently mutable array. Segments are never dropped because a literal
 //! inside a function body re-initializes on every call.
+//!
+//! Luau buffers deliberately use a distinct Wasm-GC handle containing a raw
+//! data pointer and byte length. Their bytes share this browser module's bump
+//! heap, but they do not have typed-array headers or typed-array semantics.
+//! Allocations live for the lifetime of the module; there is no free API.
 
 use waluau_ast::{Type, TypedArrayKind};
 use waluau_diagnostics::Diagnostic;
