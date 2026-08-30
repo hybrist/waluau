@@ -2205,6 +2205,29 @@ fn parses_untyped_multi_local() {
 }
 
 #[test]
+fn preserves_short_multi_binding_and_assignment_value_lists_for_semantic_adjustment() {
+    let source = r#"
+        function entry(x: i32): i32
+            local a, b, c = x
+            a, b, c = x
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::LetMulti { bindings, values }
+            if bindings.len() == 3 && values.len() == 1
+    ));
+    assert!(matches!(
+        &function.body[1],
+        waluau_ast::Stmt::AssignMulti { targets, values, .. }
+            if targets.len() == 3 && values.len() == 1
+    ));
+}
+
+#[test]
 fn rejects_if_expression_without_else() {
     let source = r#"
         function entry(flag: bool, x: i32): i32

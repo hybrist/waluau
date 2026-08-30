@@ -928,11 +928,26 @@ impl<'a> Monomorphizer<'a> {
                     .map(|expr| self.rewrite_expr(expr, ctx))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut value_types = Vec::new();
-                for expr in &rewritten_values {
+                for (index, expr) in rewritten_values.iter().enumerate() {
+                    let is_last = index + 1 == rewritten_values.len();
                     if matches!(expr, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
                         value_types.push(Type::record(std::collections::BTreeMap::new()));
                     } else {
                         match self.infer_expr_type(expr, ctx)? {
+                            Type::Unit
+                                if matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) =>
+                            {
+                                if !is_last {
+                                    value_types.push(Type::Nil);
+                                }
+                            }
+                            Type::Multi(mut tys) if !is_last => {
+                                value_types.push(if tys.is_empty() {
+                                    Type::Nil
+                                } else {
+                                    tys.remove(0)
+                                });
+                            }
                             Type::Multi(tys) => value_types.extend(tys),
                             other => value_types.push(other),
                         }
@@ -943,7 +958,7 @@ impl<'a> Monomorphizer<'a> {
                     let inferred_ty = if let Some(ty) = &binding.ty {
                         substitute_type(ty, subst)
                     } else {
-                        value_types.get(i).cloned().unwrap_or(Type::Unit)
+                        value_types.get(i).cloned().unwrap_or(Type::Nil)
                     };
                     if let Some(symbol_id) = binding.symbol_id {
                         types.insert(symbol_id, inferred_ty.clone());

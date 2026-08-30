@@ -2963,6 +2963,26 @@ impl Builder<'_> {
         self.coerce_value(null, runtime_ty, Some(param_ty.clone()))
     }
 
+    /// Materialize Lua's implicit trailing nil values after every authored RHS
+    /// expression has been lowered. The caller supplies the target types so a
+    /// nullable or dynamic slot gets the correct Wasm representation; HIR has
+    /// already rejected a missing value for a concrete non-null target.
+    fn pad_lowered_values_with_nil(
+        &mut self,
+        lowered: &mut Vec<ValueId>,
+        expected: &[Type],
+        scope: &Scope,
+    ) -> Result<(), Diagnostic> {
+        for expected_ty in &expected[lowered.len().min(expected.len())..] {
+            lowered.push(self.lower_expr(
+                &Expr::Nil(None),
+                scope,
+                Some(expected_ty.clone()),
+            )?);
+        }
+        Ok(())
+    }
+
     /// Return the stable i32 discriminant for a tagged-union variant name.
     fn variant_tag_id(&self, name: &str) -> Result<i32, Diagnostic> {
         self.cx.tag_ids
@@ -3613,14 +3633,8 @@ impl Builder<'_> {
                             .map(|(binding, inferred)| binding.ty.clone().unwrap_or(inferred))
                             .collect()
                     };
-                    let lowered = self.lower_expr_list(values, scope, Some(&expected))?;
-                    if lowered.len() < expected.len() {
-                        return Err(Diagnostic::new(format!(
-                            "multi-binding declaration expects {} values, got {}",
-                            expected.len(),
-                            lowered.len()
-                        )));
-                    }
+                    let mut lowered = self.lower_expr_list(values, scope, Some(&expected))?;
+                    self.pad_lowered_values_with_nil(&mut lowered, &expected, scope)?;
                     for ((binding, value), expected_ty) in
                         bindings.iter().zip(lowered).zip(expected)
                     {
@@ -3638,23 +3652,15 @@ impl Builder<'_> {
                             other => inferred_types.push(other),
                         }
                     }
-                    // Extra values from a trailing multi-value call are
-                    // dropped, following Lua's adjustment rules.
-                    if inferred_types.len() < bindings.len() {
-                        return Err(Diagnostic::new(format!(
-                            "multi-binding declaration expects {} values, got {}",
-                            bindings.len(),
-                            inferred_types.len()
-                        )));
+                    // Extra explicit values and trailing multi-return slots
+                    // are dropped only after lowering, following Lua's
+                    // adjustment and side-effect rules.
+                    while inferred_types.len() < bindings.len() {
+                        inferred_types.push(Type::Nil);
                     }
-                    let lowered = self.lower_expr_list(values, scope, None)?;
-                    if lowered.len() < bindings.len() {
-                        return Err(Diagnostic::new(format!(
-                            "multi-binding declaration expects {} values, got {}",
-                            bindings.len(),
-                            lowered.len()
-                        )));
-                    }
+                    let mut lowered =
+                        self.lower_expr_list(values, scope, Some(&inferred_types))?;
+                    self.pad_lowered_values_with_nil(&mut lowered, &inferred_types, scope)?;
                     for ((binding, value), ty) in bindings.iter().zip(lowered).zip(inferred_types) {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
                         self.bind_local_value(symbol_id, value, ty, scope);
@@ -3671,14 +3677,8 @@ impl Builder<'_> {
                     })?;
                     expected.push(ty);
                 }
-                let lowered = self.lower_expr_list(values, scope, Some(&expected))?;
-                if lowered.len() < expected.len() {
-                    return Err(Diagnostic::new(format!(
-                        "multi-assignment expects {} values, got {}",
-                        expected.len(),
-                        lowered.len()
-                    )));
-                }
+                let mut lowered = self.lower_expr_list(values, scope, Some(&expected))?;
+                self.pad_lowered_values_with_nil(&mut lowered, &expected, scope)?;
                 for ((id, value), ty) in ids.iter().zip(lowered).zip(expected.iter()) {
                     self.assign_local_value(*id, value, ty, &mut scope.env)?;
                     self.sever_discriminants(*id);
@@ -7209,6 +7209,17 @@ impl Builder<'_> {
             } else {
                 self.infer_expr_type(expr, &scope.types, slot_expected.clone())?
             };
+            // A no-result call still executes for effects. In final position
+            // it contributes no values; in an earlier position Lua adjusts it
+            // to one nil value.
+            if ty == Type::Unit && matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
+                let _ = self.lower_expr(expr, scope, Some(Type::Unit))?;
+                if !is_last {
+                    let nil_ty = slot_expected.unwrap_or(Type::Nil);
+                    out.push(self.lower_expr(&Expr::Nil(None), scope, Some(nil_ty))?);
+                }
+                continue;
+            }
             match ty {
                 Type::Variadic(element_ty) => {
                     let pack = self.lower_expr(

@@ -1056,6 +1056,38 @@ fn emits_valid_wasm_for_multi_assign() {
 }
 
 #[test]
+fn emits_valid_wasm_for_nil_padded_multi_bindings() {
+    let source = r#"
+        function scalar(): i32
+            return 1
+        end
+
+        function pair(): i32, bool
+            return 2, true
+        end
+
+        function nothing(): ()
+        end
+
+        function entry(): bool
+            local a, b = scalar()
+            local c, d, e = pair()
+            local f: string?, g: i32? = nothing()
+            local h: i32?, i: i32? = 3::i32, 4::i32
+            h, i = scalar()
+            return a == 1 and b == nil and c == 2 and d and e == nil
+                and f == nil and g == nil and i == nil
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn emits_valid_wasm_for_for_in_closure_iterator() {
     let source = r#"
         function entry(): i32

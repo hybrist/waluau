@@ -53,18 +53,68 @@ pub(super) fn expected_binding_types(
             .collect());
     }
     let unconstrained = infer_expr_list(values, vars, fn_signatures, active_type_params, None)?;
-    if unconstrained.len() < bindings.len() {
-        return Err(Diagnostic::new(format!(
-            "multi-binding declaration expects {} values, got {}",
-            bindings.len(),
-            unconstrained.len()
-        )));
-    }
     Ok(bindings
         .iter()
-        .zip(unconstrained)
-        .map(|(binding, inferred)| binding.ty.clone().unwrap_or(inferred))
+        .enumerate()
+        .map(|(index, binding)| {
+            binding
+                .ty
+                .clone()
+                .or_else(|| unconstrained.get(index).cloned())
+                .unwrap_or(Type::Nil)
+        })
         .collect())
+}
+
+/// Apply Lua's value-list adjustment to a multi-binding declaration. Extra
+/// values are retained so their expressions are still evaluated, but only the
+/// prefix with a matching name is bound. Missing trailing values become nil
+/// when the name is unannotated or explicitly nullable; a non-null annotation
+/// remains an arity error rather than silently acquiring a nullable type.
+pub(super) fn nil_pad_binding_types(
+    bindings: &[waluau_ast::Binding],
+    mut actual: Vec<Type>,
+) -> Result<Vec<Type>, Diagnostic> {
+    let produced = actual.len();
+    for binding in bindings.iter().skip(produced) {
+        match &binding.ty {
+            None => actual.push(Type::Nil),
+            Some(expected) => match coerce_type(Type::Nil, Some(expected.clone())) {
+                Ok(padded) => actual.push(padded),
+                Err(_) => {
+                    return Err(Diagnostic::new(format!(
+                        "multi-binding declaration expects {} values, got {}",
+                        bindings.len(),
+                        produced
+                    )));
+                }
+            },
+        }
+    }
+    Ok(actual)
+}
+
+/// Apply the same adjustment to an assignment using the already-established
+/// target types. `unknown`, `nil`, and nullable targets can represent the
+/// synthesized nil; concrete non-null targets keep the static arity error.
+fn nil_pad_assignment_types(
+    expected: &[Type],
+    mut actual: Vec<Type>,
+) -> Result<Vec<Type>, Diagnostic> {
+    let produced = actual.len();
+    for expected_ty in expected.iter().skip(produced) {
+        match coerce_type(Type::Nil, Some(expected_ty.clone())) {
+            Ok(padded) => actual.push(padded),
+            Err(_) => {
+                return Err(Diagnostic::new(format!(
+                    "multi-assignment expects {} values, got {}",
+                    expected.len(),
+                    produced
+                )));
+            }
+        }
+    }
+    Ok(actual)
 }
 
 fn property_setter_name(base: &str, property: &str) -> String {
@@ -1433,13 +1483,7 @@ fn collect_return_types_with_scope(
                         active_type_params,
                         Some(&expected),
                     )?;
-                    if actual.len() < expected.len() {
-                        return Err(Diagnostic::new(format!(
-                            "multi-binding declaration expects {} values, got {}",
-                            expected.len(),
-                            actual.len()
-                        )));
-                    }
+                    let actual = nil_pad_binding_types(bindings, actual)?;
                     for (index, (binding, value_ty)) in
                         bindings.iter().zip(actual.iter()).enumerate()
                     {
@@ -1457,16 +1501,10 @@ fn collect_return_types_with_scope(
                     }
                     actual
                 } else {
-                    let actual =
-                        infer_expr_list(values, &scope, fn_signatures, active_type_params, None)?;
-                    if actual.len() < bindings.len() {
-                        return Err(Diagnostic::new(format!(
-                            "multi-binding declaration expects {} values, got {}",
-                            bindings.len(),
-                            actual.len()
-                        )));
-                    }
-                    actual
+                    nil_pad_binding_types(
+                        bindings,
+                        infer_expr_list(values, &scope, fn_signatures, active_type_params, None)?,
+                    )?
                 };
                 for value in values {
                     seal_record_locals_in_expr(value, &mut scope);
@@ -1506,13 +1544,7 @@ fn collect_return_types_with_scope(
                 for value in values {
                     seal_record_locals_in_expr(value, &mut scope);
                 }
-                if actual.len() < expected.len() {
-                    return Err(Diagnostic::new(format!(
-                        "multi-assignment expects {} values, got {}",
-                        expected.len(),
-                        actual.len()
-                    )));
-                }
+                let _actual = nil_pad_assignment_types(&expected, actual)?;
                 for target in targets {
                     sever_pcall_link(target, &mut scope);
                 }
@@ -2389,13 +2421,7 @@ fn check_stmt_inner(
                     active_type_params,
                     Some(&expected),
                 )?;
-                if actual.len() != expected.len() {
-                    return Err(Diagnostic::new(format!(
-                        "multi-binding declaration expects {} values, got {}",
-                        expected.len(),
-                        actual.len()
-                    )));
-                }
+                let actual = nil_pad_binding_types(bindings, actual)?;
                 for (index, (binding, value_ty)) in bindings.iter().zip(actual.iter()).enumerate() {
                     let Some(expected_ty) = binding.ty.as_ref() else {
                         continue;
@@ -2411,16 +2437,10 @@ fn check_stmt_inner(
                 }
                 actual
             } else {
-                let actual =
-                    infer_expr_list(values, vars, fn_signatures, active_type_params, None)?;
-                if actual.len() != bindings.len() {
-                    return Err(Diagnostic::new(format!(
-                        "multi-binding declaration expects {} values, got {}",
-                        bindings.len(),
-                        actual.len()
-                    )));
-                }
-                actual
+                nil_pad_binding_types(
+                    bindings,
+                    infer_expr_list(values, vars, fn_signatures, active_type_params, None)?,
+                )?
             };
             for value in values {
                 seal_record_locals_in_expr(value, vars);
@@ -2462,13 +2482,7 @@ fn check_stmt_inner(
             for value in values {
                 seal_record_locals_in_expr(value, vars);
             }
-            if actual.len() != expected.len() {
-                return Err(Diagnostic::new(format!(
-                    "multi-assignment expects {} values, got {}",
-                    expected.len(),
-                    actual.len()
-                )));
-            }
+            let actual = nil_pad_assignment_types(&expected, actual)?;
             for (index, (expected_ty, actual_ty)) in expected.iter().zip(actual.iter()).enumerate()
             {
                 if expected_ty != actual_ty {
