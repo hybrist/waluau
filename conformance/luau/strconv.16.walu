@@ -1,0 +1,9 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/strconv.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from conformance/luau/strconv.walu in original source order.
+-- Upstream source lines 64-65.
+
+assert(tostring(4.8970527433648997e-260) == "4.8970527433649e-260")
+assert(tostring(1.62890625) == "1.62890625")

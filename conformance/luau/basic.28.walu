@@ -1,0 +1,403 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/basic.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk retains checks from the upstream source that still fail in
+-- Waluau. Remove this directive when the whole chunk passes.
+-- Split from conformance/luau/basic.walu in original source order.
+-- Upstream source lines 393-775.
+-- Required upstream helper setup from line 11-19 is repeated for standalone execution.
+
+print("testing language/library basics")
+
+function concat(head, ...)
+    if select('#', ...) == 0 then
+        return tostring(head)
+    else
+        return tostring(head) .. "," .. concat(...)
+    end
+end
+assert((function() local t = {6, 9, 7} t[0] = 5 return t[0] end)() == 5)
+assert((function() local t = {6, 9, 7} t[4] = 10 return t[4] end)() == 10)
+assert((function() local t = {6, 9, 7} t[4.5] = 10 return t[4.5] end)() == 10)
+assert((function() local t = {6, 9, 7} t['a'] = 11 return t['a'] end)() == 11)
+assert((function() local t = {6, 9, 7} setmetatable(t, { __newindex = function(t,i,v) rawset(t, i * 10, v) end }) t[1] = 17 t[5] = 1 return concat(t[1],t[5],t[50]) end)() == "17,nil,1")
+
+-- userdata access
+assert((function() local ud = newproxy(true) getmetatable(ud).__index = function(ud,i) return i * 10 end return ud[2] end)() == 20)
+assert((function() local ud = newproxy(true) getmetatable(ud).__index = function() return function(self, i) return i * 10 end end return ud:meow(2) end)() == 20)
+
+-- and/or
+-- rhs is a constant
+assert((function() local a = 1 a = a and 2 return a end)() == 2)
+assert((function() local a = nil a = a and 2 return a end)() == nil)
+assert((function() local a = 1 a = a or 2 return a end)() == 1)
+assert((function() local a = nil a = a or 2 return a end)() == 2)
+
+-- rhs is a local
+assert((function() local a = 1 local b = 2 a = a and b return a end)() == 2)
+assert((function() local a = nil local b = 2 a = a and b return a end)() == nil)
+assert((function() local a = 1 local b = 2 a = a or b return a end)() == 1)
+assert((function() local a = nil local b = 2 a = a or b return a end)() == 2)
+
+-- rhs is a global (prevents optimizations)
+assert((function() local a = 1 b = 2 a = a and b return a end)() == 2)
+assert((function() local a = nil b = 2 a = a and b return a end)() == nil)
+assert((function() local a = 1 b = 2 a = a or b return a end)() == 1)
+assert((function() local a = nil b = 2 a = a or b return a end)() == 2)
+
+-- table access: method calls + fake oop via mt
+assert((function()
+    local Class = {}
+    Class.__index = Class
+
+    function Class.new()
+        local self = {}
+        setmetatable(self, Class)
+
+        self.field = 5
+
+        return self
+    end
+
+    function Class:GetField()
+        return self.field
+    end
+
+    local object = Class.new()
+    return object:GetField()
+end)() == 5)
+
+-- table access: evil indexer
+assert((function()
+    local a = {5}
+    local b = {6}
+    local mt = { __index = function() return b[1] end }
+    setmetatable(a, mt)
+    b = a.hi
+    return b
+end)() == 6)
+
+-- table access:  fast-path tests for array lookup
+-- in-bounds array lookup shouldn't call into Lua, but if the element isn't there we'll still call the metatable
+assert((function() local a = {9, [1.5] = 7} return a[1], a[2], a[1.5] end)() == 9,nil,7)
+assert((function() local a = {9, [1.5] = 7} setmetatable(a, { __index = function() return 5 end }) return concat(a[1],a[2],a[1.5]) end)() == "9,5,7")
+assert((function() local a = {9, nil, 11} setmetatable(a, { __index = function() return 5 end }) return concat(a[1],a[2],a[3],a[4]) end)() == "9,5,11,5")
+
+-- namecall for userdata: technically not officially supported but hard to test in a different way!
+-- warning: this test may break at any time as we may decide that we'll only use userdata-namecall on tagged user data objects
+assert((function()
+    local obj = newproxy(true)
+    getmetatable(obj).__namecall = function(self, arg) return 42 + arg end
+    return obj:Foo(10)
+end)() == 52)
+assert((function()
+    local obj = newproxy(true)
+    local t = {}
+    setmetatable(t, { __call = function(self1, self2, arg) return 42 + arg end })
+    getmetatable(obj).__namecall = t
+    return obj:Foo(10)
+end)() == 52)
+
+-- namecall for oop to test fast paths
+assert((function()
+    local Class = {}
+    Class.__index = Class
+
+    function Class:new(klass, v) -- note, this isn't necessarily common but it exercises additional namecall paths
+        local self = {value = v}
+        setmetatable(self, Class)
+        return self
+    end
+
+    function Class:get()
+        return self.value
+    end
+
+    function Class:set(v)
+        self.value = v
+    end
+
+    local n = Class:new(32)
+    n:set(42)
+    return n:get()
+end)() == 42)
+
+-- comparison
+-- basic types
+assert((function() a = nil return concat(a == nil, a ~= nil) end)() == "true,false")
+assert((function() a = nil return concat(a == 1, a ~= 1) end)() == "false,true")
+assert((function() a = 1 return concat(a == 1, a ~= 1) end)() == "true,false")
+assert((function() a = 1 return concat(a == 2, a ~= 2) end)() == "false,true")
+assert((function() a = true return concat(a == true, a ~= true) end)() == "true,false")
+assert((function() a = true return concat(a == false, a ~= false) end)() == "false,true")
+assert((function() a = 'a' return concat(a == 'a', a ~= 'a') end)() == "true,false")
+assert((function() a = 'a' return concat(a == 'b', a ~= 'b') end)() == "false,true")
+
+-- tables, reference equality (no mt)
+assert((function() a = {} return concat(a == a, a ~= a) end)() == "true,false")
+assert((function() a = {} b = {} return concat(a == b, a ~= b) end)() == "false,true")
+
+-- tables, reference equality (mt without __eq)
+assert((function() a = {} setmetatable(a, {}) return concat(a == a, a ~= a) end)() == "true,false")
+assert((function() a = {} b = {} mt = {} setmetatable(a, mt) setmetatable(b, mt) return concat(a == b, a ~= b) end)() == "false,true")
+
+-- tables, __eq with same mt/different mt but same function/different function
+assert((function() a = {} b = {} mt = { __eq = function(l, r) return #l == #r end } setmetatable(a, mt) setmetatable(b, mt) return concat(a == b, a ~= b) end)() == "true,false")
+assert((function() a = {} b = {} function eq(l, r) return #l == #r end setmetatable(a, {__eq = eq}) setmetatable(b, {__eq = eq}) return concat(a == b, a ~= b) end)() == "true,false")
+assert((function() a = {} b = {} setmetatable(a, {__eq = function(l, r) return #l == #r end}) setmetatable(b, {__eq = function(l, r) return #l == #r end}) return concat(a == b, a ~= b) end)() == "false,true")
+
+-- userdata, reference equality (no mt or mt.__eq)
+assert((function() a = newproxy() return concat(a == newproxy(),a ~= newproxy()) end)() == "false,true")
+assert((function() a = newproxy(true) return concat(a == newproxy(true),a ~= newproxy(true)) end)() == "false,true")
+
+-- rawequal
+assert(rawequal(true, 5) == false)
+assert(rawequal(nil, nil) == true)
+assert(rawequal(true, false) == false)
+assert(rawequal(true, true) == true)
+assert(rawequal(0, -0) == true)
+assert(rawequal(1, 2) == false)
+assert(rawequal("a", "a") == true)
+assert(rawequal("a", "b") == false)
+assert((function() a = {} b = {} mt = { __eq = function(l, r) return #l == #r end } setmetatable(a, mt) setmetatable(b, mt) return concat(a == b, rawequal(a, b)) end)() == "true,false")
+
+-- rawequal fallback
+assert(concat(pcall(rawequal, "a", "a")) == "true,true")
+assert(concat(pcall(rawequal, "a", "b")) == "true,false")
+assert(concat(pcall(rawequal, "a", nil)) == "true,false")
+assert(pcall(rawequal, "a") == false)
+
+-- metatable ops
+local function vec3t(x, y, z)
+    return setmetatable({x=x, y=y, z=z}, {
+        __add = function(l, r) return vec3t(l.x + r.x, l.y + r.y, l.z + r.z) end,
+        __sub = function(l, r) return vec3t(l.x - r.x, l.y - r.y, l.z - r.z) end,
+        __mul = function(l, r) return type(r) == "number" and vec3t(l.x * r, l.y * r, l.z * r) or vec3t(l.x * r.x, l.y * r.y, l.z * r.z) end,
+        __div = function(l, r) return type(r) == "number" and vec3t(l.x / r, l.y / r, l.z / r) or vec3t(l.x / r.x, l.y / r.y, l.z / r.z) end,
+        __idiv = function(l, r) return type(r) == "number" and vec3t(l.x // r, l.y // r, l.z // r) or vec3t(l.x // r.x, l.y // r.y, l.z // r.z) end,
+        __unm = function(v) return vec3t(-v.x, -v.y, -v.z) end,
+        __tostring = function(v) return string.format("%g, %g, %g", v.x, v.y, v.z) end
+    })
+end
+
+-- reg vs reg
+assert((function() return tostring(vec3t(1,2,3) + vec3t(4,5,6)) end)() == "5, 7, 9")
+assert((function() return tostring(vec3t(1,2,3) - vec3t(4,5,6)) end)() == "-3, -3, -3")
+assert((function() return tostring(vec3t(1,2,3) * vec3t(4,5,6)) end)() == "4, 10, 18")
+assert((function() return tostring(vec3t(1,2,3) / vec3t(2,4,8)) end)() == "0.5, 0.5, 0.375")
+assert((function() return tostring(vec3t(1,2,3) // vec3t(2,4,2)) end)() == "0, 0, 1")
+assert((function() return tostring(vec3t(1,2,3) // vec3t(-2,-4,-2)) end)() == "-1, -1, -2")
+
+-- reg vs constant
+assert((function() return tostring(vec3t(1,2,3) * 2) end)() == "2, 4, 6")
+assert((function() return tostring(vec3t(1,2,3) / 2) end)() == "0.5, 1, 1.5")
+assert((function() return tostring(vec3t(1,2,3) // 2) end)() == "0, 1, 1")
+
+-- unary
+assert((function() return tostring(-vec3t(1,2,3)) end)() == "-1, -2, -3")
+
+-- string comparison
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('a', 'b')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('a', 'a')) end)() == "false,true,false,true")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('a', '')) end)() == "false,false,true,true")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('', '\\0')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('abc', 'abd')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('ab\\0c', 'ab\\0d')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('ab\\0c', 'ab\\0')) end)() == "false,false,true,true")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('\\0a', '\\0b')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('a', 'a\\0')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('a', '\200')) end)() == "true,true,false,false")
+
+-- array access
+assert((function() local a = {4,5,6} return a[3] end)() == 6)
+assert((function() local a = {4,5,nil,6} return a[3] end)() == nil)
+assert((function() local a = {4,5,nil,6} setmetatable(a, { __index = function() return 42 end }) return a[4] end)() == 6)
+assert((function() local a = {4,5,nil,6} setmetatable(a, { __index = function() return 42 end }) return a[3] end)() == 42)
+assert((function() local a = {4,5,6} a[3] = 8 return a[3] end)() == 8)
+assert((function() local a = {4,5,nil,6} a[3] = 8 return a[3] end)() == 8)
+assert((function() local a = {4,5,nil,6} setmetatable(a, { __newindex = function(t,i) rawset(t,i,42) end }) a[4] = 0 return a[4] end)() == 0)
+assert((function() local a = {4,5,nil,6} setmetatable(a, { __newindex = function(t,i) rawset(t,i,42) end }) a[3] = 0 return a[3] end)() == 42)
+
+-- array index for literal
+assert((function() local a = {4, 5, nil, 6} return concat(a[1], a[3], a[4], a[100]) end)() == "4,nil,6,nil")
+assert((function() local a = {4, 5, nil, 6} a[1] = 42 a[3] = 0 a[100] = 75 return concat(a[1], a[3], a[75], a[100]) end)() == "42,0,nil,75")
+
+-- load error
+assert((function() return concat(loadstring('hello world')) end)() == "nil,[string \"hello world\"]:1: Incomplete statement: expected assignment or a function call")
+
+-- many arguments & locals
+function f(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10,
+    p11, p12, p13, p14, p15, p16, p17, p18, p19, p20,
+    p21, p22, p23, p24, p25, p26, p27, p28, p29, p30,
+    p31, p32, p33, p34, p35, p36, p37, p38, p39, p40,
+    p41, p42, p43, p44, p45, p46, p48, p49, p50, ...)
+    local a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14
+end
+
+assert(f() == nil)
+
+-- upvalues & loops (validates timely closing)
+assert((function()
+    local res = {}
+
+    for i=1,5 do
+        res[#res+1] = (function() return i end)
+    end
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local res = {}
+
+    for i in ipairs({1,2,3,4,5}) do
+        res[#res+1] =(function() return i end)
+    end
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local res = {}
+
+    local i = 0
+    while i <= 5 do
+        local j = i
+        res[#res+1] = (function() return j end)
+        i = i + 1
+    end
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local res = {}
+
+    local i = 0
+    repeat
+        local j = i
+        res[#res+1] = (function() return j end)
+        i = i + 1
+    until i > 5
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+-- upvalues & loops & break!
+assert((function()
+    local res = {}
+
+    for i=1,10 do
+        res[#res+1] = (function() return i end)
+        if i == 5 then
+            break
+        end
+    end
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local res = {}
+
+    for i in ipairs({1,2,3,4,5,6,7,8,9,10}) do
+        res[#res+1] =(function() return i end)
+        if i == 5 then
+            break
+        end
+    end
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local res = {}
+
+    local i = 0
+    while i < 10 do
+        local j = i
+        res[#res+1] = (function() return j end)
+        if i == 5 then
+            break
+        end
+        i = i + 1
+    end
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local res = {}
+
+    local i = 0
+    repeat
+        local j = i
+        res[#res+1] = (function() return j end)
+        if i == 5 then
+            break
+        end
+        i = i + 1
+    until i >= 10
+
+    local sum = 0
+    for i,f in pairs(res) do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+-- ipairs will not iterate through hash part
+assert((function()
+    local arr = { [1] = 1, [42] = 42, x = 10 }
+    local sum = 0
+    for i,v in ipairs(arr) do
+    sum = sum + v
+    end
+    return sum
+end)() == 1)
+
+-- the reason why this test is interesting is it ensures we do correct mutability analysis for locals
+local function chainTest(n)
+     local first = nil
+     local last = nil
+
+     -- Build chain of n equality constraints
+     for i = 0, n do
+            local name = "v" .. i;
+            if i == 0 then first = name end
+            if i == n then last = name end
+     end
+
+     return concat(first, last)
+end
+
+assert(chainTest(100) == "v0,v100")
+
+-- this validates import fallbacks
+assert(idontexist == nil)
+assert(math.idontexist == nil)
+assert(pcall(function() return idontexist.a end) == false)
+assert(pcall(function() return math.pow.a end) == false)
+assert(pcall(function() return math.a.b end) == false)

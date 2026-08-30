@@ -1,0 +1,41 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/basic.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk retains checks from the upstream source that still fail in
+-- Waluau. Remove this directive when the whole chunk passes.
+-- Split from conformance/luau/basic.walu in original source order.
+-- Upstream source lines 191-211.
+-- Required upstream helper setup from line 11-19 is repeated for standalone execution.
+
+print("testing language/library basics")
+
+function concat(head, ...)
+    if select('#', ...) == 0 then
+        return tostring(head)
+    else
+        return tostring(head) .. "," .. concat(...)
+    end
+end
+-- make sure internal index is protected against modification
+assert((function() local a = 1 for b=9,1,-2 do a = a * 2 b = nil end return a end)() == 32)
+
+-- make sure that when step is 0, we treat it as backward iteration (and as such, iterate zero times or indefinitely)
+-- this is consistent with Lua 5.1; future Lua versions emit an error when step is 0; LuaJIT instead treats 0 as forward iteration
+-- we repeat tests twice, with and without constant folding
+local zero = tonumber("0")
+assert((function() local c = 0 for i=1,10,0 do c += 1 if c > 10 then break end end return c end)() == 0)
+assert((function() local c = 0 for i=10,1,0 do c += 1 if c > 10 then break end end return c end)() == 11)
+assert((function() local c = 0 for i=1,10,zero do c += 1 if c > 10 then break end end return c end)() == 0)
+assert((function() local c = 0 for i=10,1,zero do c += 1 if c > 10 then break end end return c end)() == 11)
+
+-- make sure that when limit is nan, we iterate zero times (this is consistent with Lua 5.1; future Lua versions break this)
+-- we repeat tests twice, with and without constant folding
+local nan = tonumber("nan")
+assert((function() local c = 0 for i=1,0/0 do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=1,0/0,-1 do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=1,nan do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=1,nan,-1 do c += 1 end return c end)() == 0)
+
+-- make sure that when step is nan, we treat it as backward iteration and as such iterate once iff start<=limit

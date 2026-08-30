@@ -2,8 +2,9 @@
 -- tests/conformance/basic.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- Split from conformance/luau/basic.walu. Common helper setup is repeated
--- so each numbered chunk is independently discoverable by the conformance runner.
+-- Split from conformance/luau/basic.walu in original source order.
+-- Upstream source lines 28-29.
+-- Required upstream helper setup from line 11-19 is repeated for standalone execution.
 
 print("testing language/library basics")
 
@@ -14,7 +15,5 @@ function concat(head, ...)
         return tostring(head) .. "," .. concat(...)
     end
 end
-
--- make sure that NaN is preserved by the bytecode compiler
-local realnan = tostring(math.abs(0)/math.abs(0))
-assert(tostring(0/0*0) == realnan)
+assert((function() local a = 1 return a end)() == 1)
+assert((function() local a, b, c = 1, 2, 3 return c end)() == 3)

@@ -6,7 +6,7 @@
 -- This chunk retains checks from the upstream source that still fail in
 -- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/basic.walu in original source order.
--- Upstream source lines 30-45.
+-- Upstream source lines 99-108.
 -- Required upstream helper setup from line 11-19 is repeated for standalone execution.
 
 print("testing language/library basics")
@@ -18,19 +18,13 @@ function concat(head, ...)
         return tostring(head) .. "," .. concat(...)
     end
 end
-assert((function() local a, b, c = 1, 2 return c end)() == nil)
-assert((function() local a = 1, 2 return a end)() == 1)
+-- binary ops with fp specials, neg zero, large constants
+-- argument is passed into anonymous function to prevent constant folding
+assert((function(a) return tostring(a + 0) end)(-0) == "0")
+assert((function(a) return tostring(a - 0) end)(-0) == "-0")
+assert((function(a) return tostring(0 - a) end)(0) == "0")
+assert((function(a) return tostring(a - a) end)(1 / 0) == "nan")
+assert((function(a) return tostring(a * 0) end)(0 / 0) == "nan")
+assert((function(a) return tostring(a / (2^1000)) end)(2^1000) == "1")
+assert((function(a) return tostring(a / (2^-1000)) end)(2^-1000) == "1")
 
--- function calls
-local function foo(a, b) return b end
-assert(foo(1) == nil)
-assert(foo(1, 2) == 2)
-assert(foo(1, 2, 3) == 2)
-
--- pcall
-assert(concat(pcall(function () end)) ==  "true")
-assert(concat(pcall(function () return nil end)) ==  "true,nil")
-assert(concat(pcall(function () return 1,2,3 end)) ==  "true,1,2,3")
-assert(concat(pcall(function () error("oops") end)) ==  "false,basic.luau:39: oops")
-
--- assignments

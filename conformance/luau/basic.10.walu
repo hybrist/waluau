@@ -1,0 +1,47 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/basic.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk retains checks from the upstream source that still fail in
+-- Waluau. Remove this directive when the whole chunk passes.
+-- Split from conformance/luau/basic.walu in original source order.
+-- Upstream source lines 126-152.
+-- Required upstream helper setup from line 11-19 is repeated for standalone execution.
+
+print("testing language/library basics")
+
+function concat(head, ...)
+    if select('#', ...) == 0 then
+        return tostring(head)
+    else
+        return tostring(head) .. "," .. concat(...)
+    end
+end
+
+assert(concat(pcall(function() return '1' .. nil .. '2' end)):match("^false,.*attempt to concatenate nil with string"))
+
+assert((function() local a = 1 a = a == 2 return a end)() == false)
+assert((function() local a = 1 a = a ~= 2 return a end)() == true)
+assert((function() local a = 1 a = a < 2 return a end)() == true)
+assert((function() local a = 1 a = a <= 2 return a end)() == true)
+assert((function() local a = 1 a = a > 2 return a end)() == false)
+assert((function() local a = 1 a = a >= 2 return a end)() == false)
+
+assert((function() local a = 1 a = a and 2 return a end)() == 2)
+assert((function() local a = nil a = a and 2 return a end)() == nil)
+assert((function() local a = 1 a = a or 2 return a end)() == 1)
+assert((function() local a = nil a = a or 2 return a end)() == 2)
+
+assert((function() local a a = 1 local b = 2 b = a and b return b end)() == 2)
+assert((function() local a a = nil local b = 2 b = a and b return b end)() == nil)
+assert((function() local a a = 1 local b = 2 b = a or b return b end)() == 1)
+assert((function() local a a = nil local b = 2 b = a or b return b end)() == 2)
+
+assert((function(a) return 12 % a end)(5) == 2)
+
+-- binary arithmetics coerces strings to numbers (sadly)
+assert(1 + "2" == 3)
+assert(2 * "0xa" == 20)
+
+-- unary ops
