@@ -61,6 +61,14 @@ fn rejects_invalid_binary_number_literals() {
 }
 
 #[test]
+fn parses_mutable_buffer_type_annotation() {
+    let program = parse("function id(value: buffer): buffer return value end")
+        .expect("buffer should be a source type");
+    assert_eq!(program.functions[0].params[0].ty, Type::Buffer);
+    assert_eq!(program.functions[0].return_type, Some(Type::Buffer));
+}
+
+#[test]
 fn parses_explicit_exported_function() {
     let source = "export function answer(): i32\n    return 42\nend\n";
     let outcome = crate::parse_with_recovery(source, "module.walu");

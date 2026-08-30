@@ -2,30 +2,19 @@
 -- tests/conformance/buffers.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only buffers.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
---
--- Split from conformance/luau/buffers.walu. Common helper setup is repeated
--- as needed so each numbered chunk is independently discoverable by the
--- conformance runner.
+-- Split from conformance/luau/buffers.walu. The untyped table-parameter
+-- checks from this upstream block remain in buffers.18_untyped_table.walu;
+-- this chunk covers the independently supported buffer behavior.
 
 -- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 print("testing byte buffer library")
 
-local function misc(t16)
+local function misc()
   local native_check = is_native_if_supported()
   local b = buffer.create(1000)
 
   assert(select('#', buffer.writei32(b, 10, 40)) == 0)
   assert(select('#', buffer.writef32(b, 20, 40.0)) == 0)
-
-  -- some extra operation to place '#t16' into a linear block
-  t16[1] = 10
-  t16[15] = 20
-
-  buffer.writei32(b, #t16, 10)
-  assert(buffer.readi32(b, 16) == 10)
 
   buffer.writeu8(b, 100, 0xff)
   buffer.writeu8(b, 110, 0x80)
@@ -39,4 +28,4 @@ local function misc(t16)
   assert(not native_check or is_native_if_supported())
 end
 
-misc(table.create(16, 0))
+misc()

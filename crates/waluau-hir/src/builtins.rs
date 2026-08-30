@@ -152,6 +152,85 @@ pub(super) fn intrinsic_function_value_type(
     })
 }
 
+fn buffer_scalar_kind(member: &str) -> Option<waluau_ast::TypedArrayKind> {
+    use waluau_ast::TypedArrayKind;
+    match member {
+        "i8" => Some(TypedArrayKind::I8),
+        "u8" => Some(TypedArrayKind::U8),
+        "i16" => Some(TypedArrayKind::I16),
+        "u16" => Some(TypedArrayKind::U16),
+        "i32" => Some(TypedArrayKind::I32),
+        "u32" => Some(TypedArrayKind::U32),
+        "f32" => Some(TypedArrayKind::F32),
+        "f64" => Some(TypedArrayKind::F64),
+        _ => None,
+    }
+}
+
+/// Infer the fixed-size mutable `buffer` scalar API. Offsets deliberately
+/// remain zero-based even though authored arrays are one-based.
+pub(super) fn infer_buffer_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let member = name.strip_prefix("buffer.")?;
+    let (params, result) = match member {
+        "create" => (vec![Type::number()], Type::Buffer),
+        "len" => (vec![Type::Buffer], Type::Numeric(NumericType::I32)),
+        member if member.starts_with("read") => {
+            let kind = buffer_scalar_kind(member.strip_prefix("read")?)?;
+            (
+                vec![Type::Buffer, Type::number()],
+                Type::Numeric(kind.element_numeric_type()),
+            )
+        }
+        member if member.starts_with("write") => {
+            buffer_scalar_kind(member.strip_prefix("write")?)?;
+            (
+                vec![Type::Buffer, Type::number(), Type::number()],
+                Type::Unit,
+            )
+        }
+        _ => return None,
+    };
+    if args.len() != params.len() {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects {} arguments, got {}",
+            params.len(),
+            args.len()
+        ))));
+    }
+    for (index, (arg, param)) in args.iter().zip(&params).enumerate() {
+        let actual = match super::expressions::infer_expr(
+            arg,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(param.clone()),
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if index > 0 || member == "create" {
+            if !actual.is_numeric() {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects a numeric argument at position {}, got {actual}",
+                    index + 1
+                ))));
+            }
+        } else if actual != Type::Buffer {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects buffer as its first argument, got {actual}"
+            ))));
+        }
+    }
+    Some(coerce_type(result, expected))
+}
+
 fn json_supported_type(ty: &Type) -> bool {
     match ty {
         Type::Numeric(_)
@@ -170,6 +249,7 @@ fn json_supported_type(ty: &Type) -> bool {
             .iter()
             .all(|variant| json_tag_payload_supported(&variant.payload)),
         Type::Nil
+        | Type::Buffer
         | Type::Extern
         | Type::ExternSubtype(_)
         | Type::Named { .. }
@@ -1051,6 +1131,12 @@ pub(super) fn infer_select_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
+    // Lua expressions with no return values form an empty result pack in
+    // call position. `select('#', unit_expression)` therefore evaluates the
+    // expression and reports zero values.
+    if count_marker && arg_ty == Type::Unit {
+        return Some(coerce_type(Type::Numeric(NumericType::I32), expected));
+    }
     let Some(element_ty) = arg_ty.element_type() else {
         return Some(Err(Diagnostic::new(format!(
             "{SELECT} expects an array, got {arg_ty}"

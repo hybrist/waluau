@@ -418,6 +418,8 @@ pub const ERR_DIV_ZERO: &str = "attempt to perform 'n//0'";
 pub const ERR_MOD_ZERO: &str = "attempt to perform 'n%0'";
 /// Luau-compatible error message for out-of-bounds typed-array access.
 pub const ERR_BUFFER_OOB: &str = "buffer access out of bounds";
+pub const ERR_BUFFER_SIZE: &str = "invalid argument #1 to 'create' (size)";
+pub const ERR_BUFFER_ALLOC: &str = "buffer allocation failed";
 /// Error payload used when `pcall` catches a foreign (non-Waluau) exception
 /// raised by a host import.
 pub const ERR_FOREIGN_EXCEPTION: &str = "uncaught host exception";
@@ -448,6 +450,10 @@ pub(crate) fn runtime_error_messages(instruction: &IrInstruction) -> &'static [&
         IrInstruction::DynIndex { .. } => &[ERR_ARRAY_OOB, ERR_INDEX_NON_ARRAY],
         IrInstruction::DynLen { .. } => &[ERR_LEN_NON_ARRAY],
         IrInstruction::BufferGet { .. } | IrInstruction::BufferSet { .. } => &[ERR_BUFFER_OOB],
+        IrInstruction::LuauBufferNew { .. } => &[ERR_BUFFER_SIZE, ERR_BUFFER_ALLOC],
+        IrInstruction::LuauBufferGet { .. } | IrInstruction::LuauBufferSet { .. } => {
+            &[ERR_BUFFER_OOB]
+        }
         IrInstruction::ProtectedCall { .. } => &[ERR_FOREIGN_EXCEPTION],
         IrInstruction::BitwiseIntrinsic {
             intrinsic: BitwiseIntrinsic::Extract | BitwiseIntrinsic::Replace,

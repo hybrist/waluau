@@ -438,6 +438,8 @@ pub enum Type {
     Bool,
     String,
     Bytes,
+    /// A fixed-size mutable byte buffer backed by Wasm linear memory.
+    Buffer,
     Extern,
     ExternSubtype(Arc<Type>),
     Nil,
@@ -765,6 +767,7 @@ impl std::fmt::Display for Type {
             Self::Unknown => f.write_str("unknown"),
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
+            Self::Buffer => f.write_str("buffer"),
             Self::Extern => f.write_str("extern"),
             Self::ExternSubtype(parent) => write!(f, "extern extends {parent}"),
             Self::Nil => f.write_str("nil"),
@@ -1252,6 +1255,7 @@ impl Resolver {
             "table",
             "string",
             "bit32",
+            "buffer",
         ] {
             let id = resolver.next_id();
             global_bindings.insert(builtin.to_string(), id);

@@ -328,6 +328,7 @@ impl Parser {
                     TypedArrayKind::from_type_name(&name).expect("checked in guard"),
                 ))
             }
+            Some(TokenKind::Identifier(name)) if name == "buffer" => Ok(Type::Buffer),
             Some(TokenKind::Identifier(name)) => {
                 // A dotted name (`game.State`) references a type alias
                 // exported by a required module; the linker resolves the

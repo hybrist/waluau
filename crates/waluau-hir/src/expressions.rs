@@ -727,7 +727,9 @@ fn infer_expr_inner(
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                    Type::Bytes => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Bytes | Type::Buffer => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                     Type::Extern | Type::ExternSubtype(_) => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
@@ -983,6 +985,18 @@ fn infer_expr_inner(
             }
             if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_table_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
+            if let Some(name) = builtin_name(callee.as_ref()) {
+                if let Some(result) = super::builtins::infer_buffer_builtin_call(
                     &name,
                     args,
                     vars,
@@ -2061,8 +2075,8 @@ fn infer_expr_inner(
                     if right_ty != Type::Bytes {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
-                } else if matches!(left_ty, Type::TypedArray(_)) {
-                    // Typed arrays compare by identity (same allocation).
+                } else if matches!(left_ty, Type::TypedArray(_) | Type::Buffer) {
+                    // Typed arrays and mutable buffers compare by identity.
                     let right_ty = infer_expr(
                         right,
                         vars,

@@ -64,6 +64,10 @@ pub(crate) fn wasm_type(
         Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) => {
             Ok(externref_val_type())
         }
+        Type::Buffer => Ok(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(array_registry.luau_buffer_struct_type()?),
+        })),
         // Typed arrays are i32 pointers into linear memory (the element count
         // lives in the allocation header, not the value).
         Type::TypedArray(_) => Ok(ValType::I32),

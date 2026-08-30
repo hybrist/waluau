@@ -2148,6 +2148,24 @@ impl<'a> Monomorphizer<'a> {
             "print" | "assert" | "error" => Ok(Some(Type::Unit)),
             "pcall" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "tostring" => Ok(Some(Type::String)),
+            "buffer.create" => Ok(Some(Type::Buffer)),
+            "buffer.len" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
+            "buffer.readi8" | "buffer.readi16" | "buffer.readi32" => {
+                Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)))
+            }
+            "buffer.readu8" | "buffer.readu16" | "buffer.readu32" => {
+                Ok(Some(Type::Numeric(waluau_ast::NumericType::U32)))
+            }
+            "buffer.readf32" => Ok(Some(Type::Numeric(waluau_ast::NumericType::F32))),
+            "buffer.readf64" => Ok(Some(Type::Numeric(waluau_ast::NumericType::F64))),
+            "buffer.writei8"
+            | "buffer.writeu8"
+            | "buffer.writei16"
+            | "buffer.writeu16"
+            | "buffer.writei32"
+            | "buffer.writeu32"
+            | "buffer.writef32"
+            | "buffer.writef64" => Ok(Some(Type::Unit)),
             "coroutine.create" => Ok(Some(Type::Thread)),
             "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "coroutine.close" => Ok(Some(Type::Bool)),
@@ -2186,6 +2204,7 @@ fn mangle_type(ty: &Type) -> String {
         Type::Numeric(numeric) => format!("$n{numeric}"),
         Type::Bool => "$bbool".to_string(),
         Type::String => "$sstring".to_string(),
+        Type::Buffer => "$bbuffer".to_string(),
         Type::Array(inner) => format!("$a{}", mangle_type(inner)),
         Type::Variadic(inner) => format!("$v{}", mangle_type(inner)),
         Type::Multi(types) => format!(

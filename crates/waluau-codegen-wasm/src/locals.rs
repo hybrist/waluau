@@ -435,6 +435,12 @@ pub(crate) fn infer_value_types(
                 IrInstruction::BufferGet { kind, .. } => Type::Numeric(kind.element_numeric_type()),
                 IrInstruction::BufferSet { .. } => Type::Unit,
                 IrInstruction::BufferLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::LuauBufferNew { .. } => Type::Buffer,
+                IrInstruction::LuauBufferLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::LuauBufferGet { kind, .. } => {
+                    Type::Numeric(kind.element_numeric_type())
+                }
+                IrInstruction::LuauBufferSet { .. } => Type::Unit,
                 IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
                 IrInstruction::StructGet { field_ty, .. } => field_ty.clone(),
                 IrInstruction::StructSet { .. } => Type::Unit,
@@ -865,6 +871,15 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*buffer, *index, *value],
         IrInstruction::BufferLen { buffer } => vec![*buffer],
+        IrInstruction::LuauBufferNew { len } => vec![*len],
+        IrInstruction::LuauBufferLen { buffer } => vec![*buffer],
+        IrInstruction::LuauBufferGet { buffer, offset, .. } => vec![*buffer, *offset],
+        IrInstruction::LuauBufferSet {
+            buffer,
+            offset,
+            value,
+            ..
+        } => vec![*buffer, *offset, *value],
         IrInstruction::StructNew { fields, .. } => fields.clone(),
         IrInstruction::StructGet { base, .. } => vec![*base],
         IrInstruction::StructSet { base, value, .. } => vec![*base, *value],
@@ -990,6 +1005,10 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::BufferGet { .. }
         | IrInstruction::BufferSet { .. } => false,
         IrInstruction::BufferLen { buffer } => *buffer == value,
+        IrInstruction::LuauBufferNew { .. }
+        | IrInstruction::LuauBufferGet { .. }
+        | IrInstruction::LuauBufferSet { .. } => false,
+        IrInstruction::LuauBufferLen { buffer } => *buffer == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),
         IrInstruction::StructGet { base, .. } => *base == value,
         IrInstruction::StructSet { base, .. } => *base == value,

@@ -888,6 +888,80 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::LuauBufferNew { len } => {
+                    let len_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *len,
+                    )?;
+                    if len_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "Luau buffer length in block {:?} must be i32, got {}",
+                            block.id, len_ty
+                        )));
+                    }
+                }
+                Instruction::LuauBufferLen { buffer } => {
+                    let buffer_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                    )?;
+                    if buffer_ty != Type::Buffer {
+                        return Err(Diagnostic::new(format!(
+                            "buffer.len operand in block {:?} must be buffer, got {}",
+                            block.id, buffer_ty
+                        )));
+                    }
+                }
+                Instruction::LuauBufferGet { buffer, offset, .. } => {
+                    verify_luau_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *offset,
+                    )?;
+                }
+                Instruction::LuauBufferSet {
+                    buffer,
+                    offset,
+                    value,
+                    kind,
+                } => {
+                    verify_luau_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *offset,
+                    )?;
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    let expected = match kind {
+                        TypedArrayKind::F32 | TypedArrayKind::F64 => {
+                            Type::Numeric(kind.element_numeric_type())
+                        }
+                        _ => Type::Numeric(NumericType::I32),
+                    };
+                    if value_ty != expected {
+                        return Err(Diagnostic::new(format!(
+                            "Luau buffer store in block {:?} has type {}, expected {}",
+                            block.id, value_ty, expected
+                        )));
+                    }
+                }
                 Instruction::StructNew { struct_ty, fields } => {
                     let Type::Record(record_fields) = struct_ty else {
                         return Err(Diagnostic::new(format!(
@@ -1302,6 +1376,33 @@ fn verify_buffer_access(
     Ok(())
 }
 
+fn verify_luau_buffer_access(
+    definitions: &HashMap<ValueId, ValueDefinition>,
+    dominators: &HashMap<BlockId, HashSet<BlockId>>,
+    seen_in_block: &HashSet<ValueId>,
+    use_block: BlockId,
+    buffer: ValueId,
+    offset: ValueId,
+) -> Result<(), Diagnostic> {
+    let buffer_ty =
+        require_dominating_definition(definitions, dominators, seen_in_block, use_block, buffer)?;
+    if buffer_ty != Type::Buffer {
+        return Err(Diagnostic::new(format!(
+            "Luau buffer access in block {:?} expects buffer, got {}",
+            use_block, buffer_ty
+        )));
+    }
+    let offset_ty =
+        require_dominating_definition(definitions, dominators, seen_in_block, use_block, offset)?;
+    if offset_ty != Type::Numeric(NumericType::I32) {
+        return Err(Diagnostic::new(format!(
+            "Luau buffer offset in block {:?} must be i32, got {}",
+            use_block, offset_ty
+        )));
+    }
+    Ok(())
+}
+
 fn require_dominating_definition(
     definitions: &HashMap<ValueId, ValueDefinition>,
     dominators: &HashMap<BlockId, HashSet<BlockId>>,
@@ -1448,6 +1549,12 @@ fn infer_instruction_type(
         Instruction::BufferGet { kind, .. } => Ok(Type::Numeric(kind.element_numeric_type())),
         Instruction::BufferSet { .. } => Ok(Type::Unit),
         Instruction::BufferLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::LuauBufferNew { .. } => Ok(Type::Buffer),
+        Instruction::LuauBufferLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::LuauBufferGet { kind, .. } => {
+            Ok(Type::Numeric(kind.element_numeric_type()))
+        }
+        Instruction::LuauBufferSet { .. } => Ok(Type::Unit),
         Instruction::StructNew { struct_ty, .. } => Ok(struct_ty.clone()),
         Instruction::StructGet { field_ty, .. } => Ok(field_ty.clone()),
         Instruction::StructSet { .. } => Ok(Type::Unit),

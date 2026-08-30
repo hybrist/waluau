@@ -356,6 +356,27 @@ pub enum Instruction {
     BufferLen {
         buffer: ValueId,
     },
+    /// Allocate a zero-filled fixed-size Luau buffer of `len` bytes.
+    LuauBufferNew {
+        len: ValueId,
+    },
+    /// Return the byte length stored in a Luau buffer handle.
+    LuauBufferLen {
+        buffer: ValueId,
+    },
+    /// Bounds-checked scalar load at a zero-based byte offset.
+    LuauBufferGet {
+        buffer: ValueId,
+        offset: ValueId,
+        kind: TypedArrayKind,
+    },
+    /// Bounds-checked scalar store at a zero-based byte offset.
+    LuauBufferSet {
+        buffer: ValueId,
+        offset: ValueId,
+        value: ValueId,
+        kind: TypedArrayKind,
+    },
     StructNew {
         struct_ty: Type,
         fields: Vec<ValueId>,

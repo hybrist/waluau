@@ -1,4 +1,4 @@
-//! Linear-memory typed arrays (`Float32Array` & friends).
+//! Linear-memory typed arrays (`Float32Array` & friends) and Luau buffers.
 //!
 //! Runtime layout: a typed-array value is an i32 pointer to its element data.
 //! Each allocation is preceded by an 8-byte header whose first 4 bytes hold
@@ -14,8 +14,13 @@
 //! `memory.init` on every evaluation, so each evaluation yields an
 //! independently mutable array. Segments are never dropped because a literal
 //! inside a function body re-initializes on every call.
+//!
+//! Luau buffers deliberately use a distinct Wasm-GC handle containing a raw
+//! data pointer and byte length. Their bytes share this browser module's bump
+//! heap, but they do not have typed-array headers or typed-array semantics.
+//! Allocations live for the lifetime of the module; there is no free API.
 
-use waluau_ast::TypedArrayKind;
+use waluau_ast::{Type, TypedArrayKind};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Instruction as IrInstruction, Module};
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
@@ -29,6 +34,8 @@ pub(crate) const BUFFER_HEAP_BASE: i32 = 16;
 
 /// The wasm export name of the linear memory (JS view helpers read it).
 pub(crate) const MEMORY_EXPORT_NAME: &str = "memory";
+pub(crate) const LUAU_BUFFER_DATA_FIELD: u32 = 0;
+pub(crate) const LUAU_BUFFER_LEN_FIELD: u32 = 1;
 
 pub(crate) const fn element_size_log2(kind: TypedArrayKind) -> i32 {
     match kind.element_size() {
@@ -45,6 +52,8 @@ pub(crate) const fn element_size_log2(kind: TypedArrayKind) -> i32 {
 #[derive(Clone, Default)]
 pub(crate) struct BufferPlan {
     pub(crate) uses_memory: bool,
+    pub(crate) uses_typed_arrays: bool,
+    pub(crate) uses_luau_buffer: bool,
     pub(crate) data_segments: Vec<Vec<u8>>,
 }
 
@@ -57,6 +66,7 @@ impl BufferPlan {
                     match instruction {
                         IrInstruction::BufferConst { bytes, .. } => {
                             plan.uses_memory = true;
+                            plan.uses_typed_arrays = true;
                             if !plan.data_segments.iter().any(|seg| seg == bytes) {
                                 plan.data_segments.push(bytes.clone());
                             }
@@ -67,11 +77,29 @@ impl BufferPlan {
                         | IrInstruction::BufferSet { .. }
                         | IrInstruction::BufferLen { .. } => {
                             plan.uses_memory = true;
+                            plan.uses_typed_arrays = true;
+                        }
+                        IrInstruction::LuauBufferNew { .. }
+                        | IrInstruction::LuauBufferLen { .. }
+                        | IrInstruction::LuauBufferGet { .. }
+                        | IrInstruction::LuauBufferSet { .. } => {
+                            plan.uses_memory = true;
+                            plan.uses_luau_buffer = true;
                         }
                         _ => {}
                     }
                 }
             }
+        }
+        for global in &module.globals {
+            plan.uses_luau_buffer |= type_contains_buffer(&global.ty);
+        }
+        for function in &module.functions {
+            plan.uses_luau_buffer |= function
+                .params
+                .iter()
+                .any(|(_, ty)| type_contains_buffer(ty));
+            plan.uses_luau_buffer |= type_contains_buffer(&function.return_type);
         }
         plan
     }
@@ -82,6 +110,30 @@ impl BufferPlan {
             .position(|seg| seg == bytes)
             .map(|index| index as u32)
             .ok_or_else(|| Diagnostic::new("missing typed-array data segment"))
+    }
+}
+
+fn type_contains_buffer(ty: &Type) -> bool {
+    match ty {
+        Type::Buffer => true,
+        Type::Array(inner)
+        | Type::Variadic(inner)
+        | Type::Nullable(inner)
+        | Type::ExternSubtype(inner) => type_contains_buffer(inner),
+        Type::Opaque { ty, .. } => type_contains_buffer(ty),
+        Type::Multi(types) => types.iter().any(type_contains_buffer),
+        Type::Function {
+            params,
+            return_type,
+            ..
+        } => params.iter().any(type_contains_buffer) || type_contains_buffer(return_type),
+        Type::Record(fields) => fields.values().any(type_contains_buffer),
+        Type::Named { type_args, .. } => type_args.iter().any(type_contains_buffer),
+        Type::TaggedVariant(variant) => type_contains_buffer(&variant.payload),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .any(|variant| type_contains_buffer(&variant.payload)),
+        _ => false,
     }
 }
 
@@ -183,6 +235,94 @@ pub(crate) fn emit_buffer_alloc_function(heap_ptr_global: u32) -> Function {
     out
 }
 
+/// Emit the checked raw-byte allocator used by `buffer.create`.
+/// Invalid sizes and allocation failures use the Lua exception tag so `pcall`
+/// can observe them; unlike typed-array allocation this path never traps.
+pub(crate) fn emit_luau_buffer_alloc_function(
+    heap_ptr_global: u32,
+    invalid_size_global: u32,
+    allocation_failed_global: u32,
+) -> Function {
+    // param 0=len; locals 1=header, 2=end, 3=current_bytes, 4=pages_needed
+    let mut out = Function::new(vec![(4, ValType::I32)]);
+    let header = 1u32;
+    let end = 2u32;
+    let current_bytes = 3u32;
+    let pages_needed = 4u32;
+
+    // Unsigned comparison rejects negative i32 lengths too.
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::I32Const(0x4000_0000));
+    out.instruction(&Instruction::I32GtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(&mut out, invalid_size_global);
+    out.instruction(&Instruction::End);
+
+    // Align the shared heap to 8 bytes. Detect wrap before committing it.
+    out.instruction(&Instruction::GlobalGet(heap_ptr_global));
+    out.instruction(&Instruction::I32Const(7));
+    out.instruction(&Instruction::I32Add);
+    out.instruction(&Instruction::I32Const(!7));
+    out.instruction(&Instruction::I32And);
+    out.instruction(&Instruction::LocalTee(header));
+    out.instruction(&Instruction::GlobalGet(heap_ptr_global));
+    out.instruction(&Instruction::I32LtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(&mut out, allocation_failed_global);
+    out.instruction(&Instruction::End);
+
+    // end = header + len. Buffer handles carry their length, so raw buffers do
+    // not need the typed-array header. Unsigned wrap is an allocation failure.
+    out.instruction(&Instruction::LocalGet(header));
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::I32Add);
+    out.instruction(&Instruction::LocalTee(end));
+    out.instruction(&Instruction::LocalGet(header));
+    out.instruction(&Instruction::I32LtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(&mut out, allocation_failed_global);
+    out.instruction(&Instruction::End);
+
+    out.instruction(&Instruction::MemorySize(0));
+    out.instruction(&Instruction::I32Const(16));
+    out.instruction(&Instruction::I32Shl);
+    out.instruction(&Instruction::LocalSet(current_bytes));
+    out.instruction(&Instruction::LocalGet(end));
+    out.instruction(&Instruction::LocalGet(current_bytes));
+    out.instruction(&Instruction::I32GtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    // ceil((end-current_bytes)/64KiB), written without an overflowing +65535.
+    out.instruction(&Instruction::LocalGet(end));
+    out.instruction(&Instruction::LocalGet(current_bytes));
+    out.instruction(&Instruction::I32Sub);
+    out.instruction(&Instruction::I32Const(1));
+    out.instruction(&Instruction::I32Sub);
+    out.instruction(&Instruction::I32Const(16));
+    out.instruction(&Instruction::I32ShrU);
+    out.instruction(&Instruction::I32Const(1));
+    out.instruction(&Instruction::I32Add);
+    out.instruction(&Instruction::LocalTee(pages_needed));
+    out.instruction(&Instruction::MemoryGrow(0));
+    out.instruction(&Instruction::I32Const(-1));
+    out.instruction(&Instruction::I32Eq);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(&mut out, allocation_failed_global);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::End);
+
+    out.instruction(&Instruction::LocalGet(end));
+    out.instruction(&Instruction::GlobalSet(heap_ptr_global));
+    out.instruction(&Instruction::LocalGet(header));
+    out.instruction(&Instruction::End);
+    out
+}
+
+fn emit_lua_error(out: &mut Function, message_global: u32) {
+    out.instruction(&Instruction::GlobalGet(message_global));
+    out.instruction(&Instruction::AnyConvertExtern);
+    out.instruction(&Instruction::Throw(crate::ERROR_TAG_INDEX));
+}
+
 /// Push the element-count of the typed-array data pointer on the stack.
 pub(crate) fn emit_buffer_len_from_stack(out: &mut Function) {
     out.instruction(&Instruction::I32Const(BUFFER_HEADER_SIZE));
@@ -234,6 +374,82 @@ fn mem_arg(kind: TypedArrayKind, offset: u64) -> wasm_encoder::MemArg {
         align: element_size_log2(kind) as u32,
         memory_index: 0,
     }
+}
+
+fn unaligned_mem_arg(offset: u64) -> wasm_encoder::MemArg {
+    wasm_encoder::MemArg {
+        offset,
+        align: 0,
+        memory_index: 0,
+    }
+}
+
+pub(crate) fn emit_luau_buffer_load(out: &mut Function, kind: TypedArrayKind) {
+    let arg = unaligned_mem_arg(0);
+    match kind {
+        TypedArrayKind::I8 => out.instruction(&Instruction::I32Load8S(arg)),
+        TypedArrayKind::U8 => out.instruction(&Instruction::I32Load8U(arg)),
+        TypedArrayKind::I16 => out.instruction(&Instruction::I32Load16S(arg)),
+        TypedArrayKind::U16 => out.instruction(&Instruction::I32Load16U(arg)),
+        TypedArrayKind::I32 | TypedArrayKind::U32 => out.instruction(&Instruction::I32Load(arg)),
+        TypedArrayKind::F32 => out.instruction(&Instruction::F32Load(arg)),
+        TypedArrayKind::F64 => out.instruction(&Instruction::F64Load(arg)),
+    };
+}
+
+pub(crate) fn emit_luau_buffer_store(out: &mut Function, kind: TypedArrayKind) {
+    let arg = unaligned_mem_arg(0);
+    match kind {
+        TypedArrayKind::I8 | TypedArrayKind::U8 => out.instruction(&Instruction::I32Store8(arg)),
+        TypedArrayKind::I16 | TypedArrayKind::U16 => out.instruction(&Instruction::I32Store16(arg)),
+        TypedArrayKind::I32 | TypedArrayKind::U32 => out.instruction(&Instruction::I32Store(arg)),
+        TypedArrayKind::F32 => out.instruction(&Instruction::F32Store(arg)),
+        TypedArrayKind::F64 => out.instruction(&Instruction::F64Store(arg)),
+    };
+}
+
+pub(crate) fn emit_luau_buffer_address(
+    out: &mut Function,
+    buffer_type: u32,
+    buffer_local: u32,
+    offset_local: u32,
+    kind: TypedArrayKind,
+    oob_message_global: u32,
+) {
+    let width = kind.element_size() as i32;
+    // First ensure len >= width so len-width cannot underflow.
+    out.instruction(&Instruction::LocalGet(buffer_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: buffer_type,
+        field_index: LUAU_BUFFER_LEN_FIELD,
+    });
+    out.instruction(&Instruction::I32Const(width));
+    out.instruction(&Instruction::I32LtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, oob_message_global);
+    out.instruction(&Instruction::End);
+
+    // Unsigned offset > len-width rejects both negative and wrapping offsets.
+    out.instruction(&Instruction::LocalGet(offset_local));
+    out.instruction(&Instruction::LocalGet(buffer_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: buffer_type,
+        field_index: LUAU_BUFFER_LEN_FIELD,
+    });
+    out.instruction(&Instruction::I32Const(width));
+    out.instruction(&Instruction::I32Sub);
+    out.instruction(&Instruction::I32GtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, oob_message_global);
+    out.instruction(&Instruction::End);
+
+    out.instruction(&Instruction::LocalGet(buffer_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: buffer_type,
+        field_index: LUAU_BUFFER_DATA_FIELD,
+    });
+    out.instruction(&Instruction::LocalGet(offset_local));
+    out.instruction(&Instruction::I32Add);
 }
 
 /// Emit the typed load for one element; expects the element address on the
