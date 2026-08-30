@@ -114,6 +114,38 @@ describe(
             end
         )
 
+        -- The hinge is also a place on screen, not only a height: the turn
+        -- happens at the slot's left edge. Edge-on, the whole card stands on
+        -- that line; the rest of the time the card is the part unfolding to
+        -- the right of it. Without the centre sliding, the silhouette closes
+        -- and opens symmetrically about the middle and the flip reads as a
+        -- spin about the centre axis.
+        it(
+            "stands on the slot's left edge at the middle of the flip",
+            function(): unit
+                local mesh: card_warp.Mesh = built(0.5)
+                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                    expect(mesh.xs[index]):toBeCloseTo(X, 6)
+                end
+            end
+        )
+
+        it(
+            "keeps the hinge at the slot's left edge for the whole flip",
+            function(): unit
+                for step = 0::i32, SAMPLES do
+                    local mesh: card_warp.Mesh = built((step::f64) / (SAMPLES::f64))
+                    local footprint: Extent = extent(mesh)
+                    -- The falling edge may loom a few pixels past the hinge —
+                    -- it is the nearest thing to the viewer — but the hinge
+                    -- itself never wanders into the slot.
+                    expect(footprint.low_x):toBeGreaterThan(X - 8.0)
+                    expect(footprint.low_x):toBeLessThan(X + 2.0)
+                    expect(footprint.high_x):toBeLessThan(X + card.width + 8.0)
+                end
+            end
+        )
+
         it(
             "shows the back on the way up and the face on the way down",
             function(): unit

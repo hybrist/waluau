@@ -3,15 +3,16 @@
 -- whole retained board composition.
 --
 -- The flip is the table move, not a spin: a hand gets under the card's right
--- edge, that edge comes up while the left edge stays on the table, the card
--- stands past vertical at the top of the lift, and the raised edge comes down
--- on the far side as the card drops back flat. Posed as card_warp geometry
--- this is one rotation about the card's vertical axis with the whole card
--- raised by exactly half its width times the sine of the turn — which pins
--- the low edge to the table for the entire flip and is what makes it a pivot
--- rather than a card spinning in midair. The pivot edge slides toward where
--- it will land, the way a real hand drags a card so it turns over onto its
--- own spot.
+-- edge, that edge comes up and over while the left edge stays on the table,
+-- the card stands on that edge at the top of the lift, and the raised edge
+-- drops onto the same line as the base kicks out to the right, landing the
+-- card flat on its own spot. Posed as card_warp geometry this is a rotation
+-- about the card's vertical axis with two anchors that make it a hinge
+-- rather than a spin: the whole card rides at half its width times the sine
+-- of the turn, which pins the low edge to the table for the entire flip, and
+-- the centre slides so the hinge line never leaves the slot's left edge on
+-- screen — going up it is the resting edge, coming down it is the raised
+-- edge falling onto it, and the card only ever unfolds to the right of it.
 local game = require("../game")
 local easing = require("../easing")
 local ui = require("../ui/node")
@@ -50,10 +51,15 @@ function pose_at(x: f64, y: f64, progress: f64): card_warp.Pose
     local turn: f64 = easing.in_out_cubic(progress)
     local angle: f64 = turn * math.pi
     local depth: f64 = math.sin(angle)
+    -- The hinge, made visible: the centre tracks half the card's projected
+    -- width so the slot's left edge is where the turn happens on screen. Held
+    -- at the resting centre instead, the silhouette closes and opens
+    -- symmetrically about the middle and the whole flip reads as a spin
+    -- about the centre axis, whatever the depth is doing.
     local pose: card_warp.Pose = card_warp.Pose.rest(
         card.width,
         card.height,
-        x + card.width * 0.5,
+        x + card.width * 0.5 * math.abs(math.cos(angle)),
         y + card.height * 0.5
     )
     -- Negative, so the right edge is the one that comes toward the viewer —
@@ -72,15 +78,16 @@ const SHADOW_FLOOR: f64 = 0.22
 -- The grounding under the flip. The captured sheet carries no drop shadow —
 -- captures are the bare paper — so without this the card detaches from the
 -- table the moment the flip begins. The footprint is the card's horizontal
--- extent, which closes toward the pivot as the card stands and opens again
--- as it lands, and the whole patch fades as the body rises off it.
+-- extent, which closes toward the hinge at the slot's left edge as the card
+-- stands and opens rightward from it as the card lands, and the whole patch
+-- fades as the body rises off it.
 function draw_shadow(graphics: ui.Graphics, x: f64, y: f64, angle: f64, depth: f64): unit
     local footprint: f64 = math.abs(math.cos(angle))
     if footprint < SHADOW_FLOOR then
         footprint = SHADOW_FLOOR
     end
     local width: f64 = card.width * footprint
-    local left: f64 = x + (card.width - width) * 0.5
+    local left: f64 = x
     graphics:set_color_rgba(0.03, 0.02, 0.04, 0.2 - 0.08 * depth)
     graphics:fill_rounded_rectangle(
         left,
