@@ -297,6 +297,19 @@ struct ActiveSpecialization {
     type_args: Vec<Type>,
 }
 
+// The read-only inputs every expression rewrite and type inference consults:
+// the type substitution in effect, the specialization whose body is being
+// rewritten (recursive-instantiation checks; `None` during inference outside
+// a rewrite), and the types of the bindings in scope. Statement rewriting
+// grows the binding-type map between statements, so the statement family
+// threads that map mutably and rebuilds this view for each expression.
+#[derive(Clone, Copy)]
+struct RewriteCtx<'a> {
+    subst: &'a HashMap<String, Type>,
+    active: Option<&'a ActiveSpecialization>,
+    types: &'a HashMap<SymbolId, Type>,
+}
+
 pub(crate) struct Monomorphizer<'a> {
     generic_functions: HashMap<SymbolId, &'a AstFunction>,
     generic_methods: HashMap<(SymbolId, String), &'a waluau_ast::FunctionExpr>,
@@ -438,8 +451,15 @@ impl<'a> Monomorphizer<'a> {
             } = stmt
             {
                 let inferred = ty.clone().or_else(|| {
-                    this.infer_expr_type(value, &empty_subst, &module_local_types)
-                        .ok()
+                    this.infer_expr_type(
+                        value,
+                        RewriteCtx {
+                            subst: &empty_subst,
+                            active: None,
+                            types: &module_local_types,
+                        },
+                    )
+                    .ok()
                 });
                 if let Some(inferred) = inferred {
                     module_local_types.insert(*symbol_id, inferred);
@@ -531,10 +551,13 @@ impl<'a> Monomorphizer<'a> {
                 value,
             } = stmt
             {
-                let rewritten_value = self.rewrite_expr(value, &subst, None, &types)?;
-                let inferred_ty = ty
-                    .clone()
-                    .or_else(|| self.infer_expr_type(value, &subst, &types).ok());
+                let ctx = RewriteCtx {
+                    subst: &subst,
+                    active: None,
+                    types: &types,
+                };
+                let rewritten_value = self.rewrite_expr(value, ctx)?;
+                let inferred_ty = ty.clone().or_else(|| self.infer_expr_type(value, ctx).ok());
                 if let (Some(symbol_id), Some(inferred_ty)) = (symbol_id, &inferred_ty) {
                     types.insert(*symbol_id, inferred_ty.clone());
                 }
@@ -699,13 +722,14 @@ impl<'a> Monomorphizer<'a> {
         active: Option<&ActiveSpecialization>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<Stmt, Diagnostic> {
+        let ctx = RewriteCtx { subst, active, types };
         Ok(match stmt {
             Stmt::Match {
                 value,
                 enum_ty,
                 arms,
             } => Stmt::Match {
-                value: self.rewrite_expr(value, subst, active, types)?,
+                value: self.rewrite_expr(value, ctx)?,
                 enum_ty: substitute_type(enum_ty, subst),
                 arms: arms
                     .iter()
@@ -726,13 +750,13 @@ impl<'a> Monomorphizer<'a> {
                 value,
                 ..
             } => {
-                let val = self.rewrite_expr(value, subst, active, types)?;
+                let val = self.rewrite_expr(value, ctx)?;
                 let inferred_ty = if let Some(ty) = ty {
                     substitute_type(ty, subst)
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
                     Type::record(std::collections::BTreeMap::new())
                 } else {
-                    self.infer_expr_type(value, subst, types)?
+                    self.infer_expr_type(value, ctx)?
                 };
                 if let Some(symbol_id) = symbol_id {
                     types.insert(*symbol_id, inferred_ty.clone());
@@ -749,7 +773,7 @@ impl<'a> Monomorphizer<'a> {
                 op: *op,
                 name: name.clone(),
                 symbol_id: *symbol_id,
-                value: self.rewrite_expr(value, subst, active, types)?,
+                value: self.rewrite_expr(value, ctx)?,
             },
             Stmt::IndexAssign {
                 op,
@@ -758,9 +782,9 @@ impl<'a> Monomorphizer<'a> {
                 value,
             } => Stmt::IndexAssign {
                 op: *op,
-                base: Box::new(self.rewrite_expr(base, subst, active, types)?),
-                index: Box::new(self.rewrite_expr(index, subst, active, types)?),
-                value: self.rewrite_expr(value, subst, active, types)?,
+                base: Box::new(self.rewrite_expr(base, ctx)?),
+                index: Box::new(self.rewrite_expr(index, ctx)?),
+                value: self.rewrite_expr(value, ctx)?,
             },
             Stmt::FieldAssign {
                 op,
@@ -769,12 +793,12 @@ impl<'a> Monomorphizer<'a> {
                 resolved_name,
                 value,
             } => {
-                let rewritten_base = self.rewrite_expr(base, subst, active, types)?;
-                let rewritten_value = self.rewrite_expr(value, subst, active, types)?;
+                let rewritten_base = self.rewrite_expr(base, ctx)?;
+                let rewritten_value = self.rewrite_expr(value, ctx)?;
                 if let Expr::Name(_, Some(base_symbol_id), _) = base.as_ref() {
                     if let Some(Type::Record(mut fields)) = types.get(base_symbol_id).cloned() {
                         if !fields.contains_key(name) {
-                            let inferred_val_ty = self.infer_expr_type(&rewritten_value, subst, types)?;
+                            let inferred_val_ty = self.infer_expr_type(&rewritten_value, ctx)?;
                             Arc::make_mut(&mut fields).insert(name.clone(), inferred_val_ty);
                             types.insert(*base_symbol_id, Type::Record(fields));
                         }
@@ -793,7 +817,7 @@ impl<'a> Monomorphizer<'a> {
                 then_body,
                 else_body,
             } => Stmt::If {
-                condition: self.rewrite_expr(condition, subst, active, types)?,
+                condition: self.rewrite_expr(condition, ctx)?,
                 then_body: self.rewrite_stmts(then_body, subst, active, &mut types.clone())?,
                 else_body: self.rewrite_stmts(else_body, subst, active, &mut types.clone())?,
             },
@@ -806,10 +830,10 @@ impl<'a> Monomorphizer<'a> {
                 then_body,
                 else_body,
             } => {
-                let rewritten_value = self.rewrite_expr(value, subst, active, types)?;
+                let rewritten_value = self.rewrite_expr(value, ctx)?;
                 let mut then_types = types.clone();
                 if let Some(symbol_id) = binding_symbol_id {
-                    let value_ty = self.infer_expr_type(value, subst, types)?;
+                    let value_ty = self.infer_expr_type(value, ctx)?;
                     let binding_ty = value_ty
                         .tagged_variant(target_name)
                         .map(|variant| Arc::unwrap_or_clone(variant.payload))
@@ -827,12 +851,12 @@ impl<'a> Monomorphizer<'a> {
                 }
             }
             Stmt::While { condition, body } => Stmt::While {
-                condition: self.rewrite_expr(condition, subst, active, types)?,
+                condition: self.rewrite_expr(condition, ctx)?,
                 body: self.rewrite_stmts(body, subst, active, &mut types.clone())?,
             },
             Stmt::Repeat { body, condition } => Stmt::Repeat {
                 body: self.rewrite_stmts(body, subst, active, &mut types.clone())?,
-                condition: self.rewrite_expr(condition, subst, active, types)?,
+                condition: self.rewrite_expr(condition, ctx)?,
             },
             Stmt::NumericFor {
                 name,
@@ -843,11 +867,11 @@ impl<'a> Monomorphizer<'a> {
                 body,
                 ..
             } => {
-                let rewritten_start = self.rewrite_expr(start, subst, active, types)?;
-                let rewritten_stop = self.rewrite_expr(stop, subst, active, types)?;
+                let rewritten_start = self.rewrite_expr(start, ctx)?;
+                let rewritten_stop = self.rewrite_expr(stop, ctx)?;
                 let rewritten_step = step
                     .as_ref()
-                    .map(|expr| self.rewrite_expr(expr, subst, active, types))
+                    .map(|expr| self.rewrite_expr(expr, ctx))
                     .transpose()?;
                 let mut body_types = types.clone();
                 if let Some(symbol_id) = symbol_id {
@@ -877,11 +901,11 @@ impl<'a> Monomorphizer<'a> {
                     if index == 0 && builtin_next {
                         rewritten_iterators.push(iterator.clone());
                     } else {
-                        rewritten_iterators.push(self.rewrite_expr(iterator, subst, active, types)?);
+                        rewritten_iterators.push(self.rewrite_expr(iterator, ctx)?);
                     }
                 }
                 let mut body_types = types.clone();
-                self.for_in_body_types(iterators, &rewritten_iterators, symbol_ids, subst, types, &mut body_types)?;
+                self.for_in_body_types(iterators, &rewritten_iterators, symbol_ids, ctx, &mut body_types)?;
                 Stmt::ForIn {
                     names: names.clone(),
                     symbol_ids: symbol_ids.clone(),
@@ -891,24 +915,24 @@ impl<'a> Monomorphizer<'a> {
             }
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
-            Stmt::Return(expr) => Stmt::Return(self.rewrite_expr(expr, subst, active, types)?),
+            Stmt::Return(expr) => Stmt::Return(self.rewrite_expr(expr, ctx)?),
             Stmt::ReturnMulti(values) => Stmt::ReturnMulti(
                 values
                     .iter()
-                    .map(|expr| self.rewrite_expr(expr, subst, active, types))
+                    .map(|expr| self.rewrite_expr(expr, ctx))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
             Stmt::LetMulti { bindings, values } => {
                 let rewritten_values = values
                     .iter()
-                    .map(|expr| self.rewrite_expr(expr, subst, active, types))
+                    .map(|expr| self.rewrite_expr(expr, ctx))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut value_types = Vec::new();
                 for expr in &rewritten_values {
                     if matches!(expr, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
                         value_types.push(Type::record(std::collections::BTreeMap::new()));
                     } else {
-                        match self.infer_expr_type(expr, subst, types)? {
+                        match self.infer_expr_type(expr, ctx)? {
                             Type::Multi(tys) => value_types.extend(tys),
                             other => value_types.push(other),
                         }
@@ -941,16 +965,16 @@ impl<'a> Monomorphizer<'a> {
                 symbol_ids: symbol_ids.clone(),
                 values: values
                     .iter()
-                    .map(|expr| self.rewrite_expr(expr, subst, active, types))
+                    .map(|expr| self.rewrite_expr(expr, ctx))
                     .collect::<Result<Vec<_>, _>>()?,
             },
-            Stmt::Expr(expr) => Stmt::Expr(self.rewrite_expr(expr, subst, active, types)?),
+            Stmt::Expr(expr) => Stmt::Expr(self.rewrite_expr(expr, ctx)?),
         })
     }
 
     /// Seeds the loop-variable symbol types for a rewritten for-in statement,
     /// mirroring the type checker's dispatch over the iterator forms. Original
-    /// expressions are used for inference (the ambient `types` map matches
+    /// expressions are used for inference (the ambient binding-type map matches
     /// them); the rewritten first expression is only consulted for the
     /// `pairs(record)` shape, whose argument types may have been substituted.
     fn for_in_body_types(
@@ -958,8 +982,7 @@ impl<'a> Monomorphizer<'a> {
         original_iterators: &[Expr],
         rewritten_iterators: &[Expr],
         symbol_ids: &Option<Vec<SymbolId>>,
-        subst: &HashMap<String, Type>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
         body_types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let Some(symbol_ids) = symbol_ids else {
@@ -1001,7 +1024,7 @@ impl<'a> Monomorphizer<'a> {
             // plus the record's shared field type (validated by the type
             // checker before monomorphization).
             if let Some(record_expr) = waluau_ast::pairs_call_arg(&rewritten_iterators[0]) {
-                let record_ty = self.infer_expr_type(record_expr, subst, types)?;
+                let record_ty = self.infer_expr_type(record_expr, ctx)?;
                 if let Some(first) = symbol_ids.first() {
                     body_types.insert(*first, Type::String);
                 }
@@ -1012,7 +1035,7 @@ impl<'a> Monomorphizer<'a> {
                 }
                 return Ok(());
             }
-            match self.infer_expr_type(iterator, subst, types)? {
+            match self.infer_expr_type(iterator, ctx)? {
                 Type::Array(element_ty) => {
                     if symbol_ids.len() == 1 {
                         body_types.insert(symbol_ids[0], Arc::unwrap_or_clone(element_ty));
@@ -1042,7 +1065,7 @@ impl<'a> Monomorphizer<'a> {
         }
         // Explicit protocol list `f, s[, c0]`, or the builtin `next`.
         if let Some(target) = waluau_ast::for_in_builtin_next_target(original_iterators) {
-            let target_ty = self.infer_expr_type(target?, subst, types)?;
+            let target_ty = self.infer_expr_type(target?, ctx)?;
             if target_ty.is_array() {
                 let element_ty = target_ty
                     .element_type()
@@ -1065,7 +1088,7 @@ impl<'a> Monomorphizer<'a> {
             }
             return Ok(());
         }
-        let f_ty = self.infer_expr_type(&original_iterators[0], subst, types)?;
+        let f_ty = self.infer_expr_type(&original_iterators[0], ctx)?;
         if let Some(protocol) = waluau_ast::iterator_protocol(&f_ty) {
             let slot_types: Vec<Type> = std::iter::once(protocol.control_ty)
                 .chain(protocol.value_types)
@@ -1080,9 +1103,7 @@ impl<'a> Monomorphizer<'a> {
     fn rewrite_expr(
         &mut self,
         expr: &Expr,
-        subst: &HashMap<String, Type>,
-        active: Option<&ActiveSpecialization>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<Expr, Diagnostic> {
         Ok(match expr {
             Expr::Number(..)
@@ -1099,13 +1120,13 @@ impl<'a> Monomorphizer<'a> {
                 span,
             } => Expr::Unary {
                 op: *op,
-                expr: Box::new(self.rewrite_expr(expr, subst, active, types)?),
+                expr: Box::new(self.rewrite_expr(expr, ctx)?),
                 resolved_name: resolved_name.clone(),
                 span: *span,
             },
             Expr::Cast { expr, ty, span } => Expr::Cast {
-                expr: Box::new(self.rewrite_expr(expr, subst, active, types)?),
-                ty: substitute_type(ty, subst),
+                expr: Box::new(self.rewrite_expr(expr, ctx)?),
+                ty: substitute_type(ty, ctx.subst),
                 span: *span,
             },
             Expr::Binary {
@@ -1116,13 +1137,13 @@ impl<'a> Monomorphizer<'a> {
                 span,
             } => Expr::Binary {
                 op: *op,
-                left: Box::new(self.rewrite_expr(left, subst, active, types)?),
-                right: Box::new(self.rewrite_expr(right, subst, active, types)?),
+                left: Box::new(self.rewrite_expr(left, ctx)?),
+                right: Box::new(self.rewrite_expr(right, ctx)?),
                 resolved_name: resolved_name.clone(),
                 span: *span,
             },
             Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
-                expr: Box::new(self.rewrite_expr(expr, subst, active, types)?),
+                expr: Box::new(self.rewrite_expr(expr, ctx)?),
                 tag: tag.clone(),
                 span: *span,
             },
@@ -1132,9 +1153,9 @@ impl<'a> Monomorphizer<'a> {
                 else_expr,
                 span,
             } => Expr::If {
-                condition: Box::new(self.rewrite_expr(condition, subst, active, types)?),
-                then_expr: Box::new(self.rewrite_expr(then_expr, subst, active, types)?),
-                else_expr: Box::new(self.rewrite_expr(else_expr, subst, active, types)?),
+                condition: Box::new(self.rewrite_expr(condition, ctx)?),
+                then_expr: Box::new(self.rewrite_expr(then_expr, ctx)?),
+                else_expr: Box::new(self.rewrite_expr(else_expr, ctx)?),
                 span: *span,
             },
             Expr::Call {
@@ -1143,17 +1164,17 @@ impl<'a> Monomorphizer<'a> {
                 args,
                 span,
                 method_call_origin,
-            } => self.rewrite_call_expr(callee, type_args, args, *span, method_call_origin, subst, active, types)?,
+            } => self.rewrite_call_expr(callee, type_args, args, *span, method_call_origin, ctx)?,
             method_call @ Expr::MethodCall { .. } => {
-                self.rewrite_method_call(method_call, subst, active, types)?
+                self.rewrite_method_call(method_call, ctx)?
             }
             Expr::Function(function) => {
-                Expr::Function(self.rewrite_function_expr(function, subst, active, types)?)
+                Expr::Function(self.rewrite_function_expr(function, ctx)?)
             }
             Expr::ArrayLiteral { elements, span } => Expr::ArrayLiteral {
                 elements: elements
                     .iter()
-                    .map(|expr| self.rewrite_expr(expr, subst, active, types))
+                    .map(|expr| self.rewrite_expr(expr, ctx))
                     .collect::<Result<Vec<_>, _>>()?,
                 span: *span,
             },
@@ -1163,7 +1184,7 @@ impl<'a> Monomorphizer<'a> {
                     .map(|field| {
                         Ok(waluau_ast::TableField {
                             name: field.name.clone(),
-                            value: self.rewrite_expr(&field.value, subst, active, types)?,
+                            value: self.rewrite_expr(&field.value, ctx)?,
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?,
@@ -1175,21 +1196,20 @@ impl<'a> Monomorphizer<'a> {
                 resolved_name,
                 span,
             } => Expr::Field {
-                base: Box::new(self.rewrite_expr(base, subst, active, types)?),
+                base: Box::new(self.rewrite_expr(base, ctx)?),
                 name: name.clone(),
                 resolved_name: resolved_name.clone(),
                 span: *span,
             },
             Expr::Index { base, index, span } => Expr::Index {
-                base: Box::new(self.rewrite_expr(base, subst, active, types)?),
-                index: Box::new(self.rewrite_expr(index, subst, active, types)?),
+                base: Box::new(self.rewrite_expr(base, ctx)?),
+                index: Box::new(self.rewrite_expr(index, ctx)?),
                 span: *span,
             },
             Expr::Vararg(span) => Expr::Vararg(*span),
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn rewrite_call_expr(
         &mut self,
         callee: &Expr,
@@ -1197,14 +1217,12 @@ impl<'a> Monomorphizer<'a> {
         args: &[Expr],
         span: Option<waluau_ast::Span>,
         method_call_origin: &Option<MethodCallOrigin>,
-        subst: &HashMap<String, Type>,
-        active: Option<&ActiveSpecialization>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<Expr, Diagnostic> {
         let original_args = args;
         let args = args
             .iter()
-            .map(|expr| self.rewrite_expr(expr, subst, active, types))
+            .map(|expr| self.rewrite_expr(expr, ctx))
             .collect::<Result<Vec<_>, _>>()?;
 
         if let Expr::Name(_name, Some(symbol_id), callee_span) = callee {
@@ -1219,8 +1237,7 @@ impl<'a> Monomorphizer<'a> {
                         &params,
                         &ret,
                         original_args,
-                        subst,
-                        types,
+                        ctx,
                     )?;
                     &inferred_type_args
                 } else {
@@ -1228,9 +1245,9 @@ impl<'a> Monomorphizer<'a> {
                 };
                 let subst_concrete = concrete_type_args
                     .iter()
-                    .map(|ty| substitute_type(ty, subst))
+                    .map(|ty| substitute_type(ty, ctx.subst))
                     .collect::<Vec<_>>();
-                self.check_recursive_specialization(*symbol_id, &subst_concrete, active)?;
+                self.check_recursive_specialization(*symbol_id, &subst_concrete, ctx.active)?;
                 let specialized_name =
                     self.ensure_specialization(*symbol_id, subst_concrete)?;
                 return Ok(Expr::Call {
@@ -1262,20 +1279,19 @@ impl<'a> Monomorphizer<'a> {
                             &params,
                             &ret,
                             &args,
-                            subst,
-                            types,
+                            ctx,
                         )?;
                         &inferred_type_args
                     } else {
                         type_args
                     };
                     let specialized =
-                        self.specialize_function_expr(function, concrete_type_args, subst, active, types)?;
+                        self.specialize_function_expr(function, concrete_type_args, ctx)?;
                     
                     // For dot-call form, the first argument is the receiver
                     let receiver_expr = if !args.is_empty() {
                         Some(MethodCallOrigin {
-                            original_receiver: Box::new(self.rewrite_expr(&args[0], subst, active, types)?),
+                            original_receiver: Box::new(self.rewrite_expr(&args[0], ctx)?),
                             method_name: name.clone(),
                         })
                     } else {
@@ -1304,15 +1320,14 @@ impl<'a> Monomorphizer<'a> {
                         &params,
                         &ret,
                         &args,
-                        subst,
-                        types,
+                        ctx,
                     )?;
                     &inferred_type_args
                 } else {
                     type_args
                 };
                 let specialized =
-                    self.specialize_function_expr(function, concrete_type_args, subst, active, types)?;
+                    self.specialize_function_expr(function, concrete_type_args, ctx)?;
                 return Ok(Expr::Call {
                     callee: Box::new(Expr::Function(specialized)),
                     type_args: Vec::new(),
@@ -1324,10 +1339,10 @@ impl<'a> Monomorphizer<'a> {
         }
 
         Ok(Expr::Call {
-            callee: Box::new(self.rewrite_expr(callee, subst, active, types)?),
+            callee: Box::new(self.rewrite_expr(callee, ctx)?),
             type_args: type_args
                 .iter()
-                .map(|ty| substitute_type(ty, subst))
+                .map(|ty| substitute_type(ty, ctx.subst))
                 .collect(),
             args,
             span,
@@ -1338,9 +1353,7 @@ impl<'a> Monomorphizer<'a> {
     fn rewrite_method_call(
         &mut self,
         method_call: &Expr,
-        subst: &HashMap<String, Type>,
-        active: Option<&ActiveSpecialization>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<Expr, Diagnostic> {
         let Expr::MethodCall {
             receiver,
@@ -1354,10 +1367,10 @@ impl<'a> Monomorphizer<'a> {
             unreachable!("rewrite_method_call requires a MethodCall expression");
         };
         let span = *span;
-        let rewritten_receiver = self.rewrite_expr(receiver, subst, active, types)?;
+        let rewritten_receiver = self.rewrite_expr(receiver, ctx)?;
         let rewritten_args = args
             .iter()
-            .map(|expr| self.rewrite_expr(expr, subst, active, types))
+            .map(|expr| self.rewrite_expr(expr, ctx))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Specialize generic method calls (`receiver:method<T>(...)`) the same way
@@ -1378,8 +1391,7 @@ impl<'a> Monomorphizer<'a> {
                         &params,
                         &ret,
                         &call_args,
-                        subst,
-                        types,
+                        ctx,
                     )?;
                     &inferred_type_args
                 } else {
@@ -1387,7 +1399,7 @@ impl<'a> Monomorphizer<'a> {
                 };
                 if !concrete_type_args.is_empty() {
                     let specialized =
-                        self.specialize_function_expr(function, concrete_type_args, subst, active, types)?;
+                        self.specialize_function_expr(function, concrete_type_args, ctx)?;
                     let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
                     call_args.push(rewritten_receiver);
                     call_args.extend(rewritten_args);
@@ -1404,7 +1416,7 @@ impl<'a> Monomorphizer<'a> {
                 }
             }
         } else {
-            let receiver_ty = self.infer_expr_type(receiver, subst, types)?;
+            let receiver_ty = self.infer_expr_type(receiver, ctx)?;
             if let Some(function) = self.find_generic_method(&receiver_ty, name) {
                 let inferred_type_args;
                 let concrete_type_args = if type_args.is_empty() && !function.type_params.is_empty() {
@@ -1417,8 +1429,7 @@ impl<'a> Monomorphizer<'a> {
                         &params,
                         &ret,
                         &call_args,
-                        subst,
-                        types,
+                        ctx,
                     )?;
                     &inferred_type_args
                 } else {
@@ -1426,7 +1437,7 @@ impl<'a> Monomorphizer<'a> {
                 };
                 if !concrete_type_args.is_empty() {
                     let specialized =
-                        self.specialize_function_expr(function, concrete_type_args, subst, active, types)?;
+                        self.specialize_function_expr(function, concrete_type_args, ctx)?;
                     let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
                     call_args.push(rewritten_receiver);
                     call_args.extend(rewritten_args);
@@ -1452,7 +1463,7 @@ impl<'a> Monomorphizer<'a> {
             span,
             type_args: type_args
                 .iter()
-                .map(|ty| substitute_type(ty, subst))
+                .map(|ty| substitute_type(ty, ctx.subst))
                 .collect(),
         })
     }
@@ -1460,9 +1471,7 @@ impl<'a> Monomorphizer<'a> {
     fn rewrite_function_expr(
         &mut self,
         function: &waluau_ast::FunctionExpr,
-        subst: &HashMap<String, Type>,
-        active: Option<&ActiveSpecialization>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<waluau_ast::FunctionExpr, Diagnostic> {
         if !function.type_params.is_empty() {
             return Err(generic_diagnostic(
@@ -1470,10 +1479,10 @@ impl<'a> Monomorphizer<'a> {
                 "generic function expression must be instantiated before IR lowering",
             ));
         }
-        let mut function_types = types.clone();
+        let mut function_types = ctx.types.clone();
         for param in &function.params {
             if let Some(symbol_id) = param.symbol_id {
-                function_types.insert(symbol_id, substitute_type(&param.ty, subst));
+                function_types.insert(symbol_id, substitute_type(&param.ty, ctx.subst));
             }
         }
         Ok(waluau_ast::FunctionExpr {
@@ -1488,16 +1497,16 @@ impl<'a> Monomorphizer<'a> {
                 .map(|param| waluau_ast::Param {
                     name: param.name.clone(),
                     symbol_id: param.symbol_id,
-                    ty: substitute_type(&param.ty, subst),
+                    ty: substitute_type(&param.ty, ctx.subst),
                 })
                 .collect(),
             vararg: function.vararg.clone(),
             return_type: function
                 .return_type
                 .as_ref()
-                .map(|ty| substitute_type(ty, subst)),
+                .map(|ty| substitute_type(ty, ctx.subst)),
             body: self
-                .rewrite_stmts(&function.body, subst, active, &mut function_types)
+                .rewrite_stmts(&function.body, ctx.subst, ctx.active, &mut function_types)
                 .map_err(|error| {
                     error.with_file_path_if_missing(function.file_path.clone())
                 })?,
@@ -1510,9 +1519,7 @@ impl<'a> Monomorphizer<'a> {
         &mut self,
         function: &waluau_ast::FunctionExpr,
         type_args: &[Type],
-        subst: &HashMap<String, Type>,
-        active: Option<&ActiveSpecialization>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<waluau_ast::FunctionExpr, Diagnostic> {
         if type_args.len() != function.type_params.len() {
             return Err(generic_diagnostic(
@@ -1529,14 +1536,14 @@ impl<'a> Monomorphizer<'a> {
                 ),
             ));
         }
-        let mut local_subst = subst.clone();
+        let mut local_subst = ctx.subst.clone();
         for param in &function.type_params {
             local_subst.remove(param);
         }
         for (param, ty) in function.type_params.iter().zip(type_args.iter()) {
-            local_subst.insert(param.clone(), substitute_type(ty, subst));
+            local_subst.insert(param.clone(), substitute_type(ty, ctx.subst));
         }
-        let mut function_types = types.clone();
+        let mut function_types = ctx.types.clone();
         for param in &function.params {
             if let Some(symbol_id) = param.symbol_id {
                 function_types.insert(symbol_id, substitute_type(&param.ty, &local_subst));
@@ -1563,7 +1570,7 @@ impl<'a> Monomorphizer<'a> {
                 .as_ref()
                 .map(|ty| substitute_type(ty, &local_subst)),
             body: self
-                .rewrite_stmts(&function.body, &local_subst, active, &mut function_types)
+                .rewrite_stmts(&function.body, &local_subst, ctx.active, &mut function_types)
                 .map_err(|error| {
                     error.with_file_path_if_missing(function.file_path.clone())
                 })?,
@@ -1649,8 +1656,7 @@ impl<'a> Monomorphizer<'a> {
     fn infer_expr_type(
         &self,
         expr: &Expr,
-        subst: &HashMap<String, Type>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<Type, Diagnostic> {
         match expr {
             Expr::Number(..) => Ok(Type::number()),
@@ -1665,7 +1671,7 @@ impl<'a> Monomorphizer<'a> {
                         "symbol_id for '{name}' should be resolved during monomorphization"
                     ))
                 })?;
-                if let Some(ty) = types.get(&symbol_id) {
+                if let Some(ty) = ctx.types.get(&symbol_id) {
                     Ok(ty.clone())
                 } else if let Some(ty) = self.function_signatures.get(&symbol_id) {
                     Ok(ty.clone())
@@ -1679,11 +1685,11 @@ impl<'a> Monomorphizer<'a> {
                 }
             }
             Expr::Unary { op, expr, .. } => match op {
-                waluau_ast::UnaryOp::Neg => self.infer_expr_type(expr, subst, types),
+                waluau_ast::UnaryOp::Neg => self.infer_expr_type(expr, ctx),
                 waluau_ast::UnaryOp::Not => Ok(Type::Bool),
                 waluau_ast::UnaryOp::Len => Ok(Type::Numeric(waluau_ast::NumericType::I32)),
             },
-            Expr::Cast { ty, .. } => Ok(substitute_type(ty, subst)),
+            Expr::Cast { ty, .. } => Ok(substitute_type(ty, ctx.subst)),
             Expr::Binary { op, left, right, .. } => match op {
                 waluau_ast::BinaryOp::Eq
                 | waluau_ast::BinaryOp::NotEq
@@ -1697,19 +1703,19 @@ impl<'a> Monomorphizer<'a> {
                 // own type when the fallback is itself nullable. `bool?` is
                 // rejected by the type checker, so it cannot reach here.
                 waluau_ast::BinaryOp::Or => {
-                    let left_ty = self.infer_expr_type(left, subst, types)?;
+                    let left_ty = self.infer_expr_type(left, ctx)?;
                     let Some(inner) = left_ty.nullable_inner() else {
                         return Ok(Type::Bool);
                     };
-                    match self.infer_expr_type(right, subst, types) {
+                    match self.infer_expr_type(right, ctx) {
                         Ok(Type::Nullable(_) | Type::Nil) => Ok(left_ty),
                         _ => Ok(inner),
                     }
                 }
                 waluau_ast::BinaryOp::Concat => Ok(Type::String),
                 _ => {
-                    let left_ty = self.infer_expr_type(left, subst, types)?;
-                    let right_ty = self.infer_expr_type(right, subst, types)?;
+                    let left_ty = self.infer_expr_type(left, ctx)?;
+                    let right_ty = self.infer_expr_type(right, ctx)?;
                     match (left_ty, right_ty) {
                         (Type::Numeric(l), Type::Numeric(r)) => {
                             if let Some(common) = l.common(r) {
@@ -1725,7 +1731,7 @@ impl<'a> Monomorphizer<'a> {
                 }
             },
             Expr::IsVariant { .. } => Ok(Type::Bool),
-            Expr::If { then_expr, .. } => self.infer_expr_type(then_expr, subst, types),
+            Expr::If { then_expr, .. } => self.infer_expr_type(then_expr, ctx),
             Expr::Call {
                 callee,
                 type_args,
@@ -1734,7 +1740,7 @@ impl<'a> Monomorphizer<'a> {
             } => {
                 if let Some(name) = builtin_name(callee) {
                     if let Some(ty) =
-                        self.infer_builtin_call_type(&name, type_args, args, subst, types)?
+                        self.infer_builtin_call_type(&name, type_args, args, ctx)?
                     {
                         return Ok(ty);
                     }
@@ -1753,8 +1759,7 @@ impl<'a> Monomorphizer<'a> {
                             &ret,
                             type_args,
                             args,
-                            subst,
-                            types,
+                            ctx,
                         );
                     }
                 }
@@ -1774,8 +1779,7 @@ impl<'a> Monomorphizer<'a> {
                                 &ret,
                                 type_args,
                                 args,
-                                subst,
-                                types,
+                                ctx,
                             );
                         }
                     }
@@ -1794,13 +1798,12 @@ impl<'a> Monomorphizer<'a> {
                             &ret,
                             type_args,
                             args,
-                            subst,
-                            types,
+                            ctx,
                         );
                     }
                 }
 
-                let callee_ty = self.infer_expr_type(callee, subst, types)?;
+                let callee_ty = self.infer_expr_type(callee, ctx)?;
                 match callee_ty {
                     Type::Function { return_type, .. } => Ok(Arc::unwrap_or_clone(return_type)),
                     _ => Ok(Type::Unknown),
@@ -1814,7 +1817,7 @@ impl<'a> Monomorphizer<'a> {
                 args,
                 ..
             } => {
-                let receiver_ty = self.infer_expr_type(receiver, subst, types)?;
+                let receiver_ty = self.infer_expr_type(receiver, ctx)?;
                 if receiver_ty == Type::String {
                     return match name.as_str() {
                         "find" | "len" | "byte" => Ok(Type::Numeric(waluau_ast::NumericType::I32)),
@@ -1842,8 +1845,7 @@ impl<'a> Monomorphizer<'a> {
                             &ret,
                             type_args,
                             &call_args,
-                            subst,
-                            types,
+                            ctx,
                         );
                     }
                 } else if let Some(function) = self.find_generic_method(&receiver_ty, name) {
@@ -1861,8 +1863,7 @@ impl<'a> Monomorphizer<'a> {
                         &ret,
                         type_args,
                         &call_args,
-                        subst,
-                        types,
+                        ctx,
                     );
                 }
 
@@ -1884,12 +1885,12 @@ impl<'a> Monomorphizer<'a> {
                 let params = function
                     .params
                     .iter()
-                    .map(|p| substitute_type(&p.ty, subst))
+                    .map(|p| substitute_type(&p.ty, ctx.subst))
                     .collect();
                 let return_type = function
                     .return_type
                     .clone()
-                    .map(|ty| substitute_type(&ty, subst))
+                    .map(|ty| substitute_type(&ty, ctx.subst))
                     .unwrap_or(Type::Unit);
                 Ok(Type::Function {
                     params,
@@ -1899,7 +1900,7 @@ impl<'a> Monomorphizer<'a> {
             }
             Expr::ArrayLiteral { elements, .. } => {
                 let element_ty = if let Some(first) = elements.first() {
-                    self.infer_expr_type(first, subst, types)?
+                    self.infer_expr_type(first, ctx)?
                 } else {
                     Type::Unknown
                 };
@@ -1908,7 +1909,7 @@ impl<'a> Monomorphizer<'a> {
             Expr::TableLiteral { fields, .. } => {
                 let mut record_fields = std::collections::BTreeMap::new();
                 for field in fields {
-                    let field_ty = self.infer_expr_type(&field.value, subst, types)?;
+                    let field_ty = self.infer_expr_type(&field.value, ctx)?;
                     record_fields.insert(field.name.clone(), field_ty);
                 }
                 Ok(Type::record(record_fields))
@@ -1919,7 +1920,7 @@ impl<'a> Monomorphizer<'a> {
                 resolved_name,
                 span,
             } => {
-                let base_ty = self.infer_expr_type(base, subst, types)?;
+                let base_ty = self.infer_expr_type(base, ctx)?;
                 if let Some((params, return_type)) =
                     type_property_getter_signature(
                         &base_ty,
@@ -1929,7 +1930,7 @@ impl<'a> Monomorphizer<'a> {
                     )
                 {
                     if params.len() == 1 && method_receiver_matches(&params[0], &base_ty) {
-                        return Ok(substitute_type(&return_type, subst));
+                        return Ok(substitute_type(&return_type, ctx.subst));
                     }
                 }
                 base_ty.record_field(name).ok_or_else(|| {
@@ -1943,7 +1944,7 @@ impl<'a> Monomorphizer<'a> {
                 })
             }
             Expr::Index { base, span, .. } => {
-                let base_ty = self.infer_expr_type(base, subst, types)?;
+                let base_ty = self.infer_expr_type(base, ctx)?;
                 base_ty.element_type().ok_or_else(|| {
                     let diagnostic =
                         Diagnostic::new(format!("indexing non-array type '{base_ty}'"));
@@ -2008,7 +2009,6 @@ impl<'a> Monomorphizer<'a> {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn infer_generic_call_return_type(
         &self,
         type_params: &[String],
@@ -2016,8 +2016,7 @@ impl<'a> Monomorphizer<'a> {
         return_type: &Type,
         type_args: &[Type],
         args: &[Expr],
-        subst: &HashMap<String, Type>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<Type, Diagnostic> {
         let inferred_type_args;
         let concrete_type_args = if type_args.is_empty() && !type_params.is_empty() {
@@ -2026,16 +2025,15 @@ impl<'a> Monomorphizer<'a> {
                 params,
                 return_type,
                 args,
-                subst,
-                types,
+                ctx,
             )?;
             &inferred_type_args
         } else {
             type_args
         };
-        let mut local_subst = subst.clone();
+        let mut local_subst = ctx.subst.clone();
         for (param, ty) in type_params.iter().zip(concrete_type_args.iter()) {
-            local_subst.insert(param.clone(), substitute_type(ty, subst));
+            local_subst.insert(param.clone(), substitute_type(ty, ctx.subst));
         }
         Ok(substitute_type(return_type, &local_subst))
     }
@@ -2046,13 +2044,12 @@ impl<'a> Monomorphizer<'a> {
         params: &[Type],
         _return_type: &Type,
         args: &[Expr],
-        subst: &HashMap<String, Type>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<Vec<Type>, Diagnostic> {
         let mut unified_subst = HashMap::new();
         for (param_ty, arg) in params.iter().zip(args.iter()) {
             let substituted_param_ty = substitute_type(param_ty, &unified_subst);
-            let actual_arg_ty = self.infer_expr_type(arg, subst, types)?;
+            let actual_arg_ty = self.infer_expr_type(arg, ctx)?;
             let _ = unify(&substituted_param_ty, &actual_arg_ty, &mut unified_subst);
         }
         let mut inferred_type_args = Vec::new();
@@ -2074,13 +2071,12 @@ impl<'a> Monomorphizer<'a> {
         name: &str,
         type_args: &[Type],
         args: &[Expr],
-        subst: &HashMap<String, Type>,
-        types: &HashMap<SymbolId, Type>,
+        ctx: RewriteCtx<'_>,
     ) -> Result<Option<Type>, Diagnostic> {
         match name {
             crate::JSON_PACK => return Ok(Some(Type::String)),
             crate::JSON_UNPACK if type_args.len() == 1 => {
-                let target = substitute_type(&type_args[0], subst);
+                let target = substitute_type(&type_args[0], ctx.subst);
                 let value = if target.accepts_nil() {
                     target
                 } else {
@@ -2092,7 +2088,7 @@ impl<'a> Monomorphizer<'a> {
             crate::TABLE_INSERT | crate::TABLE_SORT => return Ok(Some(Type::Unit)),
             crate::TABLE_REMOVE => {
                 let element_ty = match args.first() {
-                    Some(array) => match self.infer_expr_type(array, subst, types)? {
+                    Some(array) => match self.infer_expr_type(array, ctx)? {
                         Type::Array(element) => Arc::unwrap_or_clone(element),
                         _ => Type::Unknown,
                     },
@@ -2108,14 +2104,14 @@ impl<'a> Monomorphizer<'a> {
             }
             crate::TABLE_CREATE => {
                 let element_ty = match args.get(1) {
-                    Some(value) => self.infer_expr_type(value, subst, types)?,
+                    Some(value) => self.infer_expr_type(value, ctx)?,
                     None => Type::Unknown,
                 };
                 return Ok(Some(Type::Array(Arc::new(element_ty))));
             }
             crate::TABLE_UNPACK => {
                 let element_ty = match args.first() {
-                    Some(array) => match self.infer_expr_type(array, subst, types)? {
+                    Some(array) => match self.infer_expr_type(array, ctx)? {
                         Type::Array(element) => Arc::unwrap_or_clone(element),
                         _ => Type::Unknown,
                     },
