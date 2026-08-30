@@ -79,17 +79,20 @@ describe(
 
         -- The pivot is what separates a flip from a spin: one long edge is on
         -- the table the whole time. That edge is the card's own left edge —
-        -- on screen it slides across as the card turns over onto it — and it
-        -- may ride the thumb's pick-up but never sink through the surface.
+        -- on screen it slides across as the card turns over onto it. The
+        -- card leans back toward the viewer while airborne, so the edge's
+        -- corners swing a little either side of the surface, but its middle
+        -- rides nothing higher than the thumb's pick-up.
         it(
             "keeps its pivot edge on the table for the whole flip",
             function(): unit
                 for step = 0::i32, SAMPLES do
                     local mesh: card_warp.Mesh = built((step::f64) / (SAMPLES::f64))
+                    local middle: f64 = mesh.pz[at(0, ROWS / 2)]
+                    expect(middle):toBeGreaterThanOrEqual(-0.000001)
+                    expect(middle):toBeLessThan(16.0)
                     for row = 0::i32, ROWS do
-                        local z: f64 = mesh.pz[at(0, row)]
-                        expect(z):toBeGreaterThanOrEqual(-0.000001)
-                        expect(z):toBeLessThan(16.0)
+                        expect(math.abs(mesh.pz[at(0, row)])):toBeLessThan(40.0)
                     end
                 end
             end
@@ -110,7 +113,19 @@ describe(
                     end
                 end
                 expect(highest):toBeGreaterThan(card.width * 0.9)
-                expect(highest):toBeLessThan(card.width * 1.25)
+                expect(highest):toBeLessThan(card.width * 1.5)
+            end
+        )
+
+        -- Depth alone is invisible to the board's straight-down camera; the
+        -- lean is what turns the lift into motion the eye can see. The
+        -- standing card's raised edge pokes well above the slot's top on
+        -- screen, and the whole flight comes back down onto the slot.
+        it(
+            "carries the raised edge up the screen at the top of the lift",
+            function(): unit
+                local footprint: Extent = extent(built(0.5))
+                expect(footprint.low_y):toBeLessThan(Y - 20.0)
             end
         )
 

@@ -29,15 +29,20 @@ const COLUMNS: i32 = 8
 const ROWS: i32 = 12
 
 -- How much higher than the bare pivot the whole card rides, scaled by the
--- turn. A thumb under the edge lifts the card a little off the table even at
--- the pivot; it also covers what the tilt costs, so the low edge never sinks
--- below the surface — keep this above half the card height times sin(TILT).
+-- turn. A thumb under the edge lifts the card a little off the table even
+-- at the pivot.
 const PICK_UP: f64 = 6.0
 
--- A lean about the horizontal axis while airborne, scaled by the turn. The
--- board is seen from slightly above and in front, and a card being handled
--- rocks back toward that view instead of standing perfectly square.
-const TILT: f64 = 0.08
+-- How far the card leans back toward the viewer while airborne, scaled by
+-- the turn. The board looks straight down at the table, and under that
+-- camera height off the surface projects as nothing but a little
+-- magnification — an edge flip becomes a silhouette closing and opening,
+-- which reads as a spin about the middle, or worse, as the card being
+-- dragged flat by something under the table. The lean is the borrowed
+-- three-quarter view: it shears the raised edge up the screen by its
+-- height and brings it back down as the card lands, which is what makes
+-- the lift look like a lift.
+const TILT: f64 = 0.35
 
 -- One grid, reused: a card flipped sixty times a second should not be sixty
 -- allocations. Both of the board's reveal flips share it, because each draw
@@ -67,6 +72,12 @@ function pose_at(x: f64, y: f64, progress: f64): card_warp.Pose
     pose.flip = -angle
     pose.rise = (card.width * 0.5 + PICK_UP) * depth
     pose.tilt = TILT * depth
+    -- The lean shears screen-y by depth before the bulk rise, which sends
+    -- the raised edge up the screen but would push the hinge edge down into
+    -- the table by the same shear. Lifting the whole card up-screen by the
+    -- rise's share of it plants the hinge back on the table line, so what
+    -- moves is the raised edge climbing, not the card sinking.
+    pose.center_y -= math.sin(pose.tilt) * pose.rise
     return pose
 end
 
