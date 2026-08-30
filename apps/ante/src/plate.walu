@@ -126,6 +126,99 @@ function brackets(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, e
     )
 end
 
+-- Curved surfaces get their light in steps: a stack of circles from the rim
+-- inward, each one a shade further along the ramp and each one nudged toward
+-- the light. Offsetting the centres is what turns a flat ramp into a
+-- direction — the far side of the stack keeps showing, so the lit crescent
+-- lands on one edge instead of ringing the whole shape.
+const CURVE_STEPS: i32 = 7
+
+-- One circle of the batch colour at a fraction of its brightness. fill_circle
+-- reads the colour off the batch rather than taking a shade, so the shade is
+-- applied to the channels and then put back.
+function shaded_circle(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    shade: f64
+): unit
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
+    graphics:set_color_rgba(red * shade, green * shade, blue * shade, alpha)
+    graphics:fill_circle(center_x, center_y, radius)
+    graphics:set_color_rgba(red, green, blue, alpha)
+end
+
+-- A raised cap: brightest at the top-left where the light lands, falling away
+-- to the bottom-right.
+function dome(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    rim: f64,
+    crown: f64
+): unit
+    for step = 0::i32, CURVE_STEPS - 1 do
+        local along: f64 = (step::f64) / ((CURVE_STEPS - 1)::f64)
+        shaded_circle(
+            graphics,
+            center_x - radius * 0.20 * along,
+            center_y - radius * 0.24 * along,
+            radius * (1.0 - along * 0.72),
+            rim + (crown - rim) * along
+        )
+    end
+end
+
+-- A socket cut into the plate: the rim is the lit edge and the floor the dark
+-- one, and the stack drifts upward so the lit crescent settles along the
+-- bottom wall, where light falling into a pit collects.
+function well(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    rim: f64,
+    floor: f64
+): unit
+    for step = 0::i32, CURVE_STEPS - 1 do
+        local along: f64 = (step::f64) / ((CURVE_STEPS - 1)::f64)
+        shaded_circle(
+            graphics,
+            center_x,
+            center_y - radius * 0.14 * along,
+            radius * (1.0 - along * 0.80),
+            rim + (floor - rim) * along
+        )
+    end
+end
+
+-- A soft halo in the colour already set: rings at falling opacity, so a thing
+-- that is ready glows rather than merely being outlined.
+function halo(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    inner: f64,
+    outer: f64,
+    rings: i32,
+    strength: f64
+): unit
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    for ring = rings, 1::i32, -1 do
+        local along: f64 = (ring::f64) / (rings::f64)
+        graphics:set_color_rgba(red, green, blue, strength * (1.0 - along) * (1.0 - along))
+        graphics:fill_circle(center_x, center_y, inner + (outer - inner) * along)
+    end
+    graphics:set_color_rgba(red, green, blue, 1.0)
+end
+
 -- The plate every piece of Ante chrome is: lit face inside an etched border.
 function draw(
     graphics: Graphics,
@@ -162,5 +255,9 @@ return {
     face = face,
     border = border,
     brackets = brackets,
-    gradient_rectangle = gradient_rectangle
+    gradient_rectangle = gradient_rectangle,
+    shaded_circle = shaded_circle,
+    dome = dome,
+    well = well,
+    halo = halo
 }
