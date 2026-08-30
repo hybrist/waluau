@@ -67,7 +67,7 @@ function State:prepare_headless(frame: Frame): unit
 end
 
 function State:hand_bounds(index: i32): box.Rect
-    return self.hand_nodes[index]:bounds()
+    return self.hand_nodes[index + 1]:bounds()
 end
 
 function State:fan_parts(): {f64}
@@ -75,15 +75,15 @@ function State:fan_parts(): {f64}
 end
 
 function State:set_table_enabled(index: i32, enabled: bool): unit
-    self.table_targets[index]:set_enabled(enabled)
+    self.table_targets[index + 1]:set_enabled(enabled)
 end
 
 function State:set_hand_enabled(index: i32, enabled: bool): unit
-    self.hand_nodes[index]:set_enabled(enabled)
+    self.hand_nodes[index + 1]:set_enabled(enabled)
 end
 
 function State:hand_enabled(index: i32): bool
-    return self.hand_nodes[index]:is_enabled()
+    return self.hand_nodes[index + 1]:is_enabled()
 end
 
 function empty_paint(surface: ui.Surface, bounds: box.Rect): unit
@@ -141,14 +141,14 @@ function State.new(visual_children: {ui.Node}, table_nodes: {ui.Node}, commit_no
     for index, node in hand_nodes do
         table.insert(
             hand_targets,
-            router:add(node, board_scope, true, handlers(presentation, "hand", index))
+            router:add(node, board_scope, true, handlers(presentation, "hand", index - 1))
         )
     end
     local table_targets: {router_module.Target} = {}
     for index, node in table_nodes do
         table.insert(
             table_targets,
-            router:add(node, board_scope, true, handlers(presentation, "table-card", index))
+            router:add(node, board_scope, true, handlers(presentation, "table-card", index - 1))
         )
     end
     local commit_target: router_module.Target = router:add(
@@ -185,7 +185,7 @@ function State:focused_hand(): i32
     local key: i32 = self.router:focused()
     for index, target in self.hand_targets do
         if target.key == key then
-            return index
+            return index - 1
         end
     end
     return -1
@@ -195,7 +195,7 @@ function State:focused_table(): i32
     local key: i32 = self.router:focused()
     for index, target in self.table_targets do
         if target.key == key then
-            return index
+            return index - 1
         end
     end
     return -1
@@ -207,16 +207,16 @@ function State:focus_hand(index: i32): bool
     end
     -- Input can move focus between presentations, before the next draw has
     -- refreshed target visibility for the new mode.
-    self.hand_targets[index]:set_visible(true)
-    return self.router:focus(self.hand_targets[index].key)
+    self.hand_targets[index + 1]:set_visible(true)
+    return self.router:focus(self.hand_targets[index + 1].key)
 end
 
 function State:focus_table(index: i32): bool
     if index < 0 or index >= #self.table_targets then
         return false
     end
-    self.table_targets[index]:set_visible(true)
-    return self.router:focus(self.table_targets[index].key)
+    self.table_targets[index + 1]:set_visible(true)
+    return self.router:focus(self.table_targets[index + 1].key)
 end
 
 -- A condition such as Freeze Ray can make the focused table card stop being
@@ -227,14 +227,14 @@ function State:repair_table_focus(): bool
         return false
     end
     local count: i32 = self.presentation.table_count
-    if focused < count and self.table_nodes[focused]:is_visible() and self.table_nodes[focused]:is_enabled() then
+    if focused < count and self.table_nodes[focused + 1]:is_visible() and self.table_nodes[focused + 1]:is_enabled() then
         return false
     end
     for offset = 1::i32, count - 1 do
         local index: i32 = (focused + offset) % count
-        local node: ui.Node = self.table_nodes[index]
+        local node: ui.Node = self.table_nodes[index + 1]
         if node:is_visible() and node:is_enabled() then
-            self.router:focus(self.table_targets[index].key)
+            self.router:focus(self.table_targets[index + 1].key)
             return true
         end
     end
@@ -253,33 +253,35 @@ function State:present(frame: Frame): unit
     local board_live: bool = not frame.modal_open and not frame.finished
 
     for index, target in self.hand_targets do
-        target:set_visible(board_live and not frame.casting and index < frame.hand_count)
-        if index < frame.hand_count then
+        local slot: i32 = index - 1
+        target:set_visible(board_live and not frame.casting and slot < frame.hand_count)
+        if slot < frame.hand_count then
             target:link(
                 "left",
-                self.hand_targets[(index + frame.hand_count - 1) % frame.hand_count]
+                self.hand_targets[(slot + frame.hand_count - 1) % frame.hand_count + 1]
             )
-            target:link("right", self.hand_targets[(index + 1) % frame.hand_count])
+            target:link("right", self.hand_targets[(slot + 1) % frame.hand_count + 1])
             if frame.swap_open and frame.table_count > 0 then
-                target:link("up", self.table_targets[index % frame.table_count])
+                target:link("up", self.table_targets[slot % frame.table_count + 1])
             end
         end
     end
     for index, target in self.table_targets do
+        local slot: i32 = index - 1
         target:set_visible(
-            board_live and (frame.swap_open or frame.casting) and index < frame.table_count
+            board_live and (frame.swap_open or frame.casting) and slot < frame.table_count
         )
         target:set_enabled(
-            index < frame.table_count and (frame.casting or not frame.frozen_table[index])
+            slot < frame.table_count and (frame.casting or not frame.frozen_table[slot + 1])
         )
-        if index < frame.table_count then
+        if slot < frame.table_count then
             target:link(
                 "left",
-                self.table_targets[(index + frame.table_count - 1) % frame.table_count]
+                self.table_targets[(slot + frame.table_count - 1) % frame.table_count + 1]
             )
-            target:link("right", self.table_targets[(index + 1) % frame.table_count])
+            target:link("right", self.table_targets[(slot + 1) % frame.table_count + 1])
             if frame.hand_count > 0 then
-                target:link("down", self.hand_targets[index % frame.hand_count])
+                target:link("down", self.hand_targets[slot % frame.hand_count + 1])
             end
         end
     end
@@ -305,10 +307,11 @@ end
 function State:arrange(): unit
     local presentation: Presentation = self.presentation
     for index, node in self.hand_nodes do
-        if index < presentation.hand_count then
+        local slot: i32 = index - 1
+        if slot < presentation.hand_count then
             local bounds: box.Rect = hand_fan.slot_rect(
                 presentation.fan_bounds,
-                index,
+                slot,
                 presentation.fan_parts[index],
                 presentation.hand_count
             )

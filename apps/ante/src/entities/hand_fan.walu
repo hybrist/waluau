@@ -185,7 +185,7 @@ end
 -- space by undoing the same centre/rotation transform the card was drawn with.
 function hit(bounds: box.Rect, parts: {f64}, x: f64, y: f64): i32
     for index = #parts - 1, 0::i32, -1::i32 do
-        local part: f64 = parts[index]
+        local part: f64 = parts[index + 1]
         local angle: f64 = angle_at(index, part, #parts)
         local slot: box.Rect = slot_rect(bounds, index, part, #parts)
         local dx: f64 = x - (slot.x + card.width * 0.5)
@@ -224,13 +224,13 @@ function Stateful.new(looks: {card.Look}, parts: {f64}, hidden: {bool}): Statefu
             box.set_fixed(into, width, height)
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
-            for index = 0::i32, #presentation.looks - 1 do
+            for index = 1::i32, #presentation.looks do
                 if not presentation.hidden[index] then
                     draw_slot(
                         surface,
                         presentation.looks[index],
                         bounds,
-                        index,
+                        index - 1,
                         presentation.parts[index],
                         #presentation.looks
                     )
