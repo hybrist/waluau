@@ -28,11 +28,12 @@ for n in $(seq 1 25); do
 done
 ```
 
-At the buffer-integration pass in `waluau-q7qg.6.6`, the directory has
-**1,090 chunks**: **407 enabled** and **683 pending**. These numbers are an
-exact filesystem snapshot, not a target. The final inventory bead
-`waluau-q7qg.16` will reconcile the global category mappings after all
-contemporaneous conformance PRs have landed.
+At the final reconciliation in `waluau-q7qg.16`, the directory has **1,090
+chunks**: **409 enabled** and **681 pending**. These numbers are an exact
+filesystem snapshot, not a target. Run
+`node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
+family mapping below, the compact intentional sets, and the sole exact runner
+exclusion.
 
 PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
 splits can likewise change both the total and the enabled/pending counts. The
@@ -40,26 +41,28 @@ meaningful measure remains independently passing upstream coverage.
 
 ## Intentional execution-model inventory
 
-The 2026-08-30 audit initially identified a 140-chunk union. Four native-family
-chunks were subsequently enabled by the bit32 work in `waluau-q7qg.5`, leaving
-this exact current **136-chunk union**. These chunks are pending for deliberate
-execution-model or scope reasons, rather than a small missing parser or library
-implementation.
+The 2026-08-30 audit and final compiler probe identify this exact current
+**153-chunk union**. It includes Luau's experimental `integer` VM extension,
+which the initial documentation omitted even though the compiler audit had
+classified all 19 chunks with the register/native families. Four native chunks
+were enabled by `waluau-q7qg.5`; `native.1` and `native.50` were enabled later.
+The remaining chunks are pending for deliberate execution-model or scope
+reasons, rather than a small missing parser or library implementation.
 
 | Category | Exact pending chunks | Count |
 | --- | --- | ---: |
-| [Native/JIT and VM register layout](#nativejit-and-vm-register-layout) | `native.{1-7,10-18,21-45,47-58}`, `integers_regspill.{1-6}`, `native_integer_spills.{1-3}`, `native_types`, `native_userdata` | 64 |
+| [Native/JIT, Luau integer extension, and VM register layout](#nativejit-luau-integer-extension-and-vm-register-layout) | `native.{2-7,10-18,21-45,47-49,51-58}`, `integers.{1-19}`, `integers_regspill.{1-6}`, `native_integer_spills.{1-3}`, `native_types`, `native_userdata` | 81 |
 | [Wasm GC observability](#wasm-gc-observability) | `gc.{2-4,6-24}` | 22 |
 | [Metatable event model](#metatable-event-model) | `events.{1-25}` | 25 |
 | [Native C-yield continuations](#native-c-yield-continuations) | `cyield.{1-13}` | 13 |
 | [Embedding and instrumentation hooks](#embedding-instrumentation-and-environments) | `apicalls`, `exceptions`, `coverage`, `debug`, `debugger`, `interrupt`, `iter_fenv`, `ndebug_upvalues`, `safeenv`, `types` | 10 |
 | [Reference test userdata](#reference-test-userdata) | `udata_direct`, `userdata` | 2 |
 
-The enabled exceptions in those source families are `native.8`, `native.9`,
-`native.19`, `native.20`, `native.46`, `gc.1`, `gc.5`, and `gc.25`; their
-independent assertions already pass.
+The enabled exceptions in those source families are `native.1`, `native.8`,
+`native.9`, `native.19`, `native.20`, `native.46`, `native.50`, `gc.1`, `gc.5`,
+and `gc.25`; their independent assertions already pass.
 
-### Native/JIT and VM register layout
+### Native/JIT, Luau integer extension, and VM register layout
 
 Luau's `native` and register-spill tests inspect its bytecode VM, native-code
 compiler, integer register behavior, optimization/deoptimization paths, and
@@ -68,6 +71,13 @@ directly; it has no Luau VM register file or Luau native/JIT tier for those
 assertions to observe. Implementing analogous Waluau optimizations would not
 make those VM-specific assertions conformance tests.
 
+`integers.{1-19}` tests Luau's experimental 64-bit `integer` VM value, `123i`
+literal suffix, `integer.*` namespace, integer-specific type identity, and
+native-tier behavior. Waluau instead exposes ordinary Wasm numeric types such
+as `i64` and `u64`; adding a second Luau-VM integer value solely for this suite
+is out of scope. This is distinct from ordinary numeric operations and
+scientific notation, which are supported and tested elsewhere.
+
 The browser conformance runner supplies imported `luau/*` chunks with a small
 authored `is_native_if_supported(): bool` preamble that always returns `false`.
 That preserves upstream tests' ordinary fallback paths without introducing a
@@ -75,9 +85,9 @@ production builtin or implying an optional native tier. Assertions that require
 the probe to become true still fail and remain in this intentional-deviation
 category.
 
-Impact: the 64 chunks in the table above remain intentionally pending. Where a
+Impact: the 81 chunks in the table above remain intentionally pending. Where a
 file contains an ordinary language assertion independent of native execution,
-it should be split, as `native.46` already demonstrates.
+it should be split, as `native.1`, `native.46`, and `native.50` demonstrate.
 
 ### Wasm GC observability
 
@@ -145,7 +155,7 @@ purpose is native-code generation over test userdata.
 
 ## Broad language and API deviations
 
-These sets can overlap the 136-chunk execution-model union above. They are
+These sets can overlap the 153-chunk execution-model union above. They are
 listed independently because their semantic impact reaches otherwise ordinary
 language/library families.
 
@@ -197,6 +207,22 @@ remaining six chunks after implementing the independent parser gaps. Other
 large sources also contain truthiness checks; keep those intervals pending or
 split them from ordinary boolean assertions rather than treating truthiness as
 an incomplete parser feature.
+
+### Static lexical names and module environments
+
+Waluau resolves lexical names, module imports, and declared browser-host
+symbols ahead of time. Reading an undeclared name is a compile error; it does
+not silently produce `nil`, and compiled modules do not expose a mutable `_G`
+environment that can replace resolved builtins. This is the same static module
+contract that makes `getfenv`/`setfenv` and per-loaded-chunk environments
+inapplicable, but it also affects ordinary expressions such as the deliberate
+undefined-name interpolation in `stringinterp.4`.
+
+Impact: chunks whose only intended behavior is undeclared-name-to-`nil` or
+runtime global-environment substitution remain pending. Coarse chunks that also
+contain a fixable parser, inference, or library gap are mapped to both reasons
+in the family inventory below; this deviation is not a blanket explanation for
+unknown-name diagnostics on missing standard-library namespaces.
 
 ### Ahead-of-time compilation and `loadstring`
 
@@ -318,24 +344,100 @@ independent reason:
 | `clear`, `coverage` | hash-table clearing/iteration and VM coverage instrumentation, respectively |
 | `native.39` | native/JIT-focused iterator-protocol coverage |
 
+## Exhaustive pending-family mapping
+
+The browser probe covers every pending file, while this table assigns every
+current filename stem to at least one documented deviation or **open** bead.
+Counts sum to all **681 pending chunks**. The `trackedByFamily` data in
+`check-pending-inventory.mjs` is the machine-checked form of this table: an
+unknown family, changed count, missing mapping, or stale compact set fails
+`./check`. A family mapping names its primary blockers; individual coarse
+chunks can contain more than one and should still be split when a contiguous
+assertion range becomes independently useful.
+
+| Pending filename family | Count | Primary deviation or open bead |
+| --- | ---: | --- |
+| `apicalls*` | 1 | [Embedding hooks](#embedding-instrumentation-and-environments) |
+| `assert*` | 1 | [Strict booleans](#strict-boolean-control-flow); dynamic/special builtin calls `waluau-9f8d` |
+| `attrib*` | 2 | [Sparse/mixed/hash tables](#sparse-mixed-and-hash-tables) |
+| `basic*` | 14 | Sparse tables, strict booleans, [AOT source loading](#ahead-of-time-compilation-and-loadstring), [static names](#static-lexical-names-and-module-environments); dynamic calls/inference `waluau-9f8d` |
+| `bitwise*` | 12 | Dynamic numeric/error boundaries `waluau-rndq`; string-number coercion `waluau-dbyy` |
+| `buffers*` | 2 | Unknown array refinement `waluau-2dow`; `getfenv`/VM slow-call aggregate is an embedding deviation |
+| `calls*` | 43 | AOT source loading and sparse tables; multi-value/runtime-vararg work `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8`; dynamic calls/inference `waluau-9f8d` |
+| `classes*` | 49 | Luau class declarations `waluau-wll8` |
+| `clear*` | 1 | Sparse/mixed/hash tables |
+| `closure*` | 19 | Typed coroutines, AOT source loading, sparse tables, static names; dynamic calls/inference `waluau-9f8d` |
+| `constructs*` | 41 | Strict booleans, AOT source loading, sparse tables; dynamic calls/inference `waluau-9f8d` |
+| `coroutine*` | 22 | [Typed coroutine API](#typed-coroutine-api) |
+| `coverage*` | 1 | Embedding/instrumentation hooks |
+| `cyield*` | 13 | [Native C-yield continuations](#native-c-yield-continuations) and typed coroutines |
+| `datetime*` | 1 | Browser `os.date`/`os.time` compatibility `waluau-qabb` |
+| `debug*`, `debugger*` | 2 | Embedding/instrumentation hooks |
+| `errors*` | 80 | AOT source loading and sparse tables; `xpcall` `waluau-wb7a`, error formatting `waluau-fg46`, dynamic calls/inference `waluau-9f8d` |
+| `events*` | 25 | [Metatable event model](#metatable-event-model) |
+| `exceptions*` | 1 | Embedding/instrumentation hooks |
+| `explicit_type_instantiations*` | 1 | Explicit generic instantiation/type packs `waluau-9ttd` |
+| `gc*` | 22 | [Wasm GC observability](#wasm-gc-observability) |
+| `ifelseexpr*` | 3 | Strict boolean control flow |
+| `integers*` | 19 | [Luau experimental integer VM extension](#nativejit-luau-integer-extension-and-vm-register-layout) |
+| `integers_regspill*` | 6 | Native/JIT and VM register layout |
+| `interrupt*` | 1 | Embedding/instrumentation hooks |
+| `iter*` | 31 | Sparse tables, typed coroutines, and metatable events; unpack/varargs `waluau-zxju`, `waluau-n6u8`; record `pairs` `waluau-yfus` |
+| `iter_fenv*` | 1 | Embedding/environment hooks |
+| `literals*` | 4 | AOT source loading and sparse tables; dynamic builtin calls `waluau-9f8d` |
+| `locals*` | 1 | AOT source loading and sparse/mixed/hash tables |
+| `math*` | 7 | AOT source loading; unknown refinement `waluau-2dow`, protected/multi-results `waluau-8fxn`, `waluau-jnyd`, `waluau-n6u8` |
+| `move*` | 1 | Sparse/mixed/hash tables |
+| `native*` | 51 | Native/JIT and VM register layout |
+| `native_integer_spills*` | 3 | Native/JIT and VM register layout |
+| `native_types*` | 1 | Native/JIT type-observation harness |
+| `native_userdata*` | 1 | Native/JIT plus reference test userdata |
+| `ndebug_upvalues*` | 1 | Embedding/instrumentation hooks |
+| `pcall*` | 66 | Typed coroutines; multi-success `waluau-8fxn`, `xpcall` `waluau-wb7a`, protected builtins `waluau-esz6`, dynamic calls/inference `waluau-9f8d` |
+| `pm*` | 52 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
+| `safeenv*` | 1 | Embedding/environment hooks |
+| `sort*` | 1 | AOT source loading and sparse/mixed/hash tables |
+| `strconv*` | 7 | Exact numeric `tostring` formatting `waluau-9wf5` |
+| `stringinterp*` | 4 | Static names plus remaining interpolation semantics `waluau-h37g` |
+| `strings*` | 25 | AOT source loading, sparse tables, metatable events; coercion `waluau-dbyy`, catchable formatting `waluau-nlyf`, byte ranges `waluau-vogb`, error formatting `waluau-fg46`, dynamic calls `waluau-9f8d` |
+| `tables*` | 4 | AOT source loading and sparse/mixed/hash tables; runtime unpack `waluau-zxju` |
+| `tmerror*` | 1 | Metatable event model |
+| `tpack*` | 19 | [Binary packing/text-string difference](#binary-packing-versus-browser-text-strings) |
+| `types*` | 1 | Embedding/test RTTI hooks |
+| `udata_direct*`, `userdata*` | 2 | [Reference test userdata](#reference-test-userdata) |
+| `utf8*` | 1 | AOT source loading plus runtime unpack `waluau-zxju` |
+| `vararg*` | 1 | Sparse/mixed packs; remaining vararg/unpack work `waluau-n6u8`, `waluau-zxju` |
+| `vector*`, `vector_library*` | 12 | Vector value/library `waluau-uneu` |
+
 ## Fixable gaps remain tracked work
 
 The categories above must not become a blanket excuse for unrelated failures.
-The audits linked bounded implementation work where Waluau intends to converge:
+The final probe links bounded implementation work wherever Waluau intends to
+converge:
 
-| Gap | Bead | Current impact |
+| Open gap | Bead | Current mapped impact |
 | --- | --- | --- |
-| Mutable-buffer conformance integration | `waluau-q7qg.6.1`–`waluau-q7qg.6.6` | Complete buffer behavior, including protected error paths and the 1-GiB/6-GiBit case, is enabled across 22 chunks. Only `buffers.18_untyped_table` (broad unknown indexing, `waluau-2dow`) and `buffers.21` (intentional `getfenv`/VM slow-call aggregate) remain pending |
-| Typed math-library completion | `waluau-q7qg.11` | `math.{1,4.helper,9,15,17}`, `math.2.coercion`, `math.11.numeric`, and `math.17.multivalue`; direct scalar and exact-noise ranges are enabled, while the aggregate remains pending for its named dynamic, protected-call, multi-value, and source-loading blockers |
+| Unknown-typed array refinement | `waluau-2dow` | `buffers.18_untyped_table` and dynamic helper portions of `math*`; this does not authorize sparse/mixed tables |
 | Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |
-| Builtin functions as values | `waluau-390t` | Higher-order library checks outside native harness families |
-| Dense-array `ipairs` (completed) | `waluau-uxuf` | Exact dense assertions are enabled as `basic.22.ipairs_dense` and `basic.22.ipairs_multret`; the remaining occurrence audit is classified above |
+| Dynamic calls and recursive inference | `waluau-9f8d` | Ordinary `assert`, `basic`, `calls`, `closure`, `constructs`, `errors`, `literals`, `pcall`, and `strings` chunks after intentional blockers are split away |
 | String/number coercion and pattern replacements | `waluau-dbyy` | Remaining `pm.*` cases after protected-call and parser gaps |
+| Dynamic bit32 boundaries | `waluau-rndq` | Exact `bitwise.{2,3,6,9,14,15,17,18,20,21,22,23}` set |
+| Luau class declarations | `waluau-wll8` | `classes.{1-49}` |
+| Browser date/time library | `waluau-qabb` | `datetime` |
+| Explicit generic instantiation/type packs | `waluau-9ttd` | `explicit_type_instantiations` |
+| Vector value/library | `waluau-uneu` | `vector`, `vector_library.{1-11}`; native vector checks remain VM/JIT exclusions |
+| Exact numeric `tostring` | `waluau-9wf5` | Runtime-failing `strconv.{4,6,9,11,13,15,17}` |
+| Remaining string interpolation | `waluau-h37g` | `stringinterp.{2,4,6,8}`, with static-name behavior remaining a documented decision |
 
-Completed children of `waluau-q7qg` already enabled scientific notation,
-surplus fixed-call arguments, bit32 intrinsics, large `%f` formatting, missing
+Completed work is reflected rather than left in the open-gap table: mutable
+buffers have 22 enabled chunks; deterministic typed math and exact
+`math.noise` ranges are enabled; builtin functions as values landed in
+`waluau-390t`; dense-array `ipairs` landed in `waluau-uxuf`; and fixed
+multi-results through nested vararg calls enabled `pcall.1` and `pcall.4` in
+`waluau-sdc0`. Earlier children also enabled scientific notation, surplus
+fixed-call arguments, bit32 intrinsics, large `%f` formatting, missing
 multi-binding nil padding, chained if expressions, and many passing split
-ranges. When a fix lands, recompile the affected pending chunks, split
+ranges. When another fix lands, recompile the affected pending chunks, split
 independent sections where necessary, and update this inventory rather than
 preserving an obsolete failure reason.

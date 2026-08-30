@@ -52,8 +52,16 @@ rg -l '^-- conformance: pending$' conformance/luau -g '*.walu' | wc -l
 The difference is the enabled count. The full behavior check is:
 
 ```sh
+node conformance/luau/check-pending-inventory.mjs
 pnpm --filter conformance-runner test:browser
 ```
+
+The inventory check pins the exact snapshot, verifies every pending filename is
+covered by the family mapping in [`DEVIATIONS.md`](./DEVIATIONS.md), checks the
+compact intentional-execution sets, and keeps `native.53` as the sole exact-name
+VM/JIT exclusion. The browser suite then executes every other pending chunk as
+an inverse test: if any starts passing, the suite fails until it is enabled or
+split.
 
 ## Working a pending chunk
 
