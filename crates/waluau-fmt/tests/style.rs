@@ -93,6 +93,15 @@ fn preserves_string_interpolation_verbatim() {
 }
 
 #[test]
+fn preserves_binary_literals_and_luau_separators() {
+    let src = "local bits=0B_0101__1010_\nlocal exponent=1e+___2\n";
+    assert_eq!(
+        fmt(src),
+        "local bits = 0B_0101__1010_\nlocal exponent = 1e+___2\n"
+    );
+}
+
+#[test]
 fn indents_nested_blocks() {
     let src = "if a == b then\nreturn 1\nelse\nreturn 2\nend\n";
     assert_eq!(

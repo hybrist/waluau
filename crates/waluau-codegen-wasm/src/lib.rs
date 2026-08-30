@@ -5979,6 +5979,10 @@ fn hex_digits(raw: &str) -> Option<&str> {
     raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X"))
 }
 
+fn binary_digits(raw: &str) -> Option<&str> {
+    raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B"))
+}
+
 fn parse_u128_literal(literal: &NumberLiteral, ty_name: &str) -> Result<u128, Diagnostic> {
     let raw = normalized_numeric_literal(literal);
     if raw.contains('.') {
@@ -5988,6 +5992,13 @@ fn parse_u128_literal(literal: &NumberLiteral, ty_name: &str) -> Result<u128, Di
     }
     if let Some(hex) = hex_digits(&raw) {
         return u128::from_str_radix(hex, 16).map_err(|_| {
+            Diagnostic::new(format!(
+                "invalid {ty_name} numeric literal during wasm emission"
+            ))
+        });
+    }
+    if let Some(binary) = binary_digits(&raw) {
+        return u128::from_str_radix(binary, 2).map_err(|_| {
             Diagnostic::new(format!(
                 "invalid {ty_name} numeric literal during wasm emission"
             ))
@@ -6009,6 +6020,18 @@ fn parse_i128_literal(literal: &NumberLiteral, ty_name: &str) -> Result<i128, Di
     }
     if let Some(hex) = hex_digits(&raw) {
         let value = u128::from_str_radix(hex, 16).map_err(|_| {
+            Diagnostic::new(format!(
+                "invalid {ty_name} numeric literal during wasm emission"
+            ))
+        })?;
+        return i128::try_from(value).map_err(|_| {
+            Diagnostic::new(format!(
+                "invalid {ty_name} numeric literal during wasm emission"
+            ))
+        });
+    }
+    if let Some(binary) = binary_digits(&raw) {
+        let value = u128::from_str_radix(binary, 2).map_err(|_| {
             Diagnostic::new(format!(
                 "invalid {ty_name} numeric literal during wasm emission"
             ))
@@ -6050,6 +6073,11 @@ fn parse_f64_literal(literal: &NumberLiteral) -> Result<f64, Diagnostic> {
     let raw = normalized_numeric_literal(literal);
     if let Some(hex) = hex_digits(&raw) {
         return u128::from_str_radix(hex, 16)
+            .map(|value| value as f64)
+            .map_err(|_| Diagnostic::new("invalid f64 numeric literal during wasm emission"));
+    }
+    if let Some(binary) = binary_digits(&raw) {
+        return u128::from_str_radix(binary, 2)
             .map(|value| value as f64)
             .map_err(|_| Diagnostic::new("invalid f64 numeric literal during wasm emission"));
     }

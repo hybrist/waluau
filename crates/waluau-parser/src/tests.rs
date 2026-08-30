@@ -36,6 +36,31 @@ fn parses_scientific_notation_number_literals() {
 }
 
 #[test]
+fn parses_binary_number_literals_and_luau_separators() {
+    let source = r#"
+        function binary(): f64
+            return 0b1010 + 0B_0101_ + 1__0 + 0x__f_f__ + 1e+___2
+        end
+    "#;
+
+    let program = parse(source).expect("binary literals and arbitrary separators should parse");
+    assert_eq!(program.functions.len(), 1);
+}
+
+#[test]
+fn rejects_invalid_binary_number_literals() {
+    for literal in ["0b", "0B___", "0b102"] {
+        let source = format!("function invalid(): f64\nreturn {literal}\nend\n");
+        let error = parse(&source).expect_err("invalid binary literal should fail parsing");
+        assert_eq!(
+            error.to_string(),
+            "invalid number literal",
+            "literal: {literal}"
+        );
+    }
+}
+
+#[test]
 fn parses_explicit_exported_function() {
     let source = "export function answer(): i32\n    return 42\nend\n";
     let outcome = crate::parse_with_recovery(source, "module.walu");

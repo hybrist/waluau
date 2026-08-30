@@ -1,0 +1,6 @@
+-- This preamble is imported only by apps/conformance-runner for vendored Luau
+-- chunks. Waluau is an AOT Wasm-GC compiler and has no optional VM native/JIT
+-- tier, so the faithful answer for upstream fallback guards is always false.
+function is_native_if_supported(): bool
+    return false
+end

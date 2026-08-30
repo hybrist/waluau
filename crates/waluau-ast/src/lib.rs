@@ -1121,12 +1121,17 @@ pub struct NumberLiteral {
 }
 
 impl NumberLiteral {
-    /// The literal's value when written in integer form (decimal or hex,
+    /// The literal's value when written in integer form (decimal, hex, or binary,
     /// no fraction or exponent). `None` for float-form or malformed literals.
     pub fn int_value(&self) -> Option<i128> {
         let raw = self.raw.replace('_', "");
         if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
             return u128::from_str_radix(hex, 16)
+                .ok()
+                .map(|value| value as i128);
+        }
+        if let Some(binary) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
+            return u128::from_str_radix(binary, 2)
                 .ok()
                 .map(|value| value as i128);
         }
@@ -1138,6 +1143,11 @@ impl NumberLiteral {
         let raw = self.raw.replace('_', "");
         if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
             return u128::from_str_radix(hex, 16).ok().map(|value| value as f64);
+        }
+        if let Some(binary) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
+            return u128::from_str_radix(binary, 2)
+                .ok()
+                .map(|value| value as f64);
         }
         raw.parse::<f64>().ok()
     }

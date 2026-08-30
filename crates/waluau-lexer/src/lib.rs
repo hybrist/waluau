@@ -367,9 +367,21 @@ fn lex_range(
             }
             d if d.is_ascii_digit() => {
                 let mut end = i + 1;
-                if d == '0' && matches!(chars.get(end), Some('x' | 'X')) {
+                let radix = if d == '0' && matches!(chars.get(end), Some('x' | 'X')) {
+                    Some(16)
+                } else if d == '0' && matches!(chars.get(end), Some('b' | 'B')) {
+                    Some(2)
+                } else {
+                    None
+                };
+                if radix.is_some() {
                     end += 1;
-                    while end < chars.len() && (chars[end].is_ascii_hexdigit() || chars[end] == '_')
+                    // Match Luau's number-like token boundary first, then
+                    // validate the radix digits below. This keeps `0b102` and
+                    // `0xgg` together so they produce one useful numeric
+                    // diagnostic instead of a number followed by an identifier.
+                    while end < chars.len()
+                        && (chars[end].is_ascii_alphanumeric() || chars[end] == '_')
                     {
                         end += 1;
                     }
@@ -415,11 +427,12 @@ fn lex_range(
                 if number.matches('.').count() > 1 {
                     return Err(Diagnostic::new("invalid number literal"));
                 }
-                if matches!(number.as_str(), "0x" | "0X") {
-                    return Err(Diagnostic::new("invalid number literal"));
-                } else if number.starts_with("0x") || number.starts_with("0X") {
+                if let Some(radix) = radix {
                     let digits = number[2..].replace('_', "");
-                    u128::from_str_radix(&digits, 16)
+                    if digits.is_empty() {
+                        return Err(Diagnostic::new("invalid number literal"));
+                    }
+                    u128::from_str_radix(&digits, radix)
                         .map_err(|_| Diagnostic::new("invalid number literal"))?;
                 } else if number.contains('.') || number.contains(['e', 'E']) {
                     let normalized = number.replace('_', "");
@@ -1052,6 +1065,13 @@ mod tests {
                 "source: {source}",
             );
         }
+        for source in ["0b", "0B___", "0b2", "0B10_2", "0x", "0X___", "0xgg"] {
+            assert_eq!(
+                err(source).to_string(),
+                "invalid number literal",
+                "source: {source}",
+            );
+        }
     }
 
     #[test]
@@ -1082,7 +1102,7 @@ mod tests {
     fn accepts_well_formed_number_literals() {
         assert_eq!(
             kinds(
-                "0 42 3.14 1. 0xdead 0x88E8 1e6 1e+30 0.1e-30 0.9E30 1_0e+3_0 1e+___2 10e500 4.9406564584124654e-324",
+                "0 42 3.14 1. 0xdead 0x88E8 0b101 0B_0101_ 1e6 1e+30 0.1e-30 0.9E30 1_0e+3_0 1e+___2 10e500 4.9406564584124654e-324",
             ),
             vec![
                 TokenKind::Number("0".into()),
@@ -1091,6 +1111,8 @@ mod tests {
                 TokenKind::Number("1.".into()),
                 TokenKind::Number("0xdead".into()),
                 TokenKind::Number("0x88E8".into()),
+                TokenKind::Number("0b101".into()),
+                TokenKind::Number("0B_0101_".into()),
                 TokenKind::Number("1e6".into()),
                 TokenKind::Number("1e+30".into()),
                 TokenKind::Number("0.1e-30".into()),
