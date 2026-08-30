@@ -2,34 +2,17 @@
 -- tests/conformance/ifelseexpr.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk retains checks from the upstream source that still fail in
--- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/ifelseexpr.walu in original source order.
--- Upstream source lines 85-91.
--- Required upstream helper setup from line 32-48 is repeated for standalone execution.
+-- Upstream source lines 80-84.
+-- Required upstream helper setup from line 16-22 is repeated for standalone execution.
 
-function CheckForConditionalEvaluation(condition)
-    local counter = 0
-
-    local function AddToCounter(count)
-      counter += count
-      return counter
-    end
-
-    local result = if condition then AddToCounter(7) else AddToCounter(17)
-    if condition then
-      assert(result == 7)
-    else
-      assert(result == 17)
-    end
-    -- ensure the counter value matches the result of the clause that was evaluated
-    assert(counter == result)
+function True()
+  return true
 end
--- Ensure that if/else expressions are conditionally evaluated
--- i.e. verify the evaluated expression doesn't evaluate the true and false expressions and
--- merely select the proper value.
-CheckForConditionalEvaluation(true)
-CheckForConditionalEvaluation(false)
 
-return('OK')
+function False()
+  return false
+end
+-- Test nesting of if-else expressions inside the condition of an if-else expression
+assert((if (if True() then false else true) then 10 else 20) == 20)
+assert((if if True() then false else true then 10 else 20) == 20)

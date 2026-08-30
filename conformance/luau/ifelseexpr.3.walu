@@ -3,11 +3,9 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- This chunk retains checks from the upstream source that still fail in
--- Waluau. Remove this directive when the whole chunk passes.
+-- Lua/Luau treats nil as false in a condition. Waluau deliberately requires
+-- if-expression conditions to be bool rather than applying Lua truthiness.
 -- Split from conformance/luau/ifelseexpr.walu in original source order.
--- Upstream source lines 53-55.
+-- Upstream source lines 53-54.
 
 assert(if nil then false else true)
-assert((7 + if true then 10 else 20) == 17)
-

@@ -761,8 +761,10 @@ fn is_expr(t: &Tree) -> Doc {
 }
 
 fn if_expr(t: &Tree) -> Doc {
-    // if cond then a else b
-    concat([
+    // `if cond then a else b`, or a right-nested `elseif` clause. Chained
+    // expression clauses have five children because the final child is the
+    // complete nested IfExpr (including its leading `elseif` token).
+    let mut parts = vec![
         node(&t.children[0]),
         text(" "),
         node(&t.children[1]),
@@ -772,9 +774,12 @@ fn if_expr(t: &Tree) -> Doc {
         node(&t.children[3]),
         text(" "),
         node(&t.children[4]),
-        text(" "),
-        node(&t.children[5]),
-    ])
+    ];
+    if t.children.len() == 6 {
+        parts.push(text(" "));
+        parts.push(node(&t.children[5]));
+    }
+    concat(parts)
 }
 
 fn call_expr(t: &Tree) -> Doc {

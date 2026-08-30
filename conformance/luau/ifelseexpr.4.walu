@@ -3,17 +3,6 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- Split from conformance/luau/ifelseexpr.walu in original source order.
--- Upstream source lines 56-59.
--- Required upstream helper setup from line 16-22 is repeated for standalone execution.
+-- Upstream source line 55.
 
-function True()
-  return true
-end
-
-function False()
-  return false
-end
--- Test expression using non-constant condition
-assert(if True() then true else false)
-assert(if False() then false else true)
-
+assert((7 + if true then 10 else 20) == 17)

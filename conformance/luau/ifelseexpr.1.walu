@@ -3,8 +3,9 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- This chunk retains checks from the upstream source that still fail in
--- Waluau. Remove this directive when the whole chunk passes.
+-- CheckForConditionalEvaluation leaves `condition` untyped and uses it in a
+-- statement condition. Waluau deliberately requires statement conditions to
+-- be bool; it does not apply Lua/Luau truthiness to an unknown value.
 -- Split from conformance/luau/ifelseexpr.walu in original source order.
 -- Upstream source lines 12-49.
 

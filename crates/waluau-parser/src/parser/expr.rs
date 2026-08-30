@@ -126,11 +126,33 @@ impl Parser {
     fn parse_if_expr(&mut self) -> Result<Expr, Diagnostic> {
         let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::If, "expected 'if'")?;
+        self.parse_if_expr_clause(start_pos)
+    }
+
+    /// Parse the body of an if-expression after its `if` or `elseif` keyword.
+    ///
+    /// Luau's `elseif` expression clauses are represented as right-nested
+    /// `Expr::If` nodes. That keeps the existing lazy branch lowering intact:
+    /// the next condition is part of the outer expression's else branch and is
+    /// only evaluated when the preceding conditions are false.
+    fn parse_if_expr_clause(&mut self, start_pos: u32) -> Result<Expr, Diagnostic> {
         let condition = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
         let then_expr = self.parse_expr()?;
-        self.expect_simple(TokenKind::Else, "expected 'else' in if expression")?;
-        let else_expr = self.parse_expr()?;
+        let else_expr = if self.check_simple(&TokenKind::ElseIf) {
+            let elseif_start = self
+                .peek()
+                .map(|token| token.span.start)
+                .unwrap_or(start_pos);
+            self.advance();
+            self.parse_if_expr_clause(elseif_start)?
+        } else {
+            self.expect_simple(
+                TokenKind::Else,
+                "expected 'else' or 'elseif' in if expression",
+            )?;
+            self.parse_expr()?
+        };
         let end_pos = else_expr.span().map(|s| s.end).unwrap_or(start_pos);
         Ok(Expr::If {
             condition: Box::new(condition),
@@ -597,6 +619,11 @@ impl Parser {
             TokenKind::Str(value) => Ok(Expr::String(value, span)),
             TokenKind::Bytes(value) => Ok(Expr::Bytes(value, span)),
             TokenKind::TripleDot => Ok(Expr::Vararg(span)),
+            // An if-expression is a primary in Luau, so it may occupy an
+            // operator position such as `7 + if flag then 10 else 20`.
+            // `parse_expr` still recognizes a leading `if` directly to retain
+            // its deliberately low precedence at the start of an expression.
+            TokenKind::If => self.parse_if_expr_clause(token.span.start),
             TokenKind::Function => {
                 let start_pos = token.span.start;
                 let name = if let Some(Token {
