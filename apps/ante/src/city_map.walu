@@ -151,10 +151,10 @@ function generate(state: State): unit
     fill_streets(state, state.vertical_streets, CITY_WIDTH, 108.0, 168.0)
     fill_streets(state, state.horizontal_streets, CITY_HEIGHT, 82.0, 132.0)
 
-    for column = 0::i32, #state.vertical_streets - 2 do
+    for column = 1::i32, #state.vertical_streets - 1 do
         local left: f64 = state.vertical_streets[column] + STREET_WIDTH * 0.5
         local right: f64 = state.vertical_streets[column + 1] - STREET_WIDTH * 0.5
-        for row = 0::i32, #state.horizontal_streets - 2 do
+        for row = 1::i32, #state.horizontal_streets - 1 do
             local top: f64 = state.horizontal_streets[row] + STREET_WIDTH * 0.5
             local bottom: f64 = state.horizontal_streets[row + 1] - STREET_WIDTH * 0.5
             local inset_x: f64 = random_range(state, 5.0, 12.0)
@@ -322,15 +322,15 @@ function State:position_at(travel: f64): Point
         return { x = CITY_WIDTH * 0.5, y = CITY_HEIGHT * 0.5 }
     end
     if travel <= 0.0 then
-        return { x = self.stops[0].x, y = self.stops[0].y }
+        return { x = self.stops[1].x, y = self.stops[1].y }
     end
     if travel >= last::f64 then
-        return { x = self.stops[last].x, y = self.stops[last].y }
+        return { x = self.stops[last + 1].x, y = self.stops[last + 1].y }
     end
     local base: i32 = math.floor(travel)::i32
     local fraction: f64 = travel - (base::f64)
-    local from: Stop = self.stops[base]
-    local into: Stop = self.stops[base + 1]
+    local from: Stop = self.stops[base + 1]
+    local into: Stop = self.stops[base + 2]
     return { x = from.x + (into.x - from.x) * fraction, y = from.y + (into.y - from.y) * fraction }
 end
 

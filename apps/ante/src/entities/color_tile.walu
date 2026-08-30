@@ -39,7 +39,7 @@ function Stateful.new(suit: i32): Stateful
             card.draw_sigil(surface, suit, center - 11.0, bounds.y + SIGIL_DROP)
             ink.text_centered(
                 graphics,
-                NAMES[suit],
+                NAMES[suit + 1],
                 center,
                 bounds.y + NAME_DROP,
                 NAME_SIZE,

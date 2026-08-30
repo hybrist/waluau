@@ -61,8 +61,8 @@ describe(
                 -- The menu's pick is the whole opening loadout, at full price and on
                 -- the first cast key.
                 expect(state:spell_count()):toBe(1)
-                expect(state.spells[0].kind):toBe(spells.SpellKind.Clone)
-                expect(state.spells[0].cost):toBe(game.spell_cost)
+                expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
+                expect(state.spells[1].cost):toBe(game.spell_cost)
                 expect(state.start_spell):toBe(spells.SpellKind.Clone)
                 expect(state:boss()):toBe(false)
                 expect(state:next_is_boss()):toBe(false)
@@ -151,8 +151,8 @@ describe(
                     expect(restored.cleared):toBe(1)
                     expect(restored.gold):toBe(27 - run.target_at(1, true))
                     expect(restored.hearts):toBe(run.max_hearts - 1)
-                    expect(restored.spells[0].kind):toBe(spells.SpellKind.RaiseCard)
-                    expect(restored.spells[0].level):toBe(1)
+                    expect(restored.spells[1].kind):toBe(spells.SpellKind.RaiseCard)
+                    expect(restored.spells[1].level):toBe(1)
                     expect(restored.start_spell):toBe(spells.SpellKind.RaiseCard)
                     expect(restored.rush):toBe(true)
                     expect(restored:snapshot()):toBe(encoded)
@@ -173,9 +173,9 @@ describe(
                     '"start_spell":99'
                 )
                 expect(run.State.restore(unknown_spell) == nil):toBe(true)
-                state.spells[0].level = 0
+                state.spells[1].level = 0
                 expect(run.State.restore(state:snapshot()) == nil):toBe(true)
-                state.spells[0].level = 1
+                state.spells[1].level = 1
                 state.hearts = run.max_hearts + 1
                 expect(run.State.restore(state:snapshot()) == nil):toBe(true)
             end
@@ -192,11 +192,11 @@ describe(
                 expect(restored == nil):toBe(false)
                 if restored ~= nil then
                     expect(restored:spell_count()):toBe(2)
-                    expect(restored.spells[0].kind):toBe(spells.SpellKind.Firebolt)
-                    expect(restored.spells[0].cost):toBe(game.spell_cost)
-                    expect(restored.spells[0].level):toBe(1)
-                    expect(restored.spells[1].kind):toBe(spells.SpellKind.Clone)
-                    expect(restored.spells[1].level):toBe(3)
+                    expect(restored.spells[1].kind):toBe(spells.SpellKind.Firebolt)
+                    expect(restored.spells[1].cost):toBe(game.spell_cost)
+                    expect(restored.spells[1].level):toBe(1)
+                    expect(restored.spells[2].kind):toBe(spells.SpellKind.Clone)
+                    expect(restored.spells[2].level):toBe(3)
                     expect(restored:snapshot()):toBe(encoded)
                 end
 
@@ -229,9 +229,9 @@ describe(
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 1))):toBe(true)
                 expect(state:spell_count()):toBe(2)
-                expect(state.spells[1].kind):toBe(spells.SpellKind.Clone)
-                expect(state.spells[1].cost):toBe(game.spell_cost)
-                expect(state.spells[1].level):toBe(1)
+                expect(state.spells[2].kind):toBe(spells.SpellKind.Clone)
+                expect(state.spells[2].cost):toBe(game.spell_cost)
+                expect(state.spells[2].level):toBe(1)
                 -- Two is as many as travel at once. A third kind cannot silently
                 -- replace either spell already bound to a cast key.
                 expect(
@@ -277,7 +277,7 @@ describe(
                 -- The next duel is dealt the levelled pair: the loadout belongs to the
                 -- run, not to the duel that bought it.
                 expect(state:spell_count()):toBe(2)
-                expect(state.spells[1].level):toBe(2)
+                expect(state.spells[2].level):toBe(2)
                 local dealt: game.State = game.State.new(state:boss(), state.spells, state.gold)
                 expect(dealt:spell_count()):toBe(2)
                 expect(dealt:spell_level(1)):toBe(2)
@@ -287,8 +287,8 @@ describe(
                 -- full price.
                 state:settle(false, 19)
                 expect(state:spell_count()):toBe(1)
-                expect(state.spells[0].kind):toBe(spells.SpellKind.Firebolt)
-                expect(state.spells[0].cost):toBe(game.spell_cost)
+                expect(state.spells[1].kind):toBe(spells.SpellKind.Firebolt)
+                expect(state.spells[1].cost):toBe(game.spell_cost)
             end
         )
 
@@ -301,7 +301,7 @@ describe(
                 -- own copy — and nothing done to the run's afterwards — crosses over.
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Firebolt, 2))):toBe(true)
                 expect(dealt:spell_level(0)):toBe(1)
-                expect(state.spells[0].level):toBe(2)
+                expect(state.spells[1].level):toBe(2)
             end
         )
     end

@@ -68,7 +68,7 @@ end
 
 function target_at(self: Router, key: i32): Target
     assert(key >= 0 and key < #self.targets)
-    return self.targets[key]
+    return self.targets[key + 1]
 end
 
 function target_active(self: Router, target: Target): bool
@@ -79,7 +79,7 @@ function focus_candidate(self: Router, key: i32): bool
     if key < 0 or key >= #self.targets then
         return false
     end
-    local target: Target = self.targets[key]
+    local target: Target = self.targets[key + 1]
     return target.focusable and target_active(self, target)
 end
 
@@ -159,7 +159,7 @@ function Router:hovered(): i32
     if #self.hover_path == 0 then
         return -1
     end
-    return self.hover_path[0]
+    return self.hover_path[1]
 end
 
 function Router:focus(key: i32): bool
@@ -171,16 +171,16 @@ function Router:focus(key: i32): bool
     end
 
     if self.focused_key >= 0 and self.focused_key < #self.targets then
-        self.targets[self.focused_key].handlers.on_blur()
+        target_at(self, self.focused_key).handlers.on_blur()
     end
     self.focused_key = key
-    self.targets[key].handlers.on_focus()
+    target_at(self, key).handlers.on_focus()
     return true
 end
 
 function Router:clear_focus(): unit
     if self.focused_key >= 0 and self.focused_key < #self.targets then
-        self.targets[self.focused_key].handlers.on_blur()
+        target_at(self, self.focused_key).handlers.on_blur()
     end
     self.focused_key = -1
 end
@@ -236,21 +236,21 @@ end
 
 function Router:pointer_move(x: f64, y: f64): i32
     local hit: i32 = resolve(self, x, y)
-    local old_index: i32 = #self.hover_path - 1
-    local new_index: i32 = #self.next_path - 1
-    while old_index >= 0 and new_index >= 0 and self.hover_path[old_index] == self.next_path[new_index] do
+    local old_index: i32 = #self.hover_path
+    local new_index: i32 = #self.next_path
+    while old_index >= 1 and new_index >= 1 and self.hover_path[old_index] == self.next_path[new_index] do
         old_index -= 1
         new_index -= 1
     end
 
     -- Stored paths run leaf-to-root: leave bubbles out, enter tunnels in.
-    local index: i32 = 0
+    local index: i32 = 1
     while index <= old_index do
         target_at(self, self.hover_path[index]).handlers.on_leave()
         index += 1
     end
     index = new_index
-    while index >= 0 do
+    while index >= 1 do
         target_at(self, self.next_path[index]).handlers.on_enter()
         index -= 1
     end
@@ -336,7 +336,7 @@ function ordered_destination(self: Router, direction: Direction, policy: Navigat
         end
         index += step
     end
-    if not self.scopes[self.active_scope].wrap then
+    if not self.scopes[self.active_scope + 1].wrap then
         return -1
     end
 
@@ -411,7 +411,7 @@ function Router:navigate(direction: Direction): bool
         return self:focus(destination)
     end
 
-    local policy: Navigation = self.scopes[self.active_scope].navigation
+    local policy: Navigation = self.scopes[self.active_scope + 1].navigation
     if policy == "row" or policy == "column" then
         destination = ordered_destination(self, direction, policy)
     elseif policy == "spatial" then

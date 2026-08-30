@@ -45,11 +45,11 @@ local shop: Shop = { open = false, slots = {} }
 restock(shop)
 assert(shop.open)
 assert(#shop.slots == 2)
-assert(shop.slots[0].goods is Upgrade)
-assert(shop.slots[1].goods is Spell)
-assert(kind_of(shop.slots[0].goods) == 1)
-assert(kind_of(shop.slots[1].goods) == 102)
-assert(shop.slots[1].price == 7)
+assert(shop.slots[1].goods is Upgrade)
+assert(shop.slots[2].goods is Spell)
+assert(kind_of(shop.slots[1].goods) == 1)
+assert(kind_of(shop.slots[2].goods) == 102)
+assert(shop.slots[2].price == 7)
 
 -- The empty literal replaces it — the ante shop's `close`, where this was
 -- first caught.
@@ -60,7 +60,7 @@ assert(#shop.slots == 0)
 -- And the field can be filled again after being cleared.
 restock(shop)
 assert(#shop.slots == 2)
-assert(kind_of(shop.slots[1].goods) == 102)
+assert(kind_of(shop.slots[2].goods) == 102)
 
 -- The union as the element type directly, without a record in between.
 local satchel: Satchel = { goods = {Spell({ kind = 9 })} }

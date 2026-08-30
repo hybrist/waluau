@@ -14,14 +14,14 @@ end
 
 local t = collect_prefixed(5, 6)
 assert(#t == 3)
-assert(t[0] == 0)
-assert(t[1] == 5)
-assert(t[2] == 6)
+assert(t[1] == 0)
+assert(t[2] == 5)
+assert(t[3] == 6)
 
 -- `{...}` is a copy: growing it does not affect the varargs.
 function copy_and_grow(...)
     local t = {...}
-    t[#t] = "extra"
+    t[#t + 1] = "extra"
     return tostring(#t) .. "/" .. tostring(select('#', ...))
 end
 

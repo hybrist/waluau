@@ -585,7 +585,7 @@ function Graphics:emit_shaded_vertex(
     textured: f64,
     shade: f64
 ): unit
-    local base: i32 = #self.transforms - 6
+    local base: i32 = #self.transforms - 5
     local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
     local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
     self:push_float(world_x / self.draw_width * 2.0 - 1.0)
@@ -1390,9 +1390,9 @@ function emit_mesh_vertex(
 ): unit
     local shade: f64 = 1.0
     if lit then
-        shade = shades[index]
+        shade = shades[index + 1]
     end
-    graphics:emit_shaded_vertex(xs[index], ys[index], u, v, 1.0, shade)
+    graphics:emit_shaded_vertex(xs[index + 1], ys[index + 1], u, v, 1.0, shade)
 end
 
 -- Draws a texture across a grid the caller has shaped. `xs` and `ys` hold one
@@ -1640,8 +1640,8 @@ function Graphics:fill_rounded_rectangle(x: f64, y: f64, width: f64, height: f64
     local segments: i32 = CIRCLE_SEGMENTS / 4
     local step: f64 = math.pi * 0.5 / (segments::f64)
     for corner = 0::i32, 3::i32 do
-        local center_x: f64 = centers_x[corner]
-        local center_y: f64 = centers_y[corner]
+        local center_x: f64 = centers_x[corner + 1]
+        local center_y: f64 = centers_y[corner + 1]
         local start: f64 = (corner::f64) * math.pi * 0.5
         for segment = 0::i32, segments - 1 do
             local from: f64 = start + (segment::f64) * step
@@ -1721,7 +1721,7 @@ function Graphics:quadratic_curve_to(cx: f64, cy: f64, x: f64, y: f64): unit
     if not self.path_has_current then
         self:move_to(cx, cy)
     end
-    local index: i32 = #self.path_x - 1
+    local index: i32 = #self.path_x
     local from_x: f64 = self.path_x[index]
     local from_y: f64 = self.path_y[index]
     local length: f64 = math.sqrt(
@@ -1745,7 +1745,7 @@ function Graphics:cubic_curve_to(cx1: f64, cy1: f64, cx2: f64, cy2: f64, x: f64,
     if not self.path_has_current then
         self:move_to(cx1, cy1)
     end
-    local index: i32 = #self.path_x - 1
+    local index: i32 = #self.path_x
     local from_x: f64 = self.path_x[index]
     local from_y: f64 = self.path_y[index]
     local length: f64 = math.sqrt(
@@ -1772,7 +1772,7 @@ function Graphics:close_path(): unit
     if not self.path_has_current then
         return
     end
-    local index: i32 = #self.path_x - 1
+    local index: i32 = #self.path_x
     if self.path_x[index] ~= self.path_start_x or self.path_y[index] ~= self.path_start_y then
         path_append(self, self.path_start_x, self.path_start_y, false)
     end
@@ -1781,7 +1781,7 @@ end
 -- Strokes every subpath through the existing batched line implementation, so
 -- long paths retain its implicit-flush capacity behavior and transform rules.
 function Graphics:stroke(): unit
-    for index = 1::i32, #self.path_x - 1 do
+    for index = 2::i32, #self.path_x do
         if not self.path_move[index] then
             self:line(
                 self.path_x[index - 1],
@@ -1850,7 +1850,7 @@ end
 function Graphics:custom_glyph_advance(code: i32): i32
     local index: i32 = code - self.custom_font_first_code
     if index >= 0 and index < #self.custom_font_advances then
-        return self.custom_font_advances[index]
+        return self.custom_font_advances[index + 1]
     end
     return self.custom_font_advance
 end
@@ -1986,7 +1986,7 @@ function Graphics:print_aligned(text: string, x: f64, y: f64, alignment: string)
 end
 
 function Graphics:push(): unit
-    local base: i32 = #self.transforms - 6
+    local base: i32 = #self.transforms - 5
     for offset = 0::i32, 5::i32 do
         table.insert(self.transforms, self.transforms[base + offset])
     end
@@ -2015,7 +2015,7 @@ end
 
 -- Right-multiplies the current transform by [a c tx; b d ty].
 function Graphics:apply_transform(a: f64, b: f64, c: f64, d: f64, tx: f64, ty: f64): unit
-    local base: i32 = #self.transforms - 6
+    local base: i32 = #self.transforms - 5
     local ca: f64 = self.transforms[base]
     local cb: f64 = self.transforms[base + 1]
     local cc: f64 = self.transforms[base + 2]

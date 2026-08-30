@@ -1,43 +1,43 @@
--- Growable arrays: writing at index #t (the current length) appends, so the
--- Luau `t[#t+1] = x` idiom works in Waluau's 0-based indexing as `t[#t] = x`.
+-- Growable arrays use Luau-compatible 1-based authored indexing while their
+-- Wasm GC storage stays 0-based. Writing at #t + 1 appends.
 -- Writes past the length still trap (there is no hash part), and `#` always
 -- reports the logical length, never the storage capacity.
 local t: {i32} = {10, 20}
-t[#t] = 30
-t[#t] = 40
-t[#t] = 50
-t[#t] = 60
+t[#t + 1] = 30
+t[#t + 1] = 40
+t[#t + 1] = 50
+t[#t + 1] = 60
 assert(#t == 6)
-assert(t[0] == 10)
-assert(t[2] == 30)
-assert(t[5] == 60)
+assert(t[1] == 10)
+assert(t[3] == 30)
+assert(t[6] == 60)
 
 -- In-bounds writes replace without changing the length.
-t[0] = 99
-assert(t[0] == 99)
+t[1] = 99
+assert(t[1] == 99)
 assert(#t == 6)
 
 -- Empty literals start at length 0 and grow across many doublings.
 local e: {f64} = {}
 assert(#e == 0)
 for i = 1, 100 do
-    e[#e] = i * 2
+    e[#e + 1] = i * 2
 end
 assert(#e == 100)
-assert(e[0] == 2)
-assert(e[99] == 200)
+assert(e[1] == 2)
+assert(e[100] == 200)
 
 -- Appending inside a function sees the same array the caller holds.
 function push(xs: {i32}, value: i32)
-    xs[#xs] = value
+    xs[#xs + 1] = value
 end
 
 local shared: {i32} = {1}
 push(shared, 2)
 push(shared, 3)
 assert(#shared == 3)
-assert(shared[1] == 2)
-assert(shared[2] == 3)
+assert(shared[2] == 2)
+assert(shared[3] == 3)
 
 -- Nested arrays: inner arrays grow independently.
 local rows: {{i32}} = {}
@@ -46,30 +46,30 @@ while r <= 3 do
     local row: {i32} = {}
     local c: i32 = 1
     while c <= 4 do
-        row[#row] = r * 10 + c
+        row[#row + 1] = r * 10 + c
         c += 1
     end
-    rows[#rows] = row
+    rows[#rows + 1] = row
     r += 1
 end
 assert(#rows == 3)
-local first_row: {i32} = rows[0]
+local first_row: {i32} = rows[1]
 assert(#first_row == 4)
-local last_row: {i32} = rows[2]
-assert(last_row[3] == 34)
+local last_row: {i32} = rows[3]
+assert(last_row[4] == 34)
 
 -- Growth works on arrays captured by closures.
 assert(
     (function(): i32
         local log: {i32} = {}
         local record = function(value: i32)
-            log[#log] = value
+            log[#log + 1] = value
         end
         local i: i32 = 1
         while i <= 10 do
             record(i)
             i += 1
         end
-        return #log * 1000 + log[0] * 100 + log[9]
+        return #log * 1000 + log[1] * 100 + log[10]
     end)() == 10110
 )

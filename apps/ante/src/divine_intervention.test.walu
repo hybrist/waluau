@@ -44,7 +44,7 @@ describe(
                     "A"
                 }
                 for index, key in keys do
-                    expect(state:keypressed(key)):toBe(index == 9)
+                    expect(state:keypressed(key)):toBe(index == 10)
                 end
                 expect(state.active):toBe(true)
             end
@@ -83,7 +83,7 @@ describe(
                 local touched: {i32} = state:update(divine.total_seconds)
                 expect(#touched):toBe(5)
                 for index, target in touched do
-                    expect(target):toBe(index)
+                    expect(target):toBe(index - 1)
                 end
                 expect(state.active):toBe(false)
             end
@@ -100,17 +100,17 @@ describe(
                 for target = 0::i32, divine.target_count - 1 do
                     expect(rules:divine_intervention(target)):toBe(true)
                 end
-                expect(rules:view().middle[0].rank):toBe(10)
-                expect(rules:view().middle[1].rank):toBe(11)
-                expect(rules:view().middle[2].rank):toBe(12)
-                expect(rules:view().player_hand[0].card.rank):toBe(13)
-                expect(rules:view().player_hand[1].card.rank):toBe(14)
+                expect(rules:view().middle[1].rank):toBe(10)
+                expect(rules:view().middle[2].rank):toBe(11)
+                expect(rules:view().middle[3].rank):toBe(12)
+                expect(rules:view().player_hand[1].card.rank):toBe(13)
+                expect(rules:view().player_hand[2].card.rank):toBe(14)
                 for card in rules:view().middle do
                     local suit: i32 = card.suit
                     expect(suit):toBe(0)
                 end
-                expect(rules:view().player_hand[0].card.suit):toBe(0)
                 expect(rules:view().player_hand[1].card.suit):toBe(0)
+                expect(rules:view().player_hand[2].card.suit):toBe(0)
                 local pair: game.PairChoice = game.best_pair(
                     game.hand_cards(rules:view().player_hand),
                     rules:view().middle

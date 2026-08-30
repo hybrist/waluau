@@ -557,9 +557,9 @@ function Scene:blast(x: f64, y: f64): unit
     for system in self.systems do
         system:set_position(x, y)
     end
-    self.systems[0]:emit(26)
-    self.systems[1]:emit(30)
-    self.systems[2]:emit(90)
+    self.systems[1]:emit(26)
+    self.systems[2]:emit(30)
+    self.systems[3]:emit(90)
 end
 
 -- Clears live particles and rewinds the scripted motion, so a scene looks
@@ -608,7 +608,7 @@ function Scene:update(dt: f64): unit
     elseif self.kind == SCENE_SMOKE then
         -- A wandering chimney: move_to, so the plume stays connected.
         local x: f64 = WIDTH * 0.5 + math.sin(self.clock * 0.35) * 190.0
-        self.systems[0]:move_to(x, HEIGHT * 0.8)
+        self.systems[1]:move_to(x, HEIGHT * 0.8)
     elseif self.kind == SCENE_TRAIL then
         local x: f64 = self.pointer_x
         local y: f64 = self.pointer_y
@@ -706,7 +706,7 @@ function Scene:build_atlas(graphics: Graphics): unit
             particles.quad((frame::f64) * SPRITE_CELL, 0.0, SPRITE_CELL, SPRITE_CELL)
         )
     end
-    local sparkles: ParticleSystem = self.systems[0]
+    local sparkles: ParticleSystem = self.systems[1]
     sparkles:set_texture(texture)
     sparkles:set_quads(frames)
 

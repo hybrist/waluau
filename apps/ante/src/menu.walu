@@ -331,14 +331,14 @@ function State.new(): State
     for index, row in main_rows do
         table.insert(
             main_targets,
-            router:add(row, main_scope, true, row_handlers(model, "main", index))
+            router:add(row, main_scope, true, row_handlers(model, "main", index - 1))
         )
     end
     local spell_targets: {interaction.Target} = {}
     for index, row in spell_rows do
         table.insert(
             spell_targets,
-            router:add(row, spell_scope, true, row_handlers(model, "spell", index))
+            router:add(row, spell_scope, true, row_handlers(model, "spell", index - 1))
         )
     end
     local help_callbacks: interaction.Handlers = interaction.handlers()
@@ -376,11 +376,11 @@ function State:sync_scope(): unit
     elseif model.stage == "spell" then
         local desired: i32 = model.spell_cursor
         self.router:activate_scope(self.spell_scope)
-        self.router:focus(self.spell_targets[desired].key)
+        self.router:focus(self.spell_targets[desired + 1].key)
     else
         local desired: i32 = model.cursor
         self.router:activate_scope(self.main_scope)
-        self.router:focus(self.main_targets[desired].key)
+        self.router:focus(self.main_targets[desired + 1].key)
     end
 end
 

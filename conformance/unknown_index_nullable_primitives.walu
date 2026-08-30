@@ -17,35 +17,35 @@ end
 
 local ints: {i32?} = {1, nil, 3}
 assert(len_of(ints) == 3)
-assert(get(ints, 0) == 1)
-assert(get(ints, 2) == 3)
+assert(get(ints, 1) == 1)
+assert(get(ints, 3) == 3)
 
 -- Reading a nil slot back through `unknown` yields nil, not a stray box.
-local missing_int: i32? = get(ints, 1)
+local missing_int: i32? = get(ints, 2)
 assert(missing_int == nil)
-local present_int: i32? = get(ints, 0)
+local present_int: i32? = get(ints, 1)
 assert(present_int ~= nil)
 assert(present_int == 1)
 
 local uints: {u32?} = {4, nil, 6}
 assert(len_of(uints) == 3)
-assert(get(uints, 0) == 4)
-assert(get(uints, 2) == 6)
-local missing_uint: u32? = get(uints, 1)
+assert(get(uints, 1) == 4)
+assert(get(uints, 3) == 6)
+local missing_uint: u32? = get(uints, 2)
 assert(missing_uint == nil)
 
 local flags: {bool?} = {true, nil, false}
 assert(len_of(flags) == 3)
-assert(get(flags, 0) == true)
-assert(get(flags, 2) == false)
-local missing_flag: bool? = get(flags, 1)
+assert(get(flags, 1) == true)
+assert(get(flags, 3) == false)
+local missing_flag: bool? = get(flags, 2)
 assert(missing_flag == nil)
 
 local reals: {f64?} = {1.5, nil}
 assert(len_of(reals) == 2)
-assert(get(reals, 0) == 1.5)
-local missing_real: f64? = get(reals, 1)
+assert(get(reals, 1) == 1.5)
+local missing_real: f64? = get(reals, 2)
 assert(missing_real == nil)
-local present_real: f64? = get(reals, 0)
+local present_real: f64? = get(reals, 1)
 assert(present_real ~= nil)
 assert(present_real == 1.5)

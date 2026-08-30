@@ -22,18 +22,18 @@ local read_ok, read_err = pcall(
 assert(not read_ok)
 assert(read_err == "array index out of bounds")
 
--- Negative indices are out of bounds too.
+-- Zero and negative indices are out of bounds too.
 local negative_ok, negative_err = pcall(
     function(index: i32): f64
         local xs: {f64} = {1.5, 2.5}
         return xs[index]
     end,
-    -1
+    0
 )
 assert(not negative_ok)
 assert(negative_err == "array index out of bounds")
 
--- Writes past the append position (index == #t) are caught.
+-- Writes past the authored append position (index == #t + 1) are caught.
 local write_ok, write_err = pcall(
     function(index: i32): unit
         local xs: {i32} = {1, 2}
@@ -48,7 +48,7 @@ assert(write_err == "array index out of bounds")
 -- trapping.
 local dyn_ok, dyn_err = pcall(
     function(value: unknown): unknown
-        return value[0]
+        return value[1]
     end,
     5
 )
@@ -119,6 +119,6 @@ assert(buffer_err == "buffer access out of bounds")
 -- Execution continues normally after caught runtime errors: in-bounds
 -- array operations still work.
 local xs: {i32} = {1, 2, 3}
-xs[#xs] = 4
+xs[#xs + 1] = 4
 assert(#xs == 4)
-assert(xs[0] + xs[1] + xs[2] + xs[3] == 10)
+assert(xs[1] + xs[2] + xs[3] + xs[4] == 10)

@@ -87,7 +87,7 @@ function State:step(): unit
     self.dir.x = self.next_dir.x
     self.dir.y = self.next_dir.y
 
-    local head = self.snake[0]
+    local head = self.snake[1]
     local nx: i32 = head.x + self.dir.x
     local ny: i32 = head.y + self.dir.y
 
@@ -101,7 +101,7 @@ function State:step(): unit
         return
     end
 
-    table.insert(self.snake, 0, { x = nx, y = ny })
+    table.insert(self.snake, 1, { x = nx, y = ny })
     if nx == self.food.x and ny == self.food.y then
         self.score += 1
         self:spawn_food()

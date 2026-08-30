@@ -42,7 +42,7 @@ local ints: {i32}? = {9, 8}
 local no_ints: {i32}? = nil
 local int_defaults: {i32} = {1}
 assert(#(ints or int_defaults) == 2)
-assert((ints or int_defaults)[0] == 9)
+assert((ints or int_defaults)[1] == 9)
 assert(#(no_ints or int_defaults) == 1)
 
 local empty: {u32}? = {}
@@ -52,12 +52,12 @@ assert(#(empty or uint_defaults) == 0)
 local flags: {bool}? = {true, false}
 local flag_defaults: {bool} = {}
 assert(#(flags or flag_defaults) == 2)
-assert((flags or flag_defaults)[1] == false)
+assert((flags or flag_defaults)[2] == false)
 
 local nested: {{i32}}? = {{1}, {2, 3}}
 local nested_defaults: {{i32}} = {}
 assert(#(nested or nested_defaults) == 2)
-assert(#((nested or nested_defaults)[1]) == 2)
+assert(#((nested or nested_defaults)[2]) == 2)
 
 -- Through a record field and a return type, not just a local annotation.
 type Bucket = { values: {i32}? }
@@ -74,4 +74,4 @@ end
 
 assert(#(sized(0) or int_defaults) == 0)
 assert(#(sized(1) or int_defaults) == 1)
-assert((sized(1) or int_defaults)[0] == 7)
+assert((sized(1) or int_defaults)[1] == 7)

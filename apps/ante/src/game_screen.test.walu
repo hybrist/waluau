@@ -35,8 +35,8 @@ describe(
                 screen:perform_board_action(city, first)
                 screen:perform_board_action(city, second)
                 expect(#screen.ui.play_picks):toBe(2)
-                expect(screen.ui.play_picks[0]):toBe(1)
-                expect(screen.ui.play_picks[1]):toBe(3)
+                expect(screen.ui.play_picks[1]):toBe(1)
+                expect(screen.ui.play_picks[2]):toBe(3)
 
                 screen:perform_board_action(city, { kind = "commit", index = 0 })
                 expect(screen.ui.revealing):toBe(true)
@@ -97,22 +97,22 @@ describe(
 
                 screen.shop:open_for(screen.run)
                 screen.shop.cursor = 1
-                screen.shop.slots[0].sold = true
+                screen.shop.slots[1].sold = true
                 local sections: {string} = screen:snapshot()
                 local restored: game_screen.State? = game_screen.State.restore(
-                    sections[0],
                     sections[1],
                     sections[2],
                     sections[3],
-                    sections[4]
+                    sections[4],
+                    sections[5]
                 )
                 expect(restored == nil):toBe(false)
                 if restored ~= nil then
                     local live: game_screen.State = restored::game_screen.State
                     expect(live.shop.open):toBe(true)
                     expect(live.shop.cursor):toBe(1)
-                    expect(live.shop.slots[0].sold):toBe(true)
-                    expect(live.shop:snapshot()):toBe(sections[4])
+                    expect(live.shop.slots[1].sold):toBe(true)
+                    expect(live.shop:snapshot()):toBe(sections[5])
                 end
             end
         )

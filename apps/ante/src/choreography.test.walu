@@ -13,7 +13,7 @@ describe(
                 local baseline: string = state:snapshot()
 
                 state.fan_parts = {0.2, 0.4}
-                state.sheet.xs[0] = 321.0
+                state.sheet.xs[1] = 321.0
                 state:apply_power(spells.SpellKind.Firebolt, 1)
                 state:finish_reveal()
 
@@ -27,7 +27,7 @@ describe(
                 expect(#state.fan_parts):toBe(5)
                 expect(state:firebolt_pending()):toBe(false)
                 expect(state:reveal_finished()):toBe(false)
-                expect(state.sheet.xs[0]):toBe(321.0)
+                expect(state.sheet.xs[1]):toBe(321.0)
             end
         )
 

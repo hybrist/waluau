@@ -13,10 +13,10 @@ function get(v, i)
     return v[i]
 end
 
-assert(get({10, 20, 30}, 1) == 20)
-assert(get({"x", "y"}, 0) == "x")
-assert(get({1.5, 2.5}, 1) == 2.5)
-assert(get({true, false}, 0) == true)
+assert(get({10, 20, 30}, 2) == 20)
+assert(get({"x", "y"}, 1) == "x")
+assert(get({1.5, 2.5}, 2) == 2.5)
+assert(get({true, false}, 1) == true)
 
 -- These element types share the same Wasm storage representation. Dynamic
 -- dispatch must use the array's element kind rather than treating the first
@@ -27,12 +27,12 @@ local flags: {bool} = {true, false}
 assert(len_of(ints) == 2)
 assert(len_of(uints) == 2)
 assert(len_of(flags) == 2)
-assert(get(ints, 0) == 10)
-assert(get(uints, 1) == 40)
-assert(get(flags, 0) == true)
+assert(get(ints, 1) == 10)
+assert(get(uints, 2) == 40)
+assert(get(flags, 1) == true)
 
 -- Heterogeneous literals infer as {unknown} with boxed elements.
 local mixed = {true, 1, 2, 42}
 assert(#mixed == 4)
-assert(mixed[0] == true)
-assert(mixed[3] == 42)
+assert(mixed[1] == true)
+assert(mixed[4] == 42)

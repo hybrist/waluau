@@ -23,7 +23,7 @@ function install_gallery(): unit
     local gallery: Gallery = { scenes = {}, index = 0, emitting = true, shown_count = 0.0 }
 
     local function current(): Scene
-        return gallery.scenes[gallery.index]
+        return gallery.scenes[gallery.index + 1]
     end
 
     local function show(index: i32): unit

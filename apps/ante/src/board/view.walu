@@ -63,7 +63,7 @@ export opaque type State = {
 function new(state: game.View, run: run_module.View): State
     local sample: game.Card = { rank = 2, suit = 0 }
     if #state.middle > 0 then
-        sample = state.middle[0]
+        sample = state.middle[1]
     end
     local computer_views: {card.Stateful} = {}
     for _ = 0::i32, HAND_CAPACITY - 1 do
@@ -111,7 +111,7 @@ function new(state: game.View, run: run_module.View): State
         table.insert(table_nodes, node)
         table.insert(visual_children, node)
     end
-    local commit_node: ui.Node = action_view.capsules[0].root
+    local commit_node: ui.Node = action_view.capsules[1].root
     table.insert(visual_children, commit_node)
     table.insert(visual_children, player_node)
     local input: input_module.State = input_module.new(visual_children, table_nodes, commit_node)
@@ -191,7 +191,7 @@ end
 
 function State:present_computer(index: i32, value: card.Look, hidden: bool): unit
     table.insert(self.computer_hidden, hidden)
-    self.computer_views[index]:present(value)
+    self.computer_views[index + 1]:present(value)
 end
 
 function State:present_input(frame: input_module.Frame): unit
@@ -212,7 +212,7 @@ function State:present_table(
     hidden: bool
 ): unit
     table.insert(self.table_hidden, hidden)
-    self.table_views[index]:present(value, kind, clock, ash, dust)
+    self.table_views[index + 1]:present(value, kind, clock, ash, dust)
 end
 
 function State:present_modal(
@@ -291,14 +291,14 @@ function State:paint_panel(bounds: box.Rect): unit
 end
 
 function State:paint_table(index: i32, bounds: box.Rect): unit
-    if not self.table_hidden[index] then
-        self:paint_node(self.table_nodes[index], bounds)
+    if not self.table_hidden[index + 1] then
+        self:paint_node(self.table_nodes[index + 1], bounds)
     end
 end
 
 function State:paint_computer(index: i32, bounds: box.Rect): unit
-    if not self.computer_hidden[index] then
-        self:paint_node(self.computer_nodes[index], bounds)
+    if not self.computer_hidden[index + 1] then
+        self:paint_node(self.computer_nodes[index + 1], bounds)
     end
 end
 
@@ -307,8 +307,8 @@ function State:paint_player(bounds: box.Rect): unit
 end
 
 function State:paint_action(text: string, active: bool, band: box.Rect): unit
-    self.action_items[0].text = text
-    self.action_items[0].active = active
+    self.action_items[1].text = text
+    self.action_items[1].active = active
     self.action_view:present(self.action_items)
     local retained: ui.Surface? = self.surface
     assert(retained ~= nil)

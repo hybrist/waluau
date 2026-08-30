@@ -107,7 +107,7 @@ function node(children: {ui.Node}, preferred: f64): ui.Node
             end
             local left: f64 = bounds.x + (bounds.width - width) * 0.5
             for index = 0::i32, #children - 1 do
-                children[index]:draw(
+                children[index + 1]:draw(
                     surface,
                     left + (index::f64) * pitch,
                     bounds.y,

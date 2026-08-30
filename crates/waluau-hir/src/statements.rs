@@ -468,7 +468,7 @@ fn check_control_start_type(
 ///
 /// - `string.gmatch` / `pairs(...)` compile-time special forms,
 /// - a parameterless closure returning `(bool, V...)`,
-/// - an array (element, or 0-based index + element),
+/// - an array (element, or 1-based index + element),
 /// - the generic-for protocol `for ... in f, s[, c0]` — the loop calls
 ///   `f(s, control)` until the first result is nil (PIL 7.3), written as an
 ///   explicit expression list, as `next, t`, or as one expression returning

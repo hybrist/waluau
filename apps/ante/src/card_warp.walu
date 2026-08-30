@@ -134,6 +134,12 @@ function point_count(columns: i32, rows: i32): i32
     return (columns + 1) * (rows + 1)
 end
 
+-- Grid coordinates are intentionally zero-based geometry, while the backing
+-- authored arrays are a Luau sequence.
+function point_index(row: i32, column: i32, stride: i32): i32
+    return row * stride + column + 1
+end
+
 function filled(count: i32): {f64}
     local values: {f64} = {}
     for _ = 0::i32, count - 1 do
@@ -362,7 +368,7 @@ function Mesh:build(pose: Pose): unit
         for column = 0::i32, columns do
             local u: f64 = (column::f64) / (columns::f64)
             local point: Space = place_point(pose, u, v, reach, narrowing, mean)
-            local index: i32 = row * stride + column
+            local index: i32 = point_index(row, column, stride)
             self.px[index] = point.x
             self.py[index] = point.y
             self.pz[index] = point.z
@@ -370,7 +376,7 @@ function Mesh:build(pose: Pose): unit
     end
     for row = 0::i32, rows do
         for column = 0::i32, columns do
-            local index: i32 = row * stride + column
+            local index: i32 = point_index(row, column, stride)
             local left: i32 = index - 1
             local right: i32 = index + 1
             if column == 0 then

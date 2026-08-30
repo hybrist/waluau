@@ -105,7 +105,7 @@ function draw_row(
         return
     end
 
-    local slot: Slot = state.slots[index]
+    local slot: Slot = state.slots[index + 1]
     ink.text(
         surface.graphics,
         slot.item:describe(),

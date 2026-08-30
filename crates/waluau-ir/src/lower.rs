@@ -2096,10 +2096,10 @@ enum CarryUpdate {
 
 /// How `lower_indexed_for_in` binds the loop variables for each element.
 enum IndexedLoopBindings {
-    /// `for v in arr` / `for i, v in arr`: the element, or the 0-based index
+    /// `for v in arr` / `for i, v in arr`: the element, or the 1-based index
     /// plus the element.
     Array,
-    /// `for i[, v] in next, arr`: the 0-based index plus, when bound, the
+    /// `for i[, v] in next, arr`: the 1-based index plus, when bound, the
     /// element — `next` yields keys first, so one variable binds the index.
     ArrayNext,
     /// `for name in pairs(rec)` / `for name, value in pairs(rec)`: the
@@ -3345,8 +3345,7 @@ impl Builder<'_> {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
                 let array = self.lower_expr(base, scope, Some(base_ty))?;
-                let index =
-                    self.lower_expr(index, scope, Some(Type::Numeric(NumericType::I32)))?;
+                let index = self.lower_authored_array_index(index, scope)?;
                 let value = match op {
                     AssignOp::Set => {
                         self.lower_expr(value, scope, Some(element_ty.clone()))?
@@ -5545,9 +5544,16 @@ impl Builder<'_> {
                         self.bind_loop_var(ids[0], element_val, element_ty, &mut body_scope.env);
                         body_scope.types.insert(ids[0], element_ty.clone());
                     } else {
+                        let visible_index = self.emit(Instruction::Binary {
+                            op: BinaryOp::Add,
+                            left: index_phi,
+                            right: const_one,
+                            operand_ty: Type::Numeric(NumericType::I32),
+                            result_ty: Type::Numeric(NumericType::I32),
+                        });
                         self.bind_loop_var(
                             ids[0],
-                            index_phi,
+                            visible_index,
                             &Type::Numeric(NumericType::I32),
                             &mut body_scope.env,
                         );
@@ -5557,9 +5563,16 @@ impl Builder<'_> {
                     }
                 }
                 IndexedLoopBindings::ArrayNext => {
+                    let visible_index = self.emit(Instruction::Binary {
+                        op: BinaryOp::Add,
+                        left: index_phi,
+                        right: const_one,
+                        operand_ty: Type::Numeric(NumericType::I32),
+                        result_ty: Type::Numeric(NumericType::I32),
+                    });
                     self.bind_loop_var(
                         ids[0],
-                        index_phi,
+                        visible_index,
                         &Type::Numeric(NumericType::I32),
                         &mut body_scope.env,
                     );
@@ -6973,7 +6986,7 @@ impl Builder<'_> {
                 }
                 if base_ty == Type::Unknown {
                     let base = self.lower_expr(base, scope, Some(Type::Unknown))?;
-                    let index = self.lower_index_to_i32(index, scope)?;
+                    let index = self.lower_authored_array_index(index, scope)?;
                     let value = self.emit(Instruction::DynIndex { value: base, index });
                     return self.coerce_value(value, Type::Unknown, expected);
                 }
@@ -6996,7 +7009,7 @@ impl Builder<'_> {
                     .element_type()
                     .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?;
                 let array = self.lower_expr(base, scope, Some(base_ty))?;
-                let index = self.lower_index_to_i32(index, scope)?;
+                let index = self.lower_authored_array_index(index, scope)?;
                 let value = self.emit(Instruction::ArrayGet {
                     array,
                     index,
@@ -9841,6 +9854,25 @@ impl Builder<'_> {
         self.lower_expr(index, scope, Some(i32_ty))
     }
 
+    /// Convert a 1-based authored ordinary-array index to the 0-based physical
+    /// index used by growable Wasm GC array storage. Bytes and linear-memory
+    /// typed arrays deliberately bypass this helper and remain 0-based.
+    fn lower_authored_array_index(
+        &mut self,
+        index: &Expr,
+        scope: &Scope,
+    ) -> Result<ValueId, Diagnostic> {
+        let authored = self.lower_index_to_i32(index, scope)?;
+        let one = self.emit_i32_const(1);
+        Ok(self.emit(Instruction::Binary {
+            op: BinaryOp::Sub,
+            left: authored,
+            right: one,
+            operand_ty: Type::Numeric(NumericType::I32),
+            result_ty: Type::Numeric(NumericType::I32),
+        }))
+    }
+
     /// Lower a numeric expression, inserting an explicit-cast-style conversion
     /// when its own type differs from `target` (mirrors `lower_index_to_i32`).
     /// Typed-array element writes use this so any number converts on store,
@@ -10061,9 +10093,9 @@ impl Builder<'_> {
             TABLE_SORT => return Some(self.lower_table_sort(args, scope, expected)),
             _ => return None,
         }
-        if args.is_empty() || args.len() > 2 {
+        if args.is_empty() || args.len() > 4 {
             return Some(Err(Diagnostic::new(format!(
-                "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+                "{TABLE_CONCAT} expects 1 to 4 arguments, got {}",
                 args.len()
             ))));
         }
@@ -10112,6 +10144,25 @@ impl Builder<'_> {
             ty: NumericType::I32,
             literal: NumberLiteral { raw: "1".into() },
         });
+        // Authored table.concat bounds are 1-based and inclusive. A physical
+        // start of `i - 1` paired with an exclusive stop of authored `j`
+        // expresses that range directly while preserving empty i > j ranges.
+        let start = if let Some(start_expr) = args.get(2) {
+            match self.lower_authored_array_index(start_expr, scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            zero
+        };
+        let stop = if let Some(stop_expr) = args.get(3) {
+            match self.lower_index_to_i32(stop_expr, scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            len
+        };
 
         // Naive lowering: result = "" then for each element, result = result .. prefix .. element,
         // where prefix starts as "" and becomes the separator after the first element. This avoids
@@ -10123,13 +10174,13 @@ impl Builder<'_> {
         self.set_terminator(preheader, Terminator::Jump(header));
 
         self.current_block = header;
-        let index_phi = self.emit(Instruction::Phi(vec![(preheader, zero)]));
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, start)]));
         let acc_phi = self.emit(Instruction::Phi(vec![(preheader, empty_string)]));
         let prefix_phi = self.emit(Instruction::Phi(vec![(preheader, empty_string)]));
         // `len` is loop-invariant, but it must still be threaded through a phi (with a
         // trivial `+ 0` self-edge) so the local allocator's liveness analysis treats it as
         // live across the back-edge — mirrors `array_len_phi` in `lower_for_in`.
-        let len_phi = self.emit(Instruction::Phi(vec![(preheader, len)]));
+        let len_phi = self.emit(Instruction::Phi(vec![(preheader, stop)]));
         let cond = self.emit(Instruction::Binary {
             op: BinaryOp::Less,
             left: index_phi,
@@ -10382,8 +10433,8 @@ impl Builder<'_> {
     }
 
     /// `table.unpack(a [, first [, last]])` with statically-knowable bounds
-    /// lowers to a fixed tuple of element loads. The bounds are 0-based like
-    /// all Waluau array indexing and default to the whole array; the
+    /// lowers to a fixed tuple of element loads. The authored bounds are
+    /// Luau-compatible and 1-based, defaulting to the whole array; the
     /// runtime-variable arity case is not supported yet.
     fn lower_table_unpack(
         &mut self,
@@ -10458,21 +10509,66 @@ impl Builder<'_> {
             return self.coerce_value(unit, Type::Unit, expected);
         }
 
-        // table.insert(t, pos, v): append v to grow by one, then shift
-        // t[pos..n-1] one slot to the right and write v at pos (0-based; pos
-        // outside 0..=#t traps via the array bounds checks).
-        let pos = self.lower_expr(&args[1], scope, Some(i32_ty.clone()))?;
+        // table.insert(t, pos, v): authored positions are 1-based. Convert to
+        // a physical offset, append v to grow by one, then shift the tail.
+        let pos = self.lower_authored_array_index(&args[1], scope)?;
         let value = self.lower_expr(&args[2], scope, Some(element_ty.clone()))?;
         let element_ty = stored_ty;
         let n = self.emit(Instruction::ArrayLen { array });
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+
+        // Validate before growing: authored positions 1..=#t + 1 map to
+        // physical offsets 0..=#t. Without this guard, #t + 2 would become
+        // the append position after the temporary growth below and append a
+        // second element instead of failing.
+        let non_negative = self.emit(Instruction::Binary {
+            op: BinaryOp::GreaterEq,
+            left: pos,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let within_append_position = self.emit(Instruction::Binary {
+            op: BinaryOp::LessEq,
+            left: pos,
+            right: n,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let valid = self.emit(Instruction::Binary {
+            op: BinaryOp::And,
+            left: non_negative,
+            right: within_append_position,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let insert_block = self.new_block();
+        let trap_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: valid,
+                then_block: insert_block,
+                else_block: trap_block,
+            },
+        );
+        self.current_block = trap_block;
+        let error = self.emit(Instruction::String("array index out of bounds".to_string()));
+        self.emit(Instruction::Throw { error });
+        self.set_terminator(
+            trap_block,
+            Terminator::Unreachable {
+                span: args[1].span(),
+            },
+        );
+        self.current_block = insert_block;
         self.emit(Instruction::ArraySet {
             array,
             index: n,
             value,
             element_ty: element_ty.clone(),
         });
-        let zero = self.emit_i32_const(0);
-        let one = self.emit_i32_const(1);
 
         // for i = n down to pos + 1: t[i] = t[i-1]
         let preheader = self.current_block;
@@ -10571,7 +10667,7 @@ impl Builder<'_> {
         let zero = self.emit_i32_const(0);
         let one = self.emit_i32_const(1);
         let pos = if let Some(pos_arg) = args.get(1) {
-            self.lower_expr(pos_arg, scope, Some(i32_ty.clone()))?
+            self.lower_authored_array_index(pos_arg, scope)?
         } else {
             self.emit(Instruction::Binary {
                 op: BinaryOp::Sub,
@@ -11184,9 +11280,9 @@ impl Builder<'_> {
             }
             _ => {}
         }
-        if args.is_empty() || args.len() > 2 {
+        if args.is_empty() || args.len() > 4 {
             return Some(Err(Diagnostic::new(format!(
-                "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+                "{TABLE_CONCAT} expects 1 to 4 arguments, got {}",
                 args.len()
             ))));
         }
@@ -11211,6 +11307,15 @@ impl Builder<'_> {
                     ))));
                 }
                 Err(error) => return Some(Err(error)),
+            }
+        }
+        for bound in args.iter().skip(2) {
+            if let Err(error) = self.infer_expr_type(
+                bound,
+                types,
+                Some(Type::Numeric(NumericType::I32)),
+            ) {
+                return Some(Err(error));
             }
         }
         Some(Ok(Type::String))

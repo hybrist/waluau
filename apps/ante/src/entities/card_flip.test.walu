@@ -20,18 +20,18 @@ function built(progress: f64): card_warp.Mesh
 end
 
 function at(column: i32, row: i32): i32
-    return row * (COLUMNS + 1) + column
+    return row * (COLUMNS + 1) + column + 1
 end
 
 -- The card's projected footprint, as the extremes of the grid.
 type Extent = { low_x: f64, high_x: f64, low_y: f64, high_y: f64 }
 
 function extent(mesh: card_warp.Mesh): Extent
-    local low_x: f64 = mesh.xs[0]
-    local high_x: f64 = mesh.xs[0]
-    local low_y: f64 = mesh.ys[0]
-    local high_y: f64 = mesh.ys[0]
-    for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+    local low_x: f64 = mesh.xs[1]
+    local high_x: f64 = mesh.xs[1]
+    local low_y: f64 = mesh.ys[1]
+    local high_y: f64 = mesh.ys[1]
+    for index = 1::i32, card_warp.point_count(COLUMNS, ROWS) do
         if mesh.xs[index] < low_x then
             low_x = mesh.xs[index]
         end
@@ -86,13 +86,13 @@ describe(
             function(): unit
                 for step = 0::i32, SAMPLES do
                     local mesh: card_warp.Mesh = built((step::f64) / (SAMPLES::f64))
-                    for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                    for index = 1::i32, card_warp.point_count(COLUMNS, ROWS) do
                         expect(mesh.pz[index]):toBeGreaterThanOrEqual(-0.000001)
                     end
                 end
                 local standing: card_warp.Mesh = built(0.5)
-                local lowest: f64 = standing.pz[0]
-                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                local lowest: f64 = standing.pz[1]
+                for index = 1::i32, card_warp.point_count(COLUMNS, ROWS) do
                     if standing.pz[index] < lowest then
                         lowest = standing.pz[index]
                     end
@@ -161,7 +161,7 @@ describe(
                     expect(footprint.high_x):toBeLessThan(X + card.width + 12.0)
                 end
                 local standing: card_warp.Mesh = built(0.5)
-                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                for index = 1::i32, card_warp.point_count(COLUMNS, ROWS) do
                     expect(standing.xs[index]):toBeCloseTo(X + card.width * 0.5, 6)
                 end
             end

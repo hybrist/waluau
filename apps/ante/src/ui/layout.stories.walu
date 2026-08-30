@@ -130,8 +130,8 @@ function draw_flow(
     graphics:set_color("#52525b")
     graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
     for index = 0::i32, #flow.leaves - 1 do
-        local rect: layout.Rect = flow.leaves[index]:rectangle()
-        local color: string = COLORS[index % #COLORS]
+        local rect: layout.Rect = flow.leaves[index + 1]:rectangle()
+        local color: string = COLORS[index % #COLORS + 1]
         graphics:set_color(color .. "33")
         graphics:fill_rectangle(rect.x, rect.y, rect.width, rect.height)
         graphics:set_color(color)

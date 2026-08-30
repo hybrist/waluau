@@ -7,7 +7,7 @@ end
 
 function nested_trailing(): i32
     local points: {{ x: i32, y: i32 }} = {{ x = 1, y = 2 }, { x = 3, y = 4 }}
-    return points[1].x
+    return points[2].x
 end
 
 function record_trailing(): i32

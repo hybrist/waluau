@@ -2,13 +2,6 @@
 -- tests/conformance/strings.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only strings.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
--- Still failing: string.split itself now works, but the eq helper's 1-based
--- array reads trap under Waluau's documented 0-based array indexing. See the
--- passing PATCHED companion strings.146.patched.walu.
---
 -- Split from conformance/luau/strings.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.
 

@@ -144,26 +144,26 @@ fn expr_i32_literal(expr: &Expr) -> Option<i32> {
     }
 }
 
-/// Static 0-based element indices produced by a `table.unpack` call, from
+/// Static physical element indices produced by a `table.unpack` call, from
 /// (in priority order) literal bounds, a statically sized array argument, or
-/// the expected multi-value arity. Waluau arrays are 0-based, so the bounds
-/// are too: the defaults are `first = 0` and `last = #a - 1`. Mirrors the
-/// HIR-side helper of the same name.
+/// the expected multi-value arity. Authored bounds are 1-based, while the
+/// returned indices address 0-based Wasm GC storage. Mirrors the HIR-side
+/// helper of the same name.
 fn table_unpack_static_indices(
     args: &[Expr],
     expected: Option<&Type>,
 ) -> Result<Vec<i32>, Diagnostic> {
     let start = match args.get(1) {
-        None => 0,
+        None => 1,
         Some(arg) => expr_i32_literal(arg).ok_or_else(|| {
             Diagnostic::new(
                 "table.unpack requires literal bounds (runtime-variable table.unpack is not supported yet)",
             )
         })?,
     };
-    if start < 0 {
+    if start < 1 {
         return Err(Diagnostic::new(
-            "table.unpack bounds are 0-based and must be non-negative",
+            "table.unpack bounds are 1-based and must be positive",
         ));
     }
     if let Some(last) = args.get(2) {
@@ -175,16 +175,16 @@ fn table_unpack_static_indices(
         return Ok(if end < start {
             Vec::new()
         } else {
-            (start..=end).collect()
+            (start..=end).map(|index| index - 1).collect()
         });
     }
     if let Some(len) = expr_static_array_len(&args[0]) {
-        return Ok((start..len).collect());
+        return Ok((start..=len).map(|index| index - 1).collect());
     }
     if let Some(Type::Multi(types)) = expected {
         let count = i32::try_from(types.len())
             .map_err(|_| Diagnostic::new("table.unpack expected multi-value arity is too large"))?;
-        return Ok((start..start + count).collect());
+        return Ok((start..start + count).map(|index| index - 1).collect());
     }
     Err(Diagnostic::new(
         "table.unpack requires literal bounds, a statically sized array argument, or an \

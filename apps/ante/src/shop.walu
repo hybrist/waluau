@@ -31,7 +31,7 @@ function roll_slots(run: RunState): {Slot}
     local items: {Item} = all_scroll_items(run)
     for _ = 1, DEFAULT_SHOP_ITEM_COUNT do
         local index: i32 = math.random(#items) - 1
-        local item: Item = table.remove(items, index)
+        local item: Item = table.remove(items, index + 1)
         table.insert(slots, { item = item, price = item:base_price(run), sold = false })
     end
     return slots
@@ -57,7 +57,7 @@ function State:slot_available(run: RunState, index: i32): bool
     if index < 0 or index >= #self.slots then
         return false
     end
-    local slot: Slot = self.slots[index]
+    local slot: Slot = self.slots[index + 1]
     return not slot.sold and slot.price <= run.gold and slot.item:can_use(run)
 end
 
@@ -70,7 +70,7 @@ function State:confirm_choice(run: RunState): bool
         return false
     end
 
-    local slot: Slot = self.slots[self.cursor]
+    local slot: Slot = self.slots[self.cursor + 1]
     if not run:spend(slot.price) then
         return false
     end

@@ -433,10 +433,10 @@ describe('browser conformance', () => {
       local state: shop.State = shop.new_state()
       shop.open_for(state)
       assert(#state.slots == 2)
-      assert(shop.kind_of(state.slots[0]) == 1)
-      assert(shop.kind_of(state.slots[1]) == 102)
-      assert(state.slots[0].goods is Upgrade)
-      assert(state.slots[1].price == 7)
+      assert(shop.kind_of(state.slots[1]) == 1)
+      assert(shop.kind_of(state.slots[2]) == 102)
+      assert(state.slots[1].goods is Upgrade)
+      assert(state.slots[2].price == 7)
     `;
     await expect(
       compileAndInstantiate({ '/shop.walu': shop, '/main.walu': main }, '/main.walu'),
@@ -456,17 +456,17 @@ describe('browser conformance', () => {
 
       local changed = DEFAULTS
       changed.inner.value = 55
-      changed.values[0] = 55
+      changed.values[1] = 55
       local unchanged = DEFAULTS
       assert(unchanged.inner.value == BASE)
-      assert(unchanged.values[0] == BASE)
+      assert(unchanged.values[1] == BASE)
 
       function defaults_are_independent(): bool
           local first: Defaults = DEFAULTS
           first.inner.value = 99
-          first.values[0] = 99
+          first.values[1] = 99
           local second: Defaults = DEFAULTS
-          return second.inner.value == BASE and second.values[0] == BASE
+          return second.inner.value == BASE and second.values[1] == BASE
       end
 
       return {
@@ -480,10 +480,10 @@ describe('browser conformance', () => {
       assert(defaults.defaults_are_independent())
       local first = defaults.DEFAULTS
       first.inner.value = 101
-      first.values[0] = 101
+      first.values[1] = 101
       local second = defaults.DEFAULTS
       assert(second.inner.value == 7)
-      assert(second.values[0] == 7)
+      assert(second.values[1] == 7)
     `;
 
     await expect(

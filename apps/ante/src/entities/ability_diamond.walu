@@ -103,7 +103,7 @@ function draw_slot(surface: ui.Surface, state: game.View, bounds: box.Rect, slot
     local edge: string = EMPTY_EDGE
     local caption: string = EMPTY_INK
     if occupied then
-        local spell: game.Spell = state.spells[slot]
+        local spell: game.Spell = state.spells[slot + 1]
         edge = spell_launch.color(spell.kind)
         caption = edge
         if state.player_points < spell.cost then
@@ -120,7 +120,7 @@ function draw_slot(surface: ui.Surface, state: game.View, bounds: box.Rect, slot
     graphics:fill_circle(x, y, SLOT_RADIUS - SLOT_INSET)
 
     if occupied then
-        local spell: game.Spell = state.spells[slot]
+        local spell: game.Spell = state.spells[slot + 1]
         ink.text_centered(
             graphics,
             short_name(spell.kind),

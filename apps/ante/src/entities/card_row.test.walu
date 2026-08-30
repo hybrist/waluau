@@ -18,11 +18,11 @@ describe(
                 local slots = card_row.slot_rects(3, card_row.flat_pitch, bounds)
 
                 expect(#slots):toBe(3)
-                expect(slots[0].x):toBe(0.0)
-                expect(slots[1].x):toBe(116.0)
-                expect(slots[2].x):toBe(232.0)
-                expect(slots[0].y):toBe(40.0)
-                expect(slots[2].x + slots[2].width):toBe(324.0)
+                expect(slots[1].x):toBe(0.0)
+                expect(slots[2].x):toBe(116.0)
+                expect(slots[3].x):toBe(232.0)
+                expect(slots[1].y):toBe(40.0)
+                expect(slots[3].x + slots[3].width):toBe(324.0)
             end
         )
 
@@ -54,9 +54,9 @@ describe(
                     box.rect(-394.0, 0.0, 788.0, card.height)
                 )
 
-                expect(hand[1].x):toBe(table_cards[0].x)
-                expect(hand[3].x):toBe(table_cards[2].x)
-                expect(hand[5].x):toBe(table_cards[4].x)
+                expect(hand[2].x):toBe(table_cards[1].x)
+                expect(hand[4].x):toBe(table_cards[3].x)
+                expect(hand[6].x):toBe(table_cards[5].x)
             end
         )
 
@@ -74,8 +74,8 @@ describe(
                     card_row.pitch_in(tight, 3, card_row.flat_pitch),
                     tight
                 )
-                expect(slots[0].x):toBe(0.0)
-                expect(slots[2].x + slots[2].width):toBe(300.0)
+                expect(slots[1].x):toBe(0.0)
+                expect(slots[3].x + slots[3].width):toBe(300.0)
             end
         )
 
@@ -89,9 +89,9 @@ describe(
                 expect(pitch):toBe(46.0)
 
                 local slots = card_row.slot_rects(7, pitch, bounds)
-                expect(slots[0].x):toBe(0.0)
-                expect(slots[6].x + slots[6].width):toBe(368.0)
-                expect(slots[1].x - slots[0].x):toBe(46.0)
+                expect(slots[1].x):toBe(0.0)
+                expect(slots[7].x + slots[7].width):toBe(368.0)
+                expect(slots[2].x - slots[1].x):toBe(46.0)
             end
         )
     end

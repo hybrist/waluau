@@ -1,29 +1,49 @@
 -- table library on growable arrays: insert (append and positional), remove
--- (last and positional), sort (default and comparator), and getn. Positions
--- are 0-based like all Waluau array indexing.
+-- (last and positional), sort (default and comparator), and getn. Authored
+-- positions are Luau-compatible and 1-based.
 -- table.insert(t, v) appends.
 local t: {i32} = {3, 1}
 table.insert(t, 2)
 assert(#t == 3)
-assert(t[2] == 2)
+assert(t[3] == 2)
 assert(table.getn(t) == 3)
 
 -- table.insert(t, pos, v) shifts the tail right.
-table.insert(t, 0, 99)
+table.insert(t, 1, 99)
 assert(#t == 4)
-assert(t[0] == 99)
-assert(t[1] == 3)
-assert(t[2] == 1)
-assert(t[3] == 2)
-table.insert(t, 4, 55)
+assert(t[1] == 99)
+assert(t[2] == 3)
+assert(t[3] == 1)
+assert(t[4] == 2)
+table.insert(t, 5, 55)
 assert(#t == 5)
-assert(t[4] == 55)
+assert(t[5] == 55)
+
+-- Positional insertion accepts exactly 1 through #t + 1 and validates the
+-- position before growing the array.
+local insert_low_ok, insert_low_err = pcall(
+    function(): unit
+        table.insert(t, 0, 44)
+    end
+)
+assert(not insert_low_ok)
+assert(insert_low_err == "array index out of bounds")
+assert(#t == 5)
+
+local insert_high_ok, insert_high_err = pcall(
+    function(): unit
+        table.insert(t, #t + 2, 66)
+    end
+)
+assert(not insert_high_ok)
+assert(insert_high_err == "array index out of bounds")
+assert(#t == 5)
 
 -- table.remove(t, pos) returns the removed element and shifts left.
-local removed: i32 = table.remove(t, 0)
+local removed: i32 = table.remove(t, 1)
 assert(removed == 99)
 assert(#t == 4)
-assert(t[0] == 3)
+assert(t[1] == 3)
 
 -- table.remove(t) removes the last element.
 local last: i32 = table.remove(t)
@@ -33,12 +53,12 @@ assert(#t == 3)
 -- Default sort is ascending.
 local u: {i32} = {5, 2, 9, 1, 7, 3}
 table.sort(u)
-assert(u[0] == 1)
-assert(u[1] == 2)
-assert(u[2] == 3)
-assert(u[3] == 5)
-assert(u[4] == 7)
-assert(u[5] == 9)
+assert(u[1] == 1)
+assert(u[2] == 2)
+assert(u[3] == 3)
+assert(u[4] == 5)
+assert(u[5] == 7)
+assert(u[6] == 9)
 
 -- Comparator sort (descending).
 table.sort(
@@ -47,25 +67,32 @@ table.sort(
         return a > b
     end
 )
-assert(u[0] == 9)
-assert(u[1] == 7)
-assert(u[2] == 5)
-assert(u[3] == 3)
-assert(u[4] == 2)
-assert(u[5] == 1)
+assert(u[1] == 9)
+assert(u[2] == 7)
+assert(u[3] == 5)
+assert(u[4] == 3)
+assert(u[5] == 2)
+assert(u[6] == 1)
 
 -- Sorting f64 and string arrays.
 local f: {f64} = {2.5, 0.5, 1.5}
 table.sort(f)
-assert(f[0] == 0.5)
-assert(f[1] == 1.5)
-assert(f[2] == 2.5)
+assert(f[1] == 0.5)
+assert(f[2] == 1.5)
+assert(f[3] == 2.5)
 
 local s: {string} = {"pear", "apple", "orange"}
 table.sort(s)
-assert(s[0] == "apple")
-assert(s[1] == "orange")
-assert(s[2] == "pear")
+assert(s[1] == "apple")
+assert(s[2] == "orange")
+assert(s[3] == "pear")
+
+-- table.concat's optional inclusive positions are authored 1-based too.
+assert(table.concat(s, ":", 2, 3) == "orange:pear")
+local concat_start: i32 = 1
+local concat_stop: i32 = 2
+assert(table.concat(s, "-", concat_start, concat_stop) == "apple-orange")
+assert(table.concat(s, ",", 3, 2) == "")
 
 -- Sorting an empty or single-element array is a no-op.
 local empty: {i32} = {}
@@ -73,7 +100,7 @@ table.sort(empty)
 assert(#empty == 0)
 local single: {i32} = {42}
 table.sort(single)
-assert(single[0] == 42)
+assert(single[1] == 42)
 
 -- Sort remains correct after growth via insert.
 local grown: {i32} = {}
@@ -84,18 +111,18 @@ while i > 0 do
 end
 assert(#grown == 10)
 table.sort(grown)
-assert(grown[0] == 1)
-assert(grown[9] == 10)
+assert(grown[1] == 1)
+assert(grown[10] == 10)
 
 -- remove/insert round-trip keeps the array usable inside functions.
 function rotate(xs: {i32})
-    local head: i32 = table.remove(xs, 0)
+    local head: i32 = table.remove(xs, 1)
     table.insert(xs, head)
 end
 
 local ring: {i32} = {1, 2, 3}
 rotate(ring)
-assert(ring[0] == 2)
-assert(ring[1] == 3)
-assert(ring[2] == 1)
+assert(ring[1] == 2)
+assert(ring[2] == 3)
+assert(ring[3] == 1)
 assert(#ring == 3)

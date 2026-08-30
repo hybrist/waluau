@@ -524,7 +524,7 @@ function ParticleSystem:refresh_offset(): unit
         width = texture.width::f64
         height = texture.height::f64
         if #self.quads > 0 then
-            local first: Quad = self.quads[0]
+            local first: Quad = self.quads[1]
             width = first.width
             height = first.height
         end
@@ -757,14 +757,14 @@ end
 
 function ParticleSystem:insert_particle(particle: Particle): unit
     if self.insert_mode == INSERT_BOTTOM then
-        table.insert(self.alive, 0, particle)
+        table.insert(self.alive, 1, particle)
     elseif self.insert_mode == INSERT_RANDOM then
         local slots: i32 = #self.alive + 1
         local position: i32 = math.floor(self:random() * (slots::f64))::i32
         if position >= slots then
             position = slots - 1
         end
-        table.insert(self.alive, position, particle)
+        table.insert(self.alive, position + 1, particle)
     else
         table.insert(self.alive, particle)
     end
@@ -970,10 +970,10 @@ function ParticleSystem:update(dt: f64): unit
 
     local index: i32 = 0
     while index < #self.alive do
-        local particle: Particle = self.alive[index]
+        local particle: Particle = self.alive[index + 1]
         particle.life -= dt
         if particle.life <= 0.0 then
-            table.remove(self.alive, index)
+            table.remove(self.alive, index + 1)
             table.insert(self.free, particle)
         else
             advance_particle(particle, dt, self.relative_rotation)
@@ -1026,10 +1026,10 @@ function size_at(sizes: {f64}, particle: Particle, t: f64): f64
     end
     local index: i32 = math.floor(position)::i32
     if index >= last then
-        return sizes[last]
+        return sizes[last + 1]
     end
     local blend: f64 = position - (index::f64)
-    return sizes[index] * (1.0 - blend) + sizes[index + 1] * blend
+    return sizes[index + 1] * (1.0 - blend) + sizes[index + 2] * blend
 end
 
 function color_at(colors: {Color}, particle: Particle, t: f64): (f64, f64, f64, f64)
@@ -1042,12 +1042,12 @@ function color_at(colors: {Color}, particle: Particle, t: f64): (f64, f64, f64, 
     end
     local index: i32 = math.floor(position)::i32
     if index >= last then
-        local final: Color = colors[last]
+        local final: Color = colors[last + 1]
         return final.red, final.green, final.blue, final.alpha
     end
     local blend: f64 = position - (index::f64)
-    local from: Color = colors[index]
-    local to: Color = colors[index + 1]
+    local from: Color = colors[index + 1]
+    local to: Color = colors[index + 2]
     return from.red * (1.0 - blend) + to.red * blend, from.green * (1.0 - blend) + to.green * blend, from.blue * (1.0 - blend) + to.blue * blend, from.alpha * (1.0 - blend) + to.alpha * blend
 end
 
@@ -1098,7 +1098,7 @@ function ParticleSystem:draw_sprites(
     local source_width: f64 = base_width
     local source_height: f64 = base_height
     if frames > 0 then
-        local first: Quad = self.quads[0]
+        local first: Quad = self.quads[1]
         base_width = first.width
         base_height = first.height
     end
@@ -1119,7 +1119,7 @@ function ParticleSystem:draw_sprites(
             elseif frame >= frames then
                 frame = frames - 1
             end
-            local region: Quad = self.quads[frame]
+            local region: Quad = self.quads[frame + 1]
             source_x = region.x
             source_y = region.y
             source_width = region.width
@@ -1277,28 +1277,28 @@ function ParticleSystem:particle_x(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    return self.alive[index].x
+    return self.alive[index + 1].x
 end
 
 function ParticleSystem:particle_y(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    return self.alive[index].y
+    return self.alive[index + 1].y
 end
 
 function ParticleSystem:particle_velocity_x(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    return self.alive[index].velocity_x
+    return self.alive[index + 1].velocity_x
 end
 
 function ParticleSystem:particle_velocity_y(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    return self.alive[index].velocity_y
+    return self.alive[index + 1].velocity_y
 end
 
 -- The drawn angle, which includes the direction of travel when relative
@@ -1307,7 +1307,7 @@ function ParticleSystem:particle_angle(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    return self.alive[index].angle
+    return self.alive[index + 1].angle
 end
 
 -- How far through its life the particle is, from 0.0 at birth to 1.0.
@@ -1315,7 +1315,7 @@ function ParticleSystem:particle_progress(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    local particle: Particle = self.alive[index]
+    local particle: Particle = self.alive[index + 1]
     return 1.0 - particle.life / particle.lifetime
 end
 
@@ -1323,7 +1323,7 @@ function ParticleSystem:particle_life(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    return self.alive[index].life
+    return self.alive[index + 1].life
 end
 
 -- The size curve sampled for this particle right now, including its own
@@ -1332,7 +1332,7 @@ function ParticleSystem:particle_size(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    local particle: Particle = self.alive[index]
+    local particle: Particle = self.alive[index + 1]
     return size_at(self.sizes, particle, 1.0 - particle.life / particle.lifetime)
 end
 
@@ -1342,7 +1342,7 @@ function ParticleSystem:particle_color_red(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    local particle: Particle = self.alive[index]
+    local particle: Particle = self.alive[index + 1]
     local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
         self.colors,
         particle,
@@ -1355,7 +1355,7 @@ function ParticleSystem:particle_color_green(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    local particle: Particle = self.alive[index]
+    local particle: Particle = self.alive[index + 1]
     local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
         self.colors,
         particle,
@@ -1368,7 +1368,7 @@ function ParticleSystem:particle_color_blue(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    local particle: Particle = self.alive[index]
+    local particle: Particle = self.alive[index + 1]
     local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
         self.colors,
         particle,
@@ -1381,7 +1381,7 @@ function ParticleSystem:particle_color_alpha(index: i32): f64
     if index < 0 or index >= #self.alive then
         return 0.0
     end
-    local particle: Particle = self.alive[index]
+    local particle: Particle = self.alive[index + 1]
     local red: f64, green: f64, blue: f64, alpha: f64 = color_at(
         self.colors,
         particle,

@@ -4,10 +4,10 @@
 -- iterator type is `(S, C) -> (K?, V...)`; the loop binds `k: K` non-nil.
 local words = {"alpha", "beta", "gamma"}
 
--- A hand-written stateless ipairs over waluau's 0-based arrays.
+-- A hand-written stateless ipairs over Waluau's 1-based arrays.
 function iter(a: {string}, i: i32): (i32?, string)
     local n = i + 1
-    if n < #a then
+    if n <= #a then
         return n, a[n]
     end
     return nil, ""
@@ -15,16 +15,16 @@ end
 
 local seen = ""
 local isum: i32 = 0
-for i, v in iter, words, -1 do
+for i, v in iter, words, 0 do
     seen = seen .. v
     isum = isum + i
 end
 assert(seen == "alphabetagamma")
-assert(isum == 3)
+assert(isum == 6)
 
 -- Binding only the control variable.
 local count: i32 = 0
-for i in iter, words, -1 do
+for i in iter, words, 0 do
     count = count + 1
 end
 assert(count == 3)
@@ -32,7 +32,7 @@ assert(count == 3)
 -- A factory returning the (iterator, state, control) triple: the value form
 -- of the protocol, i.e. a hand-written ipairs.
 function my_ipairs(a: {string}): (({string}, i32) -> (i32?, string), {string}, i32)
-    return iter, a, -1
+    return iter, a, 0
 end
 
 local via_factory = ""
@@ -113,9 +113,9 @@ assert(scaled == 600)
 -- Nested protocol loops over the same iterator value stay independent.
 local f = iter
 local grid: i32 = 0
-for i, v in f, words, -1 do
-    for j, w in f, words, -1 do
-        grid = grid + (i + 1) * (j + 1)
+for i, v in f, words, 0 do
+    for j, w in f, words, 0 do
+        grid = grid + i * j
     end
 end
 assert(grid == 36)
@@ -123,7 +123,7 @@ assert(grid == 36)
 -- Inside a generic function the loop survives monomorphization.
 function count_with<T>(tag: T, a: {string}): i32
     local n: i32 = 0
-    for i, v in iter, a, -1 do
+    for i, v in iter, a, 0 do
         n = n + 1
     end
     return n

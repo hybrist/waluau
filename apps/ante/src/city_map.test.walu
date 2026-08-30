@@ -48,24 +48,22 @@ describe(
 
                 expect(#first.vertical_streets):toBeGreaterThan(5)
                 expect(#first.horizontal_streets):toBeGreaterThan(5)
-                expect(first.vertical_streets[#first.vertical_streets - 1]):toBe(city_map.width)
-                expect(
-                    first.horizontal_streets[#first.horizontal_streets - 1]
-                ):toBe(city_map.height)
+                expect(first.vertical_streets[#first.vertical_streets]):toBe(city_map.width)
+                expect(first.horizontal_streets[#first.horizontal_streets]):toBe(city_map.height)
                 expect(
                     #first.buildings
                 ):toBe((#first.vertical_streets - 1) * (#first.horizontal_streets - 1))
                 expect(#second.vertical_streets):toBe(#first.vertical_streets)
                 expect(#second.horizontal_streets):toBe(#first.horizontal_streets)
-                for index = 0::i32, #first.vertical_streets - 1 do
+                for index = 1::i32, #first.vertical_streets do
                     expect(second.vertical_streets[index]):toBe(first.vertical_streets[index])
                 end
-                for index = 0::i32, #first.horizontal_streets - 1 do
+                for index = 1::i32, #first.horizontal_streets do
                     expect(second.horizontal_streets[index]):toBe(first.horizontal_streets[index])
                 end
                 for index = 0::i32, first:stop_count() - 1 do
-                    expect(second.stops[index].x):toBe(first.stops[index].x)
-                    expect(second.stops[index].y):toBe(first.stops[index].y)
+                    expect(second.stops[index + 1].x):toBe(first.stops[index + 1].x)
+                    expect(second.stops[index + 1].y):toBe(first.stops[index + 1].y)
                 end
             end
         )
@@ -81,7 +79,7 @@ describe(
 
                 expect(city:stop_count()):toBeGreaterThanOrEqual(24)
                 for index = 0::i32, city:stop_count() - 1 do
-                    local stop: city_map.Stop = city.stops[index]
+                    local stop: city_map.Stop = city.stops[index + 1]
                     expect(stop.duel):toBe(index % 2 == 1)
                     expect(contains(city.vertical_streets, stop.x)):toBe(true)
                     expect(contains(city.horizontal_streets, stop.y)):toBe(true)
@@ -103,8 +101,8 @@ describe(
                 -- Each leg turns a corner and covers ground: one axis changes, the
                 -- other holds, and the two stops are never the same corner.
                 for index = 0::i32, city:stop_count() - 2 do
-                    local from: city_map.Stop = city.stops[index]
-                    local into: city_map.Stop = city.stops[index + 1]
+                    local from: city_map.Stop = city.stops[index + 1]
+                    local into: city_map.Stop = city.stops[index + 2]
                     expect(from.x == into.x or from.y == into.y):toBe(true)
                     expect(from.x == into.x and from.y == into.y):toBe(false)
                 end

@@ -50,11 +50,11 @@ mesh.verts[5] = 7.5
 assert(mesh.verts[5] == 7.5)
 
 local pool: {Float32Array} = {}
-pool[0] = {9}::Float32Array
-pool[1] = Float32Array.create(2)
+pool[1] = {9}::Float32Array
+pool[2] = Float32Array.create(2)
 assert(#pool == 2)
-assert(pool[0][0] == 9)
-assert(#pool[1] == 2)
+assert(pool[1][0] == 9)
+assert(#pool[2] == 2)
 
 -- Compound assignment reads, computes, and stores.
 local acc = {-1.5, 0, 1.5}::Float64Array

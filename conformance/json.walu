@@ -20,7 +20,7 @@ if decoded ~= nil then
     assert(decoded.name == original.name)
     assert(decoded.note == nil)
     assert(#decoded.scores == 3)
-    assert(decoded.scores[2] == 42)
+    assert(decoded.scores[3] == 42)
 else
     error(decode_error)
 end

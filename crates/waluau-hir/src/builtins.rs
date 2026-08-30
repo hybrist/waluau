@@ -1234,9 +1234,9 @@ pub(super) fn infer_table_builtin_call(
         TABLE_CONCAT => {}
         _ => return None,
     }
-    if args.is_empty() || args.len() > 2 {
+    if args.is_empty() || args.len() > 4 {
         return Some(Err(Diagnostic::new(format!(
-            "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+            "{TABLE_CONCAT} expects 1 to 4 arguments, got {}",
             args.len()
         ))));
     }
@@ -1278,6 +1278,17 @@ pub(super) fn infer_table_builtin_call(
                 ))));
             }
             Err(error) => return Some(Err(error)),
+        }
+    }
+    for bound in args.iter().skip(2) {
+        if let Err(error) = super::expressions::infer_expr(
+            bound,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(Type::Numeric(NumericType::I32)),
+        ) {
+            return Some(Err(error));
         }
     }
     Some(coerce_type(Type::String, expected))
@@ -1850,25 +1861,25 @@ pub(super) fn string_byte_static_count(
     })
 }
 
-/// Static 0-based element indices produced by a `table.unpack` call, from
+/// Static physical element indices produced by a `table.unpack` call, from
 /// (in priority order) literal bounds, a statically sized array argument, or
-/// the expected multi-value arity. Waluau arrays are 0-based, so the bounds
-/// are too: the defaults are `first = 0` and `last = #a - 1`.
+/// the expected multi-value arity. Authored bounds are 1-based, while the
+/// returned indices address 0-based Wasm GC storage.
 pub(super) fn table_unpack_static_indices(
     args: &[Expr],
     expected: Option<&Type>,
 ) -> Result<Vec<i32>, Diagnostic> {
     let start = match args.get(1) {
-        None => 0,
+        None => 1,
         Some(arg) => expr_i32_literal(arg).ok_or_else(|| {
             Diagnostic::new(
                 "table.unpack requires literal bounds (runtime-variable table.unpack is not supported yet)",
             )
         })?,
     };
-    if start < 0 {
+    if start < 1 {
         return Err(Diagnostic::new(
-            "table.unpack bounds are 0-based and must be non-negative",
+            "table.unpack bounds are 1-based and must be positive",
         ));
     }
     if let Some(last) = args.get(2) {
@@ -1880,16 +1891,16 @@ pub(super) fn table_unpack_static_indices(
         return Ok(if end < start {
             Vec::new()
         } else {
-            (start..=end).collect()
+            (start..=end).map(|index| index - 1).collect()
         });
     }
     if let Some(len) = expr_static_array_len(&args[0]) {
-        return Ok((start..len).collect());
+        return Ok((start..=len).map(|index| index - 1).collect());
     }
     if let Some(Type::Multi(types)) = expected {
         let count = i32::try_from(types.len())
             .map_err(|_| Diagnostic::new("table.unpack expected multi-value arity is too large"))?;
-        return Ok((start..start + count).collect());
+        return Ok((start..start + count).map(|index| index - 1).collect());
     }
     Err(Diagnostic::new(
         "table.unpack requires literal bounds, a statically sized array argument, or an \

@@ -24,7 +24,7 @@ function draw_at(surface: ui.Surface, cards: {game.Card}, count: i32, x: f64, y:
     if count > 6 then
         card.fill_silhouette(graphics, x - 3.0, y + 3.0, "#15151c")
     end
-    card.draw_face(surface, card.plain(cards[count - 1]), x, y)
+    card.draw_face(surface, card.plain(cards[count]), x, y)
 end
 
 type PilePresentation = { cards: {game.Card}, count: i32 }

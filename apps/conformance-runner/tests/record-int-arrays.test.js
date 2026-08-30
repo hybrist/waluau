@@ -3,7 +3,7 @@ import { compileAndInstantiateWithExports } from '../src/runner.js';
 
 // Mirrors the engine's font flow: font_from_resource builds an {i32} array
 // from host calls, hands it over inside a record, set_font_resource copies it
-// into a mutable state record, and a state method looks values up 0-based.
+// into a mutable state record, and a state method looks values up 1-based.
 const probeSource = `
 type Font = {
     first_code: i32,
@@ -38,7 +38,7 @@ end
 function State:glyph_advance(code: i32): i32
     local index: i32 = code - self.first_code
     if index >= 0 and index < #self.advances then
-        return self.advances[index]
+        return self.advances[index + 1]
     end
     return self.advance
 end
@@ -81,7 +81,7 @@ end
 `;
 
 describe('{i32} arrays carried through records', () => {
-  it('builds from host calls, copies via a method, and reads 0-based with fallback', async () => {
+  it('builds from host calls, copies via a method, and reads 1-based with fallback', async () => {
     const exports = await compileAndInstantiateWithExports({ '/main.walu': probeSource }, '/main.walu', {
       hostImports: {
         probe_value: (index) => 100 + Number(index),

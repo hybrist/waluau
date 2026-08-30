@@ -74,10 +74,10 @@ local no_values: {i32}? = nil
 local defaults: {i32} = {1, 2}
 local chosen: {i32} = some_values or defaults
 assert(#chosen == 1)
-assert(chosen[0] == 9)
+assert(chosen[1] == 9)
 local chosen_default: {i32} = no_values or defaults
 assert(#chosen_default == 2)
-assert(chosen_default[0] == 1)
+assert(chosen_default[1] == 1)
 
 -- The fallback is evaluated only when the left operand is nil.
 local calls: i32 = 0

@@ -441,7 +441,7 @@ function Box:measure(): Intrinsic
         return value
     end
 
-    local child_value: Intrinsic = self.children[0]:measure()
+    local child_value: Intrinsic = self.children[1]:measure()
     if self.kind == "padding" then
         local horizontal: f64 = self.insets.left + self.insets.right
         local vertical: f64 = self.insets.top + self.insets.bottom
@@ -522,8 +522,8 @@ function distribute_grow(self: Box, horizontal: bool, extra: f64): f64
     local pass: i32 = 0
     while pass < #self.children do
         local total_weight: f64 = 0.0
-        local index: i32 = 0
-        while index < #self.children do
+        local index: i32 = 1
+        while index <= #self.children do
             local child: Box = self.children[index]
             if child.grow > 0.0 and self.sizes[index] < main_max(
                 child.intrinsic,
@@ -537,8 +537,8 @@ function distribute_grow(self: Box, horizontal: bool, extra: f64): f64
             break
         end
         local spent: f64 = 0.0
-        index = 0
-        while index < #self.children do
+        index = 1
+        while index <= #self.children do
             local child: Box = self.children[index]
             local room: f64 = main_max(child.intrinsic, horizontal) - self.sizes[index]
             if child.grow > 0.0 and room > EPSILON then
@@ -565,8 +565,8 @@ function distribute_shrink(self: Box, horizontal: bool, deficit: f64): f64
     local pass: i32 = 0
     while pass < #self.children do
         local total_weight: f64 = 0.0
-        local index: i32 = 0
-        while index < #self.children do
+        local index: i32 = 1
+        while index <= #self.children do
             local child: Box = self.children[index]
             if child.shrink > 0.0 and self.sizes[index] > main_min(
                 child.intrinsic,
@@ -580,8 +580,8 @@ function distribute_shrink(self: Box, horizontal: bool, deficit: f64): f64
             break
         end
         local reduced: f64 = 0.0
-        index = 0
-        while index < #self.children do
+        index = 1
+        while index <= #self.children do
             local child: Box = self.children[index]
             local weight: f64 = child.shrink * self.sizes[index]
             local room: f64 = self.sizes[index] - main_min(child.intrinsic, horizontal)
@@ -641,7 +641,7 @@ function arrange_box(self: Box, into: Result): unit
         return
     end
     if self.kind == "padding" then
-        local child: Box = self.children[0]
+        local child: Box = self.children[1]
         set_rect(
             child.bounds,
             bounds.x + self.insets.left,
@@ -673,8 +673,8 @@ function arrange_box(self: Box, into: Result): unit
     end
 
     local used: f64 = 0.0
-    local index: i32 = 0
-    while index < #self.children do
+    local index: i32 = 1
+    while index <= #self.children do
         local measured_child: Box = self.children[index]
         local size: f64 = main_preferred(measured_child.intrinsic, horizontal)
         self.sizes[index] = size
@@ -713,8 +713,8 @@ function arrange_box(self: Box, into: Result): unit
     end
 
     local cursor: f64 = offset
-    index = 0
-    while index < #self.children do
+    index = 1
+    while index <= #self.children do
         local child: Box = self.children[index]
         local value: Intrinsic = child.intrinsic
         local child_cross: f64 = cross_preferred(value, horizontal)

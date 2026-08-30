@@ -1783,13 +1783,14 @@ pub fn pairs_record_value_type(ty: &Type) -> Option<Type> {
 pub const ENUM_PAIRS_ORDINAL: &str = "__enum_pairs_ordinal";
 
 /// Desugars `for <names> in pairs(<Enum>) do <body> end` into an array for-in
-/// over the variant-name strings. Variant ordinals are their 0-based
-/// declaration position — the same value the array loop index takes — so a
-/// two-variable loop rebuilds the enum value by casting the index:
+/// over the variant-name strings. Authored array-loop indices are 1-based,
+/// while variant ordinals are their 0-based declaration positions, so a
+/// two-variable loop rebuilds the enum value by subtracting one before the
+/// cast:
 ///
 /// ```text
 /// for __enum_pairs_ordinal, name in {"A", "B"} do
-///     local value = __enum_pairs_ordinal :: Enum
+///     local value = (__enum_pairs_ordinal - 1) :: Enum
 ///     <body>
 /// end
 /// ```
@@ -1824,7 +1825,13 @@ pub fn enum_pairs_for_in(
             rebindability: Rebindability::Const,
             ty: None,
             value: Expr::Cast {
-                expr: Box::new(Expr::Name(ENUM_PAIRS_ORDINAL.to_string(), None, span)),
+                expr: Box::new(Expr::Binary {
+                    op: BinaryOp::Sub,
+                    left: Box::new(Expr::Name(ENUM_PAIRS_ORDINAL.to_string(), None, span)),
+                    right: Box::new(Expr::Number(NumberLiteral { raw: "1".into() }, span)),
+                    resolved_name: None,
+                    span,
+                }),
                 ty: Type::Named {
                     name: type_name.to_string(),
                     type_args: Vec::new(),
