@@ -1,0 +1,36 @@
+-- Declared browser-host functions are ordinary typed values when referenced
+-- outside direct-call position. Their wrappers must retain the host signature
+-- and use the same Wasm-GC closure representation as authored functions.
+local output: (string) -> unit = print
+assert(string.find(tostring(output), "function:"))
+
+local render: (unknown) -> string = tostring
+assert(render(5) == "5")
+
+local abs: (f64) -> f64 = math.abs
+assert(abs(-4.5) == 4.5)
+
+local function apply(fn: (f64) -> f64, value: f64): f64
+    return fn(value)
+end
+
+assert(apply(abs, -9.25) == 9.25)
+
+local function captured_abs(value: f64): f64
+    return abs(value)
+end
+
+assert(captured_abs(-6.25) == 6.25)
+
+local ok, protected = pcall(abs, -3.5)
+assert(ok and protected == 3.5)
+
+local invert: (u32) -> u32 = bit32.bnot
+assert(invert(0) == 4294967295)
+
+local bit_order: (u32, u32) -> bool = bit32.btest
+local bits: {u32} = {0, 1}
+table.sort(bits, bit_order)
+
+local found, _find_error = pcall(string.find, "a", "(.")
+assert(not found)

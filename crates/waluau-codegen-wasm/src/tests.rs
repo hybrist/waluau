@@ -2002,6 +2002,40 @@ fn scalar_program_has_no_closure_gc_types() {
 }
 
 #[test]
+fn emits_first_class_host_and_intrinsic_builtin_adapters() {
+    let source = r#"
+        declare function host(value: f64): f64
+
+        function apply(fn: (f64) -> f64, value: f64): f64
+            return fn(value)
+        end
+
+        function entry(): f64
+            local imported: (f64) -> f64 = host
+            local invert: (u32) -> u32 = bit32.bnot
+            local ignored = invert(0)
+            return apply(imported, 4.5)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains(r#"(import "waluau" "host""#),
+        "host adapter must retain the declared browser import:\n{wat}"
+    );
+    assert!(
+        wat.contains("call_indirect"),
+        "passing the adapter through a user callback must use the typed closure wrapper:\n{wat}"
+    );
+}
+
+#[test]
 fn closure_program_still_emits_closure_gc_types() {
     // Programs that use closures must still emit the closure GC types.
     let source = r#"

@@ -3,8 +3,9 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- This chunk contains only pcall.luau checks that currently fail in Waluau.
--- Remove this directive when the chunk passes.
+-- First-class math.abs and its protected invocation pass independently. This
+-- verbatim chunk remains pending because forwarding pcall's multi-value result
+-- through checkresults(...), then table.pack(...), loses the trailing payload.
 --
 -- Split from conformance/luau/pcall.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.
