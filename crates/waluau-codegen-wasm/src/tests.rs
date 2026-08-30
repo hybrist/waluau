@@ -1496,9 +1496,9 @@ fn safe_extern_if_cast_imports_runtime_check() {
 
 #[test]
 fn emits_valid_wasm_for_unknown_boxing() {
-    // `unknown` lowers to anyref; primitives box (i32/bool via i31ref, f64 via a
-    // boxed struct) and unbox via explicit cast, including through calls and
-    // record fields.
+    // `unknown` lowers to anyref; primitives box (i32 via i31ref, f32/f64 via a
+    // boxed-f64 struct) and unbox via explicit cast, including through calls
+    // and record fields.
     let source = r#"
         function roundtrip_i32(x: i32): i32
             local boxed: unknown = x
@@ -1508,6 +1508,11 @@ fn emits_valid_wasm_for_unknown_boxing() {
         function roundtrip_f64(x: f64): f64
             local boxed: unknown = x
             return boxed::f64
+        end
+
+        function roundtrip_f32(x: f32): f32
+            local boxed: unknown = x
+            return boxed::f32
         end
 
         function identity(v: unknown): unknown
@@ -1534,6 +1539,8 @@ fn emits_valid_wasm_for_unknown_boxing() {
     let mut saw_ref_i31 = false;
     let mut saw_i31_get = false;
     let mut saw_struct_new = false;
+    let mut saw_f32_promote = false;
+    let mut saw_f32_demote = false;
     for payload in Parser::new(0).parse_all(&wasm) {
         let payload = payload.expect("wasm should parse");
         if let Payload::CodeSectionEntry(body) = payload {
@@ -1543,6 +1550,8 @@ fn emits_valid_wasm_for_unknown_boxing() {
                     Operator::RefI31 => saw_ref_i31 = true,
                     Operator::I31GetS | Operator::I31GetU => saw_i31_get = true,
                     Operator::StructNew { .. } => saw_struct_new = true,
+                    Operator::F64PromoteF32 => saw_f32_promote = true,
+                    Operator::F32DemoteF64 => saw_f32_demote = true,
                     _ => {}
                 }
             }
@@ -1552,6 +1561,11 @@ fn emits_valid_wasm_for_unknown_boxing() {
     assert!(saw_ref_i31, "expected ref.i31 for i32/bool boxing");
     assert!(saw_i31_get, "expected i31.get for i32/bool unboxing");
     assert!(saw_struct_new, "expected struct.new for f64 boxing");
+    assert!(
+        saw_f32_promote,
+        "expected exact f32 promotion before boxing"
+    );
+    assert!(saw_f32_demote, "expected f32 demotion after unboxing");
 }
 
 #[test]
@@ -2435,6 +2449,42 @@ fn unknown_pcall_emits_canonical_dynamic_closure_wrappers() {
     assert!(
         wat.contains("call_indirect"),
         "missing dynamic dispatch:\n{wat}"
+    );
+}
+
+#[test]
+fn unknown_pcall_boxes_f32_results_as_luau_numbers() {
+    let source = r#"
+        function protect(fn): bool, unknown
+            return pcall(fn)
+        end
+
+        function run(): i32
+            local ok, value = protect(function(): f32
+                return 1.25
+            end)
+            if ok and value == 1.25 and value::f32 == 1.25 then
+                return 1
+            end
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("IR should succeed");
+    waluau_ir::verify(&ir).expect("IR should verify");
+    let wasm = emit(&ir).expect("f32 dynamic protected-call result should emit");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("f64.promote_f32"),
+        "f32 result should promote exactly into the canonical number box:\n{wat}"
+    );
+    assert!(
+        wat.contains("f32.demote_f64"),
+        "an explicit f32 cast should recover the scalar from unknown:\n{wat}"
     );
 }
 
@@ -3355,11 +3405,11 @@ fn dyn_index_over_nullable_f64_array_reboxes_payload() {
 
 #[test]
 fn dyn_index_over_nullable_i64_array_still_fails() {
-    // `i64?`/`u64?`/`f32?` payloads have no canonical `unknown` boxed form
+    // `i64?`/`u64?` payloads have no canonical `unknown` boxed form
     // (waluau-agmp / design 0010), so those element kinds stay out of the
-    // dispatch and fall through to the failure path, exactly like plain
-    // i64/f32 elements. Since #408 that path throws the catchable Lua error
-    // tag rather than emitting `unreachable`. The module must still validate.
+    // dispatch and fall through to the failure path, exactly like plain i64
+    // elements. Since #408 that path throws the catchable Lua error tag rather
+    // than emitting `unreachable`. The module must still validate.
     let source = r#"
         function get(v, i)
             return v[i]

@@ -4583,6 +4583,28 @@ fn permits_unknown_callee_only_at_pcall_boundary() {
 }
 
 #[test]
+fn type_checks_dynamic_pcall_f32_result_as_unknown_number() {
+    let program = parse(
+        r#"
+            function protect(fn): bool, unknown
+                return pcall(fn)
+            end
+
+            function run(): f32
+                local ok, value = protect(function(): f32
+                    return 1.25
+                end)
+                assert(ok)
+                assert(value == 1.25)
+                return value::f32
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&program).expect("f32 should survive the dynamic pcall type boundary");
+}
+
+#[test]
 fn preserves_recursive_local_function_scope_during_multi_binding_annotation() {
     let source = r#"
         function entry(): f64

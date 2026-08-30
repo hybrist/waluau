@@ -14061,11 +14061,17 @@ impl Builder<'_> {
         let inner = nullable_ty
             .nullable_inner()
             .expect("caller checked nullable operand");
-        // i64/u64/f32 have no `unknown` boxing yet (see waluau-agmp), so their
+        // i64/u64 have no `unknown` boxing yet (see waluau-agmp), so their
         // nullables cannot be unboxed for the value-vs-value arm.
         if !matches!(
             inner,
-            Type::Bool | Type::Numeric(NumericType::I32 | NumericType::U32 | NumericType::F64)
+            Type::Bool
+                | Type::Numeric(
+                    NumericType::I32
+                        | NumericType::U32
+                        | NumericType::F32
+                        | NumericType::F64,
+                )
         ) {
             return Err(Diagnostic::new(format!(
                 "comparing two nullable {inner} values is not supported yet",

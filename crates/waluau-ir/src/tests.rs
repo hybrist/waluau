@@ -41,6 +41,50 @@ fn lowers_unknown_pcall_to_dynamic_protected_call() {
 }
 
 #[test]
+fn lowers_unknown_pcall_with_f32_closure_result() {
+    let program = parse(
+        r#"
+            function protect(fn): bool, unknown
+                return pcall(fn)
+            end
+
+            function run(): f32
+                local ok, value = protect(function(): f32
+                    return 1.25
+                end)
+                assert(ok)
+                return value::f32
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+    assert!(module.functions.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(instruction, Instruction::ProtectedCallUnknown { .. })
+            })
+        })
+    }));
+    assert!(module.functions.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Cast {
+                        from: Type::Unknown,
+                        to: Type::Numeric(NumericType::F32),
+                        ..
+                    }
+                )
+            })
+        })
+    }));
+}
+
+#[test]
 fn preserves_function_instruction_and_terminator_locations() {
     let source = "function entry(x: i32): i32\n    return x + 42\nend\n";
     let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");
