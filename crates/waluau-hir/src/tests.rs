@@ -4546,6 +4546,19 @@ fn permits_unknown_callee_only_at_pcall_boundary() {
     )
     .expect("parse should succeed");
     super::type_check(&protected_only).expect("pcall should accept an unknown callee");
+
+    let dynamic_error_narrowing = parse(
+        r#"
+            function protected_message(fn, ...): string
+                local ok, err = pcall(fn, ...)
+                assert(not ok)
+                return err:sub(1, #err)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&dynamic_error_narrowing)
+        .expect("a failed dynamic pcall should narrow its error payload to string");
 }
 
 #[test]

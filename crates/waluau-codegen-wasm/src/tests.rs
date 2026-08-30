@@ -2359,8 +2359,12 @@ fn unknown_pcall_emits_canonical_dynamic_closure_wrappers() {
                 error("boom")
             end)
             local not_fn, type_message = protect(42)
+            local buffer_ok, buffer_value = protect(function(value: buffer): buffer
+                return value
+            end, buffer.create(1))
             if ok and value::f64 == 42 and not failed and message::string == "boom"
-                and not not_fn and type_message::string == "attempt to call a non-function value" then
+                and not not_fn and type_message::string == "attempt to call a non-function value"
+                and buffer_ok and typeof(buffer_value) == "buffer" then
                 return 1
             end
             return 0

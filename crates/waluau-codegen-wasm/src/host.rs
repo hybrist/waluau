@@ -532,7 +532,9 @@ fn collect_from_function<'a>(
                     from: Type::Unknown,
                     ..
                 } => {
-                    for literal in ["boolean", "nil", "number", "function", "table", "thread"] {
+                    for literal in [
+                        "boolean", "nil", "number", "function", "table", "thread", "buffer",
+                    ] {
                         if indices.insert(literal, strings.len() as u32).is_none() {
                             strings.push(literal.to_string());
                         }
@@ -544,7 +546,7 @@ fn collect_from_function<'a>(
                 } => {
                     // The dynamic tostring chain reads the "nil" constant and
                     // passes reference-type prefixes to js_tostring_named.
-                    for literal in ["nil", "function", "table", "thread"] {
+                    for literal in ["nil", "function", "table", "thread", "buffer"] {
                         if indices.insert(literal, strings.len() as u32).is_none() {
                             strings.push(literal.to_string());
                         }

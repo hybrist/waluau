@@ -4491,15 +4491,16 @@ impl Builder<'_> {
         let Some(first_arg) = args.first() else {
             return;
         };
-        let Ok(Type::Function { return_type, .. }) = self.infer_expr_type(first_arg, types, None)
-        else {
-            return;
+        let success = match self.infer_expr_type(first_arg, types, None) {
+            Ok(Type::Function { return_type, .. }) => Arc::unwrap_or_clone(return_type),
+            Ok(Type::Unknown) => Type::Unknown,
+            _ => return,
         };
         self.discriminants.insert(
             ok_symbol,
             DiscriminantLink {
                 payload: payload_symbol,
-                when_true: Arc::unwrap_or_clone(return_type),
+                when_true: success,
                 when_false: Type::String,
             },
         );

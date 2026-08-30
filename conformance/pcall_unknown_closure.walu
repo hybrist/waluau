@@ -59,6 +59,21 @@ local payload_ok, payload_error = protect(
 assert(not payload_ok)
 assert(payload_error::string == "protected function argument type mismatch")
 
+-- GC buffer handles and numbers survive the unknown argument pack. Mutating
+-- the handle in the callee proves the wrapper preserved its boxed identity.
+local forwarded_buffer = buffer.create(1)
+local buffer_ok, buffer_value = protect(
+    function(value: buffer, offset: number): number
+        buffer.writei8(value, offset, 37)
+        return buffer.readi8(value, offset)
+    end,
+    forwarded_buffer,
+    0
+)
+assert(buffer_ok)
+assert(buffer_value::f64 == 37)
+assert(buffer.readi8(forwarded_buffer, 0) == 37)
+
 -- An already-boxed closure can travel through the unknown pack and return
 -- unchanged; identity is preserved rather than cloning the function value.
 local identity_ok, identity_value = protect(

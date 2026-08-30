@@ -661,10 +661,12 @@ pub(super) fn pcall_discriminant_types(
     }
     let callee_ty =
         infer_expr(args.first()?, vars, fn_signatures, active_type_params, None).ok()?;
-    let Type::Function { return_type, .. } = callee_ty else {
-        return None;
+    let success = match callee_ty {
+        Type::Function { return_type, .. } => Arc::unwrap_or_clone(return_type),
+        Type::Unknown => Type::Unknown,
+        _ => return None,
     };
-    Some((Arc::unwrap_or_clone(return_type), Type::String))
+    Some((success, Type::String))
 }
 
 /// Installs the bidirectional discriminant link for `local ok, v = pcall(...)`
