@@ -1,0 +1,69 @@
+-- A small standing control: a quiet bordered box with a caption, sized to its
+-- own label. The duel's footer strip and the menu's way back are both made of
+-- these.
+--
+-- It is separate from `capsule` because the two answer different questions.
+-- A capsule is what the board is asking for right now and lights up when the
+-- answer would be accepted; a chip is always there and always the same, which
+-- is what lets it read as chrome rather than as part of the phase.
+--
+-- Each chip carries the key that also reaches it, so a run played with a
+-- finger and a run played with the keyboard teach each other.
+local box = require("../ui/layout")
+local ui = require("../ui/node")
+local ink = require("../ink")
+
+const LABEL_SIZE: f64 = 9.0
+const PAD_X: f64 = 11.0
+const HEIGHT: f64 = 22.0
+
+const FILL: string = "#17171c"
+const EDGE: string = "#3f3f46"
+const CAPTION: string = "#8a8a92"
+
+function always(): bool
+    return true
+end
+
+-- `shown` gates the paint, not the layout: node visibility in this tree is a
+-- routing flag, so a chip that is only offered on one screen still has to be
+-- told when to draw itself.
+function gated(text: string, shown: () -> bool): ui.Node
+    return ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            local width: f64 = ui.text_width(graphics, text, LABEL_SIZE) + PAD_X * 2.0
+            into.min_width = width
+            into.preferred_width = width
+            into.max_width = width
+            into.min_height = HEIGHT
+            into.preferred_height = HEIGHT
+            into.max_height = HEIGHT
+            into.baseline = (HEIGHT + LABEL_SIZE) * 0.5
+        end,
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            if not shown() then
+                return
+            end
+            local graphics = surface.graphics
+            graphics:set_color(FILL)
+            graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            graphics:set_color(EDGE)
+            graphics:set_line_width(1.0)
+            graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            ink.text_centered(
+                graphics,
+                text,
+                bounds.x + bounds.width * 0.5,
+                bounds.y + (bounds.height + LABEL_SIZE) * 0.5,
+                LABEL_SIZE,
+                CAPTION
+            )
+        end
+    )
+end
+
+function node(text: string): ui.Node
+    return gated(text, always)
+end
+
+return { node = node, gated = gated, height = HEIGHT }

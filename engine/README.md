@@ -42,6 +42,9 @@ local session: engine.Session = engine.start({
     draw = draw,                 -- (Graphics, interpolation_alpha) -> unit
     keypressed = keypressed,
     keyreleased = keyreleased,
+    mousepressed = mousepressed,   -- (x, y, button) -> unit
+    mousereleased = mousereleased, -- (x, y, button) -> unit
+    mousemoved = mousemoved,       -- (x, y, dx, dy) -> unit
 })
 
 -- Stops the animation loop and unregisters browser input listeners.
@@ -66,13 +69,48 @@ the browser's available space instead — the natural pairing with
 `canvas_sizing`, where the canvas has no one true size to be given and the
 game derives its layout from the live dimensions each frame.
 
+## Pointing devices
+
+The canvas listens for DOM pointer events, so mouse, pen and touch contacts all
+arrive through `mousepressed`, `mousereleased` and `mousemoved` — in logical
+canvas coordinates, with Love2D-style button numbers where a finger or a pen tip
+presses button 1. `Input.mouse_x`, `Input.mouse_y` and `is_mouse_down` report the
+same stream to a polling game. A game therefore gets touch input by handling the
+callbacks it already handles; there is no separate touch path to write.
+
+The canvas takes `touch-action: none`, so the browser never reinterprets a
+gesture that lands on it as a scroll, a pinch zoom, or the first half of a
+double-tap zoom, and never holds a tap back waiting to find out. A cancelled
+gesture — one the browser takes away rather than the player lifting — puts the
+buttons back up without reporting a release, because no release happened.
+
+A game that fills the window should also stop the page itself from zooming
+around it, which is a document concern rather than an engine one:
+
+```html
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+```
+
+The engine sizes the canvas from the space the browser actually has, and its
+root box is `dvh` rather than `vh` so that a mobile browser showing its own bars
+does not lay out a root taller than the screen and push the canvas half off it.
+Those bars are the browser's, though: they collapse on a page scroll, and a game
+that fills the viewport has nothing to scroll. Losing them is a matter of how
+the page is opened rather than anything a page can ask for, so a game meant to
+be played on a phone or a tablet should also say it can be installed:
+
+```html
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+```
+
 ## Package and version contract
 
 The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.5.0`)
+- `VERSION`: the semantic API version (`1.6.0`)
 - `start`: the browser lifecycle entry point
 - `Config`, `Game`, `Session`, `Input`, `Graphics`, and `ParticleSystem`:
   canonical public types
@@ -87,7 +125,7 @@ Subsystem modules remain supported for focused programs, including DOM-free ones
 
 | Current-major import | Pinned import | Surface |
 | --- | --- | --- |
-| `waluau:engine/input` | `waluau:engine/v1/input` | keyboard state and `Input` |
+| `waluau:engine/input` | `waluau:engine/v1/input` | keyboard and pointer state and `Input` |
 | `waluau:engine/graphics` | `waluau:engine/v1/graphics` | GPU drawing and `Graphics` |
 | `waluau:engine/particles` | `waluau:engine/v1/particles` | pooled particle emitters and `ParticleSystem` |
 | `waluau:engine/resources` | `waluau:engine/v1/resources` | packaged resource loading and handles |
@@ -102,7 +140,10 @@ Relative imports remain valid for engine development, but applications should
 use package imports. See [`examples/game-project`](../examples/game-project/)
 for the version-1 project layout and build/launch commands.
 
-`Input` supplies `is_down`, `was_pressed`, and `was_released`. `Graphics`
+`Input` supplies `is_down`, `was_pressed`, and `was_released` for keys, and
+`mouse_x`, `mouse_y`, `is_mouse_down`, `was_mouse_pressed`, and
+`was_mouse_released` for whichever pointing device is in the player's hand.
+`Graphics`
 supplies clearing, color and line-width state, rectangles, circles, lines,
 text, and a push/pop transform stack with translate/rotate/scale. Every one
 of those calls renders on the GPU: lines are thin quads, circles are

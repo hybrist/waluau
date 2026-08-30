@@ -1,0 +1,67 @@
+-- The duel's standing controls, in the top corner of the board: leaving the
+-- run, reading the rules, looking back over the rounds, and starting the run
+-- again. These used to be a line of key hints along the bottom, because a
+-- keyboard is where they were reached from. They are controls now because a
+-- tablet has no key row, and they moved to the top because the bottom of the
+-- board belongs to the fan, which spreads into whatever room is left there.
+--
+-- Two rows of two rather than one row of four: the header band is only as wide
+-- as the board, and at the board's narrowest a single row would reach the
+-- round orbs sitting centred in the same band.
+local ui = require("../ui/node")
+local control_chip = require("./control_chip")
+
+const GAP: f64 = 6.0
+
+-- The controls the bar offers, in the order it lays them out. The board reads
+-- this order to bind each one, so it is the one place their identity lives.
+const CONTROL_MENU: i32 = 0
+const CONTROL_HELP: i32 = 1
+const CONTROL_HISTORY: i32 = 2
+const CONTROL_RESTART: i32 = 3
+const CONTROL_COUNT: i32 = 4
+
+function control_label(control: i32): string
+    if control == CONTROL_HELP then
+        return "? HELP"
+    end
+    if control == CONTROL_HISTORY then
+        return "H HISTORY"
+    end
+    if control == CONTROL_RESTART then
+        return "R RESTART"
+    end
+    return "M MENU"
+end
+
+-- `controls` are the bar's pointer leaves in the order the constants name, so
+-- the board binds them by index without knowing how the bar is laid out.
+export type Stateful = { controls: {ui.Node}, root: ui.Node }
+
+function Stateful.new(): Stateful
+    local controls: {ui.Node} = {}
+    for index = 0::i32, CONTROL_COUNT - 1 do
+        table.insert(controls, control_chip.node(control_label(index)))
+    end
+    local root: ui.Node = ui.Node.down(
+        { gap = GAP, align = "end" },
+        {
+            ui.Node.across({ gap = GAP }, {controls[1], controls[2]}),
+            ui.Node.across({ gap = GAP }, {controls[3], controls[4]})
+        }
+    )
+    return { controls = controls, root = root }
+end
+
+function node(): ui.Node
+    return Stateful.new().root
+end
+
+return {
+    node = node,
+    menu = CONTROL_MENU,
+    help = CONTROL_HELP,
+    history = CONTROL_HISTORY,
+    restart = CONTROL_RESTART,
+    control_count = CONTROL_COUNT
+}

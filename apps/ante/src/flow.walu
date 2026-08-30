@@ -35,10 +35,13 @@ function State.new(): State
     }
 end
 
+-- Picking a card that is already picked puts it back. The loop key and
+-- table.remove's position are both one-based, so the key is the position:
+-- shifting it would take the pick after the one being let go.
 function toggle(picks: {i32}, value: i32, limit: i32): unit
     for index, pick in picks do
         if pick == value then
-            table.remove(picks, index + 1)
+            table.remove(picks, index)
             return
         end
     end

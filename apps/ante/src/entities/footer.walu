@@ -1,8 +1,12 @@
 -- The strip along the bottom of the duel: the player's health and gold occupy
--- the lower left, the way back to the menu stays centred, and the player's four
--- ready-ability sockets occupy the lower right. The diamond owns spell identity,
--- affordability, and key hints; this strip only places it against the same board
--- edge on every viewport.
+-- the lower left, and the player's four ready-ability sockets occupy the lower
+-- right. The diamond owns spell identity, affordability, and key hints; this
+-- strip only places it against the same board edge on every viewport.
+--
+-- The centre is left to the fan, which spreads into whatever room the board
+-- has down here. The caption that used to name the key back to the menu became
+-- a control in the header band instead, where a finger can reach it without
+-- landing on a card.
 local game = require("../game")
 local run_module = require("../run")
 local ui = require("../ui/node")
@@ -13,7 +17,6 @@ const HINT_SIZE: f64 = 9.0
 const CAPTION_PAD_X: f64 = 8.0
 const CAPTION_PAD_Y: f64 = 7.0
 
-const QUIET_INK: string = "#8a8a92"
 const GOLD_INK: string = "#67e8f9"
 const HEART_INK: string = "#fb7185"
 
@@ -21,26 +24,6 @@ const HEART_INK: string = "#fb7185"
 -- with the padding so it remains stable inside the taller diamond band.
 function padded_caption(caption: ui.Node): ui.Node
     return caption:padded(CAPTION_PAD_X, CAPTION_PAD_Y)
-end
-
-function menu(): ui.Node
-    return padded_caption(label.centered("M MENU", HINT_SIZE, QUIET_INK))
-end
-
-function stats(state: game.View, run: run_module.View): ui.Node
-    return padded_caption(
-        ui.Node.down(
-            { gap = 4.0, align = "start" },
-            {
-                label.left(
-                    "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
-                    HINT_SIZE,
-                    HEART_INK
-                ),
-                label.left("GOLD " .. tostring(state.player_points), HINT_SIZE, GOLD_INK)
-            }
-        )
-    )
 end
 
 export type Stateful = {
@@ -72,7 +55,6 @@ function Stateful.new(state: game.View, run: run_module.View): Stateful
     local root: ui.Node = ui.Node.layer(
         {
             ui.Node.across({ justify = "start", align = "end" }, {stat_root}),
-            ui.Node.across({ justify = "center", align = "end" }, {menu()}),
             ui.Node.across({ justify = "end", align = "end" }, {abilities.root})
         }
     )

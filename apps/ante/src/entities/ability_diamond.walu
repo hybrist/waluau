@@ -1,7 +1,10 @@
 -- The player's ready abilities in the same diamond their face buttons make:
 -- the first ability at South, then West, North, and East. The keyboard still
 -- casts them with 1-4, so each circle carries its number while its position
--- teaches the controller-shaped layout the game can grow into.
+-- teaches the controller-shaped layout the game can grow into. A finger has no
+-- number row, so each socket is also its own pointer target: the diamond's box
+-- is divided between the four positions, which makes a socket a much larger
+-- thing to hit than the ring that is drawn for it.
 --
 -- Every position is always present. A run that only carries its starting
 -- spell therefore reads as one ready ability and three empty sockets instead
@@ -59,6 +62,26 @@ function slot_y(slot: i32): f64
         return CENTER_Y - PITCH_Y
     end
     return CENTER_Y
+end
+
+-- Which socket a point belongs to: the nearest of the four positions, so the
+-- whole diamond is divided between them with no gap to fall into and no
+-- overlap to resolve. An unoccupied socket claims its share and answers to
+-- nothing, which is what keeps a tap in an empty corner from reaching the
+-- spell across the diamond.
+function nearest_slot(bounds: box.Rect, x: f64, y: f64): i32
+    local best: i32 = 0
+    local best_distance: f64 = -1.0
+    for slot = 0::i32, SLOT_COUNT - 1 do
+        local dx: f64 = x - (bounds.x + slot_x(slot))
+        local dy: f64 = y - (bounds.y + slot_y(slot))
+        local distance: f64 = dx * dx + dy * dy
+        if best_distance < 0.0 or distance < best_distance then
+            best = slot
+            best_distance = distance
+        end
+    end
+    return best
 end
 
 function short_name(kind: spells.SpellKind): string
@@ -159,12 +182,18 @@ function draw_slot(surface: ui.Surface, state: game.View, bounds: box.Rect, slot
     )
 end
 
+function empty_paint(surface: ui.Surface, bounds: box.Rect): unit
+end
+
 type DiamondPresentation = { state: game.View }
-export type Stateful = { presentation: DiamondPresentation, root: ui.Node }
+-- `sockets` are the pointer leaves, one per position, in loadout order. They
+-- paint nothing: the face under them draws the whole diamond in one pass, and
+-- they exist so a router can hand each position its own key.
+export type Stateful = { presentation: DiamondPresentation, root: ui.Node, sockets: {ui.Node} }
 
 function Stateful.new(state: game.View): Stateful
     local presentation: DiamondPresentation = { state = state }
-    local root: ui.Node = ui.Node.sized(
+    local face: ui.Node = ui.Node.sized(
         WIDTH,
         HEIGHT,
         function(surface: ui.Surface, bounds: box.Rect): unit
@@ -174,7 +203,23 @@ function Stateful.new(state: game.View): Stateful
             end
         end
     )
-    return { presentation = presentation, root = root }
+    local sockets: {ui.Node} = {}
+    local children: {ui.Node} = {face}
+    for index = 0::i32, SLOT_COUNT - 1 do
+        local slot: i32 = index
+        local socket: ui.Node = ui.Node.sized(WIDTH, HEIGHT, empty_paint)
+        socket:set_hit_test(
+            function(bounds: box.Rect, x: f64, y: f64): bool
+                if slot >= #presentation.state.spells then
+                    return false
+                end
+                return box.contains(bounds, x, y) and nearest_slot(bounds, x, y) == slot
+            end
+        )
+        table.insert(sockets, socket)
+        table.insert(children, socket)
+    end
+    return { presentation = presentation, root = ui.Node.layer(children), sockets = sockets }
 end
 
 function Stateful:present(state: game.View): unit
@@ -187,6 +232,7 @@ end
 
 return {
     node = node,
+    nearest_slot = nearest_slot,
     slot_x = slot_x,
     slot_y = slot_y,
     short_name = short_name,

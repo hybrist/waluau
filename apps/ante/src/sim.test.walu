@@ -771,6 +771,37 @@ describe(
     "Ante Magic duel flow",
     function()
         it(
+            "lets a picked card go again, and only that one",
+            function()
+                local picks: {i32} = {}
+                flow.toggle(picks, 3, 3)
+                expect(#picks):toBe(1)
+                flow.toggle(picks, 3, 3)
+                expect(#picks):toBe(0)
+
+                flow.toggle(picks, 3, 3)
+                flow.toggle(picks, 5, 3)
+                flow.toggle(picks, 7, 3)
+                -- The one let go is the one named, wherever it sits in the list.
+                flow.toggle(picks, 5, 3)
+                expect(#picks):toBe(2)
+                expect(picks[1]):toBe(3)
+                expect(picks[2]):toBe(7)
+                flow.toggle(picks, 7, 3)
+                expect(#picks):toBe(1)
+                expect(picks[1]):toBe(3)
+
+                -- A full list still lets its own members go.
+                flow.toggle(picks, 5, 2)
+                flow.toggle(picks, 9, 2)
+                expect(#picks):toBe(2)
+                flow.toggle(picks, 3, 2)
+                expect(#picks):toBe(1)
+                expect(picks[1]):toBe(5)
+            end
+        )
+
+        it(
             "applies the same modal and animation gates to both input adapters",
             function()
                 local keyboard: flow.State = flow.State.new()

@@ -1,16 +1,35 @@
 -- Retained input state for the live duel board. The caller supplies the
--- stable visual nodes in paint order; table cards and the commit capsule are
--- registered directly, while the rotated fan gets parallel custom-shape
--- leaves because it is painted by one presenter.
+-- stable visual nodes in paint order; table cards, the commit capsule, the
+-- ability sockets and the standing controls are registered directly, while the
+-- rotated fan gets parallel custom-shape leaves because it is painted by one
+-- presenter.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local router_module = require("../ui/interaction")
 local card = require("../entities/card")
 local hand_fan = require("../entities/hand_fan")
+local control_bar = require("../entities/control_bar")
 
 const HAND_CAPACITY: i32 = 7
 
-export type Action = { kind: "none" | "hand" | "table-card" | "commit" | "modal", index: i32 }
+-- "spell" carries a loadout slot; the rest ignore the index. The four chrome
+-- kinds have no keyboard equivalent to route through, because the keys that
+-- reach them are the ones printed on their own labels.
+export type Action = {
+    kind: "none" | "hand" | "table-card" | "commit" | "modal" | "spell" | "menu" | "help" | "history" | "restart",
+    index: i32
+}
+
+-- The stable leaves this module binds, all of them owned and painted by the
+-- board's visual side. `visuals` is that side's paint order; the rest name
+-- which of those leaves answer to what.
+export type Controls = {
+    visuals: {ui.Node},
+    tables: {ui.Node},
+    commit: ui.Node,
+    spells: {ui.Node},
+    chrome: {ui.Node}
+}
 
 export type Frame = {
     viewport_width: f64,
@@ -24,7 +43,12 @@ export type Frame = {
     casting: bool,
     modal_open: bool,
     finished: bool,
-    play_pick_count: i32
+    play_pick_count: i32,
+    spell_count: i32,
+    -- The smallest a chrome control's hit area may be, in board units. The
+    -- board scales with the canvas, so its chrome is painted far under a
+    -- fingertip on a phone; a caller that has no pointer to serve passes 0.
+    touch_minimum: f64
 }
 
 type Presentation = {
@@ -34,6 +58,7 @@ type Presentation = {
     fan_parts: {f64},
     hand_count: i32,
     table_count: i32,
+    touch_minimum: f64,
     pending: Action
 }
 
@@ -49,6 +74,8 @@ export opaque type State = {
     table_targets: {router_module.Target},
     commit_node: ui.Node,
     commit_target: router_module.Target,
+    spell_targets: {router_module.Target},
+    chrome_targets: {router_module.Target},
     modal_node: ui.Node,
     modal_target: router_module.Target
 }
@@ -91,7 +118,7 @@ end
 
 function handlers(
     presentation: Presentation,
-    kind: "none" | "hand" | "table-card" | "commit" | "modal",
+    kind: "none" | "hand" | "table-card" | "commit" | "modal" | "spell" | "menu" | "help" | "history" | "restart",
     index: i32
 ): router_module.Handlers
     local callbacks: router_module.Handlers = router_module.handlers()
@@ -101,7 +128,46 @@ function handlers(
     return callbacks
 end
 
-function State.new(visual_children: {ui.Node}, table_nodes: {ui.Node}, commit_node: ui.Node): State
+-- Which action a standing control stands for. The bar owns the order and the
+-- labels; this is the only place that turns one into an intent.
+function chrome_kind(control: i32): "menu" | "help" | "history" | "restart"
+    if control == control_bar.help then
+        return "help"
+    end
+    if control == control_bar.history then
+        return "history"
+    end
+    if control == control_bar.restart then
+        return "restart"
+    end
+    return "menu"
+end
+
+-- A control painted at chrome size is a sliver of screen once the board has
+-- scaled down to a phone, so its hit area grows to a fingertip's worth of
+-- height while what is drawn stays where the bar put it. Only the height
+-- grows: these controls sit in a row, and widening them would make neighbours
+-- fight over the gap between them.
+function comfortable_hit(presentation: Presentation, node: ui.Node): ui.Node
+    return node:set_hit_test(
+        function(bounds: box.Rect, x: f64, y: f64): bool
+            local grow: f64 = (presentation.touch_minimum - bounds.height) * 0.5
+            if grow < 0.0 then
+                grow = 0.0
+            end
+            return box.contains(
+                box.rect(bounds.x, bounds.y - grow, bounds.width, bounds.height + grow * 2.0),
+                x,
+                y
+            )
+        end
+    )
+end
+
+function State.new(controls: Controls): State
+    local visual_children: {ui.Node} = controls.visuals
+    local table_nodes: {ui.Node} = controls.tables
+    local commit_node: ui.Node = controls.commit
     local presentation: Presentation = {
         viewport_width = 0.0,
         viewport_height = 0.0,
@@ -109,6 +175,7 @@ function State.new(visual_children: {ui.Node}, table_nodes: {ui.Node}, commit_no
         fan_parts = {},
         hand_count = 0,
         table_count = 0,
+        touch_minimum = 0.0,
         pending = { kind = "none", index = -1 }
     }
     local hand_nodes: {ui.Node} = {}
@@ -157,6 +224,32 @@ function State.new(visual_children: {ui.Node}, table_nodes: {ui.Node}, commit_no
         true,
         handlers(presentation, "commit", 0)
     )
+    -- Sockets and standing controls stay out of the focus ring: arrow keys walk
+    -- the cards, and every one of these controls already has a key of its own.
+    -- They are pointer targets and nothing else. The bar's controls are also
+    -- the only targets no phase ever takes away — leaving, reading and
+    -- restarting are answers the duel owes wherever it has got to — so
+    -- `present` never has to reconsider them. Under a modal they stop
+    -- answering through the scope, not through their own visibility.
+    local spell_targets: {router_module.Target} = {}
+    for index, node in controls.spells do
+        table.insert(
+            spell_targets,
+            router:add(node, board_scope, false, handlers(presentation, "spell", index - 1))
+        )
+    end
+    local chrome_targets: {router_module.Target} = {}
+    for index, node in controls.chrome do
+        table.insert(
+            chrome_targets,
+            router:add(
+                comfortable_hit(presentation, node),
+                board_scope,
+                false,
+                handlers(presentation, chrome_kind(index - 1), 0)
+            )
+        )
+    end
     local modal_target: router_module.Target = router:add(
         modal_node,
         modal_scope,
@@ -176,6 +269,8 @@ function State.new(visual_children: {ui.Node}, table_nodes: {ui.Node}, commit_no
         table_targets = table_targets,
         commit_node = commit_node,
         commit_target = commit_target,
+        spell_targets = spell_targets,
+        chrome_targets = chrome_targets,
         modal_node = modal_node,
         modal_target = modal_target
     }
@@ -250,6 +345,7 @@ function State:present(frame: Frame): unit
     presentation.fan_parts = frame.fan_parts
     presentation.hand_count = frame.hand_count
     presentation.table_count = frame.table_count
+    presentation.touch_minimum = frame.touch_minimum
     local board_live: bool = not frame.modal_open and not frame.finished
 
     for index, target in self.hand_targets do
@@ -285,7 +381,17 @@ function State:present(frame: Frame): unit
             end
         end
     end
-    self.commit_target:set_visible(board_live and (frame.swap_open or frame.play_pick_count == 2))
+    -- Aiming a spell takes the action band away: the capsule is not painted
+    -- then, so it is not re-arranged either, and a target left standing would
+    -- answer for the whole board out of the box the root laid it in.
+    self.commit_target:set_visible(
+        board_live and not frame.casting and (frame.swap_open or frame.play_pick_count == 2)
+    )
+    -- A socket answers whenever the loadout has a spell in it, aiming included:
+    -- that is how the same tap that armed a spell calls it off again.
+    for index, target in self.spell_targets do
+        target:set_visible(board_live and index - 1 < frame.spell_count)
+    end
     self.modal_target:set_visible(frame.modal_open)
     if frame.modal_open then
         self.router:activate_scope(self.modal_scope)
@@ -339,6 +445,29 @@ function State:apply_hand_order(order: {i32}): unit
             return
         end
     end
+end
+
+-- Which of the board's standing controls a point lands on, asked before any
+-- phase gating has decided whether the board itself is listening. The control
+-- bar answers wherever the duel has got to, the same as the keys printed on
+-- it; a socket answers as soon as the deal in flight can be settled out of the
+-- way. Everything else is ordinary board input and waits its turn.
+function State:standing_at(x: f64, y: f64): "none" | "chrome" | "spell"
+    local hit: i32 = self.root:hit(x, y)
+    if hit < 0 then
+        return "none"
+    end
+    for target in self.chrome_targets do
+        if target.key == hit then
+            return "chrome"
+        end
+    end
+    for target in self.spell_targets do
+        if target.key == hit then
+            return "spell"
+        end
+    end
+    return "none"
 end
 
 function State:pointer_move(x: f64, y: f64): i32
