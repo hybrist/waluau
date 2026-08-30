@@ -19,3 +19,7 @@ fixtures/dwarf-chrome-wasm-gc/compiler_dwarf_probe.js
 
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/
+
+# Local zed extension files
+/.zed/extensions/waluau/extension.wasm
+/.zed/extensions/waluau/grammars
