@@ -160,7 +160,14 @@ bd automatically syncs via Dolt:
 - Each write auto-commits to Dolt history
 - No manual export/import needed!
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on the
+storage repo [hybrist/waluau-dolt](https://github.com/hybrist/waluau-dolt), not on this repo's
+remote; `.beads/issues.jsonl` is a passive export. See
+https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+
+The Dolt data lives in a separate repository because beads pushes a `__dolt_remote_info__` branch
+alongside `refs/dolt/data`, and CI and deployment providers treat that branch as a real one. Keep
+`sync.remote` in `.beads/config.yaml` pointed at the storage repo; do not point it back at this one.
 
 ### Important Rules
 
