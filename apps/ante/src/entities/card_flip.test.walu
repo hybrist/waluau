@@ -77,30 +77,47 @@ describe(
             end
         )
 
-        -- The pivot is what separates a flip from a spin: one long edge is on
-        -- the table the whole time. That edge is the card's own left edge —
-        -- on screen it slides across as the card turns over onto it. The
-        -- card leans back toward the viewer while airborne, so the edge's
-        -- corners swing a little either side of the surface, but its middle
-        -- rides nothing higher than the thumb's pick-up.
+        -- A hand lifts the card; a hand does not push it through the table.
+        -- Nothing is pinned to the surface either: the low edge leaves the
+        -- table as the turn starts and hovers clear of it at the top of the
+        -- flip, because the whole card is in the air by then.
         it(
-            "keeps its pivot edge on the table for the whole flip",
+            "never dips below the table and is airborne at the top",
             function(): unit
                 for step = 0::i32, SAMPLES do
                     local mesh: card_warp.Mesh = built((step::f64) / (SAMPLES::f64))
-                    local middle: f64 = mesh.pz[at(0, ROWS / 2)]
-                    expect(middle):toBeGreaterThanOrEqual(-0.000001)
-                    expect(middle):toBeLessThan(16.0)
-                    for row = 0::i32, ROWS do
-                        expect(math.abs(mesh.pz[at(0, row)])):toBeLessThan(40.0)
+                    for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                        expect(mesh.pz[index]):toBeGreaterThanOrEqual(-0.000001)
                     end
                 end
+                local standing: card_warp.Mesh = built(0.5)
+                local lowest: f64 = standing.pz[0]
+                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                    if standing.pz[index] < lowest then
+                        lowest = standing.pz[index]
+                    end
+                end
+                expect(lowest):toBeGreaterThan(2.0)
+            end
+        )
+
+        -- The lift is by one edge: the held edge is well on its way up while
+        -- the low edge has barely cleared the table.
+        it(
+            "raises the held edge far faster than the low edge",
+            function(): unit
+                local mesh: card_warp.Mesh = built(0.25)
+                local held: f64 = mesh.pz[at(COLUMNS, ROWS / 2)]
+                local low: f64 = mesh.pz[at(0, ROWS / 2)]
+                expect(low):toBeGreaterThan(0.0)
+                expect(held):toBeGreaterThan(low * 3.0)
             end
         )
 
         -- Meanwhile the right edge is the one in the air: by the middle of
-        -- the flip it has climbed to about a card's width off the table,
-        -- which is where a card standing on its long edge puts it.
+        -- the flip it has climbed to about a card's width off the table —
+        -- where a card standing on its long edge puts it, plus the hand's
+        -- pick-up and lean.
         it(
             "lifts its right edge about a card's width off the table",
             function(): unit
@@ -113,7 +130,7 @@ describe(
                     end
                 end
                 expect(highest):toBeGreaterThan(card.width * 0.9)
-                expect(highest):toBeLessThan(card.width * 1.5)
+                expect(highest):toBeLessThan(card.width * 1.6)
             end
         )
 
@@ -129,34 +146,23 @@ describe(
             end
         )
 
-        -- The hinge is also a place on screen, not only a height: the turn
-        -- happens at the slot's left edge. Edge-on, the whole card stands on
-        -- that line; the rest of the time the card is the part unfolding to
-        -- the right of it. Without the centre sliding, the silhouette closes
-        -- and opens symmetrically about the middle and the flip reads as a
-        -- spin about the centre axis.
+        -- The card is in a hand that hovers over the spot the card will land
+        -- back on, so the flight never wanders off it sideways. Edge-on, the
+        -- whole card stands over the middle of the slot.
         it(
-            "stands on the slot's left edge at the middle of the flip",
-            function(): unit
-                local mesh: card_warp.Mesh = built(0.5)
-                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
-                    expect(mesh.xs[index]):toBeCloseTo(X, 6)
-                end
-            end
-        )
-
-        it(
-            "keeps the hinge at the slot's left edge for the whole flip",
+            "stays over its own spot for the whole flip",
             function(): unit
                 for step = 0::i32, SAMPLES do
                     local mesh: card_warp.Mesh = built((step::f64) / (SAMPLES::f64))
                     local footprint: Extent = extent(mesh)
-                    -- The falling edge may loom a few pixels past the hinge —
-                    -- it is the nearest thing to the viewer — but the hinge
-                    -- itself never wanders into the slot.
-                    expect(footprint.low_x):toBeGreaterThan(X - 8.0)
-                    expect(footprint.low_x):toBeLessThan(X + 2.0)
-                    expect(footprint.high_x):toBeLessThan(X + card.width + 8.0)
+                    -- The near half of a turning card looms a little past
+                    -- the slot's sides, which is the perspective's doing.
+                    expect(footprint.low_x):toBeGreaterThan(X - 12.0)
+                    expect(footprint.high_x):toBeLessThan(X + card.width + 12.0)
+                end
+                local standing: card_warp.Mesh = built(0.5)
+                for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+                    expect(standing.xs[index]):toBeCloseTo(X + card.width * 0.5, 6)
                 end
             end
         )

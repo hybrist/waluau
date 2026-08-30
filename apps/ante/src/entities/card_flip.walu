@@ -2,17 +2,20 @@
 -- card presenter so stories can exercise the animation without importing the
 -- whole retained board composition.
 --
--- The flip is the table move, not a spin: a hand gets under the card's right
--- edge, that edge comes up and over while the left edge stays on the table,
--- the card stands on that edge at the top of the lift, and the raised edge
--- drops onto the same line as the base kicks out to the right, landing the
--- card flat on its own spot. Posed as card_warp geometry this is a rotation
--- about the card's vertical axis with two anchors that make it a hinge
--- rather than a spin: the whole card rides at half its width times the sine
--- of the turn, which pins the low edge to the table for the entire flip, and
--- the centre slides so the hinge line never leaves the slot's left edge on
--- screen — going up it is the resting edge, coming down it is the raised
--- edge falling onto it, and the card only ever unfolds to the right of it.
+-- The flip is a hand's move: fingers take the right edge and pull it up —
+-- that edge climbs while the rest of the card barely stirs — the whole card
+-- comes off the table as it nears standing, the turn completes over the top
+-- midair, and the same edge comes down on the far side as the card settles
+-- flat onto its own spot. Posed as card_warp geometry that is one rotation
+-- about the card's vertical axis riding a rise of half the card's width
+-- plus a hand's pick-up, all times the sine of the turn. The half width
+-- keeps the low edge level with the surface as the card turns; the pick-up
+-- on top of it is what makes this a card in a hand rather than on a hinge —
+-- the low edge hovers clear of the table mid-flip, and nothing is ever
+-- pinned to the surface. The card stays centred over its spot the whole
+-- way: the direction of the flip lives in which edge is up and in the lean
+-- that turns height into screen motion, not in dragging the silhouette
+-- toward an anchor.
 local game = require("../game")
 local easing = require("../easing")
 local ui = require("../ui/node")
@@ -28,10 +31,12 @@ const FLIP_SECONDS: f64 = 0.55
 const COLUMNS: i32 = 8
 const ROWS: i32 = 12
 
--- How much higher than the bare pivot the whole card rides, scaled by the
--- turn. A thumb under the edge lifts the card a little off the table even
--- at the pivot.
-const PICK_UP: f64 = 6.0
+-- How much higher than the bare turn the whole card rides, scaled by the
+-- turn — the hand's contribution. This is what carries the low edge off
+-- the table: it leaves the surface as the turn starts, hovers by this much
+-- at the top, and touches back down as the turn completes, while the held
+-- edge climbs the card's standing width on top of it.
+const PICK_UP: f64 = 24.0
 
 -- How far the card leans back toward the viewer while airborne, scaled by
 -- the turn. The board looks straight down at the table, and under that
@@ -56,15 +61,10 @@ function pose_at(x: f64, y: f64, progress: f64): card_warp.Pose
     local turn: f64 = easing.in_out_cubic(progress)
     local angle: f64 = turn * math.pi
     local depth: f64 = math.sin(angle)
-    -- The hinge, made visible: the centre tracks half the card's projected
-    -- width so the slot's left edge is where the turn happens on screen. Held
-    -- at the resting centre instead, the silhouette closes and opens
-    -- symmetrically about the middle and the whole flip reads as a spin
-    -- about the centre axis, whatever the depth is doing.
     local pose: card_warp.Pose = card_warp.Pose.rest(
         card.width,
         card.height,
-        x + card.width * 0.5 * math.abs(math.cos(angle)),
+        x + card.width * 0.5,
         y + card.height * 0.5
     )
     -- Negative, so the right edge is the one that comes toward the viewer —
@@ -73,10 +73,10 @@ function pose_at(x: f64, y: f64, progress: f64): card_warp.Pose
     pose.rise = (card.width * 0.5 + PICK_UP) * depth
     pose.tilt = TILT * depth
     -- The lean shears screen-y by depth before the bulk rise, which sends
-    -- the raised edge up the screen but would push the hinge edge down into
+    -- the raised edge up the screen but would push the low edge down into
     -- the table by the same shear. Lifting the whole card up-screen by the
-    -- rise's share of it plants the hinge back on the table line, so what
-    -- moves is the raised edge climbing, not the card sinking.
+    -- rise's share of it puts the low edge just above the table line — the
+    -- hand's hover — so what moves is the card climbing, never sinking.
     pose.center_y -= math.sin(pose.tilt) * pose.rise
     return pose
 end
@@ -89,16 +89,15 @@ const SHADOW_FLOOR: f64 = 0.22
 -- The grounding under the flip. The captured sheet carries no drop shadow —
 -- captures are the bare paper — so without this the card detaches from the
 -- table the moment the flip begins. The footprint is the card's horizontal
--- extent, which closes toward the hinge at the slot's left edge as the card
--- stands and opens rightward from it as the card lands, and the whole patch
--- fades as the body rises off it.
+-- extent, which closes toward the middle as the card stands and opens again
+-- as it lands, and the whole patch fades as the body rises off it.
 function draw_shadow(graphics: ui.Graphics, x: f64, y: f64, angle: f64, depth: f64): unit
     local footprint: f64 = math.abs(math.cos(angle))
     if footprint < SHADOW_FLOOR then
         footprint = SHADOW_FLOOR
     end
     local width: f64 = card.width * footprint
-    local left: f64 = x
+    local left: f64 = x + (card.width - width) * 0.5
     graphics:set_color_rgba(0.03, 0.02, 0.04, 0.2 - 0.08 * depth)
     graphics:fill_rounded_rectangle(
         left,
