@@ -1,0 +1,125 @@
+-- Deterministic, DOM-free checks on the flip's geometry. The pose is
+-- arithmetic — which edge stays on the table, how high the card stands,
+-- which face the viewer gets — so none of it needs a canvas.
+require("waluau:vitest")
+
+local card_flip = require("./card_flip")
+local card_warp = require("../card_warp")
+local card = require("./card")
+
+const X: f64 = 300.0
+const Y: f64 = 200.0
+const COLUMNS: i32 = 8
+const ROWS: i32 = 12
+const SAMPLES: i32 = 40
+
+function built(progress: f64): card_warp.Mesh
+    local mesh: card_warp.Mesh = card_warp.Mesh.new(COLUMNS, ROWS)
+    mesh:build(card_flip.pose_at(X, Y, progress))
+    return mesh
+end
+
+function at(column: i32, row: i32): i32
+    return row * (COLUMNS + 1) + column
+end
+
+-- The card's projected footprint, as the extremes of the grid.
+type Extent = { low_x: f64, high_x: f64, low_y: f64, high_y: f64 }
+
+function extent(mesh: card_warp.Mesh): Extent
+    local low_x: f64 = mesh.xs[0]
+    local high_x: f64 = mesh.xs[0]
+    local low_y: f64 = mesh.ys[0]
+    local high_y: f64 = mesh.ys[0]
+    for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+        if mesh.xs[index] < low_x then
+            low_x = mesh.xs[index]
+        end
+        if mesh.xs[index] > high_x then
+            high_x = mesh.xs[index]
+        end
+        if mesh.ys[index] < low_y then
+            low_y = mesh.ys[index]
+        end
+        if mesh.ys[index] > high_y then
+            high_y = mesh.ys[index]
+        end
+    end
+    return { low_x = low_x, high_x = high_x, low_y = low_y, high_y = high_y }
+end
+
+describe(
+    "the reveal flip",
+    function(): unit
+        it(
+            "starts sealed and flat, exactly on its spot",
+            function(): unit
+                local mesh: card_warp.Mesh = built(0.0)
+                expect(mesh.front):toBe(true)
+                local footprint: Extent = extent(mesh)
+                expect(footprint.low_x):toBeCloseTo(X, 6)
+                expect(footprint.high_x):toBeCloseTo(X + card.width, 6)
+                expect(footprint.low_y):toBeCloseTo(Y, 6)
+                expect(footprint.high_y):toBeCloseTo(Y + card.height, 6)
+            end
+        )
+
+        it(
+            "lands face up and flat on the same spot",
+            function(): unit
+                local mesh: card_warp.Mesh = built(1.0)
+                expect(mesh.front):toBe(false)
+                local footprint: Extent = extent(mesh)
+                expect(footprint.low_x):toBeCloseTo(X, 4)
+                expect(footprint.high_x):toBeCloseTo(X + card.width, 4)
+                expect(footprint.low_y):toBeCloseTo(Y, 4)
+                expect(footprint.high_y):toBeCloseTo(Y + card.height, 4)
+            end
+        )
+
+        -- The pivot is what separates a flip from a spin: one long edge is on
+        -- the table the whole time. That edge is the card's own left edge —
+        -- on screen it slides across as the card turns over onto it — and it
+        -- may ride the thumb's pick-up but never sink through the surface.
+        it(
+            "keeps its pivot edge on the table for the whole flip",
+            function(): unit
+                for step = 0::i32, SAMPLES do
+                    local mesh: card_warp.Mesh = built((step::f64) / (SAMPLES::f64))
+                    for row = 0::i32, ROWS do
+                        local z: f64 = mesh.pz[at(0, row)]
+                        expect(z):toBeGreaterThanOrEqual(-0.000001)
+                        expect(z):toBeLessThan(16.0)
+                    end
+                end
+            end
+        )
+
+        -- Meanwhile the right edge is the one in the air: by the middle of
+        -- the flip it has climbed to about a card's width off the table,
+        -- which is where a card standing on its long edge puts it.
+        it(
+            "lifts its right edge about a card's width off the table",
+            function(): unit
+                local mesh: card_warp.Mesh = built(0.5)
+                local highest: f64 = 0.0
+                for row = 0::i32, ROWS do
+                    local z: f64 = mesh.pz[at(COLUMNS, row)]
+                    if z > highest then
+                        highest = z
+                    end
+                end
+                expect(highest):toBeGreaterThan(card.width * 0.9)
+                expect(highest):toBeLessThan(card.width * 1.25)
+            end
+        )
+
+        it(
+            "shows the back on the way up and the face on the way down",
+            function(): unit
+                expect(built(0.25).front):toBe(true)
+                expect(built(0.75).front):toBe(false)
+            end
+        )
+    end
+)
