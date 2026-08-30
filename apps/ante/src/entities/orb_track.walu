@@ -62,7 +62,7 @@ function draw_round(
     local state: game.View = presentation.state
     local played: bool = round < #state.history
     if played then
-        local winner: i32 = state.history[round].winner
+        local winner: i32 = state.history[round + 1].winner
         if winner > 0 then
             edge = ORB_ROBBERS_EDGE
             fill = ORB_ROBBERS_FILL

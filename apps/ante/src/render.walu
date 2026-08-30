@@ -450,12 +450,12 @@ function Board:begin_frame(frame: Frame): unit
         end
         self.view:add_player(
             card.look(
-                frame.view.player_hand[index].card,
+                frame.view.player_hand[index + 1].card,
                 selected,
                 index == frame.interaction.hand_focus,
                 false,
                 false,
-                frame.view.player_hand[index].known
+                frame.view.player_hand[index + 1].known
             ),
             slot_hidden(frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, index)
         )
@@ -473,8 +473,8 @@ function Board:begin_frame(frame: Frame): unit
         self.view:present_computer(
             index,
             card.sealed(
-                frame.view.computer_hand[index].card,
-                frame.view.computer_hand[index].known
+                frame.view.computer_hand[index + 1].card,
+                frame.view.computer_hand[index + 1].known
             ),
             hidden
         )
@@ -518,7 +518,7 @@ function Board:begin_frame(frame: Frame): unit
         end
         self.view:present_table(
             index,
-            card.look(frame.view.middle[index], selected, focused, hidden, false, false),
+            card.look(frame.view.middle[index + 1], selected, focused, hidden, false, false),
             power,
             frame.spell.clock,
             frame.ash,
@@ -802,7 +802,7 @@ function divine_target(viewport: layout.State, target: i32, fan_parts: {f64}): P
         return slot_center(viewport, SLOT_MIDDLE, target, #fan_parts)
     end
     local hand_index: i32 = target - 3
-    local slot: box.Rect = hand_slot(viewport, hand_index, fan_parts[hand_index], #fan_parts)
+    local slot: box.Rect = hand_slot(viewport, hand_index, fan_parts[hand_index + 1], #fan_parts)
     return point(slot.x + card.width * 0.5, slot.y + card.height * 0.5)
 end
 
@@ -1302,7 +1302,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
         else
             card.draw_at(
                 surface,
-                card.sealed(trick.computer_hand[i].card, trick.computer_hand[i].known),
+                card.sealed(trick.computer_hand[i + 1].card, trick.computer_hand[i + 1].known),
                 slot.x,
                 slot.y
             )
@@ -1321,11 +1321,11 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                 surface,
                 frame,
                 row_slot(viewport, 5, i),
-                trick.middle[i],
+                trick.middle[i + 1],
                 i,
                 false,
                 false,
-                trick.winner ~= 0 and scoring[i]
+                trick.winner ~= 0 and scoring[i + 1]
             )
         end
     end
@@ -1353,7 +1353,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                         viewport,
                         trick.player_cards[1],
                         i,
-                        fan_parts[i],
+                        fan_parts[i + 1],
                         hand_count,
                         loss_progress,
                         47,
@@ -1372,7 +1372,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                         ),
                         fan,
                         i,
-                        fan_parts[i],
+                        fan_parts[i + 1],
                         hand_count
                     )
                 end
@@ -1385,7 +1385,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                         viewport,
                         trick.player_cards[2],
                         i,
-                        fan_parts[i],
+                        fan_parts[i + 1],
                         hand_count,
                         loss_progress,
                         71,
@@ -1404,7 +1404,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                         ),
                         fan,
                         i,
-                        fan_parts[i],
+                        fan_parts[i + 1],
                         hand_count
                     )
                 end
@@ -1412,10 +1412,10 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
         else
             hand_fan.draw_slot(
                 surface,
-                card.sealed(trick.player_hand[i].card, trick.player_hand[i].known),
+                card.sealed(trick.player_hand[i + 1].card, trick.player_hand[i + 1].known),
                 fan,
                 i,
-                fan_parts[i],
+                fan_parts[i + 1],
                 hand_count
             )
         end
@@ -1442,11 +1442,11 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                 surface,
                 frame,
                 row_slot(viewport, FORMATION_SLOTS, i + 1),
-                trick.middle[i],
+                trick.middle[i + 1],
                 i,
                 false,
                 false,
-                scoring[i]
+                scoring[i + 1]
             )
         end
     end
@@ -1477,12 +1477,12 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
     elseif trick.winner > 0 then
         local angle0: f64 = hand_fan.angle_at(
             trick.player_first,
-            fan_parts[trick.player_first],
+            fan_parts[trick.player_first + 1],
             hand_count
         )
         local angle1: f64 = hand_fan.angle_at(
             trick.player_second,
-            fan_parts[trick.player_second],
+            fan_parts[trick.player_second + 1],
             hand_count
         )
         draw_winner_flight(
@@ -1491,7 +1491,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
             bound_hand_center(
                 viewport,
                 trick.player_first,
-                fan_parts[trick.player_first],
+                fan_parts[trick.player_first + 1],
                 hand_count
             ),
             angle0,
@@ -1505,7 +1505,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
             bound_hand_center(
                 viewport,
                 trick.player_second,
-                fan_parts[trick.player_second],
+                fan_parts[trick.player_second + 1],
                 hand_count
             ),
             angle1,
@@ -1561,7 +1561,7 @@ function draw_action_band(board: Board, surface: ui.Surface, frame: Frame): unit
         -- Target selection replaces the phase prompts and commit capsules:
         -- nothing else accepts input until the cast lands or is called off. The
         -- prompt names the spell whose key opened targeting, at its own price.
-        local aimed: game.Spell = state.spells[interaction.cast_slot]
+        local aimed: game.Spell = state.spells[interaction.cast_slot + 1]
         centered_line(
             surface,
             viewport,
@@ -1600,7 +1600,7 @@ function draw_action_band(board: Board, surface: ui.Surface, frame: Frame): unit
         -- a commit would actually be accepted.
         local available: bool = true
         for table_card in interaction.swap_table_cards do
-            if state.frozen_middle[table_card] then
+            if state.frozen_middle[table_card + 1] then
                 available = false
             end
         end

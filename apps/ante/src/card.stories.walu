@@ -428,7 +428,7 @@ local function drawing_cards(): ui.Node
                             -- leave longer trails.
                             local offsets = card_draw.ghost_offsets()
                             for ghost = 0, #offsets - 1 do
-                                local past = clock - offsets[ghost] * playback_rate()
+                                local past = clock - offsets[ghost + 1] * playback_rate()
                                 if card_draw.ghost_visible(past) then
                                     draw_pose(
                                         graphics,
