@@ -4969,7 +4969,57 @@ fn rejects_overloaded_function_used_as_value() {
     let error = super::type_check_and_infer(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "overloaded host function 'pick' cannot be used as a value; call it directly"
+        "overloaded host function 'pick' needs an explicit function type when used as a value"
+    );
+}
+
+#[test]
+fn selects_overloaded_function_value_from_explicit_type() {
+    let source = r#"
+        declare function pick(x: f32): f32
+        declare function pick(x: f64): f64
+
+        function good(): f64
+            local alias: (f64) -> f64 = pick
+            return alias(1.0)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("explicit function type should select an overload");
+}
+
+#[test]
+fn types_compiler_builtin_values_from_explicit_signatures_and_pcall_arguments() {
+    let source = r#"
+        function good(): unit
+            local invert: (u32) -> u32 = bit32.bnot
+            local find: (string, string) -> unknown = string.find
+            local render: (unknown) -> string = tostring
+            local ok, value = pcall(string.find, "a", "a")
+            local bits: {u32} = { invert(0) }
+            local text = render(value)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("builtin values should type-check");
+}
+
+#[test]
+fn rejects_builtin_value_with_incompatible_explicit_signature() {
+    let source = r#"
+        function bad(): unit
+            local invert: (string) -> string = bit32.bnot
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "function type (string) -> string does not match builtin 'bit32.bnot'"
     );
 }
 

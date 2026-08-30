@@ -73,6 +73,85 @@ pub(super) const JSON_PACK: &str = "json.pack";
 pub(super) const JSON_UNPACK: &str = "json.unpack";
 pub(super) const PRINT: &str = "print";
 
+pub(super) fn intrinsic_function_value_type(
+    name: &str,
+    expected: Option<&Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let Some(
+        expected_ty @ Type::Function {
+            params,
+            return_type,
+            has_self: false,
+        },
+    ) = expected
+    else {
+        return None;
+    };
+    let u32_ty = Type::Numeric(NumericType::U32);
+    let i32_ty = Type::Numeric(NumericType::I32);
+    let valid = match name {
+        TYPE | TYPEOF | TO_STRING => {
+            params == &[Type::Unknown] && return_type.as_ref() == &Type::String
+        }
+        PRINT => params == &[Type::String] && return_type.as_ref() == &Type::Unit,
+        STRING_FIND => {
+            params == &[Type::String, Type::String] && return_type.as_ref() == &Type::Unknown
+        }
+        BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ => {
+            params == std::slice::from_ref(&u32_ty) && return_type.as_ref() == &u32_ty
+        }
+        BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT => {
+            params == &[u32_ty.clone(), i32_ty] && return_type.as_ref() == &u32_ty
+        }
+        BIT32_EXTRACT => {
+            matches!(
+                params.as_slice(),
+                [
+                    Type::Numeric(NumericType::U32),
+                    Type::Numeric(NumericType::I32)
+                ] | [
+                    Type::Numeric(NumericType::U32),
+                    Type::Numeric(NumericType::I32),
+                    Type::Numeric(NumericType::I32)
+                ]
+            ) && return_type.as_ref() == &u32_ty
+        }
+        BIT32_REPLACE => {
+            matches!(
+                params.as_slice(),
+                [
+                    Type::Numeric(NumericType::U32),
+                    Type::Numeric(NumericType::U32),
+                    Type::Numeric(NumericType::I32)
+                ] | [
+                    Type::Numeric(NumericType::U32),
+                    Type::Numeric(NumericType::U32),
+                    Type::Numeric(NumericType::I32),
+                    Type::Numeric(NumericType::I32)
+                ]
+            ) && return_type.as_ref() == &u32_ty
+        }
+        BIT32_BAND | BIT32_BOR | BIT32_BXOR => {
+            !params.is_empty()
+                && params.iter().all(|param| param == &u32_ty)
+                && return_type.as_ref() == &u32_ty
+        }
+        BIT32_BTEST => {
+            !params.is_empty()
+                && params.iter().all(|param| param == &u32_ty)
+                && return_type.as_ref() == &Type::Bool
+        }
+        _ => return None,
+    };
+    Some(if valid {
+        Ok(expected_ty.clone())
+    } else {
+        Err(Diagnostic::new(format!(
+            "function type {expected_ty} does not match builtin '{name}'"
+        )))
+    })
+}
+
 fn json_supported_type(ty: &Type) -> bool {
     match ty {
         Type::Numeric(_)
@@ -451,15 +530,95 @@ pub(super) fn infer_pcall_builtin_call(
     if args.is_empty() {
         return Some(Err(Diagnostic::new("{PCALL} expects at least 1 argument")));
     }
-    let callee_ty = match super::expressions::infer_expr(
-        &args[0],
-        vars,
-        fn_signatures,
-        active_type_params,
-        None,
-    ) {
-        Ok(ty) => ty,
-        Err(error) => return Some(Err(error)),
+    // A protected call supplies the same overload evidence as an ordinary
+    // direct call. Use its protected arguments to select a namespaced or
+    // plain declared-import overload before asking for the callee as a value.
+    let intrinsic_signature = super::expressions::builtin_name(&args[0]).and_then(|callee_name| {
+        let u32_ty = Type::Numeric(NumericType::U32);
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let (params, return_type) = match callee_name.as_str() {
+            STRING_FIND if args.len() == 3 => (vec![Type::String, Type::String], Type::Unknown),
+            BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ if args.len() == 2 => {
+                (vec![u32_ty.clone()], u32_ty.clone())
+            }
+            BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT
+                if args.len() == 3 =>
+            {
+                (vec![u32_ty.clone(), i32_ty], u32_ty.clone())
+            }
+            BIT32_EXTRACT if (3..=4).contains(&args.len()) => {
+                let mut params = vec![u32_ty.clone(), Type::Numeric(NumericType::I32)];
+                if args.len() == 4 {
+                    params.push(Type::Numeric(NumericType::I32));
+                }
+                (params, u32_ty.clone())
+            }
+            BIT32_REPLACE if (4..=5).contains(&args.len()) => {
+                let mut params = vec![u32_ty.clone(), u32_ty.clone(), i32_ty.clone()];
+                if args.len() == 5 {
+                    params.push(i32_ty);
+                }
+                (params, u32_ty.clone())
+            }
+            BIT32_BAND | BIT32_BOR | BIT32_BXOR if args.len() > 1 => {
+                (vec![u32_ty.clone(); args.len() - 1], u32_ty.clone())
+            }
+            BIT32_BTEST if args.len() > 1 => (vec![u32_ty; args.len() - 1], Type::Bool),
+            _ => return None,
+        };
+        for (arg, param) in args[1..].iter().zip(params.iter()) {
+            if super::expressions::infer_expr(
+                arg,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(param.clone()),
+            )
+            .and_then(|actual| coerce_type(actual, Some(param.clone())))
+            .is_err()
+            {
+                return None;
+            }
+        }
+        Some(Type::Function {
+            params,
+            return_type: Arc::new(return_type),
+            has_self: false,
+        })
+    });
+    let callee_ty = if let Some(signature) = intrinsic_signature {
+        signature
+    } else if let Some(callee_name) = super::expressions::builtin_name(&args[0])
+        && let Some(super::signatures::FnSignature::Overloaded(variants)) =
+            fn_signatures.get(&callee_name)
+    {
+        match super::expressions::select_overload(
+            &callee_name,
+            variants,
+            None,
+            &args[1..],
+            vars,
+            fn_signatures,
+            active_type_params,
+        ) {
+            Ok(chosen) => Type::Function {
+                params: chosen.params.clone(),
+                return_type: Arc::new(chosen.return_type.clone()),
+                has_self: false,
+            },
+            Err(error) => return Some(Err(error)),
+        }
+    } else {
+        match super::expressions::infer_expr(
+            &args[0],
+            vars,
+            fn_signatures,
+            active_type_params,
+            None,
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        }
     };
     let Type::Function {
         params,

@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::{
-    BasicBlock, BlockId, BuildCache, Function, FunctionSourceMap, Instruction, Module,
-    SourceFileId, SourceLocation, SourceOrigin, Terminator, ValueId, build,
+    BasicBlock, BitwiseIntrinsic, BlockId, BuildCache, Function, FunctionSourceMap, Instruction,
+    Module, SourceFileId, SourceLocation, SourceOrigin, Terminator, ValueId, build,
     build_cached_with_changes, verify,
 };
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
@@ -4092,4 +4092,97 @@ fn preserves_trailing_vararg_packs_in_function_returns() {
         module.functions[1].return_type,
         Type::Multi(vec![Type::Unknown, Type::Variadic(Arc::new(Type::Unknown)),])
     );
+}
+
+#[test]
+fn lowers_plain_and_overloaded_host_import_values_through_adapters() {
+    let source = r#"
+        declare function output(value: string): unit
+        declare function math.abs(value: f32): f32
+        declare function math.abs(value: f64): f64
+
+        function entry(): f64
+            local sink: (string) -> unit = output
+            sink("ready")
+            local abs: (f64) -> f64 = math.abs
+            return abs(-4.5)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let adapters = module
+        .functions
+        .iter()
+        .filter(|function| function.name.contains("$host_value$"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        adapters.len(),
+        2,
+        "expected one adapter per value reference"
+    );
+    assert!(adapters.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(instruction, Instruction::HostCall { name, .. } if name == "output")
+            })
+        })
+    }));
+    assert!(adapters.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(instruction, Instruction::HostCall { name, .. } if name.starts_with("math.abs$overload"))
+            })
+        })
+    }));
+}
+
+#[test]
+fn lowers_compiler_builtin_values_through_typed_adapters() {
+    let source = r#"
+        function entry(): u32
+            local invert: (u32) -> u32 = bit32.bnot
+            local render: (unknown) -> string = tostring
+            local text = render(invert(0))
+            return invert(0)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let adapters = module
+        .functions
+        .iter()
+        .filter(|function| function.name.contains("$builtin_value$"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        adapters.len(),
+        2,
+        "each builtin value site gets one adapter"
+    );
+    assert!(adapters.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::BitwiseIntrinsic {
+                        intrinsic: BitwiseIntrinsic::Not,
+                        ..
+                    }
+                )
+            })
+        })
+    }));
+    assert!(adapters.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::ToString { .. }))
+        })
+    }));
 }

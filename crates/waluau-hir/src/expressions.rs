@@ -12,7 +12,7 @@ use super::builtins::{
     infer_json_builtin_call, infer_pcall_builtin_call, infer_print_builtin_call,
     infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
     infer_string_builtin_call, infer_table_builtin_call, infer_tonumber_builtin_call,
-    infer_tostring_builtin_call, infer_type_builtin_call,
+    infer_tostring_builtin_call, infer_type_builtin_call, intrinsic_function_value_type,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -294,6 +294,41 @@ pub(super) fn resolved_type_method_name(
         })
         .collect::<Vec<_>>();
     (matches.len() == 1).then(|| matches.remove(0))
+}
+
+/// Resolve an overloaded declared function when a value context supplies its
+/// complete function type. Unlike call-site overload selection, taking a
+/// function as a value has no argument expressions to rank, so the expected
+/// signature must identify exactly one variant.
+fn overload_function_value_type(
+    display_name: &str,
+    variants: &[OverloadVariant],
+    expected: Option<&Type>,
+) -> Result<Type, Diagnostic> {
+    let Some(
+        expected_ty @ Type::Function {
+            params,
+            return_type,
+            has_self: false,
+        },
+    ) = expected
+    else {
+        return Err(Diagnostic::new(format!(
+            "overloaded host function '{display_name}' needs an explicit function type when used as a value"
+        )));
+    };
+    let matches = variants
+        .iter()
+        .filter(|variant| {
+            variant.params == *params && variant.return_type == return_type.as_ref().clone()
+        })
+        .count();
+    if matches != 1 {
+        return Err(Diagnostic::new(format!(
+            "expected function type {expected_ty} does not select exactly one overload of '{display_name}'"
+        )));
+    }
+    Ok(expected_ty.clone())
 }
 
 /// Resolve a method call on `receiver_ty` to a directly-callable signature
@@ -608,6 +643,11 @@ fn infer_expr_inner(
              relative imports are unavailable when compiling a single source string"
         ))),
         Expr::Name(name, _, _) => {
+            if vars.get(name).is_none()
+                && let Some(result) = intrinsic_function_value_type(name, expected.as_ref())
+            {
+                return result;
+            }
             if matches!(fn_signatures.get(name), Some(FnSignature::Generic(_))) {
                 return Err(generic_diagnostic(
                     "generic/uninstantiated-value",
@@ -618,11 +658,9 @@ fn infer_expr_inner(
                 ));
             }
             if vars.get(name).is_none()
-                && matches!(fn_signatures.get(name), Some(FnSignature::Overloaded(_)))
+                && let Some(FnSignature::Overloaded(variants)) = fn_signatures.get(name)
             {
-                return Err(Diagnostic::new(format!(
-                    "overloaded host function '{name}' cannot be used as a value; call it directly"
-                )));
+                return overload_function_value_type(name, variants, expected.as_ref());
             }
             let actual = if let Some(local) = vars.get(name) {
                 local.ty.clone()
@@ -1529,6 +1567,10 @@ fn infer_expr_inner(
         Expr::Field { base, name, .. } => {
             if let Expr::Name(base_name, _, _) = base.as_ref() {
                 let method_name = method_signature_name(base_name, name);
+                if let Some(result) = intrinsic_function_value_type(&method_name, expected.as_ref())
+                {
+                    return result;
+                }
                 if let Some(signature) = fn_signatures.get(&method_name) {
                     return match signature {
                         FnSignature::Mono {
@@ -1550,9 +1592,9 @@ fn infer_expr_inner(
                             ),
                             "call the generic function with explicit type arguments",
                         )),
-                        FnSignature::Overloaded(_) => Err(Diagnostic::new(format!(
-                            "overloaded host function '{method_name}' cannot be used as a value; call it directly"
-                        ))),
+                        FnSignature::Overloaded(variants) => {
+                            overload_function_value_type(&method_name, variants, expected.as_ref())
+                        }
                         FnSignature::Const { ty } => coerce_type(ty.clone(), expected),
                     };
                 }

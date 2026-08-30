@@ -3,9 +3,8 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- Waluau's compiler-integrated bit32 members are callable directly but are not
--- first-class function values. Static typing also rejects invalid arguments
--- before a runtime pcall can observe them.
+-- Typed bit32 function values are supported, but Waluau rejects these invalid
+-- argument types and arities statically instead of deferring them to pcall.
 --
 -- Split from conformance/luau/bitwise.9.walu.
 

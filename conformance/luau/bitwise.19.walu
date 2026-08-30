@@ -2,10 +2,6 @@
 -- tests/conformance/bitwise.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- Waluau's compiler-integrated bit32 members are callable directly but are not
--- first-class function values that can be passed as pcall's callee.
---
 -- Split from conformance/luau/bitwise.10.walu.
 
 assert(not pcall(bit32.extract, 0, -1))
