@@ -3,8 +3,7 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- This chunk contains only bitwise.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- Waluau does not implicitly coerce strings to numbers for typed bit32 calls.
 --
 -- Split from conformance/luau/bitwise.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.

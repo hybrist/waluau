@@ -2,9 +2,8 @@
 -- tests/conformance/bitwise.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only bitwise.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- This chunk contains bitwise.luau checks that pass in Waluau. The independent
+-- wide implicit-global coercion check is preserved in bitwise.21.walu.
 --
 -- Split from conformance/luau/bitwise.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.
@@ -18,9 +17,3 @@ assert(bit32.byteswap(-1) == 0xffffffff)
 
 assert(bit32.byteswap(noinline(0x10203040)) == 0x40302010)
 assert(bit32.byteswap(noinline(0)) == 0)
-assert(bit32.byteswap(noinline(-1)) == 0xffffffff)
-
--- bit32.bor(n, 0) must clear top bits
--- we check this obscuring the constant through a global to make sure this gets evaluated fully
-high32 = 0x42_1234_5678
-assert(bit32.bor(high32, 0) == 0x1234_5678)

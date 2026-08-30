@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use waluau_ast::{BinaryOp, NumericType, Type};
 use waluau_diagnostics::Diagnostic;
-use waluau_ir::{Function as IrFunction, Instruction as IrInstruction, Module};
+use waluau_ir::{BitwiseIntrinsic, Function as IrFunction, Instruction as IrInstruction, Module};
 
 pub const IMPORTED_STRING_CONSTANTS_MODULE: &str = "string_constants";
 pub const JS_STRING_BUILTINS_MODULE: &str = "wasm:js-string";
@@ -421,6 +421,8 @@ pub const ERR_BUFFER_OOB: &str = "buffer access out of bounds";
 /// Error payload used when `pcall` catches a foreign (non-Waluau) exception
 /// raised by a host import.
 pub const ERR_FOREIGN_EXCEPTION: &str = "uncaught host exception";
+/// Error message for invalid `bit32.extract`/`bit32.replace` field ranges.
+pub const ERR_BIT32_FIELD: &str = "bit field range is out of bounds";
 
 /// True for the integer numeric types whose Wasm division/remainder
 /// instructions can trap (divide by zero, signed overflow).
@@ -447,6 +449,10 @@ pub(crate) fn runtime_error_messages(instruction: &IrInstruction) -> &'static [&
         IrInstruction::DynLen { .. } => &[ERR_LEN_NON_ARRAY],
         IrInstruction::BufferGet { .. } | IrInstruction::BufferSet { .. } => &[ERR_BUFFER_OOB],
         IrInstruction::ProtectedCall { .. } => &[ERR_FOREIGN_EXCEPTION],
+        IrInstruction::BitwiseIntrinsic {
+            intrinsic: BitwiseIntrinsic::Extract | BitwiseIntrinsic::Replace,
+            ..
+        } => &[ERR_BIT32_FIELD],
         IrInstruction::Binary {
             op: BinaryOp::Div | BinaryOp::FloorDiv,
             operand_ty,

@@ -402,6 +402,12 @@ pub enum BitwiseIntrinsic {
     Test,
     LRotate,
     RRotate,
+    LShift,
+    RShift,
+    ArithmeticRShift,
+    Extract,
+    Replace,
+    ByteSwap,
     CountLeadingZeros,
     CountTrailingZeros,
 }

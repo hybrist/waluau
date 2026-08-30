@@ -4187,10 +4187,7 @@ impl FunctionEmission<'_> {
                 IrInstruction::BitwiseIntrinsic {
                     intrinsic, args, ..
                 } => {
-                    for arg in args {
-                        emit_value_operand(out, local_plan, *arg)?;
-                    }
-                    emit_bitwise_intrinsic(out, *intrinsic, args.len())?;
+                    emit_bitwise_intrinsic(out, ctx, local_plan, *intrinsic, args)?;
                     emit_value_store(out, local_plan, *value)?;
                 }
                 IrInstruction::Print { value: printed } => {
@@ -7840,47 +7837,64 @@ fn emit_math_intrinsic(
 
 fn emit_bitwise_intrinsic(
     out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    local_plan: &LocalPlan,
     intrinsic: BitwiseIntrinsic,
-    arity: usize,
+    args: &[ValueId],
 ) -> Result<(), Diagnostic> {
+    let emit_arg =
+        |out: &mut Function, index: usize| emit_value_operand(out, local_plan, args[index]);
     match intrinsic {
         BitwiseIntrinsic::Not => {
-            debug_assert_eq!(arity, 1);
+            debug_assert_eq!(args.len(), 1);
+            emit_arg(out, 0)?;
             out.instruction(&Instruction::I32Const(-1));
             out.instruction(&Instruction::I32Xor);
         }
         BitwiseIntrinsic::And => {
-            if arity == 0 {
+            if args.is_empty() {
                 out.instruction(&Instruction::I32Const(-1));
             } else {
-                for _ in 1..arity {
+                for index in 0..args.len() {
+                    emit_arg(out, index)?;
+                }
+                for _ in 1..args.len() {
                     out.instruction(&Instruction::I32And);
                 }
             }
         }
         BitwiseIntrinsic::Or => {
-            if arity == 0 {
+            if args.is_empty() {
                 out.instruction(&Instruction::I32Const(0));
             } else {
-                for _ in 1..arity {
+                for index in 0..args.len() {
+                    emit_arg(out, index)?;
+                }
+                for _ in 1..args.len() {
                     out.instruction(&Instruction::I32Or);
                 }
             }
         }
         BitwiseIntrinsic::Xor => {
-            if arity == 0 {
+            if args.is_empty() {
                 out.instruction(&Instruction::I32Const(0));
             } else {
-                for _ in 1..arity {
+                for index in 0..args.len() {
+                    emit_arg(out, index)?;
+                }
+                for _ in 1..args.len() {
                     out.instruction(&Instruction::I32Xor);
                 }
             }
         }
         BitwiseIntrinsic::Test => {
-            if arity == 0 {
+            if args.is_empty() {
                 out.instruction(&Instruction::I32Const(1));
             } else {
-                for _ in 1..arity {
+                for index in 0..args.len() {
+                    emit_arg(out, index)?;
+                }
+                for _ in 1..args.len() {
                     out.instruction(&Instruction::I32And);
                 }
                 out.instruction(&Instruction::I32Eqz);
@@ -7888,22 +7902,172 @@ fn emit_bitwise_intrinsic(
             }
         }
         BitwiseIntrinsic::LRotate => {
-            debug_assert_eq!(arity, 2);
+            debug_assert_eq!(args.len(), 2);
+            emit_arg(out, 0)?;
+            emit_arg(out, 1)?;
             out.instruction(&Instruction::I32Rotl);
         }
         BitwiseIntrinsic::RRotate => {
-            debug_assert_eq!(arity, 2);
+            debug_assert_eq!(args.len(), 2);
+            emit_arg(out, 0)?;
+            emit_arg(out, 1)?;
             out.instruction(&Instruction::I32Rotr);
         }
+        BitwiseIntrinsic::LShift
+        | BitwiseIntrinsic::RShift
+        | BitwiseIntrinsic::ArithmeticRShift => {
+            debug_assert_eq!(args.len(), 2);
+            emit_arg(out, 1)?;
+            out.instruction(&Instruction::I32Const(0));
+            out.instruction(&Instruction::I32LtS);
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+
+            // Negative displacements reverse direction. Values at or below
+            // -32 always shift every bit out.
+            emit_arg(out, 1)?;
+            out.instruction(&Instruction::I32Const(-32));
+            out.instruction(&Instruction::I32LeS);
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            out.instruction(&Instruction::I32Const(0));
+            out.instruction(&Instruction::Else);
+            emit_arg(out, 0)?;
+            out.instruction(&Instruction::I32Const(0));
+            emit_arg(out, 1)?;
+            out.instruction(&Instruction::I32Sub);
+            match intrinsic {
+                BitwiseIntrinsic::LShift => out.instruction(&Instruction::I32ShrU),
+                BitwiseIntrinsic::RShift | BitwiseIntrinsic::ArithmeticRShift => {
+                    out.instruction(&Instruction::I32Shl)
+                }
+                _ => unreachable!(),
+            };
+            out.instruction(&Instruction::End);
+
+            out.instruction(&Instruction::Else);
+            emit_arg(out, 1)?;
+            out.instruction(&Instruction::I32Const(32));
+            out.instruction(&Instruction::I32GeS);
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            if intrinsic == BitwiseIntrinsic::ArithmeticRShift {
+                emit_arg(out, 0)?;
+                out.instruction(&Instruction::I32Const(31));
+                out.instruction(&Instruction::I32ShrS);
+            } else {
+                out.instruction(&Instruction::I32Const(0));
+            }
+            out.instruction(&Instruction::Else);
+            emit_arg(out, 0)?;
+            emit_arg(out, 1)?;
+            match intrinsic {
+                BitwiseIntrinsic::LShift => out.instruction(&Instruction::I32Shl),
+                BitwiseIntrinsic::RShift => out.instruction(&Instruction::I32ShrU),
+                BitwiseIntrinsic::ArithmeticRShift => out.instruction(&Instruction::I32ShrS),
+                _ => unreachable!(),
+            };
+            out.instruction(&Instruction::End);
+            out.instruction(&Instruction::End);
+        }
+        BitwiseIntrinsic::Extract => {
+            debug_assert_eq!(args.len(), 3);
+            emit_bit_field_validation(out, ctx, local_plan, args[1], args[2])?;
+            emit_arg(out, 0)?;
+            emit_arg(out, 1)?;
+            out.instruction(&Instruction::I32ShrU);
+            emit_bit_field_mask(out, local_plan, args[2])?;
+            out.instruction(&Instruction::I32And);
+        }
+        BitwiseIntrinsic::Replace => {
+            debug_assert_eq!(args.len(), 4);
+            emit_bit_field_validation(out, ctx, local_plan, args[2], args[3])?;
+            emit_arg(out, 0)?;
+            emit_bit_field_mask(out, local_plan, args[3])?;
+            emit_arg(out, 2)?;
+            out.instruction(&Instruction::I32Shl);
+            out.instruction(&Instruction::I32Const(-1));
+            out.instruction(&Instruction::I32Xor);
+            out.instruction(&Instruction::I32And);
+            emit_arg(out, 1)?;
+            emit_bit_field_mask(out, local_plan, args[3])?;
+            out.instruction(&Instruction::I32And);
+            emit_arg(out, 2)?;
+            out.instruction(&Instruction::I32Shl);
+            out.instruction(&Instruction::I32Or);
+        }
+        BitwiseIntrinsic::ByteSwap => {
+            debug_assert_eq!(args.len(), 1);
+            emit_arg(out, 0)?;
+            out.instruction(&Instruction::I32Const(0x0000_00ff));
+            out.instruction(&Instruction::I32And);
+            out.instruction(&Instruction::I32Const(24));
+            out.instruction(&Instruction::I32Shl);
+            emit_arg(out, 0)?;
+            out.instruction(&Instruction::I32Const(0x0000_ff00));
+            out.instruction(&Instruction::I32And);
+            out.instruction(&Instruction::I32Const(8));
+            out.instruction(&Instruction::I32Shl);
+            out.instruction(&Instruction::I32Or);
+            emit_arg(out, 0)?;
+            out.instruction(&Instruction::I32Const(8));
+            out.instruction(&Instruction::I32ShrU);
+            out.instruction(&Instruction::I32Const(0x0000_ff00));
+            out.instruction(&Instruction::I32And);
+            out.instruction(&Instruction::I32Or);
+            emit_arg(out, 0)?;
+            out.instruction(&Instruction::I32Const(24));
+            out.instruction(&Instruction::I32ShrU);
+            out.instruction(&Instruction::I32Or);
+        }
         BitwiseIntrinsic::CountLeadingZeros => {
-            debug_assert_eq!(arity, 1);
+            debug_assert_eq!(args.len(), 1);
+            emit_arg(out, 0)?;
             out.instruction(&Instruction::I32Clz);
         }
         BitwiseIntrinsic::CountTrailingZeros => {
-            debug_assert_eq!(arity, 1);
+            debug_assert_eq!(args.len(), 1);
+            emit_arg(out, 0)?;
             out.instruction(&Instruction::I32Ctz);
         }
     }
+    Ok(())
+}
+
+fn emit_bit_field_mask(
+    out: &mut Function,
+    local_plan: &LocalPlan,
+    width: ValueId,
+) -> Result<(), Diagnostic> {
+    out.instruction(&Instruction::I32Const(-1));
+    out.instruction(&Instruction::I32Const(32));
+    emit_value_operand(out, local_plan, width)?;
+    out.instruction(&Instruction::I32Sub);
+    out.instruction(&Instruction::I32ShrU);
+    Ok(())
+}
+
+fn emit_bit_field_validation(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    local_plan: &LocalPlan,
+    field: ValueId,
+    width: ValueId,
+) -> Result<(), Diagnostic> {
+    // Unsigned comparison catches negative fields too. After that, width
+    // must be positive and no wider than the bits remaining after `field`.
+    emit_value_operand(out, local_plan, field)?;
+    out.instruction(&Instruction::I32Const(32));
+    out.instruction(&Instruction::I32GeU);
+    emit_value_operand(out, local_plan, width)?;
+    out.instruction(&Instruction::I32Eqz);
+    out.instruction(&Instruction::I32Or);
+    emit_value_operand(out, local_plan, width)?;
+    out.instruction(&Instruction::I32Const(32));
+    emit_value_operand(out, local_plan, field)?;
+    out.instruction(&Instruction::I32Sub);
+    out.instruction(&Instruction::I32GtU);
+    out.instruction(&Instruction::I32Or);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_throw_message(out, ctx, host::ERR_BIT32_FIELD)?;
+    out.instruction(&Instruction::End);
     Ok(())
 }
 

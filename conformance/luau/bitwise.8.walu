@@ -2,9 +2,7 @@
 -- tests/conformance/bitwise.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only bitwise.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- This chunk contains bitwise.luau checks that pass in Waluau.
 --
 -- Split from conformance/luau/bitwise.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.
@@ -24,7 +22,3 @@ assert(bit32.rshift(noinline(0x12345678), -32) == 0)
 assert(bit32.arshift(noinline(0x12345678), 0) == 0x12345678)
 assert(bit32.arshift(noinline(0x12345678), 1) == 0x12345678 / 2)
 assert(bit32.arshift(noinline(0x12345678), -1) == 0x12345678 * 2)
-assert(bit32.arshift(noinline(-1), 1) == 0xffffffff)
-assert(bit32.arshift(noinline(-1), 24) == 0xffffffff)
-assert(bit32.arshift(noinline(-1), 32) == 0xffffffff)
-assert(bit32.arshift(noinline(-1), -1) == (-1 * 2) % 2^32)

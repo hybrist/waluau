@@ -66,6 +66,50 @@ fn preserves_function_instruction_and_terminator_locations() {
 }
 
 #[test]
+fn lowers_complete_bit32_intrinsics_and_default_field_widths() {
+    let source = r#"
+        function entry(value: u32, displacement: i32, field: i32): u32
+            local a: u32 = bit32.lshift(value, displacement)
+            local b: u32 = bit32.rshift(a, displacement)
+            local c: u32 = bit32.arshift(b, displacement)
+            local d: u32 = bit32.extract(c, field)
+            local e: u32 = bit32.replace(c, d, field)
+            return bit32.byteswap(e)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function");
+    let intrinsics = entry
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::BitwiseIntrinsic {
+                intrinsic, args, ..
+            } => Some((*intrinsic, args.len())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        intrinsics,
+        vec![
+            (super::BitwiseIntrinsic::LShift, 2),
+            (super::BitwiseIntrinsic::RShift, 2),
+            (super::BitwiseIntrinsic::ArithmeticRShift, 2),
+            (super::BitwiseIntrinsic::Extract, 3),
+            (super::BitwiseIntrinsic::Replace, 4),
+            (super::BitwiseIntrinsic::ByteSwap, 1),
+        ]
+    );
+}
+
+#[test]
 fn leaves_compiler_generated_function_bodies_unmapped() {
     let source = "local value: i32 = 42\n";
     let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");
