@@ -233,6 +233,15 @@ pub enum Instruction {
         params: Vec<Type>,
         return_type: Type,
     },
+    /// Protected invocation when the source-level callee is `unknown`.
+    ///
+    /// `args` is a boxed, runtime-sized `Array(unknown)`. Codegen validates
+    /// the callee and dispatches through the closure's canonical dynamic
+    /// wrapper without making ordinary calls on `unknown` legal.
+    ProtectedCallUnknown {
+        callee: ValueId,
+        args: ValueId,
+    },
     /// Create a coroutine from a zero-argument, i32-returning function value.
     /// Result type: Thread.
     CoroutineCreate {

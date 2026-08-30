@@ -87,7 +87,8 @@ pub(crate) struct ArrayTypeRegistry {
     pub(crate) nullable_box_indices: BTreeMap<NullableBoxKind, u32>,
     /// Type index of `$anyref_array = (array (ref null any) mutable)`.
     pub(crate) anyref_array_type: u32,
-    /// Type index of `$func_val = (struct { orig_idx: i32, env: ref null $anyref_array, wrapper_idx: i32 })`.
+    /// Type index of `$func_val = (struct { orig_idx, env, typed_wrapper_idx,
+    /// dynamic_wrapper_idx })`.
     pub(crate) func_val_struct_type: u32,
     /// Type index of `$boxed_f64 = (struct (field f64))`, used to box `f64` values
     /// into `anyref` (`unknown`). `i32` uses `i31ref`; bool has a distinct box so
@@ -517,6 +518,9 @@ fn collect_nullable_box_kinds_from_instruction(
             }
             add(return_type);
         }
+        IrInstruction::ProtectedCallUnknown { .. } => {
+            add(&Type::Array(std::sync::Arc::new(Type::Unknown)));
+        }
         IrInstruction::ArrayNew { element_ty, .. }
         | IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
@@ -679,6 +683,7 @@ fn collect_record_types_from_instruction(
             }
             insert_record_type(return_type, seen, out);
         }
+        IrInstruction::ProtectedCallUnknown { .. } => {}
         IrInstruction::Closure {
             params,
             return_type,

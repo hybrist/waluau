@@ -168,10 +168,12 @@ pub(crate) fn build_local_plan(
         })
     });
     let has_protected_call = function.blocks.values().any(|block| {
-        block
-            .instructions
-            .iter()
-            .any(|(_, instruction)| matches!(instruction, IrInstruction::ProtectedCall { .. }))
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                IrInstruction::ProtectedCall { .. } | IrInstruction::ProtectedCallUnknown { .. }
+            )
+        })
     });
     let coroutine_save_local = if has_resume {
         let slot = function.params.len() as u32 + extra_locals.len() as u32;
@@ -396,7 +398,10 @@ pub(crate) fn infer_value_types(
                     .clone(),
                 IrInstruction::HostCall { return_type, .. } => return_type.clone(),
                 IrInstruction::CallValue { return_type, .. } => return_type.clone(),
-                IrInstruction::ProtectedCall { .. } => Type::Multi(vec![Type::Bool, Type::Unknown]),
+                IrInstruction::ProtectedCall { .. }
+                | IrInstruction::ProtectedCallUnknown { .. } => {
+                    Type::Multi(vec![Type::Bool, Type::Unknown])
+                }
                 IrInstruction::CoroutineCreate { .. } => Type::Thread,
                 IrInstruction::CoroutineResume { .. } => {
                     Type::Multi(vec![Type::Bool, Type::Unknown])
@@ -840,6 +845,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             out.push(*callee);
             out
         }
+        IrInstruction::ProtectedCallUnknown { callee, args } => vec![*args, *callee],
         IrInstruction::CoroutineCreate { callee, .. } => vec![*callee],
         IrInstruction::CoroutineResume { coroutine, .. }
         | IrInstruction::CoroutineResumeTagged { coroutine, .. }
@@ -982,7 +988,9 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Call { args, .. } | IrInstruction::HostCall { args, .. } => {
             args.first().copied() == Some(value)
         }
-        IrInstruction::CallValue { .. } | IrInstruction::ProtectedCall { .. } => false,
+        IrInstruction::CallValue { .. }
+        | IrInstruction::ProtectedCall { .. }
+        | IrInstruction::ProtectedCallUnknown { .. } => false,
         IrInstruction::CoroutineCreate { .. } => false,
         IrInstruction::CoroutineResume { coroutine, .. }
         | IrInstruction::CoroutineResumeTagged { coroutine, .. }

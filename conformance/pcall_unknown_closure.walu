@@ -1,0 +1,72 @@
+-- Dynamic protected calls are the one legal invocation boundary for a value
+-- whose static type is unknown. Ordinary unknown calls remain a type error.
+function protect(fn, ...): bool, unknown
+    return pcall(fn, ...)
+end
+
+local ok, answer = protect(
+    function(value: number): number
+        return value + 2
+    end,
+    40
+)
+assert(ok)
+assert(answer::f64 == 42)
+
+local captured: number = 7
+local captured_ok, captured_value = protect(
+    function(value: number): number
+        return captured + value
+    end,
+    5
+)
+assert(captured_ok)
+assert(captured_value::f64 == 12)
+
+local unit_ok, unit_value = protect(
+    function(): unit
+    end
+)
+assert(unit_ok)
+assert(typeof(unit_value) == "nil")
+
+local error_ok, error_value = protect(
+    function(): unit
+        error("dynamic boom")
+    end
+)
+assert(not error_ok)
+assert(error_value::string == "dynamic boom")
+
+local not_function_ok, not_function_error = protect(42)
+assert(not not_function_ok)
+assert(not_function_error::string == "attempt to call a non-function value")
+
+local arity_ok, arity_error = protect(
+    function(value: number): number
+        return value
+    end
+)
+assert(not arity_ok)
+assert(arity_error::string == "not enough arguments for protected function")
+
+local payload_ok, payload_error = protect(
+    function(value: bool): bool
+        return value
+    end,
+    42
+)
+assert(not payload_ok)
+assert(payload_error::string == "protected function argument type mismatch")
+
+-- An already-boxed closure can travel through the unknown pack and return
+-- unchanged; identity is preserved rather than cloning the function value.
+local identity_ok, identity_value = protect(
+    function(value: unknown): unknown
+        return value
+    end,
+    function(): unit
+    end
+)
+assert(identity_ok)
+assert(typeof(identity_value) == "function")

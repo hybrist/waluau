@@ -111,6 +111,12 @@ pub(crate) fn collect_user_signatures(
                         registry.add(params.clone(), return_type.clone());
                         registry.add_wrapper(params.clone(), return_type.clone());
                     }
+                    IrInstruction::ProtectedCallUnknown { .. } => {
+                        registry.add_wrapper(
+                            vec![Type::Array(std::sync::Arc::new(Type::Unknown))],
+                            Type::Unknown,
+                        );
+                    }
                     _ => {}
                 }
             }

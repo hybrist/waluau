@@ -9489,6 +9489,25 @@ impl Builder<'_> {
                 Err(error) => return Some(Err(error)),
             }
         };
+        if callee_ty == Type::Unknown {
+            let callee = match self.lower_expr(&args[0], scope, Some(Type::Unknown)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let packed_args = match self.lower_dynamic_pcall_args(&args[1..], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = self.emit(Instruction::ProtectedCallUnknown {
+                callee,
+                args: packed_args,
+            });
+            return Some(self.coerce_value(
+                value,
+                Type::Multi(vec![Type::Bool, Type::Unknown]),
+                expected,
+            ));
+        }
         let Type::Function {
             params,
             return_type,
@@ -9548,6 +9567,42 @@ impl Builder<'_> {
             Type::Multi(vec![Type::Bool, Type::Unknown]),
             expected,
         ))
+    }
+
+    /// Box all arguments to a dynamic `pcall` into one runtime-sized pack.
+    /// A trailing `...` is appended in full, preserving the caller's runtime
+    /// arity for the dynamic closure wrapper.
+    fn lower_dynamic_pcall_args(
+        &mut self,
+        args: &[Expr],
+        scope: &Scope,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.len() > 1 && args[..args.len() - 1].iter().any(|arg| matches!(arg, Expr::Vararg(_))) {
+            return Err(Diagnostic::new(
+                "'...' is only supported as the last argument of a call",
+            ));
+        }
+        let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
+        let explicit = if trailing_vararg {
+            &args[..args.len() - 1]
+        } else {
+            args
+        };
+        let elements = explicit
+            .iter()
+            .map(|arg| self.lower_expr(arg, scope, Some(Type::Unknown)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let pack = self.emit(Instruction::ArrayNew {
+            element_ty: Type::Unknown,
+            elements,
+        });
+        if trailing_vararg {
+            let forwarded = self
+                .vararg_value
+                .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
+            self.emit_array_append_all(pack, forwarded);
+        }
+        Ok(pack)
     }
 
     fn lower_error_builtin_call(
@@ -9794,6 +9849,17 @@ impl Builder<'_> {
                 Err(error) => return Some(Err(error)),
             }
         };
+        if callee_ty == Type::Unknown {
+            for arg in args.iter().skip(1) {
+                if let Err(error) = self.infer_expr_type(arg, types, None) {
+                    return Some(Err(error));
+                }
+            }
+            return Some(coerce_type(
+                Type::Multi(vec![Type::Bool, Type::Unknown]),
+                expected,
+            ));
+        }
         let Type::Function { params, .. } = callee_ty.clone()
         else {
             return Some(Err(Diagnostic::new(format!(

@@ -18,6 +18,29 @@ fn authored(origin: SourceOrigin) -> SourceLocation {
 }
 
 #[test]
+fn lowers_unknown_pcall_to_dynamic_protected_call() {
+    let program = parse(
+        r#"
+            function protect(fn, ...): bool
+                local ok, value = pcall(fn, ...)
+                return ok
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+    assert!(module.functions.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(instruction, Instruction::ProtectedCallUnknown { .. })
+            })
+        })
+    }));
+}
+
+#[test]
 fn preserves_function_instruction_and_terminator_locations() {
     let source = "function entry(x: i32): i32\n    return x + 42\nend\n";
     let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");

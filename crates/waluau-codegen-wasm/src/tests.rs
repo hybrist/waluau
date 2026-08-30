@@ -2345,6 +2345,47 @@ fn pcall_emits_try_table_and_exception_tag() {
 }
 
 #[test]
+fn unknown_pcall_emits_canonical_dynamic_closure_wrappers() {
+    let source = r#"
+        function protect(fn, ...): bool, unknown
+            return pcall(fn, ...)
+        end
+
+        function run(): i32
+            local ok, value = protect(function(x: number): number
+                return x + 2
+            end, 40)
+            local failed, message = protect(function(): unit
+                error("boom")
+            end)
+            local not_fn, type_message = protect(42)
+            if ok and value::f64 == 42 and not failed and message::string == "boom"
+                and not not_fn and type_message::string == "attempt to call a non-function value" then
+                return 1
+            end
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+    let wasm = emit(&ir).expect("dynamic protected calls should emit");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("$dynamic_wrapper"),
+        "missing dynamic wrapper:\n{wat}"
+    );
+    assert!(
+        wat.contains("call_indirect"),
+        "missing dynamic dispatch:\n{wat}"
+    );
+}
+
+#[test]
 fn bit32_shift_field_and_byteswap_intrinsics_emit_checked_wasm() {
     let source = r#"
         function entry(value: u32, displacement: i32, field: i32, width: i32): u32
