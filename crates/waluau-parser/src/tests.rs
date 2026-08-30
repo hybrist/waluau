@@ -24,6 +24,18 @@ fn parses_v0_function() {
 }
 
 #[test]
+fn parses_scientific_notation_number_literals() {
+    let source = r#"
+        function scientific(): f64
+            return 1e6 + 1e+30 + 0.1e-30 + 0.9E30 + 1_0e+3_0
+        end
+    "#;
+
+    let program = parse(source).expect("scientific-notation literals should parse");
+    assert_eq!(program.functions.len(), 1);
+}
+
+#[test]
 fn parses_explicit_exported_function() {
     let source = "export function answer(): i32\n    return 42\nend\n";
     let outcome = crate::parse_with_recovery(source, "module.walu");

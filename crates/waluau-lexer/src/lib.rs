@@ -386,6 +386,26 @@ fn lex_range(
                             end += 1;
                             continue;
                         }
+                        if matches!(chars[end], 'e' | 'E') {
+                            end += 1;
+                            if matches!(chars.get(end), Some('+' | '-')) {
+                                end += 1;
+                            }
+
+                            let mut exponent_digits = 0;
+                            while end < chars.len()
+                                && (chars[end].is_ascii_digit() || chars[end] == '_')
+                            {
+                                exponent_digits += usize::from(chars[end].is_ascii_digit());
+                                end += 1;
+                            }
+                            if exponent_digits == 0 {
+                                return Err(Diagnostic::new(
+                                    "invalid number literal: exponent requires at least one digit",
+                                ));
+                            }
+                            break;
+                        }
                         break;
                     }
                 }
@@ -395,17 +415,17 @@ fn lex_range(
                 if number.matches('.').count() > 1 {
                     return Err(Diagnostic::new("invalid number literal"));
                 }
-                if number.contains('.') {
-                    let normalized = number.replace('_', "");
-                    number
-                        .parse::<f64>()
-                        .or_else(|_| normalized.parse::<f64>())
-                        .map_err(|_| Diagnostic::new("invalid number literal"))?;
-                } else if matches!(number.as_str(), "0x" | "0X") {
+                if matches!(number.as_str(), "0x" | "0X") {
                     return Err(Diagnostic::new("invalid number literal"));
                 } else if number.starts_with("0x") || number.starts_with("0X") {
                     let digits = number[2..].replace('_', "");
                     u128::from_str_radix(&digits, 16)
+                        .map_err(|_| Diagnostic::new("invalid number literal"))?;
+                } else if number.contains('.') || number.contains(['e', 'E']) {
+                    let normalized = number.replace('_', "");
+                    number
+                        .parse::<f64>()
+                        .or_else(|_| normalized.parse::<f64>())
                         .map_err(|_| Diagnostic::new("invalid number literal"))?;
                 }
                 tokens.push(Token {
@@ -1025,6 +1045,13 @@ mod tests {
     #[test]
     fn rejects_malformed_number_literals() {
         assert_eq!(err("12.34.56").to_string(), "invalid number literal");
+        for source in ["1e", "1E", "1e+", "1E-", "1e___"] {
+            assert_eq!(
+                err(source).to_string(),
+                "invalid number literal: exponent requires at least one digit",
+                "source: {source}",
+            );
+        }
     }
 
     #[test]
@@ -1054,12 +1081,39 @@ mod tests {
     #[test]
     fn accepts_well_formed_number_literals() {
         assert_eq!(
-            kinds("0 42 3.14 1."),
+            kinds(
+                "0 42 3.14 1. 0xdead 0x88E8 1e6 1e+30 0.1e-30 0.9E30 1_0e+3_0 1e+___2 10e500 4.9406564584124654e-324",
+            ),
             vec![
                 TokenKind::Number("0".into()),
                 TokenKind::Number("42".into()),
                 TokenKind::Number("3.14".into()),
                 TokenKind::Number("1.".into()),
+                TokenKind::Number("0xdead".into()),
+                TokenKind::Number("0x88E8".into()),
+                TokenKind::Number("1e6".into()),
+                TokenKind::Number("1e+30".into()),
+                TokenKind::Number("0.1e-30".into()),
+                TokenKind::Number("0.9E30".into()),
+                TokenKind::Number("1_0e+3_0".into()),
+                TokenKind::Number("1e+___2".into()),
+                TokenKind::Number("10e500".into()),
+                TokenKind::Number("4.9406564584124654e-324".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn exponent_literals_stop_before_concat_and_preserve_power_operator() {
+        assert_eq!(
+            kinds("1e2..3 2^1e1"),
+            vec![
+                TokenKind::Number("1e2".into()),
+                TokenKind::DoubleDot,
+                TokenKind::Number("3".into()),
+                TokenKind::Number("2".into()),
+                TokenKind::Caret,
+                TokenKind::Number("1e1".into()),
             ]
         );
     }

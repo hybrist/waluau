@@ -1357,6 +1357,18 @@ mod tests {
     }
 
     #[test]
+    fn compiles_scientific_notation_number_literals() {
+        super::compile_source(
+            r#"
+                function entry(): f64
+                    return 1e6 + 1e+30 + 0.1e-30 + 0.9E30 + 1_0e+3_0
+                end
+            "#,
+        )
+        .expect("scientific-notation literals should compile through wasm emission");
+    }
+
+    #[test]
     fn compiles_standalone_do_block_with_scoped_locals() {
         super::compile_source(
             r#"
