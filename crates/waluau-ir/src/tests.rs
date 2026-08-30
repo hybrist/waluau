@@ -2100,19 +2100,19 @@ fn verifies_loop_with_break_and_continue() {
     let globals = std::collections::HashMap::new();
     let source_file_ids =
         std::collections::HashMap::from([(program.entry_file_path.clone(), SourceFileId(0))]);
-    let mut lowered = super::build_function(
-        &program.functions[0],
-        &signatures,
-        &host_import_signatures,
-        &host_import_names,
-        &field_call_signatures,
-        &declared_constants,
-        &globals,
-        &program.sources,
-        &source_file_ids,
-        &tag_ids,
-    )
-    .expect("ir lowering should succeed");
+    let cx = super::ModuleLoweringContext {
+        signatures: &signatures,
+        host_import_signatures: &host_import_signatures,
+        host_import_names: &host_import_names,
+        field_call_signatures: &field_call_signatures,
+        declared_constants: &declared_constants,
+        globals: &globals,
+        sources: &program.sources,
+        source_file_ids: &source_file_ids,
+        tag_ids: &tag_ids,
+    };
+    let mut lowered =
+        super::build_function(&program.functions[0], &cx).expect("ir lowering should succeed");
     let mut functions = Vec::new();
     functions.push(lowered.remove(0));
     functions.extend(lowered);
