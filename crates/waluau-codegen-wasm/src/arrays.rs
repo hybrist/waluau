@@ -90,9 +90,10 @@ pub(crate) struct ArrayTypeRegistry {
     /// Type index of `$func_val = (struct { orig_idx, env, typed_wrapper_idx,
     /// dynamic_wrapper_idx })`.
     pub(crate) func_val_struct_type: u32,
-    /// Type index of `$boxed_f64 = (struct (field f64))`, used to box `f64` values
-    /// into `anyref` (`unknown`). `i32` uses `i31ref`; bool has a distinct box so
-    /// runtime `type(unknown)` can distinguish booleans from small integers.
+    /// Type index of `$boxed_f64 = (struct (field f64))`, used to box floating-
+    /// point values into `anyref` (`unknown`); f32 promotes exactly before
+    /// boxing. `i32` uses `i31ref`; bool has a distinct box so runtime
+    /// `type(unknown)` can distinguish booleans from small integers.
     pub(crate) boxed_f64_struct_type: u32,
     /// Type index of `$boxed_bool = (struct (field i32))`, used to box `bool`
     /// values into `anyref` (`unknown`).

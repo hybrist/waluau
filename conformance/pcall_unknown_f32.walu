@@ -1,0 +1,16 @@
+-- A dynamically supplied closure still has a statically known f32 body. Its
+-- protected-call wrapper promotes the result exactly into the canonical boxed
+-- Luau number, and dynamic equality and explicit recovery both consume it.
+function protect_f32(fn): bool, unknown
+    return pcall(fn)
+end
+
+local ok, value = protect_f32(
+    function(): f32
+        return 1.25
+    end
+)
+
+assert(ok)
+assert(value == 1.25)
+assert(value::f32 == 1.25)

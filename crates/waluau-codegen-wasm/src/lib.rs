@@ -310,13 +310,15 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
                         return true;
                     }
                     // Casting to/from `unknown` (or a boxed nullable, which
-                    // shares the anyref representation) with f64/bool uses
-                    // dedicated boxes.
+                    // shares the anyref representation) with floating-point
+                    // values/bool uses dedicated boxes.
                     IrInstruction::Cast { from, to, .. } => {
                         if matches!(
                             (from, to),
                             (Type::Numeric(waluau_ast::NumericType::F64), Type::Unknown)
                                 | (Type::Unknown, Type::Numeric(waluau_ast::NumericType::F64))
+                                | (Type::Numeric(waluau_ast::NumericType::F32), Type::Unknown)
+                                | (Type::Unknown, Type::Numeric(waluau_ast::NumericType::F32))
                                 | (Type::Bool, Type::Unknown)
                                 | (Type::Unknown, Type::Bool)
                         ) {
@@ -3307,7 +3309,9 @@ fn emit_throw_global(out: &mut Function, message_global: u32) {
 fn dynamic_abi_type_supported(ty: &Type, is_return: bool) -> bool {
     match ty {
         Type::Unit => is_return,
-        Type::Numeric(NumericType::I32 | NumericType::U32 | NumericType::F64)
+        Type::Numeric(
+            NumericType::I32 | NumericType::U32 | NumericType::F32 | NumericType::F64,
+        )
         | Type::Bool
         | Type::String
         | Type::Bytes
@@ -3338,11 +3342,13 @@ fn emit_dynamic_argument_value(
         Type::Unknown => {
             out.instruction(&Instruction::LocalGet(value_local));
         }
-        Type::Numeric(target @ (NumericType::I32 | NumericType::U32 | NumericType::F64)) => {
-            let result = if *target == NumericType::F64 {
-                ValType::F64
-            } else {
-                ValType::I32
+        Type::Numeric(
+            target @ (NumericType::I32 | NumericType::U32 | NumericType::F32 | NumericType::F64),
+        ) => {
+            let result = match target {
+                NumericType::F32 => ValType::F32,
+                NumericType::F64 => ValType::F64,
+                _ => ValType::I32,
             };
             out.instruction(&Instruction::LocalGet(value_local));
             out.instruction(&Instruction::RefTestNonNull(i31_heap_type()));
@@ -3350,8 +3356,14 @@ fn emit_dynamic_argument_value(
             out.instruction(&Instruction::LocalGet(value_local));
             out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
             out.instruction(&Instruction::I31GetS);
-            if *target == NumericType::F64 {
-                out.instruction(&Instruction::F64ConvertI32S);
+            match target {
+                NumericType::F32 => {
+                    out.instruction(&Instruction::F32ConvertI32S);
+                }
+                NumericType::F64 => {
+                    out.instruction(&Instruction::F64ConvertI32S);
+                }
+                _ => {}
             }
             out.instruction(&Instruction::Else);
             out.instruction(&Instruction::LocalGet(value_local));
@@ -3367,7 +3379,9 @@ fn emit_dynamic_argument_value(
                 struct_type_index: array_registry.boxed_f64_struct_type,
                 field_index: 0,
             });
-            if *target != NumericType::F64 {
+            if *target == NumericType::F32 {
+                out.instruction(&Instruction::F32DemoteF64);
+            } else if *target != NumericType::F64 {
                 out.instruction(&Instruction::LocalSet(f64_local));
                 // Reject NaN and values outside the non-trapping truncation
                 // range before converting. Fractional numbers retain the
@@ -7228,9 +7242,9 @@ pub(crate) fn number_unbox_target(from: &Type, to: &Type) -> Option<NumericType>
         return None;
     }
     match to {
-        Type::Numeric(numeric @ (NumericType::I32 | NumericType::U32 | NumericType::F64)) => {
-            Some(*numeric)
-        }
+        Type::Numeric(
+            numeric @ (NumericType::I32 | NumericType::U32 | NumericType::F32 | NumericType::F64),
+        ) => Some(*numeric),
         _ => None,
     }
 }
@@ -7351,7 +7365,10 @@ fn emit_nullable_box_cast(
                             out.instruction(&Instruction::StructNew(to_box));
                         }
                         Type::Numeric(
-                            numeric @ (NumericType::I32 | NumericType::U32 | NumericType::F64),
+                            numeric @ (NumericType::I32
+                            | NumericType::U32
+                            | NumericType::F32
+                            | NumericType::F64),
                         ) if ctx.array_registry.closure_gc_present => {
                             emit_number_unbox_dispatch(out, ctx, source_local, *numeric);
                             out.instruction(&Instruction::StructNew(to_box));
@@ -7361,7 +7378,7 @@ fn emit_nullable_box_cast(
                             emit_unbox(out, &to_inner, registry)?;
                             out.instruction(&Instruction::StructNew(to_box));
                         }
-                        // i64/u64/f32 have no canonical `unknown` boxed form,
+                        // i64/u64 have no canonical `unknown` boxed form,
                         // so a genuine dynamic value can never hold one.
                         _ => {
                             out.instruction(&Instruction::Unreachable);
@@ -7393,10 +7410,10 @@ fn emit_number_unbox_dispatch(
     target: NumericType,
 ) {
     let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
-    let result = if target == NumericType::F64 {
-        ValType::F64
-    } else {
-        ValType::I32
+    let result = match target {
+        NumericType::F32 => ValType::F32,
+        NumericType::F64 => ValType::F64,
+        _ => ValType::I32,
     };
     out.instruction(&Instruction::LocalGet(source_local));
     out.instruction(&Instruction::RefTestNonNull(i31_heap_type()));
@@ -7404,8 +7421,14 @@ fn emit_number_unbox_dispatch(
     out.instruction(&Instruction::LocalGet(source_local));
     out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
     out.instruction(&Instruction::I31GetS);
-    if target == NumericType::F64 {
-        out.instruction(&Instruction::F64ConvertI32S);
+    match target {
+        NumericType::F32 => {
+            out.instruction(&Instruction::F32ConvertI32S);
+        }
+        NumericType::F64 => {
+            out.instruction(&Instruction::F64ConvertI32S);
+        }
+        _ => {}
     }
     out.instruction(&Instruction::Else);
     out.instruction(&Instruction::LocalGet(source_local));
@@ -7420,6 +7443,9 @@ fn emit_number_unbox_dispatch(
         }
         NumericType::I32 => {
             out.instruction(&Instruction::I32TruncF64S);
+        }
+        NumericType::F32 => {
+            out.instruction(&Instruction::F32DemoteF64);
         }
         _ => {}
     }
@@ -7611,18 +7637,17 @@ fn emit_dyn_array_kind_test(out: &mut Function, operand_local: u32, wrapper_idx:
 /// (`emit_dyn_index` skips array types whose elements cannot be boxed; they
 /// fall through to the trap).
 fn dyn_element_boxable(storage: &StorageType) -> bool {
-    !matches!(
-        storage,
-        StorageType::Val(ValType::I64) | StorageType::Val(ValType::F32)
-    )
+    !matches!(storage, StorageType::Val(ValType::I64))
 }
 
 /// True when a nullable primitive element's payload has a canonical `unknown`
-/// boxed form, so `emit_dyn_index` can rebox it. `i64`/`u64`/`f32` payloads do
-/// not (the same design 0010 boxing gap that makes plain `i64`/`f32` elements
-/// unboxable), so those element types fall through to the trap.
+/// boxed form, so `emit_dyn_index` can rebox it. `i64`/`u64` payloads do not,
+/// so those element types fall through to the trap.
 fn dyn_nullable_payload_boxable(kind: NullableBoxKind) -> bool {
-    matches!(kind, NullableBoxKind::I32 | NullableBoxKind::F64)
+    matches!(
+        kind,
+        NullableBoxKind::I32 | NullableBoxKind::F32 | NullableBoxKind::F64
+    )
 }
 
 /// Push `array[index]` for one growable wrapper onto the stack, in the raw
@@ -7913,6 +7938,16 @@ fn emit_box(
             ));
             Ok(())
         }
+        Type::Numeric(NumericType::F32) => {
+            // `unknown` has one canonical floating-point box. Promotion is
+            // exact for every f32 value, so dynamic consumers can treat both
+            // source float widths as the same Luau number representation.
+            out.instruction(&Instruction::F64PromoteF32);
+            out.instruction(&Instruction::StructNew(
+                array_registry.boxed_f64_struct_type,
+            ));
+            Ok(())
+        }
         Type::Extern | Type::ExternSubtype(_) | Type::String | Type::Bytes | Type::Nil => {
             out.instruction(&Instruction::AnyConvertExtern);
             Ok(())
@@ -7974,6 +8009,17 @@ fn emit_unbox(
                 struct_type_index: array_registry.boxed_f64_struct_type,
                 field_index: 0,
             });
+            Ok(())
+        }
+        Type::Numeric(NumericType::F32) => {
+            out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                array_registry.boxed_f64_struct_type,
+            )));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: array_registry.boxed_f64_struct_type,
+                field_index: 0,
+            });
+            out.instruction(&Instruction::F32DemoteF64);
             Ok(())
         }
         Type::Extern | Type::ExternSubtype(_) | Type::String | Type::Bytes => {
