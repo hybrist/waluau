@@ -71,3 +71,42 @@ test('fixed-point formatting preserves ordinary values, specials, and errors', (
   assert.throws(() => format('%.123f', 1), /invalid string\.format precision/);
   assert.throws(() => format('%?', 1), /unsupported string\.format specifier/);
 });
+
+test('implements Luau scalar math edge semantics', () => {
+  const names = [
+    'math.min', 'math.max', 'math.modf', 'math.frexp', 'math.ldexp',
+    'math.log', 'math.sign', 'math.clamp', 'math.round', 'math.lerp',
+    'math.isnan', 'math.isinf', 'math.isfinite',
+  ];
+  const math = buildWaluauImports(null, undefined, {
+    requiredImports: names.map(name => ({
+      module: WALUAU_IMPORT_MODULE, name, kind: 'function',
+    })),
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE];
+
+  assert.ok(Number.isNaN(math['math.min'](NaN, 2)));
+  assert.equal(math['math.min'](1, NaN), 1);
+  assert.ok(Number.isNaN(math['math.max'](NaN, 2)));
+  assert.equal(math['math.max'](1, NaN), 1);
+  assert.deepEqual(math['math.modf'](3.5), [3, 0.5]);
+  assert.deepEqual(math['math.modf'](-3), [-3, -0]);
+  assert.deepEqual(math['math.modf'](-Infinity), [-Infinity, -0]);
+  assert.deepEqual(math['math.frexp'](Math.PI), [Math.PI / 4, 2]);
+  assert.deepEqual(math['math.frexp'](Number.MAX_VALUE), [Number.MAX_VALUE / (2 ** 1023) / 2, 1024]);
+  assert.equal(math['math.ldexp'](Math.PI / 4, 2), Math.PI);
+  assert.equal(math['math.ldexp'](0.5, 1024), 2 ** 1023);
+  assert.equal(math['math.log'](8, 2), 3);
+  assert.equal(math['math.sign'](NaN), 0);
+  assert.equal(math['math.round'](0.5), 1);
+  assert.equal(math['math.round'](-0.5), -1);
+  assert.equal(math['math.round'](0.49999999999999994), 0);
+  assert.equal(math['math.round'](-0.49999999999999994), -0);
+  assert.equal(math['math.round'](Infinity), Infinity);
+  assert.equal(math['math.lerp'](-Math.sqrt(3), Math.sqrt(2), 1), Math.sqrt(2));
+  assert.equal(math['math.clamp'](4, 2, 3), 3);
+  assert.throws(() => math['math.clamp'](1, 3, 2), /max must be greater/);
+  assert.equal(math['math.isnan'](NaN), true);
+  assert.equal(math['math.isinf'](-Infinity), true);
+  assert.equal(math['math.isfinite'](123.45), true);
+});

@@ -1,0 +1,23 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/math.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- Pending: the final helper is deliberately untyped and mixes floating and
+-- bit-test arithmetic; it remains a static-typing gap, separate from math APIs.
+--
+-- Split from former math.11 lines 12-24; the upstream body is preserved.
+
+assert(math.pi - math.pi % 1 == 3)
+assert(math.pi - math.pi % 0.001 == 3.141)
+
+do
+  local a = 3 % 0;
+  assert(a ~= a) -- Expect NaN
+  assert(((2^53+1) % 2) == 0)
+  assert((1234 % (2^53+1)) == 1234)
+end
+
+local function testbit(a, n)
+  return a/2^n % 2 >= 1
+end

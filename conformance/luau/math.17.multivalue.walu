@@ -1,0 +1,26 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/math.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- Pending: Waluau's select currently accepts an explicit array rather than a
+-- Lua value pack, so direct and multi-result calls cannot be inspected here.
+--
+-- Split from former math.17 lines 250-265; this contiguous body is preserved.
+
+-- test that fastcalls return correct number of results
+assert(select('#', math.floor(1.4)) == 1)
+assert(select('#', math.ceil(1.6)) == 1)
+assert(select('#', math.sqrt(9)) == 1)
+assert(select('#', math.deg(9)) == 1)
+assert(select('#', math.rad(9)) == 1)
+assert(select('#', math.sin(1.5)) == 1)
+assert(select('#', math.atan2(1.5, 0.5)) == 1)
+assert(select('#', math.modf(1.5)) == 2)
+assert(select('#', math.frexp(1.5)) == 2)
+
+-- test that fastcalls that return variadic results return them correctly in variadic position
+assert(select(1, math.modf(1.5)) == 1)
+assert(select(2, math.modf(1.5)) == 0.5)
+assert(select(1, math.frexp(1.5)) == 0.75)
+assert(select(2, math.frexp(1.5)) == 1)

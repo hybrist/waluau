@@ -1,0 +1,44 @@
+-- Imported from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/math.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from conformance/luau/math.walu. The upstream loop bodies are
+-- preserved from former math.17 lines 17-48; repeated setup is typed for Waluau.
+
+local function eq(a: f64, b: f64, limit: f64): bool
+  return math.abs(a-b) <= limit
+end
+
+math.randomseed(0)
+
+local flag = false
+local i = 0
+local Max = 0
+local Min = 2
+repeat
+  local t = math.random()
+  Max = math.max(Max, t)
+  Min = math.min(Min, t)
+  i=i+1
+  flag = eq(Max, 1, 0.001) and eq(Min, 0, 0.001)
+until flag or i>10000
+assert(0 <= Min and Max<1)
+assert(flag);
+
+for i=1,10 do
+  local t = math.random(5)
+  assert(1 <= t and t <= 5)
+end
+
+i = 0
+Max = -200
+Min = 200
+repeat
+  local t = math.random(-10,0)
+  Max = math.max(Max, t)
+  Min = math.min(Min, t)
+  i=i+1
+  flag = (Max == 0 and Min == -10)
+until flag or i>10000
+assert(-10 <= Min and Max<=0)
+assert(flag);

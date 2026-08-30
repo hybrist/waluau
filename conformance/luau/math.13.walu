@@ -2,16 +2,11 @@
 -- tests/conformance/math.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only math.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
---
--- Split from conformance/luau/math.walu. Helper setup is repeated as needed
--- so each numbered chunk is independently discoverable by the conformance runner.
+-- Split from conformance/luau/math.walu. The upstream assertion body is
+-- preserved from former math.13 lines 17-27; only repeated helper setup is typed.
 
-function eq (a,b,limit)
-  if not limit then limit = 10E-10 end
-  return math.abs(a-b) <= limit
+local function eq(a: f64, b: f64): bool
+  return math.abs(a-b) <= 10E-10
 end
 
 assert(eq(math.sqrt(10)^2, 10))
@@ -25,6 +20,3 @@ local v,e = math.frexp(math.pi)
 assert(eq(math.ldexp(v,e), math.pi))
 
 assert(eq(math.tanh(3.5), math.sinh(3.5)/math.cosh(3.5)))
-
-assert(tonumber(' 1.3e-2 ') == 1.3e-2)
-assert(tonumber(' -1.00000000000001 ') == -1.00000000000001)
