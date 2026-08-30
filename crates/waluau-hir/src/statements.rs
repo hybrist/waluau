@@ -334,6 +334,41 @@ pub(super) fn pairs_loop_value_types(
     Some(record_iteration_value_types("pairs", fields, names_len))
 }
 
+/// Loop-variable types for the compile-time `ipairs(array)` iterator form:
+/// the 1-based index plus, when requested, the dense array element.
+fn ipairs_loop_value_types(
+    iterator: &Expr,
+    names_len: usize,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Option<Result<Vec<Type>, Diagnostic>> {
+    // A lexical value or function named `ipairs` is an ordinary iterator
+    // factory and shadows the compile-time builtin.
+    if vars.contains_key("ipairs") || fn_signatures.contains_key("ipairs") {
+        return None;
+    }
+    let array_expr = waluau_ast::builtin_ipairs_call_arg(iterator)?;
+    let array_ty = match infer_expr(array_expr, vars, fn_signatures, active_type_params, None) {
+        Ok(ty) => ty,
+        Err(diagnostic) => return Some(Err(diagnostic)),
+    };
+    let array_ty = super::expressions::first_of_multi(array_ty);
+    let Some(element_ty) = array_ty.element_type() else {
+        return Some(Err(Diagnostic::new(format!(
+            "ipairs(...) requires an array, got {}",
+            super::module_type_display(&array_ty)
+        ))));
+    };
+    Some(match names_len {
+        1 => Ok(vec![Type::Numeric(NumericType::I32)]),
+        2 => Ok(vec![Type::Numeric(NumericType::I32), element_ty]),
+        _ => Err(Diagnostic::new(format!(
+            "ipairs for-in loop expects 1 or 2 loop variables, got {names_len}"
+        ))),
+    })
+}
+
 /// Loop-variable types for iterating a record's fields — via `pairs(rec)` or
 /// `next, rec`: the field-name string plus the shared field type. `what`
 /// names the iterating form in diagnostics.
@@ -535,6 +570,11 @@ pub(super) fn for_in_loop_value_types(
 ) -> Result<Vec<Type>, Diagnostic> {
     if let [iterator] = iterators {
         if let Some(result) = gmatch_loop_value_types(iterator, names_len) {
+            return result;
+        }
+        if let Some(result) =
+            ipairs_loop_value_types(iterator, names_len, vars, fn_signatures, active_type_params)
+        {
             return result;
         }
         if let Some(result) =

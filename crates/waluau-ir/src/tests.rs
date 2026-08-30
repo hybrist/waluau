@@ -3058,6 +3058,71 @@ fn lowers_array_for_in_loop() {
 }
 
 #[test]
+fn lowers_builtin_ipairs_as_index_then_element() {
+    let source = r#"
+        function entry(xs: {i32}): i32
+            local total: i32 = 0
+            for i, x in ipairs(xs) do
+                total = total + i * x
+            end
+            return total
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ipairs IR should verify");
+    let function = &module.functions[0];
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::ArrayLen { .. }))
+    }));
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::ArrayGet { .. }))
+    }));
+}
+
+#[test]
+fn builtin_ipairs_target_is_lowered_once() {
+    let source = r#"
+        function entry(): i32
+            local evaluations: i32 = 0
+            local make = function(): ({i32}, i32)
+                evaluations = evaluations + 1
+                return {10, 20, 30}, 99
+            end
+            local total: i32 = 0
+            for i, x in ipairs(make()) do
+                total = total + i + x
+            end
+            return total + evaluations
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ipairs IR should verify");
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function");
+    let make_calls = entry
+        .blocks
+        .values()
+        .flat_map(|block| &block.instructions)
+        .filter(|(_, instruction)| matches!(instruction, Instruction::CallValue { .. }))
+        .count();
+    assert_eq!(
+        make_calls, 1,
+        "ipairs target must be evaluated exactly once"
+    );
+}
+
+#[test]
 fn lowers_table_concat_builtin_call_to_naive_concat_loop() {
     let source = r#"
         function entry(): string

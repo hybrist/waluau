@@ -1,0 +1,39 @@
+function test_dense_ipairs(): unit
+    local evaluations: i32 = 0
+    local dense_values = function(): {i32}
+        evaluations += 1
+        return {10, 20, 30, 40}
+    end
+
+    local index_trace: string = ""
+    local value_total: i32 = 0
+    for i, value in ipairs(dense_values()) do
+        if i == 2 then
+            continue
+        end
+        index_trace = index_trace .. tostring(i)
+        value_total += value
+        if i == 3 then
+            break
+        end
+    end
+    assert(evaluations == 1)
+    assert(index_trace == "13")
+    assert(value_total == 40)
+
+    local indices: string = ""
+    for i in ipairs({5, 6, 7}) do
+        indices = indices .. tostring(i)
+    end
+    assert(indices == "123")
+
+    local nested: i32 = 0
+    for outer_i, outer_v in ipairs({2::i32, 3::i32}) do
+        for inner_i, inner_v in ipairs({4::i32, 5::i32}) do
+            nested += outer_i * inner_i + outer_v * inner_v
+        end
+    end
+    assert(nested == 54)
+end
+
+test_dense_ipairs()

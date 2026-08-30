@@ -1,0 +1,11 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/basic.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from conformance/luau/basic.22.walu so the dense contiguous-array
+-- `ipairs` assertions are independently discoverable by the conformance runner.
+-- Upstream source lines 219-221.
+
+assert((function() local a = '' for k in ipairs({5, 6, 7}) do a = a .. k end return a end)() == "123")
+assert((function() local a = '' for k,v in ipairs({5, 6, 7}) do a = a .. k end return a end)() == "123")
+assert((function() local a = '' for k,v in ipairs({5, 6, 7}) do a = a .. v end return a end)() == "567")

@@ -1035,6 +1035,32 @@ impl<'a> Monomorphizer<'a> {
                 }
                 return Ok(());
             }
+            // `for ... in ipairs(array)` binds the 1-based index first and
+            // the element second. The type checker has already validated the
+            // dense array target and binding count.
+            if let Some(array_expr) =
+                waluau_ast::builtin_ipairs_call_arg(&rewritten_iterators[0])
+            {
+                let array_ty = match self.infer_expr_type(array_expr, ctx)? {
+                    Type::Multi(slots) => slots.into_iter().next().ok_or_else(|| {
+                        Diagnostic::new("ipairs(...) target produced no values")
+                    })?,
+                    ty => ty,
+                };
+                let element_ty = array_ty
+                    .element_type()
+                    .expect("type checker validated ipairs array target");
+                if let Some(first) = symbol_ids.first() {
+                    body_types.insert(
+                        *first,
+                        Type::Numeric(waluau_ast::NumericType::I32),
+                    );
+                }
+                if let Some(second) = symbol_ids.get(1) {
+                    body_types.insert(*second, element_ty);
+                }
+                return Ok(());
+            }
             // `for ... in pairs(record_value)` binds the field-name string
             // plus the record's shared field type (validated by the type
             // checker before monomorphization).
