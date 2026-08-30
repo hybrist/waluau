@@ -24,10 +24,10 @@ function set_player_points(state: game.State, points: i32): unit
     state:test_set_player_points(points)
 end
 
--- Force a finished duel holding the given number of table cards for the Opponent,
--- so run-level tests reach a verdict without playing the duel out.
-function finish(state: game.State, computer_tricks: i32): unit
-    state:test_finish(computer_tricks)
+-- Force a cleared duel so run-level tests reach a verdict without playing it
+-- out.
+function clear(state: game.State): unit
+    state:test_clear()
 end
 
 function set_swap_trace(state: game.State, hand_indices: {i32}, middle_indices: {i32}): unit
@@ -40,5 +40,5 @@ return {
     arrange_player = arrange_player,
     set_player_points = set_player_points,
     set_swap_trace = set_swap_trace,
-    finish = finish
+    clear = clear
 }

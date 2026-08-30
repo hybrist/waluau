@@ -538,9 +538,7 @@ describe(
         it(
             "carries a maxed flop into four- and five-card swap opportunities",
             function()
-                -- This reaches the next hand, so exercise it in the multi-hand boss
-                -- variant now that ordinary duels end after their first hand.
-                local state = game.State.new(true, starter_loadout(), game.starting_gold)
+                local state = game.State.new(false, starter_loadout(), game.starting_gold)
                 game_fixture.arrange_arch_mage(
                     state,
                     {card(2, 1), card(4, 2), card(6, 3)},
@@ -575,7 +573,7 @@ describe(
                 expect(state:view().player_wager):toBe(9)
                 expect(state:view().pot):toBe(12)
 
-                force_player_win(state)
+                force_computer_win(state)
                 expect(state:play(0, 1) == nil):toBe(false)
                 expect(state:view().swap_open):toBe(true)
                 expect(state:view().player_swap_max):toBe(0)
@@ -853,8 +851,6 @@ describe(
                 state:play(0, 1)
 
                 expect(state:view().finished):toBe(true)
-                expect(state:view().player_tricks):toBe(1)
-                expect(state:view().computer_tricks):toBe(0)
                 expect(state:is_victory()):toBe(true)
                 expect(state:view():cleared()):toBe(true)
                 expect(#state:view().history):toBe(1)
@@ -862,7 +858,7 @@ describe(
         )
 
         it(
-            "ends a normal duel after one Opponent win",
+            "keeps a duel live after an Opponent win",
             function()
                 math.randomseed(43)
                 local state = game.State.new(false, starter_loadout(), game.starting_gold)
@@ -873,18 +869,17 @@ describe(
 
                 expect(trick.winner):toBe(-1)
                 expect(trick.points):toBe(0)
-                expect(state:view().finished):toBe(true)
-                expect(state:view().computer_tricks):toBe(1)
-                expect(state:view().player_tricks):toBe(0)
+                expect(state:view().finished):toBe(false)
                 expect(state:is_victory()):toBe(false)
                 expect(state:view():cleared()):toBe(false)
                 expect(#state:view().history):toBe(1)
-                expect(#state:view().middle):toBe(0)
+                expect(#state:view().middle):toBe(3)
+                expect(state:view().round):toBe(2)
             end
         )
 
         it(
-            "settles a normal duel after a stalemate and refunds its wager",
+            "keeps a duel live after a stalemate and refunds its wager",
             function()
                 math.randomseed(44)
                 local state = game.State.new(false, starter_loadout(), game.starting_gold)
@@ -895,19 +890,16 @@ describe(
 
                 expect(state:view().history[1].winner):toBe(0)
                 expect(state:view().history[1].points):toBe(0)
-                expect(state:view().player_tricks):toBe(0)
-                expect(state:view().computer_tricks):toBe(0)
                 expect(state:view().player_points):toBe(points)
-                expect(state:view().finished):toBe(true)
-                expect(state:view().round):toBe(1)
+                expect(state:view().finished):toBe(false)
+                expect(state:view().round):toBe(2)
             end
         )
     end
 )
 
--- Challenge hands shrink between rounds, so a forced win is sized to
--- whatever the hands currently hold: the player keeps a royal pair against
--- the fixed table_card row while the Opponent holds a ladder that never beats it.
+-- A forced challenge win keeps a royal pair against the fixed table-card row
+-- while the Opponent holds a ladder that never beats it.
 local function force_boss_player_win(state: game.State): unit
     local count: i32 = #state:view().player_hand
     local player: {game.Card} = {card(13, 0), card(14, 0)}
@@ -930,7 +922,7 @@ describe(
     "Ante Magic boss battle",
     function()
         it(
-            "deals seven cards and never replaces a spent one",
+            "deals and replenishes a seven-card hand",
             function()
                 math.randomseed(50)
                 local state = game.State.new(true, starter_loadout(), game.starting_gold)
@@ -942,7 +934,6 @@ describe(
                 expect(state:view().player_points):toBe(10)
                 expect(state:view().swap_open):toBe(true)
 
-                -- Round 1: Player wins
                 expect(state:view().round):toBe(1)
                 expect(state:view().finished):toBe(false)
                 expect(#state:view().player_hand):toBe(7)
@@ -950,23 +941,12 @@ describe(
                 finish_swap_phase(state)
                 force_boss_player_win(state)
                 state:play(0, 1)
-                expect(state:view().player_tricks):toBe(1)
-                expect(state:view().finished):toBe(false)
-
-                -- Round 2: a second player win ends the boss duel.
-                expect(state:view().round):toBe(2)
-                expect(#state:view().player_hand):toBe(5)
-                expect(#state:view().computer_hand):toBe(5)
-                finish_swap_phase(state)
-                force_boss_player_win(state)
-                state:play(0, 1)
-
                 expect(state:view().finished):toBe(true)
-                expect(state:view().player_tricks):toBe(2)
-                expect(#state:view().player_hand):toBe(3)
-                expect(#state:view().computer_hand):toBe(3)
+                expect(state:is_victory()):toBe(true)
+                expect(#state:view().player_hand):toBe(7)
+                expect(#state:view().computer_hand):toBe(7)
                 expect(#state:view().middle):toBe(0)
-                expect(state:view().deck_count):toBe(28)
+                expect(state:view().deck_count):toBe(29)
             end
         )
 
@@ -1209,7 +1189,7 @@ describe(
         )
 
         it(
-            "retains a table_card frozen after the swap for exactly one more round",
+            "retains a table_card frozen through the next hand's opening deal",
             function()
                 math.randomseed(61)
                 local state = game.State.new(
@@ -1241,7 +1221,8 @@ describe(
                 expect(
                     state:view().middle[3].rank == replaced_right.rank and state:view().middle[3].suit == replaced_right.suit
                 ):toBe(false)
-                expect(state:view().deck_count):toBe(deck_size - 2)
+                -- Four replacement hand cards and two rotating table cards were drawn.
+                expect(state:view().deck_count):toBe(deck_size - 6)
                 expect(state:is_frozen(1)):toBe(false)
             end
         )

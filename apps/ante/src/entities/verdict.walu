@@ -22,7 +22,6 @@ const KEYS_SIZE: f64 = 12.0
 const HEADLINE_INK: string = "#67e8f9"
 const FIGURE_INK: string = "#f8fafc"
 const OWED_INK: string = "#fb7185"
-const NOTE_INK: string = "#d4d4d8"
 const QUIET_INK: string = "#8a8a92"
 const WON_INK: string = "#fbbf24"
 
@@ -40,9 +39,6 @@ function title_of(run: run_module.View): string
     if run.outcome == "lost-health" then
         return "THE RUN ENDS"
     end
-    if run.outcome == "lost-vault" then
-        return "THE RUN ENDS"
-    end
     if run.outcome == "lost-target" then
         return "THE RUN ENDS"
     end
@@ -56,9 +52,6 @@ function subtitle_of(run: run_module.View): string
     if run.outcome == "lost-health" then
         return "YOUR LAST HEART WAS LOST IN DUEL " .. tostring(run.duel)
     end
-    if run.outcome == "lost-vault" then
-        return "THE OPPONENT WON DUEL " .. tostring(run.duel) .. ". YOUR GOLD IS LOST"
-    end
     -- The duel opened and the player still could not afford to leave it.
     if run.outcome == "lost-target" then
         return "DUEL " .. tostring(run.duel) .. " WON, BUT THE GOLD TARGET WAS MISSED"
@@ -66,7 +59,7 @@ function subtitle_of(run: run_module.View): string
     if run.outcome == "won" then
         return "ALL " .. tostring(run.run_length) .. " DUELS WON. THE CITY GOES ON PAST THEM"
     end
-    return "THE ROUNDS ARE COMPLETE. THE RUN GOES ON"
+    return "THE DUEL IS CLEARED. THE RUN GOES ON"
 end
 
 -- One figure under its caption.
@@ -117,7 +110,7 @@ end
 -- What the run walks away with. A lost duel has only what it took; the other
 -- three are all comparisons against the target, so they are two figures.
 function tally(state: game.View, run: run_module.View): ui.Node
-    if run.outcome == "lost-health" or run.outcome == "lost-vault" then
+    if run.outcome == "lost-health" then
         return figure(
             "DUELS WON",
             HEADLINE_INK,
@@ -175,12 +168,7 @@ function onward(run: run_module.View): {ui.Node}
 end
 
 function body(state: game.View, run: run_module.View): ui.Node
-    local lines: {ui.Node} = {
-        tally(state, run),
-        ui.Node.gap(0.0, BLOCK_GAP),
-        label.middle("ROUNDS WON " .. tostring(state.player_tricks) .. " / 5", NOTE_SIZE, NOTE_INK),
-        ui.Node.gap(0.0, BLOCK_GAP)
-    }
+    local lines: {ui.Node} = {tally(state, run), ui.Node.gap(0.0, BLOCK_GAP)}
     for line in onward(run) do
         table.insert(lines, line)
     end

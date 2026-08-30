@@ -11,9 +11,9 @@ the four schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
-The Arch Mage can commit any valid feint without a mana balance. One breach
-settles an ordinary vault. Boss battles retain the multi-breach duel: either
-side's second breach win ends the vault.
+The Arch Mage can commit any valid feint without a mana balance. Winning a
+breach clears the vault; losing one costs a heart and starts another breach in
+the same vault, unless it was the run's last heart.
 Each breach has exactly three feint opportunities. The first follows a
 three-card community deal, then a fourth card and a fifth card are dealt before
 the second and third opportunities. Both sides propose once per opportunity;
@@ -44,12 +44,11 @@ pile the first two banked and the ninth vault is reached on fumes. A rare hand
 can beat the curve with a windfall. That is the ramp: not a breach that is
 harder to win, but a win that has to be worth more.
 
-There are three ways a run ends. Losing the last heart ends it immediately. The
-Arch Mage holding a vault also ends it, carried mana included — that is far and
-away the common one, since a vault is close to a coin flip. Opening a vault and
-then not holding its ante ends it too. In every case the next heist is the first
-vault of a fresh run rather than a retry. R restarts the run from vault one at
-any point, which is also why a settled vault is never left standing on the board.
+There are two ways a run ends. Losing the last heart ends it immediately.
+Clearing a vault and then not holding its ante ends it too. In either case the
+next heist is the first vault of a fresh run. R restarts the run from vault one
+at any point, which is also why a settled vault is never left standing on the
+board.
 
 Clearing the ninth vault wins the run — and does not stop it. The city goes on,
 the table runs out, and the ante takes over on a formula whose step grows every
@@ -64,18 +63,17 @@ is no separate learn-or-upgrade product and no trade prompt: once both keys are
 taken, a scroll for another kind is unavailable rather than forgetting a spell
 the run already carries. Every scroll costs four mana. Buying one marks that
 line sold and nothing takes its place; reaching the next shop is what restocks
-the offers. Losing a vault ends the run and everything it bought with it, so a
-fresh run sets out with its starting spell at level one again.
+the offers. Losing the last heart ends the run and everything it bought with
+it, so a fresh run sets out with its starting spell at level one again.
 
-Every third vault of a run is a boss battle: both sides are dealt seven relics
-up front and spent pairs are never replaced from the draw pile, so the hands
-shrink by two every breach and the third breach is fought from a three-card
-fan. Everything else — feints, wagers, and scoring — matches a standard vault;
-the three-breach duel belongs to the boss variant. The menu's BOSS RUSH starts
-a run made of nothing else: five vaults rather than nine, on its own steeper ante. Both
-hand rows lay themselves out for however many cards they hold, tightening their
-pitch (and the fan its tilt and arc) so a seven-relic row still clears the
-deck and the three right-edge piles.
+Every third vault of a run is a boss battle: both sides hold seven relics rather
+than five, widening every feint and committed-pair choice. Spent pairs are
+replaced after each breach so the seven-card choice remains the challenge until
+the vault is cleared or the run runs out of hearts. Everything else — feints,
+wagers, and scoring — matches a standard vault. The menu's BOSS RUSH starts a
+run made of nothing else: five vaults rather than nine, on its own steeper ante.
+Both hand rows tighten their pitch (and the fan its tilt and arc) so a
+seven-relic row still clears the deck and the three right-edge piles.
 
 The browser entry imports only the engine facade and contains no DOM or canvas
 host calls. The menu, game, help, history, and final outcome all use the live
@@ -304,16 +302,15 @@ scopes prevent the covered board from responding.
 | `entities/powered_card.walu` | A ward under a spell: Firebolt's burn, Freeze Ray's shell, Raise Card's grave, Growth's division. |
 | `entities/deck.walu` | The sealed draw pile and its count. |
 | `entities/pile.walu` | One of the three right-edge piles, face up on its last card. |
-| `entities/hud.walu` | The header band: the title block, the breach orbs, the mana on hand. |
-| `entities/orb_track.walu` | The three breaches of a vault as three orbs, and the three outcome colours. |
+| `entities/hud.walu` | The duel title centred across the header band. |
 | `entities/footer.walu` | The centred way back to the menu and the lower-right ability diamond. |
 | `entities/ability_diamond.walu` | Four ready-ability sockets in South, West, North, East face-button order. |
 | `entities/capsule.walu` | A clickable control, as wide as its own label. |
 | `entities/action_bar.walu` | The band that asks for a decision, and the hit test for the controls it asked with. |
 | `entities/label.walu` | A line of type that measures itself against the font that is loaded. |
 | `entities/modal.walu` | A titled page laid over the vault, scaled to fit whatever canvas it is on. |
-| `entities/help_card.walu` | The help page: the job, the four schools, the two phases, the orbs, and every control. |
-| `entities/ledger.walu` | The breach ledger, one row per round. |
+| `entities/help_card.walu` | The help page: the job, the four schools, the two phases, hearts, and every control. |
+| `entities/ledger.walu` | The breach ledger, one row per played hand. |
 | `entities/verdict.walu` | The verdict of a fought vault, read as a moment in the run. |
 | `entities/school_tile.walu` | One school of magic as a swatch, running the card's own field. |
 | `entities/backdrop.walu` | The vault behind everything. |

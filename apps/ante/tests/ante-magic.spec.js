@@ -287,14 +287,14 @@ function countPassInk(canvas) {
   );
 }
 
-// Cyan ink where the centered shop entity prints the mana on hand: a 24px
-// number right-aligned in its header. Nothing else draws cyan in that part of
-// the map, so this distinguishes the shop from a dealt vault.
-function countFenceManaInk(canvas) {
+// Verdict titles occupy the otherwise empty strip above the duel board. This
+// is a stable signal that the live vault has ended; the draw pile also
+// disappears briefly while another hand is being dealt after a spent heart.
+function countVerdictTitleInk(canvas) {
   return countDesignInk(
     canvas,
-    { centerOffsetX: 195, heightRatio: 0.5, yOffset: -130, width: 62, height: 36 },
-    [103, 232, 249],
+    { x: 82, y: 72, width: 420, height: 40 },
+    [251, 191, 36],
     [40, 40, 40],
   );
 }
@@ -355,41 +355,39 @@ test('carries the run into the next vault once this one is settled', async ({ pa
 
   await beginHeist(page, canvas);
 
-  // The verdict modal replaces the playfield, so the sealed draw pile stops
-  // being drawn: no card-back ink means this vault has been settled, whether
-  // the robbers took it or the Arch Mage held it.
+  // A player win raises the verdict immediately. An Opponent win spends one
+  // heart and deals another hand in this vault unless that was the last heart;
+  // wait through that deal instead of mistaking its briefly hidden draw pile
+  // for the verdict.
   for (let breach = 1; breach <= 8; breach += 1) {
-    if (await countCardBackInk(canvas) < 10) break;
     await playBreach(page, canvas);
+    await expect
+      .poll(
+        async () => (await countVerdictTitleInk(canvas)) > 20
+          || (await countCardBackInk(canvas)) > 40,
+        { timeout: GAME_READY_TIMEOUT })
+      .toBe(true);
+    if (await countVerdictTitleInk(canvas) > 20) break;
   }
   await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeLessThan(10);
+    .poll(() => countVerdictTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(20);
 
   // A settled vault is a moment in the run rather than the end of play. Taking
-  // it stops at the shop, where the carried mana buys spell scrolls before
-  // the next vault is dealt; a lost run has neither mana nor loadout left to
-  // spend, so its fresh first vault is dealt straight away. Which of the two
-  // this vault ended as is the cards' to decide, so this covers both.
+  // a cleared one stops at the shop when its target was met, where the carried
+  // gold buys spell scrolls before the next vault is dealt. A run-ending
+  // verdict starts a fresh first vault directly. Which destination appears is
+  // the cards' to decide, so this covers both.
   //
-  // The fence stands on the animating city map, so there is no still frame to
-  // wait for here: what settles is which of the two screens came up.
+  // The fence stands on an animating city map, so there is no still frame to
+  // wait for. Escape walks past it when it appears and otherwise only skips
+  // the opening deal; the next vault's feint prompt proves its live hand is
+  // ready.
   await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
   await expect
-    .poll(
-      async () => (await countFenceManaInk(canvas)) > 20
-        || (await countCardBackInk(canvas)) > 40,
-      { timeout: GAME_READY_TIMEOUT })
-    .toBe(true);
-  if (await countFenceManaInk(canvas) > 20) {
-    // The shop is a cursor-driven offer list, and Esc walks past every offer
-    // into the vault the run is standing in front of.
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Escape');
-  }
-  await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(40);
+    .poll(() => countPassInk(canvas), { timeout: GAME_READY_TIMEOUT * 2 })
+    .toBeGreaterThan(10);
   expect(pageErrors).toEqual([]);
 });
 

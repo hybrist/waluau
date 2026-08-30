@@ -1,23 +1,37 @@
--- The band across the top of the duel: the ordinary hand or boss rounds.
---
--- The breach orbs sit centred in the header band across the top of the board.
+-- The centred title across the top of the duel board.
 local game = require("../game")
 local run_module = require("../run")
 local ui = require("../ui/node")
-local orb_track = require("./orb_track")
+local label = require("./label")
 
-export type Stateful = { track: orb_track.Stateful, root: ui.Node }
+const TITLE_SIZE: f64 = 12.0
+const TITLE_INK: string = "#fbbf24"
+
+function title(run: run_module.View): string
+    if run.boss then
+        return "CHALLENGE DUEL " .. tostring(run.duel)
+    end
+    return "DUEL " .. tostring(run.duel)
+end
+
+export type Stateful = { title: label.Stateful, root: ui.Node }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
-    local track: orb_track.Stateful = orb_track.Stateful.new(state)
+    local title_view: label.Stateful = label.Stateful.new(
+        title(run),
+        TITLE_SIZE,
+        TITLE_INK,
+        label.align_center,
+        true
+    )
     return {
-        track = track,
-        root = ui.Node.across({ justify = "center", align = "center" }, {track.root})
+        title = title_view,
+        root = ui.Node.across({ justify = "center", align = "center" }, {title_view.root})
     }
 end
 
 function Stateful:present(state: game.View, run: run_module.View): unit
-    self.track:present(state)
+    self.title:present(title(run), TITLE_SIZE, TITLE_INK, label.align_center)
 end
 
 function node(state: game.View, run: run_module.View): ui.Node

@@ -239,7 +239,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
     elseif model.cursor == ITEM_BOSS_RUSH then
         ink.text_centered(
             graphics,
-            "EVERY DUEL IS A CHALLENGE. SEVEN CARDS, NO REPLACEMENTS",
+            "EVERY DUEL IS A CHALLENGE. KEEP SEVEN CARDS IN HAND",
             viewport.center_x,
             detail_y,
             10,

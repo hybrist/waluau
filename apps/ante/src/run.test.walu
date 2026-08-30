@@ -9,21 +9,19 @@ local run = require("./run")
 local flow = require("./flow")
 local spells = require("./spells/spell")
 
--- One duel of a run, fought to a verdict and settled the way the duel screen
--- settles it: the rules say whether the duel opened and what gold survived,
--- and the run says what is dealt next. `arch_mage_wins` is how many table cards the
--- Opponent held, so three of them is a lost duel.
-local function settle_vault(state: run.State, arch_mage_wins: i32, gold: i32): game.State
+-- One cleared duel of a run, settled the way the duel screen settles it: the
+-- rules say what gold survived, and the run says what is dealt next.
+local function settle_vault(state: run.State, gold: i32): game.State
     local rules: game.State = game.State.new(state:boss(), state.spells, state.gold)
     game_fixture.set_player_points(rules, gold)
-    game_fixture.finish(rules, arch_mage_wins)
+    game_fixture.clear(rules)
     state:settle(rules:is_victory(), rules:gold())
     return rules
 end
 
--- Take the live duel leaving `gold` behind, the way three survived rounds do.
+-- Take the live duel leaving `gold` behind.
 local function clear_vault(state: run.State, gold: i32): unit
-    settle_vault(state, 0, gold)
+    settle_vault(state, gold)
 end
 
 describe(
@@ -106,12 +104,15 @@ describe(
         )
 
         it(
-            "ends the run on a lost duel, gold and all",
+            "ends the run on the last heart, gold and all",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 state:settle(true, 31)
-                -- A lost duel takes the carried gold with it: what follows is the
-                -- first duel of a fresh run, not a retry of the one that ended it.
+                for _ = 1, run.max_hearts do
+                    state:lose_hand()
+                end
+                -- The last heart takes the carried gold with it: what follows is the
+                -- first duel of a fresh run.
                 state:settle(false, 31)
                 expect(state.duel):toBe(1)
                 expect(state.cleared):toBe(0)
@@ -267,7 +268,7 @@ describe(
         )
 
         it(
-            "carries a bought loadout between duels and drops it with the run",
+            "carries a bought loadout between duels and drops it with the last heart",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 state:settle(true, 26)
@@ -282,9 +283,11 @@ describe(
                 expect(dealt:spell_count()):toBe(2)
                 expect(dealt:spell_level(1)):toBe(2)
 
-                -- The Opponent taking the duel ends the run, and everything the run
-                -- bought goes with it: a fresh run sets out with its starting spell at
-                -- full price.
+                -- Losing every heart drops everything the run bought: a fresh run
+                -- sets out with its starting spell at full price.
+                for _ = 1, run.max_hearts do
+                    state:lose_hand()
+                end
                 state:settle(false, 19)
                 expect(state:spell_count()):toBe(1)
                 expect(state.spells[1].kind):toBe(spells.SpellKind.Firebolt)
@@ -400,9 +403,7 @@ describe(
             "names the things a fought duel or exhausted heart pool can become",
             function()
                 local target: i32 = run.target_at(1, false)
-                expect(
-                    tostring(run.outcome_of(1, false, run.max_hearts, false, 99))
-                ):toBe("lost-vault")
+                expect(tostring(run.outcome_of(1, false, run.max_hearts, false, 99))):toBe("none")
                 -- Holding exactly the target clears; a single gold short does not.
                 expect(
                     tostring(run.outcome_of(1, false, run.max_hearts, true, target))
@@ -410,11 +411,8 @@ describe(
                 expect(
                     tostring(run.outcome_of(1, false, run.max_hearts, true, target - 1))
                 ):toBe("lost-target")
-                -- The Opponent holding the duel outranks the purse: a run that lost
-                -- the run is over for that reason, whatever it was carrying.
-                expect(
-                    tostring(run.outcome_of(1, false, run.max_hearts, false, 0))
-                ):toBe("lost-vault")
+                -- A live duel is not settled, whatever purse it currently holds.
+                expect(tostring(run.outcome_of(1, false, run.max_hearts, false, 0))):toBe("none")
                 -- The last heart can disappear before the duel has otherwise ended.
                 expect(tostring(run.outcome_of(1, false, 0, false, 99))):toBe("lost-health")
             end
@@ -486,8 +484,8 @@ describe(
                 state:settle(true, 40)
                 local short: i32 = run.target_at(state.duel, false) - 1
                 expect(tostring(state:settle(true, short))):toBe("lost-target")
-                -- The same ending as the Opponent taking it: a fresh first duel, the
-                -- starting spell back at full price, and the purse gone.
+                -- A fresh first duel follows, with the starting spell back at full
+                -- price and the purse gone.
                 expect(state.duel):toBe(1)
                 expect(state.cleared):toBe(0)
                 expect(state.gold):toBe(game.starting_gold)
@@ -533,7 +531,7 @@ describe(
     "Ante Magic duel verdicts",
     function()
         it(
-            "clears a normal duel without an Opponent win",
+            "reports a duel as cleared only after a player win",
             function()
                 math.randomseed(71)
                 local state: game.State = game.State.new(
@@ -542,14 +540,14 @@ describe(
                     game.starting_gold
                 )
                 expect(state:is_victory()):toBe(false)
-                game_fixture.finish(state, 0)
+                game_fixture.clear(state)
                 expect(state:is_victory()):toBe(true)
                 expect(state:view():cleared()):toBe(true)
             end
         )
 
         it(
-            "loses a normal duel the Opponent won",
+            "leaves a duel live before the player wins",
             function()
                 math.randomseed(73)
                 local state: game.State = game.State.new(
@@ -557,7 +555,6 @@ describe(
                     {spells.Spell.new(spells.SpellKind.Firebolt, 1)},
                     game.starting_gold
                 )
-                game_fixture.finish(state, 1)
                 expect(state:is_victory()):toBe(false)
                 expect(state:view():cleared()):toBe(false)
             end
@@ -603,7 +600,7 @@ describe(
             function()
                 math.randomseed(79)
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                local first: game.State = settle_vault(state, 0, 42)
+                local first: game.State = settle_vault(state, 42)
                 expect(first:gold()):toBe(42)
                 expect(state.duel):toBe(2)
                 expect(state.cleared):toBe(1)
@@ -617,7 +614,7 @@ describe(
                 clear_vault(state, 30)
                 expect(state.duel):toBe(3)
                 expect(state.cleared):toBe(2)
-                -- The third duel is the boss battle: seven cards, no replacements.
+                -- The third duel is the boss battle and opens with seven cards.
                 local third: game.State = game.State.new(state:boss(), state.spells, state.gold)
                 expect(third:gold()):toBe(30 - run.target_at(2, false))
                 expect(third:is_boss()):toBe(true)
@@ -626,28 +623,11 @@ describe(
         )
 
         it(
-            "ends the run where the Opponent stops it",
-            function()
-                math.randomseed(83)
-                local state: run.State = run.State.new(spells.SpellKind.Clone, false)
-                clear_vault(state, 42)
-                local lost: game.State = settle_vault(state, 3, 42)
-                expect(lost:is_victory()):toBe(false)
-
-                expect(state.duel):toBe(1)
-                expect(state.cleared):toBe(0)
-                local fresh: game.State = game.State.new(state:boss(), state.spells, state.gold)
-                expect(fresh:gold()):toBe(game.starting_gold)
-                expect(fresh:spell_kind(0)):toBe(spells.SpellKind.Clone)
-            end
-        )
-
-        it(
             "keeps every duel of a boss rush a boss battle",
             function()
                 math.randomseed(89)
                 local state: run.State = run.State.new(spells.SpellKind.FreezeRay, true)
-                local opening: game.State = settle_vault(state, 0, 25)
+                local opening: game.State = settle_vault(state, 25)
                 expect(opening:is_boss()):toBe(true)
                 expect(opening:hand_size()):toBe(7)
 
