@@ -6351,6 +6351,60 @@ fn rejects_pairs_over_array_with_iteration_hint() {
 }
 
 #[test]
+fn dense_array_ipairs_loop_type_checks() {
+    let source = r#"
+        function make_words(): ({string}, i32)
+            return {"a", "bb"}, 42
+        end
+
+        function scan(words: {string}): i32
+            local total: i32 = 0
+            for i, word in ipairs(words) do
+                total = total + i + #word
+            end
+            for i in ipairs(words) do
+                total = total + i
+            end
+            for i, word in ipairs(make_words()) do
+                total = total + i + #word
+            end
+            return total
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("dense ipairs loops should check");
+}
+
+#[test]
+fn rejects_ipairs_over_non_array_value() {
+    let source = r#"
+        function broken(): unit
+            for i, value in ipairs(42) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "ipairs(...) requires an array, got f64");
+}
+
+#[test]
+fn rejects_ipairs_with_three_loop_variables() {
+    let source = r#"
+        function broken(words: {string}): unit
+            for a, b, c in ipairs(words) do
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "ipairs for-in loop expects 1 or 2 loop variables, got 3"
+    );
+}
+
+#[test]
 fn rejects_record_pairs_with_three_loop_variables() {
     let source = r#"
         function broken(): unit

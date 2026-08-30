@@ -1541,6 +1541,18 @@ impl Resolver {
                 iterators,
                 body,
             } => {
+                // An unbound `ipairs(array)` in iterator position is a
+                // compile-time builtin, not a runtime function value. A
+                // lexical binding named `ipairs` still shadows it.
+                let skip_builtin_ipairs_callee = iterators.len() == 1
+                    && matches!(
+                        &iterators[0],
+                        Expr::Call { callee, type_args, args, .. }
+                            if type_args.is_empty()
+                                && args.len() == 1
+                                && matches!(callee.as_ref(), Expr::Name(name, _, _) if name == "ipairs")
+                    )
+                    && self.lookup("ipairs").is_none();
                 // A bare unbound `next` heading a multi-expression iterator
                 // list is the compile-time `next` builtin, not a value; a
                 // local named `next` still shadows it and binds normally.
@@ -1551,7 +1563,14 @@ impl Resolver {
                     if index == 0 && skip_builtin_next_head {
                         continue;
                     }
-                    self.resolve_expr(iterator)?;
+                    if index == 0 && skip_builtin_ipairs_callee {
+                        let Expr::Call { args, .. } = iterator else {
+                            unreachable!("ipairs shape checked above");
+                        };
+                        self.resolve_expr(&mut args[0])?;
+                    } else {
+                        self.resolve_expr(iterator)?;
+                    }
                 }
                 self.enter_scope();
                 let mut ids = Vec::new();
@@ -1771,6 +1790,30 @@ pub fn pairs_call_arg(expr: &Expr) -> Option<&Expr> {
     }
     match callee.as_ref() {
         Expr::Name(name, _, _) if name == "pairs" => Some(&args[0]),
+        _ => None,
+    }
+}
+
+/// The array argument of the compile-time `ipairs(array)` special form.
+///
+/// `ipairs` is recognized only in generic-for iterator position. After symbol
+/// resolution an authored binding named `ipairs` has a symbol id and therefore
+/// does not match this builtin form.
+pub fn builtin_ipairs_call_arg(expr: &Expr) -> Option<&Expr> {
+    let Expr::Call {
+        callee,
+        type_args,
+        args,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    if !type_args.is_empty() || args.len() != 1 {
+        return None;
+    }
+    match callee.as_ref() {
+        Expr::Name(name, None, _) if name == "ipairs" => Some(&args[0]),
         _ => None,
     }
 }

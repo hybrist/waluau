@@ -5470,6 +5470,31 @@ impl Builder<'_> {
                 return self
                     .lower_for_in_gmatch(haystack_expr, pattern_expr, ids, body, scope);
             }
+            if let Some(array_expr) = waluau_ast::builtin_ipairs_call_arg(iterator) {
+                let array_ty = first_of_multi(self.infer_expr_type(
+                    array_expr,
+                    &scope.types,
+                    None,
+                )?);
+                let Type::Array(element_ty) = &array_ty else {
+                    return Err(Diagnostic::new("ipairs(...) requires an array"));
+                };
+                if ids.len() != 1 && ids.len() != 2 {
+                    return Err(Diagnostic::new(format!(
+                        "ipairs for-in loop expects 1 or 2 loop variables, got {}",
+                        ids.len()
+                    )));
+                }
+                let array_val = self.lower_expr(array_expr, scope, Some(array_ty.clone()))?;
+                return self.lower_indexed_for_in(
+                    array_val,
+                    element_ty,
+                    IndexedLoopBindings::ArrayNext,
+                    ids,
+                    body,
+                    scope,
+                );
+            }
             if let Some(record_expr) = waluau_ast::pairs_call_arg(iterator) {
                 return self.lower_for_in_record_pairs(record_expr, ids, body, scope);
             }
