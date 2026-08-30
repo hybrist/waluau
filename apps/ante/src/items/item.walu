@@ -1,9 +1,12 @@
 local run_module = require("../run")
 
+export type Snapshot = { kind: string, payload: string }
+
 export type Item = {
     can_use: (self, run: run_module.State) -> bool,
     use: (self, run: run_module.State) -> unit,
     describe: (self) -> string,
     accent: (self) -> string,
-    base_price: (self, run: run_module.State) -> number
+    base_price: (self, run: run_module.State) -> i32,
+    snapshot: (self) -> Snapshot
 }

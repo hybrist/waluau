@@ -4,6 +4,7 @@ local spell_launch = require("../spell_launch")
 local item_ = require("./item")
 
 type Item = item_.Item
+type ItemSnapshot = item_.Snapshot
 type Spell = spell_.Spell
 type SpellKind = spell_.SpellKind
 type RunState = run_.State
@@ -26,8 +27,27 @@ function SpellScroll:accent(): string
     return spell_launch.color(self.kind)
 end
 
-function SpellScroll:base_price(run: RunState): number
+function SpellScroll:base_price(run: RunState): i32
     return 4
+end
+
+type Snapshot = { kind: SpellKind, level: i32 }
+
+function SpellScroll:snapshot(): ItemSnapshot
+    local payload: Snapshot = { kind = self.kind, level = self.level }
+    return { kind = "spell-scroll", payload = json.pack(payload) }
+end
+
+function SpellScroll.restore(payload: string): SpellScroll?
+    local decoded: Snapshot? = json.unpack<Snapshot>(payload)
+    if decoded == nil then
+        return nil
+    end
+    local restored: Snapshot = decoded::Snapshot
+    if not spell_.SpellKind.valid(restored.kind) or restored.level < 1 then
+        return nil
+    end
+    return SpellScroll.new(restored.kind, restored.level)
 end
 
 function SpellScroll.new(kind: SpellKind, level: i32): SpellScroll

@@ -287,14 +287,13 @@ function countPassInk(canvas) {
   );
 }
 
-// Cyan ink where the fence prints the mana on hand: a 24px number right-aligned
-// at the top of its panel. Nothing else draws cyan that high — the board's own
-// mana readout sits in the HUD above it, and the verdict's headings are gold —
-// so this is how these tests tell the fence apart from a dealt vault.
+// Cyan ink where the centered shop entity prints the mana on hand: a 24px
+// number right-aligned in its header. Nothing else draws cyan in that part of
+// the map, so this distinguishes the shop from a dealt vault.
 function countFenceManaInk(canvas) {
   return countDesignInk(
     canvas,
-    { x: 499, heightRatio: 0.1133333333, yOffset: 32, width: 58, height: 32 },
+    { centerOffsetX: 195, heightRatio: 0.5, yOffset: -130, width: 62, height: 36 },
     [103, 232, 249],
     [40, 40, 40],
   );
@@ -368,7 +367,7 @@ test('carries the run into the next vault once this one is settled', async ({ pa
     .toBeLessThan(10);
 
   // A settled vault is a moment in the run rather than the end of play. Taking
-  // it stops at the fence, where the carried mana buys spell upgrades before
+  // it stops at the shop, where the carried mana buys spell scrolls before
   // the next vault is dealt; a lost run has neither mana nor loadout left to
   // spend, so its fresh first vault is dealt straight away. Which of the two
   // this vault ended as is the cards' to decide, so this covers both.
@@ -383,12 +382,7 @@ test('carries the run into the next vault once this one is settled', async ({ pa
       { timeout: GAME_READY_TIMEOUT })
     .toBe(true);
   if (await countFenceManaInk(canvas) > 20) {
-    // The fence keeps to a column so the map it stands on stays readable: the
-    // vendor the run has reached is still anchored beside the offers.
-    await expect
-      .poll(() => countMapStopInk(canvas), { timeout: GAME_READY_TIMEOUT })
-      .toBeGreaterThan(30);
-    // The fence is a cursor-driven offer list, and Esc walks past every offer
+    // The shop is a cursor-driven offer list, and Esc walks past every offer
     // into the vault the run is standing in front of.
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Escape');

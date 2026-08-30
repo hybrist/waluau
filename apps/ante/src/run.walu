@@ -47,10 +47,8 @@ const RUSH_LENGTH: i32 = 5
 -- rarity-weighted pay immediately and never comes back down.
 const ENDLESS_STEP: i32 = 6
 -- Two spells are as many as the player can hold ready at once — keys 1 and 2
--- in the duel. Learning a third is a trade, not an addition.
+-- in the duel. A full loadout cannot take on another kind.
 const MAX_SPELLS: i32 = 2
--- However cheap a spell is upgraded, a cast is never free.
-const MIN_SPELL_COST: i32 = 2
 -- Three lost hands across the whole run. A won duel repairs nothing: health is
 -- run state, just like the purse and loadout it carries through the shop.
 const MAX_HEARTS: i32 = 3
@@ -304,41 +302,6 @@ function State:spend(gold: i32): bool
     return true
 end
 
--- Whether the spell in that slot has room left to be upgraded.
-function State:can_sharpen(slot: i32): bool
-    if slot < 0 or slot >= #self.spells then
-        return false
-    end
-    return self.spells[slot].cost > MIN_SPELL_COST
-end
-
-function State:upgrade(slot: i32): bool
-    if not self:can_sharpen(slot) then
-        return false
-    end
-    self.spells[slot].cost -= 1
-    return true
-end
-
--- Take on a spell at full price. `slot` past the end appends while the loadout
--- has room, which is how the second spell gets its own key; naming an occupied
--- slot trades that spell away for the new one, which is the only way to take a
--- third.
-function State:learn(kind: spells.SpellKind, slot: i32): bool
-    if self:carries(kind) then
-        return false
-    end
-    if slot < 0 or slot > #self.spells or slot >= MAX_SPELLS then
-        return false
-    end
-    if slot == #self.spells then
-        table.insert(self.spells, spells.Spell.new(kind, 1))
-    else
-        self.spells[slot] = spells.Spell.new(kind, 1)
-    end
-    return true
-end
-
 function State:can_learn_spell(spell: spells.Spell): bool
     if spell.level < 1 then
         return false
@@ -370,15 +333,6 @@ function State:current_spell_level(kind: spells.SpellKind): i32
         end
     end
     return 0
-end
-
--- The slot a newly learned spell would take by itself: the next number up while
--- the loadout has room, and -1 once it is full and something has to go.
-function State:open_slot(): i32
-    if #self.spells >= MAX_SPELLS then
-        return -1
-    end
-    return #self.spells
 end
 
 -- Development snapshots ride the built-in JSON codec. The wrapper record
@@ -416,12 +370,17 @@ function State.restore(snapshot_value: string): State?
     if #restored.spells < 1 or #restored.spells > MAX_SPELLS then
         return nil
     end
-    for spell in restored.spells do
+    for index, spell in restored.spells do
         if not spells.SpellKind.valid(spell.kind) then
             return nil
         end
         if spell.level < 1 then
             return nil
+        end
+        for previous = 0::i32, index - 1 do
+            if restored.spells[previous].kind == spell.kind then
+                return nil
+            end
         end
     end
     if not spells.SpellKind.valid(restored.start_spell) then
@@ -439,6 +398,5 @@ return {
     outcome_walks_on = outcome_walks_on,
     boss_every = BOSS_EVERY,
     max_spells = MAX_SPELLS,
-    min_spell_cost = MIN_SPELL_COST,
     max_hearts = MAX_HEARTS
 }
