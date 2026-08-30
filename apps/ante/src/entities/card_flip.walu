@@ -105,18 +105,19 @@ function draw_shadow(graphics: ui.Graphics, x: f64, y: f64, angle: f64, depth: f
     local width: f64 = card.width * footprint
     local left: f64 = x + (card.width - width) * 0.5
     graphics:set_color_rgba(0.03, 0.02, 0.04, 0.2 - 0.08 * depth)
-    graphics:fill_rounded_rectangle(
-        left,
-        y + 2.0,
-        width,
-        card.height,
-        card.corner_radius
-    )
+    graphics:fill_rounded_rectangle(left, y + 2.0, width, card.height, card.corner_radius)
 end
 
 -- The affine stand-in for when the card cannot be captured yet: the old
 -- centre-axis turn, which keeps the reveal legible until assets are ready.
-function draw_flat(surface: ui.Surface, value: game.Card, x: f64, y: f64, progress: f64, colored: bool): unit
+function draw_flat(
+    surface: ui.Surface,
+    value: game.Card,
+    x: f64,
+    y: f64,
+    progress: f64,
+    colored: bool
+): unit
     local graphics = surface.graphics
     local turn: f64 = easing.in_out_cubic(progress)
     local angle: f64 = turn * math.pi
