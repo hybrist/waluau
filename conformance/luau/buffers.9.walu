@@ -3,10 +3,8 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- Dynamic pcall now works; this chunk remains blocked by buffer.readstring
--- and buffer.writestring (waluau-q7qg.6.3).
--- This chunk contains only buffers.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- Arithmetic over untyped numeric parameters is not yet inferred
+-- (waluau-rxw1), so this nonconstant bounds chunk does not compile.
 --
 -- Split from conformance/luau/buffers.walu. Common helper setup is repeated
 -- as needed so each numbered chunk is independently discoverable by the

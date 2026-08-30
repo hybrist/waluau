@@ -68,6 +68,25 @@ fn type_checks_mutable_buffer_scalar_api_and_unknown_roundtrip() {
 }
 
 #[test]
+fn type_checks_mutable_buffer_string_and_bulk_api() {
+    let source = r#"
+        local a: buffer = buffer.fromstring("abc")
+        local all: string = buffer.tostring(a)
+        local part: string = buffer.readstring(a, 0, 2)
+        buffer.writestring(a, 0, "xyz")
+        buffer.writestring(a, 1, "xyz", 2)
+        local b = buffer.create(3)
+        buffer.copy(b, 0, a)
+        buffer.copy(b, 0, a, 1)
+        buffer.copy(b, 0, a, 1, 2)
+        buffer.fill(b, 0, 255)
+        buffer.fill(b, 1, 256, 2)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("buffer string and bulk API should type check");
+}
+
+#[test]
 fn rejects_invalid_bit32_intrinsic_arities() {
     for source in [
         "local x: u32 = bit32.lshift(1)",

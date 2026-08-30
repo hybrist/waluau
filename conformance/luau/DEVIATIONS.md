@@ -219,13 +219,18 @@ independent of generated source should be split.
 
 Luau `string.pack`, `string.unpack`, and `string.packsize` treat strings as
 arbitrary byte sequences. Waluau strings use the browser's text-string model;
-raw binary data is represented separately as `bytes`, typed-array views, or the
-planned mutable buffer API. Adding binary packing that returns a text string
-would conflate those contracts.
+raw binary data is represented separately as `bytes`, typed-array views, or
+mutable `buffer` values. Adding binary packing that returns a text string would
+conflate those contracts.
 
 Impact: `tpack.{1-19}` (19 chunks) remains pending as a deliberate API-shape
-difference. Bead `waluau-q7qg.6` tracks a Luau-compatible mutable buffer design
-for browser/Wasm linear memory; it does not redefine text strings as byte bags.
+difference. Buffer string conversion is a deliberately narrow bridge rather
+than a redefinition of every string: `buffer.fromstring`/`writestring` accept
+only browser string code units U+0000..U+00FF and map each to one byte;
+`buffer.tostring`/`readstring` project every byte back to the same code unit.
+Embedded NUL and all 256 byte values therefore round-trip, while wider Unicode
+input is rejected catchably. Use immutable `bytes` when browser text projection
+is not part of the operation.
 
 ### Sparse, mixed, and hash tables
 
@@ -262,7 +267,7 @@ The audits linked bounded implementation work where Waluau intends to converge:
 
 | Gap | Bead | Current impact |
 | --- | --- | --- |
-| Mutable Luau buffer namespace | `waluau-q7qg.6` | `buffers.{1-21}`, with later splitting for independent dynamic/native checks |
+| Remaining mutable-buffer bit operations and slow-call coverage | `waluau-q7qg.6.4`, `waluau-q7qg.6.6` | `buffers.20` bit slices and intentionally pending VM/environment aggregate `buffers.21`; `buffers.8`, `.9`, and `.11` carry their separately tracked dynamic-f32 and untyped-numeric blockers |
 | Typed math-library completion | `waluau-q7qg.11` | `math.{1,4.helper,9,15,17}`, `math.2.coercion`, `math.11.numeric`, and `math.17.multivalue`; direct scalar and exact-noise ranges are enabled, while the aggregate remains pending for its named dynamic, protected-call, multi-value, and source-loading blockers |
 | Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |

@@ -190,6 +190,64 @@ fn lowers_mutable_buffer_scalar_operations_as_distinct_ir() {
 }
 
 #[test]
+fn lowers_mutable_buffer_string_and_bulk_operations_as_distinct_ir() {
+    let source = r#"
+        function main(): ()
+            local a = buffer.fromstring("abcdef")
+            local all = buffer.tostring(a)
+            local part = buffer.readstring(a, 1, 2)
+            buffer.writestring(a, 0, "xyz", 2)
+            local b = buffer.create(6)
+            buffer.copy(b, 0, a, 1)
+            buffer.fill(b, 2, 0x1ff)
+        end
+    "#;
+    let module =
+        build(&parse(source).expect("parse should succeed")).expect("IR build should succeed");
+    verify(&module).expect("buffer bulk IR should verify");
+    let instructions = module.functions[0]
+        .blocks
+        .values()
+        .flat_map(|block| {
+            block
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::LuauBufferFromString { .. }))
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::LuauBufferToString { .. }))
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::LuauBufferReadString { .. }))
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::LuauBufferWriteString { .. }))
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::LuauBufferCopy { .. }))
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::LuauBufferFill { .. }))
+    );
+}
+
+#[test]
 fn leaves_compiler_generated_function_bodies_unmapped() {
     let source = "local value: i32 = 42\n";
     let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");

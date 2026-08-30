@@ -1,0 +1,78 @@
+-- Waluau-specific focused coverage for Luau buffer string and bulk APIs.
+-- Buffer offsets are zero-based; browser text crosses this binary boundary
+-- one code unit per byte for U+0000..U+00FF.
+function expect_error(fn: () -> unit, expected: string): unit
+    local ok, err = pcall(fn)
+    assert(not ok)
+    assert(err == expected)
+end
+
+local binary = string.char(0, 255, 65)
+local projected = buffer.fromstring(binary)
+assert(buffer.len(projected) == 3)
+assert(buffer.tostring(projected) == binary)
+assert(buffer.readstring(projected, 3, 0) == "")
+buffer.writestring(projected, 3, "ignored", 0)
+
+local text = buffer.fromstring("abcdefgh")
+buffer.writestring(text, 2, "XYZignored", 3)
+assert(buffer.tostring(text) == "abXYZfgh")
+
+local copied = buffer.create(8)
+buffer.copy(copied, 0, text)
+assert(buffer.tostring(copied) == "abXYZfgh")
+buffer.copy(copied, 0, copied, 2, 6)
+assert(buffer.tostring(copied) == "XYZfghgh")
+buffer.copy(copied, 2, copied, 0, 6)
+assert(buffer.tostring(copied) == "XYXYZfgh")
+
+buffer.fill(copied, 2, 0xffffff65, 3)
+assert(buffer.tostring(copied) == "XYeeefgh")
+buffer.fill(copied, 5, 0x7a)
+assert(buffer.tostring(copied) == "XYeeezzz")
+buffer.fill(copied, 8, 1)
+
+expect_error(
+    function()
+        buffer.readstring(copied, -1, -1)
+    end,
+    "invalid argument #3 to 'readstring' (size)"
+)
+expect_error(
+    function()
+        buffer.readstring(copied, 9, 0)
+    end,
+    "buffer access out of bounds"
+)
+expect_error(
+    function()
+        buffer.writestring(copied, 0, "abc", -1)
+    end,
+    "invalid argument #4 to 'writestring' (count)"
+)
+expect_error(
+    function()
+        buffer.writestring(copied, 0, "abc", 4)
+    end,
+    "string length overflow"
+)
+expect_error(
+    function()
+        buffer.copy(copied, 0, copied, 0, -1)
+    end,
+    "buffer access out of bounds"
+)
+expect_error(
+    function()
+        buffer.fill(copied, 0, 1, -1)
+    end,
+    "buffer access out of bounds"
+)
+expect_error(
+    function()
+        buffer.fromstring("Ā")
+    end,
+    "buffer string contains a code unit above 255"
+)
+
+print("buffer bulk ok")
