@@ -9,6 +9,13 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
+    <!-- Safari gives a page in a tab no way to put its own bars away: they
+         collapse on a scroll, and a board that fills the viewport has nothing
+         to scroll. Added to the Home Screen, these run it without them. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Ante" />
     <title>Ante</title>
   </head>
   <body>

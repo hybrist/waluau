@@ -173,10 +173,11 @@ function start(config: Config, game: Game): Session
     if owns_page then
         -- overscroll-behavior stops a swipe that misses the canvas from
         -- rubber-banding or pull-to-refreshing the page out from under a game
-        -- that fills the window.
+        -- that fills the window. The vh pair is a fallback and its dvh
+        -- successor: see the note on root_box below for what dvh buys.
         body:set_attribute(
             "style",
-            "margin:0;min-height:100vh;overflow:hidden;overscroll-behavior:none;background:" .. config.background .. ";"
+            "margin:0;min-height:100vh;min-height:100dvh;overflow:hidden;overscroll-behavior:none;background:" .. config.background .. ";"
         )
     end
     local previous_root: Element? = document:get_element_by_id("walua-game")
@@ -191,9 +192,15 @@ function start(config: Config, game: Game): Session
     -- A game that owns the page paints its own backdrop around the canvas. A
     -- mounted game paints nothing outside the canvas: the host's page keeps
     -- its own background, and the canvas stays a measurable box on it.
-    local root_box: string = "width:100vw;min-height:100vh;padding:8px;background:" .. config.background .. ";"
+    -- Heights are dvh with a vh fallback. A mobile browser's vh is the height
+    -- the page would have with the browser's own bars collapsed, so while they
+    -- are showing a 100vh root is taller than the space there is: the canvas
+    -- is sized from window.innerHeight and centred, so it would sit low in an
+    -- oversized root with its bottom clipped away. dvh is the height that is
+    -- actually there, and it follows the bars as they come and go.
+    local root_box: string = "width:100vw;min-height:100vh;min-height:100dvh;padding:8px;background:" .. config.background .. ";"
     if fluid then
-        root_box = "width:100vw;height:100vh;padding:0;background:" .. config.background .. ";"
+        root_box = "width:100vw;height:100vh;height:100dvh;padding:0;background:" .. config.background .. ";"
     end
     if not owns_page then
         root_box = "width:100%;min-height:100%;padding:0;"

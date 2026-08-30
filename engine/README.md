@@ -91,6 +91,19 @@ around it, which is a document concern rather than an engine one:
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 ```
 
+The engine sizes the canvas from the space the browser actually has, and its
+root box is `dvh` rather than `vh` so that a mobile browser showing its own bars
+does not lay out a root taller than the screen and push the canvas half off it.
+Those bars are the browser's, though: they collapse on a page scroll, and a game
+that fills the viewport has nothing to scroll. Losing them is a matter of how
+the page is opened rather than anything a page can ask for, so a game meant to
+be played on a phone or a tablet should also say it can be installed:
+
+```html
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+```
+
 ## Package and version contract
 
 The compiler embeds the engine sources. `waluau:engine` selects the current
