@@ -4741,15 +4741,15 @@ fn attaches_argument_span_to_call_coercion_diagnostic() {
 }
 
 #[test]
-fn rejects_overloaded_call_without_matching_arity() {
+fn rejects_overloaded_call_with_too_few_arguments() {
     let source = r#"
         type Ctx = extern
         declare function get_ctx(): Ctx
-        declare function Ctx:fill(): unit
         declare function Ctx:fill(rule: string): unit
+        declare function Ctx:fill(rule: string, alpha: f64): unit
 
         function bad(): unit
-            get_ctx():fill("evenodd", "extra")
+            get_ctx():fill()
         end
     "#;
 
@@ -4757,8 +4757,145 @@ fn rejects_overloaded_call_without_matching_arity() {
     let error = super::type_check_and_infer(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "no overload of 'Ctx.fill' accepts 3 arguments; available overloads: (Ctx), (Ctx, string)"
+        "no overload of 'Ctx.fill' accepts 1 argument; available overloads: (Ctx, string), (Ctx, string, f64)"
     );
+}
+
+#[test]
+fn does_not_treat_an_invalid_consumed_overload_argument_as_surplus() {
+    let program = parse(
+        r#"
+            declare function choose(): i32
+            declare function choose(value: i32): i32
+
+            function bad(): i32
+                return choose(true)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("closest overload must check its argument");
+    assert_eq!(error.to_string(), "call expected i32, got bool");
+}
+
+#[test]
+fn type_checks_surplus_fixed_call_arguments_but_not_consumed_mismatches() {
+    let source = r#"
+        type Counter = { value: i32 }
+
+        function take(value: i32): i32
+            return value
+        end
+
+        function Counter:add(delta: i32): i32
+            return self.value + delta
+        end
+
+        function valid(counter: Counter): i32
+            local zero: () -> i32 = function(): i32 return 7 end
+            return take(1, "ignored") + zero(false) + counter:add(2, "ignored")
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("surplus arguments should type check");
+
+    let invalid = parse(
+        r#"
+            function take(value: i32): i32 return value end
+            function bad(): i32 return take("consumed", 1) end
+        "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&invalid).expect_err("consumed arguments stay checked");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert string to i32"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn table_sort_contextually_types_unannotated_comparator_parameters() {
+    let program = parse(
+        r#"
+            table.sort({10, 9, 8}, function(a, b) return a < b end, "ignored")
+        "#,
+    )
+    .expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program)
+        .expect("table.sort comparator should adopt the array element type");
+    let init = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .expect("top-level initializer");
+    let Stmt::Expr(Expr::Call { args, .. }) = &init.body[0] else {
+        panic!("expected table.sort call");
+    };
+    let Expr::Function(comparator) = &args[1] else {
+        panic!("expected comparator lambda");
+    };
+    assert_eq!(comparator.params[0].ty, Type::number());
+    assert_eq!(comparator.params[1].ty, Type::number());
+}
+
+#[test]
+fn rejects_invalid_expressions_even_when_their_values_are_surplus() {
+    let program = parse(
+        r#"
+            function sink(): unit end
+            function bad(): unit
+                sink(missing_name)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("surplus expression must be checked");
+    assert_eq!(error.to_string(), "unknown name 'missing_name'");
+}
+
+#[test]
+fn rejects_invalid_surplus_expressions_in_monomorphic_namespaced_calls() {
+    let program = parse(
+        r#"
+            declare function host.seed(value: f64): unit
+            function bad(): unit
+                host.seed(1, missing_name)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("surplus extern expression must be checked");
+    assert_eq!(error.to_string(), "unknown name 'missing_name'");
+}
+
+#[test]
+fn rejects_invalid_surplus_expressions_passed_through_pcall() {
+    let program = parse(
+        r#"
+            function sink(value: i32): unit end
+            function bad(): unit
+                local ok, result = pcall(sink, 1, missing_name)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("surplus pcall expression must be checked");
+    assert_eq!(error.to_string(), "unknown name 'missing_name'");
+}
+
+#[test]
+fn compares_nil_only_function_results_with_nil() {
+    let program = parse(
+        r#"
+            function entry(): bool
+                return (function() return nil end)(4) == nil
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&program).expect("nil-only result should compare with nil");
 }
 
 #[test]

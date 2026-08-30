@@ -24,6 +24,7 @@ use waluau_ast::{
 };
 use waluau_diagnostics::Diagnostic;
 
+use crate::builtins::TABLE_SORT;
 use crate::expressions::{builtin_name, infer_expr, method_signature, type_method_signature};
 use crate::signatures::{FnSignature, active_type_param_set};
 use crate::statements::{checked_if_cast_scopes, narrowed_scopes};
@@ -866,9 +867,9 @@ pub(crate) fn desugar_conformance_coercions(
     reusable: &[bool],
 ) {
     let conformance = conformance_table(program);
-    if conformance.is_empty() {
-        return;
-    }
+    // This type-directed walk also materializes contextual parameter types for
+    // function literals (including table.sort comparators), so it remains
+    // useful when the program has no interface-conformance declarations.
     // Parameter lists for functions that have no signature entry yet (their
     // return type is still uninferred); parameters are always annotated, so
     // argument positions can still rewrite against them.
@@ -1363,7 +1364,25 @@ impl CoercionRewriter<'_> {
         match expr {
             Expr::Call { callee, args, .. } => {
                 self.rewrite_expr(callee, None, vars, active);
-                let params = self.call_param_types(callee);
+                let params = if builtin_name(callee).as_deref() == Some(TABLE_SORT) {
+                    args.first()
+                        .and_then(|array| {
+                            infer_expr(array, vars, self.fn_signatures, active, None).ok()
+                        })
+                        .and_then(|ty| ty.element_type())
+                        .map(|element| {
+                            vec![
+                                Type::Array(Arc::new(element.clone())),
+                                Type::Function {
+                                    params: vec![element.clone(), element],
+                                    return_type: Arc::new(Type::Bool),
+                                    has_self: false,
+                                },
+                            ]
+                        })
+                } else {
+                    self.call_param_types(callee)
+                };
                 for (index, arg) in args.iter_mut().enumerate() {
                     let expected = params.as_ref().and_then(|params| params.get(index));
                     self.rewrite_expr(arg, expected, vars, active);
@@ -1523,6 +1542,15 @@ impl CoercionRewriter<'_> {
                 self.rewrite_expr(index, None, vars, active);
             }
             Expr::Function(function) => {
+                if let Some(Type::Function { params, .. }) = expected
+                    && params.len() == function.params.len()
+                {
+                    for (param, expected_ty) in function.params.iter_mut().zip(params.iter()) {
+                        if param.ty == Type::Unknown {
+                            param.ty = expected_ty.clone();
+                        }
+                    }
+                }
                 let mut inner_vars = vars.clone();
                 for param in &function.params {
                     inner_vars.insert(

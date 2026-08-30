@@ -1,0 +1,52 @@
+local observed: {i32} = {}
+
+function mark(value: i32): i32
+    table.insert(observed, value)
+    return value
+end
+
+function take(value: i32): i32
+    return value
+end
+
+assert(take(mark(1), mark(2), mark(3)) == 1)
+assert(#observed == 3)
+assert(observed[1] == 1 and observed[2] == 2 and observed[3] == 3)
+
+local zero: () -> i32 = function(): i32
+    return 7
+end
+assert(zero(mark(4)) == 7)
+
+type Counter = { base: i32 }
+function Counter:add(value: i32): i32
+    return self.base + value
+end
+
+local counter: Counter = { base = 10 }
+assert(counter:add(mark(5), mark(6)) == 15)
+
+function count_rest(first: i32, ...): i32
+    local rest: {unknown} = {...}
+    return #rest
+end
+
+assert(count_rest(mark(7), mark(8), mark(9)) == 2)
+
+local ok, protected_result = pcall(take, mark(10), mark(11))
+assert(ok and protected_result == 10)
+
+local values: {i32} = {3, 1, 2}
+table.sort(
+    values,
+    function(a: i32, b: i32): bool
+        return a < b
+    end,
+    mark(12)
+)
+assert(values[1] == 1 and values[2] == 2 and values[3] == 3)
+
+assert(#observed == 12)
+for index, value in observed do
+    assert(index == value)
+end

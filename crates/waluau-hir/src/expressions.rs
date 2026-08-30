@@ -330,14 +330,17 @@ pub(super) fn resolved_type_method_call_name(
 /// Pick the declared-import overload that best matches a call's arguments.
 ///
 /// Resolution rules, in order:
-/// 1. Keep variants whose arity matches the call (for method calls the
-///    receiver occupies the first parameter and must be compatible).
-/// 2. Reject variants where some argument neither equals nor coerces to the
-///    parameter type. Each coercion (implicit widening, literal adoption)
-///    costs 1; exact type matches cost 0.
-/// 3. The variant with the lowest total cost wins. A tie between distinct
-///    variants is an ambiguity error; an empty candidate set is a no-match
-///    error. Both list the available overload signatures.
+/// 1. Keep variants whose required arity is satisfied (for method calls the
+///    receiver occupies the first parameter and must be compatible). Surplus
+///    arguments are ignored by the selected fixed-arity callee.
+/// 2. Prefer the closest fixed arity. This makes an exact-arity overload win
+///    before a shorter overload that would discard a surplus argument.
+/// 3. Reject variants where some consumed argument neither equals nor coerces
+///    to the parameter type. Each coercion (implicit widening, literal
+///    adoption) costs 1; exact type matches cost 0.
+/// 4. The variant with the lowest `(arity distance, coercion cost)` wins. A
+///    tie between distinct variants is an ambiguity error; an empty candidate
+///    set is a no-match error. Both list the available overload signatures.
 pub(super) fn select_overload<'a>(
     display_name: &str,
     variants: &'a [OverloadVariant],
@@ -376,12 +379,21 @@ pub(super) fn select_overload<'a>(
             overload_list()
         )));
     }
+    let closest_arity_distance = arity_matches
+        .iter()
+        .map(|variant| variant.params.len().abs_diff(total_args))
+        .min()
+        .expect("arity_matches is non-empty");
 
-    let mut viable: Vec<(&OverloadVariant, u32)> = Vec::new();
-    for variant in arity_matches {
-        // Prefer an exact-arity overload over one that requires omitted
-        // nullable parameters to be filled with nil.
-        let mut cost = (variant.params.len() - total_args) as u32;
+    let mut viable: Vec<(&OverloadVariant, (usize, u32))> = Vec::new();
+    for variant in arity_matches
+        .into_iter()
+        .filter(|variant| variant.params.len().abs_diff(total_args) == closest_arity_distance)
+    {
+        // Prefer exact arity, then the fixed signature that consumes the
+        // largest useful prefix (or requires the fewest omitted nullables).
+        let arity_distance = variant.params.len().abs_diff(total_args);
+        let mut coercion_cost = 0;
         let mut candidate_viable = true;
         for (arg, param) in args.iter().zip(variant.params.iter().skip(receiver_len)) {
             let unconstrained = infer_expr(arg, vars, fn_signatures, active_type_params, None).ok();
@@ -398,7 +410,7 @@ pub(super) fn select_overload<'a>(
             )
             .is_ok()
             {
-                cost += 1;
+                coercion_cost += 1;
                 // Wrapping a non-nullable value into a nullable parameter
                 // costs an extra point, so when both shapes are declared the
                 // same-shape overload wins instead of tying: `expect(4)`
@@ -413,14 +425,14 @@ pub(super) fn select_overload<'a>(
                         .as_ref()
                         .is_some_and(|actual| !matches!(actual, Type::Nullable(_) | Type::Nil))
                 {
-                    cost += 1;
+                    coercion_cost += 1;
                 }
                 if matches!(param, Type::Bool)
                     && unconstrained
                         .as_ref()
                         .is_some_and(|actual| matches!(actual, Type::Nullable(_)))
                 {
-                    cost += 1;
+                    coercion_cost += 1;
                 }
             } else {
                 candidate_viable = false;
@@ -428,7 +440,7 @@ pub(super) fn select_overload<'a>(
             }
         }
         if candidate_viable {
-            viable.push((variant, cost));
+            viable.push((variant, (arity_distance, coercion_cost)));
         }
     }
 
@@ -1163,6 +1175,9 @@ fn infer_expr_inner(
                                 )));
                             }
                         }
+                        for arg in args.iter().skip(chosen.params.len()) {
+                            infer_expr(arg, vars, fn_signatures, active_type_params, None)?;
+                        }
                         return coerce_type(chosen.return_type.clone(), expected);
                     }
                 }
@@ -1201,6 +1216,9 @@ fn infer_expr_inner(
                                         )));
                                     }
                                 }
+                                for arg in args.iter().skip(chosen.params.len()) {
+                                    infer_expr(arg, vars, fn_signatures, active_type_params, None)?;
+                                }
                                 return coerce_type(chosen.return_type.clone(), expected);
                             }
                             Some(FnSignature::Mono {
@@ -1232,6 +1250,9 @@ fn infer_expr_inner(
                                             "call expected {expected_param}, got {actual}"
                                         )));
                                     }
+                                }
+                                for arg in args.iter().skip(params.len()) {
+                                    infer_expr(arg, vars, fn_signatures, active_type_params, None)?;
                                 }
                                 return coerce_type(return_type.clone(), expected);
                             }
@@ -1839,7 +1860,7 @@ fn infer_expr_inner(
                         active_type_params,
                         None,
                     )?);
-                    if matches!(value_ty, Type::Nullable(_)) {
+                    if matches!(value_ty, Type::Nil | Type::Nullable(_)) {
                         return Ok(Type::Bool);
                     }
                     // An empty multi-value result (e.g. `string.byte` with a
@@ -2430,6 +2451,35 @@ fn infer_function_expr(
             "call the generic function expression with explicit type arguments immediately",
         ));
     }
+    let contextual_params = match expected.as_ref() {
+        Some(Type::Function { params, .. }) if params.len() == function.params.len() => {
+            Some(params)
+        }
+        _ => None,
+    };
+    let effective_params = function
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| {
+            if param.ty == Type::Unknown {
+                contextual_params
+                    .and_then(|params| params.get(index))
+                    .cloned()
+                    .unwrap_or(Type::Unknown)
+            } else {
+                param.ty.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut contextual_function = function.clone();
+    for (param, ty) in contextual_function
+        .params
+        .iter_mut()
+        .zip(effective_params.iter())
+    {
+        param.ty = ty.clone();
+    }
     let return_ty = match function.return_type.clone() {
         Some(return_ty) => return_ty,
         // Non-generic function expressions (generic ones are rejected above) may
@@ -2437,7 +2487,7 @@ fn infer_function_expr(
         // functions. This is what lets immediately-invoked function expressions
         // such as `(function() return 1 end)()` type-check.
         None => super::signatures::infer_function_expr_return_type(
-            function,
+            &contextual_function,
             vars,
             fn_signatures,
             active_type_params,
@@ -2447,16 +2497,17 @@ fn infer_function_expr(
         params: function
             .params
             .iter()
-            .map(|param| param.ty.clone())
+            .zip(effective_params.iter())
+            .map(|(_, ty)| ty.clone())
             .collect(),
         return_type: Arc::new(return_ty.clone()),
         has_self: false,
     };
     let mut local_scope = vars.clone();
-    for param in &function.params {
+    for (param, ty) in function.params.iter().zip(effective_params.iter()) {
         local_scope.insert(
             param.name.clone(),
-            super::binding_for(param.ty.clone(), waluau_ast::Rebindability::Rebindable),
+            super::binding_for(ty.clone(), waluau_ast::Rebindability::Rebindable),
         );
     }
     super::bind_vararg(&mut local_scope, function.vararg.as_ref());
