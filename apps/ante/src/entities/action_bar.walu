@@ -54,8 +54,8 @@ end
 function Stateful:present(actions: {Action}): unit
     assert(#actions == #self.capsules)
     for index = 0::i32, #actions - 1 do
-        local item: Action = actions[index]
-        self.capsules[index]:present(item.text, item.active)
+        local item: Action = actions[index + 1]
+        self.capsules[index + 1]:present(item.text, item.active)
     end
 end
 

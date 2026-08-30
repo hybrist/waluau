@@ -220,9 +220,9 @@ function draw_route_ahead(state: city_map.State, graphics: Graphics, alpha: f64)
     local from_x: f64 = standing.x
     local from_y: f64 = standing.y
     for index = next_stop, last do
-        dashed_line(graphics, from_x, from_y, state.stops[index].x, state.stops[index].y)
-        from_x = state.stops[index].x
-        from_y = state.stops[index].y
+        dashed_line(graphics, from_x, from_y, state.stops[index + 1].x, state.stops[index + 1].y)
+        from_x = state.stops[index + 1].x
+        from_y = state.stops[index + 1].y
     end
 end
 
@@ -243,24 +243,24 @@ function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64):
     graphics:set_line_width(9.0)
     for index = 0::i32, passed - 1 do
         graphics:line(
-            state.stops[index].x,
-            state.stops[index].y,
             state.stops[index + 1].x,
-            state.stops[index + 1].y
+            state.stops[index + 1].y,
+            state.stops[index + 2].x,
+            state.stops[index + 2].y
         )
     end
-    graphics:line(state.stops[passed].x, state.stops[passed].y, standing.x, standing.y)
+    graphics:line(state.stops[passed + 1].x, state.stops[passed + 1].y, standing.x, standing.y)
     graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.92))
     graphics:set_line_width(2.5)
     for index = 0::i32, passed - 1 do
         graphics:line(
-            state.stops[index].x,
-            state.stops[index].y,
             state.stops[index + 1].x,
-            state.stops[index + 1].y
+            state.stops[index + 1].y,
+            state.stops[index + 2].x,
+            state.stops[index + 2].y
         )
     end
-    graphics:line(state.stops[passed].x, state.stops[passed].y, standing.x, standing.y)
+    graphics:line(state.stops[passed + 1].x, state.stops[passed + 1].y, standing.x, standing.y)
 end
 
 -- A house with a duel in it: a gabled block on the corner, wearing the number
@@ -362,7 +362,7 @@ function draw_stops(
     local last: i32 = state:stop_count() - 1
     local entered: i32 = entered_stop(state)
     for index = 0::i32, last do
-        local stop: city_map.Stop = state.stops[index]
+        local stop: city_map.Stop = state.stops[index + 1]
         if stop.x >= left and stop.x <= right and stop.y >= top and stop.y <= bottom then
             local reached: bool = (index::f64) <= state.travel + 0.001
             local final: bool = index == landmark

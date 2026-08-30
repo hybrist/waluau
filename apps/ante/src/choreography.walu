@@ -264,7 +264,7 @@ function State:apply_hand_order(order: {i32}): unit
         table.insert(parts, 0.0)
     end
     for new_slot, old_slot in order do
-        parts[new_slot] = self.fan_parts[old_slot]
+        parts[new_slot] = self.fan_parts[old_slot + 1]
     end
     self.fan_parts = parts
 end
@@ -285,11 +285,11 @@ function State:update_fan(focus: i32, dt: f64): unit
         blend = 1.0
     end
     for i = 0::i32, #self.fan_parts - 1 do
-        local delta: f64 = render.hand_part_target(i, focus) - self.fan_parts[i]
+        local delta: f64 = render.hand_part_target(i, focus) - self.fan_parts[i + 1]
         if math.abs(delta) <= FAN_EASE_SNAP then
-            self.fan_parts[i] += delta
+            self.fan_parts[i + 1] += delta
         else
-            self.fan_parts[i] += delta * blend
+            self.fan_parts[i + 1] += delta * blend
         end
     end
 end
@@ -426,7 +426,7 @@ end
 
 function slot_part(state: State, kind: render.Slot, index: i32): f64
     if kind == render.slot_player then
-        return state.fan_parts[index]
+        return state.fan_parts[index + 1]
     end
     return 0.0
 end
@@ -543,7 +543,7 @@ function State:opening_deal(view: game.View): unit
         finish = push_deal(
             layout.current(),
             anims,
-            view.player_hand[i].card,
+            view.player_hand[i + 1].card,
             render.slot_player,
             i,
             count,
@@ -554,7 +554,7 @@ function State:opening_deal(view: game.View): unit
         finish = push_deal(
             layout.current(),
             anims,
-            view.computer_hand[i].card,
+            view.computer_hand[i + 1].card,
             render.slot_computer,
             i,
             count,
@@ -567,7 +567,7 @@ function State:opening_deal(view: game.View): unit
         finish = push_deal(
             layout.current(),
             anims,
-            view.middle[i],
+            view.middle[i + 1],
             render.slot_middle,
             i,
             #view.middle,
@@ -719,8 +719,8 @@ function push_hand_shifts(
             local from: render.Point = render.slot_pos_at(viewport, kind, old_index, old_count)
             local to: render.Point = render.slot_pos_at(viewport, kind, new_index, new_count)
             if from.x ~= to.x or from.y ~= to.y then
-                local card: game.Card = live[new_index].card
-                local known: bool = live[new_index].known
+                local card: game.Card = live[new_index + 1].card
+                local known: bool = live[new_index + 1].known
                 local depart: f64 = start + SHIFT_STEP * (new_index::f64)
                 local land: f64 = depart + SHIFT_SECONDS
                 if land > finish then
@@ -797,16 +797,16 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         -- the one spent pile. Winning a round is worth points, not a keepsake.
         local spent: {game.Card} = self.session.discards
         for i = 0::i32, #trick.middle - 1 do
-            if not trick.frozen_middle[i] then
+            if not trick.frozen_middle[i + 1] then
                 push_scoop(
                     layout.current(),
                     anims,
-                    trick.middle[i],
+                    trick.middle[i + 1],
                     render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle),
                     row_center,
                     render.slot_aside
                 )
-                table.insert(spent, trick.middle[i])
+                table.insert(spent, trick.middle[i + 1])
             end
         end
         push_scoop(
@@ -830,16 +830,16 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         ash_finish = push_ash_pair(layout.current(), anims, loser.cards[1], loser.cards[2])
     else
         for i = 0::i32, #trick.middle - 1 do
-            if not trick.frozen_middle[i] then
+            if not trick.frozen_middle[i + 1] then
                 push_scoop(
                     layout.current(),
                     anims,
-                    trick.middle[i],
+                    trick.middle[i + 1],
                     render.slot_pos_at(layout.current(), render.slot_middle, i, #trick.middle),
                     row_center,
                     render.slot_aside
                 )
-                table.insert(self.session.discards, trick.middle[i])
+                table.insert(self.session.discards, trick.middle[i + 1])
             end
         end
         push_scoop_pair(
@@ -897,7 +897,7 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
             finish = push_deal(
                 layout.current(),
                 anims,
-                view.computer_hand[i].card,
+                view.computer_hand[i + 1].card,
                 render.slot_computer,
                 i,
                 new_count,
@@ -908,7 +908,7 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
             finish = push_deal(
                 layout.current(),
                 anims,
-                view.player_hand[i].card,
+                view.player_hand[i + 1].card,
                 render.slot_player,
                 i,
                 new_count,
@@ -919,11 +919,11 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         end
     end
     for i = 0::i32, #view.middle - 1 do
-        if not retained_community(trick, view.middle[i]) then
+        if not retained_community(trick, view.middle[i + 1]) then
             finish = push_deal(
                 layout.current(),
                 anims,
-                view.middle[i],
+                view.middle[i + 1],
                 render.slot_middle,
                 i,
                 #view.middle,
@@ -965,10 +965,10 @@ function State:swap(outcome: game.SwapOutcome): unit
     local anims: {render.Anim} = {}
     local total: f64 = 0.0
     for k = 0::i32, count - 1 do
-        local hand_index: i32 = outcome.hand_indices[k]
-        local middle_index: i32 = outcome.middle_indices[k]
-        local outgoing: game.Card = outcome.outgoing[k]
-        local incoming: game.Card = outcome.incoming[k]
+        local hand_index: i32 = outcome.hand_indices[k + 1]
+        local middle_index: i32 = outcome.middle_indices[k + 1]
+        local outgoing: game.Card = outcome.outgoing[k + 1]
+        local incoming: game.Card = outcome.incoming[k + 1]
         local leave: render.Point = slot_pos_now(self, hand_kind, hand_index)
         local leave_angle: f64 = slot_tilt_now(self, hand_kind, hand_index)
         local land: render.Point = render.slot_pos_at(

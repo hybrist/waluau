@@ -349,7 +349,7 @@ function State:update(city: city_map.State, dt: f64): i32
             local rules_view: game.View = self.rules:view()
             presentation:firebolt_resolved(
                 discarded::game.Card,
-                rules_view.middle[burned_table_card],
+                rules_view.middle[burned_table_card + 1],
                 burned_table_card,
                 #rules_view.middle
             )

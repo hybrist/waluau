@@ -313,8 +313,8 @@ function hit_path_from(self: Node, x: f64, y: f64, path: {i32}): i32
         return HIT_MISS
     end
 
-    local index: i32 = #self.children - 1
-    while index >= 0 do
+    local index: i32 = #self.children
+    while index >= 1 do
         local found: i32 = hit_path_from(self.children[index], x, y, path)
         if found == HIT_BLOCKED then
             return HIT_BLOCKED

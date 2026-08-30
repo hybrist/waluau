@@ -70,7 +70,7 @@ function progress(clock: f64): f64
     local count: i32 = card_warp.point_count(COLUMNS, ROWS)
     local middle_x: f64 = 0.0
     local middle_y: f64 = 0.0
-    for index = 0::i32, count - 1 do
+    for index = 1::i32, count do
         middle_x += mesh.xs[index]
         middle_y += mesh.ys[index]
     end
@@ -272,10 +272,10 @@ describe(
             "sweeps its leading edge toward the viewer",
             function(): unit
                 local mesh: card_warp.Mesh = seen_at(0.29)
-                local left_top: i32 = 0
-                local left_bottom: i32 = ROWS * (COLUMNS + 1)
-                local right_top: i32 = COLUMNS
-                local right_bottom: i32 = ROWS * (COLUMNS + 1) + COLUMNS
+                local left_top: i32 = 1
+                local left_bottom: i32 = ROWS * (COLUMNS + 1) + 1
+                local right_top: i32 = COLUMNS + 1
+                local right_bottom: i32 = ROWS * (COLUMNS + 1) + COLUMNS + 1
                 local left: f64 = math.abs(mesh.ys[left_bottom] - mesh.ys[left_top])
                 local right: f64 = math.abs(mesh.ys[right_bottom] - mesh.ys[right_top])
                 expect(right):toBeGreaterThan(left)
