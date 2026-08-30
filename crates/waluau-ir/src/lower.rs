@@ -9244,31 +9244,46 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let arg_ty = match self.infer_expr_type(&args[0], &scope.types, None) {
-            Ok(ty) => ty,
-            Err(error) => return Some(Err(error)),
-        };
-        if !tostring_supported_type(&arg_ty) {
-            return Some(Err(Diagnostic::new(format!(
-                "{TO_STRING} cannot convert a {arg_ty} value",
-            ))));
-        }
-        if arg_ty == Type::Nil {
-            let value = self.emit(Instruction::String("nil".to_string()));
-            return Some(self.coerce_value(value, Type::String, expected));
-        }
-        let lowered = match self.lower_expr(&args[0], scope, Some(arg_ty.clone())) {
+        let value = match self.lower_tostring_operand(TO_STRING, &args[0], scope) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
-        let value = if arg_ty == Type::String {
-            lowered
-        } else if matches!(arg_ty, Type::Nullable(_)) {
+        Some(self.coerce_value(value, Type::String, expected))
+    }
+
+    /// Lowers one expression to its `tostring` representation, following the
+    /// builtin's rules: `nil` folds to "nil", strings pass through, and every
+    /// other supported type stringifies via `ToString`.
+    fn lower_tostring_operand(
+        &mut self,
+        builtin: &str,
+        arg: &Expr,
+        scope: &Scope,
+    ) -> Result<ValueId, Diagnostic> {
+        let arg_ty = self.infer_expr_type(arg, &scope.types, None)?;
+        if !tostring_supported_type(&arg_ty) {
+            return Err(Diagnostic::new(format!(
+                "{builtin} cannot convert a {arg_ty} value",
+            )));
+        }
+        if arg_ty == Type::Nil {
+            return Ok(self.emit(Instruction::String("nil".to_string())));
+        }
+        let lowered = self.lower_expr(arg, scope, Some(arg_ty.clone()))?;
+        Ok(self.tostring_value(lowered, arg_ty))
+    }
+
+    /// Stringifies an already-lowered value of a `tostring`-supported,
+    /// non-`nil` type.
+    fn tostring_value(&mut self, value: ValueId, from: Type) -> ValueId {
+        if from == Type::String {
+            value
+        } else if matches!(from, Type::Nullable(_)) {
             // A nullable value stringifies through the dynamic chain: nil
             // becomes "nil", the inner value formats as itself.
             let boxed = self.emit(Instruction::Cast {
-                value: lowered,
-                from: arg_ty,
+                value,
+                from,
                 to: Type::Unknown,
             });
             self.emit(Instruction::ToString {
@@ -9276,12 +9291,8 @@ impl Builder<'_> {
                 from: Type::Unknown,
             })
         } else {
-            self.emit(Instruction::ToString {
-                value: lowered,
-                from: arg_ty,
-            })
-        };
-        Some(self.coerce_value(value, Type::String, expected))
+            self.emit(Instruction::ToString { value, from })
+        }
     }
 
     fn lower_string_concat_operand(
@@ -10835,17 +10846,66 @@ impl Builder<'_> {
         if name != PRINT {
             return None;
         }
-        if args.len() != 1 {
-            return Some(Err(Diagnostic::new(format!(
-                "{PRINT} expects 1 argument, got {}",
-                args.len()
-            ))));
+        // Luau semantics: stringify every argument, expand multi-value
+        // results in place, and join the pieces with tabs into the single
+        // string the host's `print` import receives.
+        let mut pieces: Vec<ValueId> = Vec::new();
+        for arg in args {
+            let arg_ty = match self.infer_expr_type(arg, &scope.types, None) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if let Type::Multi(parts) = arg_ty {
+                let tuple = match self.lower_expr(arg, scope, None) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                };
+                for (index, part) in parts.into_iter().enumerate() {
+                    if !tostring_supported_type(&part) {
+                        return Some(Err(Diagnostic::new(format!(
+                            "{PRINT} cannot convert a {part} value",
+                        ))));
+                    }
+                    if part == Type::Nil {
+                        pieces.push(self.emit(Instruction::String("nil".to_string())));
+                        continue;
+                    }
+                    let value = self.emit(Instruction::MultiGet {
+                        value: tuple,
+                        index,
+                        ty: part.clone(),
+                    });
+                    pieces.push(self.tostring_value(value, part));
+                }
+            } else {
+                match self.lower_tostring_operand(PRINT, arg, scope) {
+                    Ok(value) => pieces.push(value),
+                    Err(error) => return Some(Err(error)),
+                }
+            }
         }
-        let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
-            Ok(value) => value,
-            Err(error) => return Some(Err(error)),
+        let mut pieces = pieces.into_iter();
+        let message = match pieces.next() {
+            None => self.emit(Instruction::String(String::new())),
+            Some(first) => pieces.fold(first, |message, piece| {
+                let tab = self.emit(Instruction::String("\t".to_string()));
+                let with_tab = self.emit(Instruction::Binary {
+                    op: BinaryOp::Concat,
+                    left: message,
+                    right: tab,
+                    operand_ty: Type::String,
+                    result_ty: Type::String,
+                });
+                self.emit(Instruction::Binary {
+                    op: BinaryOp::Concat,
+                    left: with_tab,
+                    right: piece,
+                    operand_ty: Type::String,
+                    result_ty: Type::String,
+                })
+            }),
         };
-        let print_value = self.emit(Instruction::Print { value });
+        let print_value = self.emit(Instruction::Print { value: message });
         Some(self.coerce_value(print_value, Type::Unit, expected))
     }
 
@@ -11139,19 +11199,24 @@ impl Builder<'_> {
         let Expr::Call { args, .. } = call else {
             return None;
         };
-        if args.len() != 1 {
-            return Some(Err(Diagnostic::new(format!(
-                "{PRINT} expects 1 argument, got {}",
-                args.len()
-            ))));
+        for arg in args {
+            let arg_ty = match self.infer_expr_type(arg, types, None) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            let parts = match arg_ty {
+                Type::Multi(parts) => parts,
+                ty => vec![ty],
+            };
+            for part in parts {
+                if !tostring_supported_type(&part) {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{PRINT} cannot convert a {part} value",
+                    ))));
+                }
+            }
         }
-        match self.infer_expr_type(&args[0], types, Some(Type::String)) {
-            Ok(Type::String) => Some(Ok(Type::Unit)),
-            Ok(actual) => Some(Err(Diagnostic::new(format!(
-                "{PRINT} expects string, got {actual}",
-            )))),
-            Err(error) => Some(Err(error)),
-        }
+        Some(Ok(Type::Unit))
     }
 
     fn infer_json_builtin_call_type(

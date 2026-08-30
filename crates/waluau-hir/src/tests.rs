@@ -3761,6 +3761,40 @@ fn type_checks_unit_return_with_print() {
 }
 
 #[test]
+fn type_checks_print_with_mixed_arguments_and_multi_spread() {
+    let source = r#"
+        function multi(): (i32, string)
+            return 7, "mid"
+        end
+
+        function check(): unit
+            print()
+            print(42)
+            print("a", 1, true, nil)
+            print(multi())
+            print("start", multi(), 2.5)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_print_of_unit_value() {
+    let source = r#"
+        function noop(): unit
+        end
+
+        function check(): unit
+            print(noop())
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "print cannot convert a unit value");
+}
+
+#[test]
 fn type_checks_bare_return_in_unit_function() {
     let source = r#"
         function check(x: i32): unit

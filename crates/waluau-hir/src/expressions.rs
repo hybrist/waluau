@@ -9,10 +9,10 @@ use super::builtins::{
     JSON_UNPACK, STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_GMATCH, STRING_GSUB, STRING_LEN,
     STRING_LOWER, STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SPLIT, STRING_SUB, STRING_UPPER,
     TABLE_UNPACK, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_error_builtin_call,
-    infer_json_builtin_call, infer_pcall_builtin_call, infer_promise_await_method_call,
-    infer_promise_builtin_call, infer_select_builtin_call, infer_string_builtin_call,
-    infer_table_builtin_call, infer_tonumber_builtin_call, infer_tostring_builtin_call,
-    infer_type_builtin_call,
+    infer_json_builtin_call, infer_pcall_builtin_call, infer_print_builtin_call,
+    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
+    infer_string_builtin_call, infer_table_builtin_call, infer_tonumber_builtin_call,
+    infer_tostring_builtin_call, infer_type_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -967,7 +967,18 @@ fn infer_expr_inner(
                     return result;
                 }
             }
-            // Note: print builtin is now handled via extern function declaration
+            if let Some(name) = builtin_name(callee.as_ref()) {
+                if let Some(result) = infer_print_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
             if let Expr::Name(name, _, _) = callee.as_ref() {
                 if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
                     return infer_generic_call(

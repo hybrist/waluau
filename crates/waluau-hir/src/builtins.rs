@@ -65,7 +65,7 @@ pub(super) const STRING_REVERSE: &str = "string.reverse";
 pub(super) const STRING_SPLIT: &str = "string.split";
 pub(super) const JSON_PACK: &str = "json.pack";
 pub(super) const JSON_UNPACK: &str = "json.unpack";
-// pub(super) const PRINT: &str = "print"; // now handled via extern declaration
+pub(super) const PRINT: &str = "print";
 
 fn json_supported_type(ty: &Type) -> bool {
     match ty {
@@ -620,26 +620,10 @@ pub(super) fn infer_tostring_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
-    if let Some((signature, _)) =
-        super::expressions::type_method_signature(&arg_ty, "__tostring", fn_signatures)
-    {
-        let super::signatures::FnSignature::Mono {
-            params,
-            return_type,
-            ..
-        } = signature
-        else {
-            return Some(Err(Diagnostic::new(
-                "__tostring must be a non-generic method",
-            )));
-        };
-        if params.len() != 1 {
-            return Some(Err(Diagnostic::new("__tostring must not accept arguments")));
-        }
-        if return_type != &Type::String {
-            return Some(Err(Diagnostic::new("__tostring must return string")));
-        }
-        return Some(coerce_type(Type::String, expected));
+    match validate_tostring_method(&arg_ty, fn_signatures) {
+        Some(Ok(())) => return Some(coerce_type(Type::String, expected)),
+        Some(Err(error)) => return Some(Err(error)),
+        None => {}
     }
     if tostring_supported_type(&arg_ty) {
         Some(coerce_type(Type::String, expected))
@@ -648,6 +632,82 @@ pub(super) fn infer_tostring_builtin_call(
             "{TO_STRING} cannot convert a {arg_ty} value",
         ))))
     }
+}
+
+/// When `arg_ty` declares a `__tostring` method, validate its shape (a
+/// non-generic method taking only `self` and returning `string`). Returns
+/// `None` when the type declares no such method.
+fn validate_tostring_method(
+    arg_ty: &Type,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Option<Result<(), Diagnostic>> {
+    let (signature, _) =
+        super::expressions::type_method_signature(arg_ty, "__tostring", fn_signatures)?;
+    let super::signatures::FnSignature::Mono {
+        params,
+        return_type,
+        ..
+    } = signature
+    else {
+        return Some(Err(Diagnostic::new(
+            "__tostring must be a non-generic method",
+        )));
+    };
+    if params.len() != 1 {
+        return Some(Err(Diagnostic::new("__tostring must not accept arguments")));
+    }
+    if return_type != &Type::String {
+        return Some(Err(Diagnostic::new("__tostring must return string")));
+    }
+    Some(Ok(()))
+}
+
+pub(super) fn infer_print_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != PRINT {
+        return None;
+    }
+    // `print` stringifies any number of arguments; a multi-value result
+    // expands in place, contributing one printed piece per value.
+    for arg in args {
+        let arg_ty = match super::expressions::infer_expr(
+            arg,
+            vars,
+            fn_signatures,
+            active_type_params,
+            None,
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if let Type::Multi(parts) = &arg_ty {
+            for part in parts {
+                if !tostring_supported_type(part) {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{PRINT} cannot convert a {part} value",
+                    ))));
+                }
+            }
+            continue;
+        }
+        match validate_tostring_method(&arg_ty, fn_signatures) {
+            Some(Ok(())) => continue,
+            Some(Err(error)) => return Some(Err(error)),
+            None => {}
+        }
+        if !tostring_supported_type(&arg_ty) {
+            return Some(Err(Diagnostic::new(format!(
+                "{PRINT} cannot convert a {arg_ty} value",
+            ))));
+        }
+    }
+    Some(coerce_type(Type::Unit, expected))
 }
 
 /// Types `tostring` accepts: primitives stringify by value, `nil` folds to
