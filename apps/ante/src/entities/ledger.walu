@@ -1,7 +1,5 @@
--- The round ledger: every round of this duel, who took it, and which two
--- hands settled it. One row per round, and the rows are a column rather
--- than a running y cursor, so the ledger of a three-round duel and the ledger
--- of an empty one are the same code.
+-- The hand ledger: every attempt in this duel, who took it, and which two
+-- committed pairs settled it. One row per hand in a flexible column.
 local game = require("../game")
 local ui = require("../ui/node")
 local modal = require("./modal")
@@ -43,7 +41,7 @@ function row(trick: game.Trick): ui.Node
     return ui.Node.across(
         { align = "baseline" },
         {
-            cell("ROUND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
+            cell("HAND " .. tostring(trick.round), ROUND_SIZE, ROUND_INK, ROUND_WIDTH),
             cell(verdict_text(trick), VERDICT_SIZE, VERDICT_INK, VERDICT_WIDTH),
             label.left(
                 game.category_name(
@@ -58,7 +56,7 @@ end
 
 function body(state: game.View): ui.Node
     if #state.history == 0 then
-        return modal.column({label.left("NO ROUNDS WON YET.", 16.0, "#8a8a92")}, ROW_GAP)
+        return modal.column({label.left("NO HANDS PLAYED YET.", 16.0, "#8a8a92")}, ROW_GAP)
     end
     local rows: {ui.Node} = {}
     for trick in state.history do
@@ -68,7 +66,7 @@ function body(state: game.View): ui.Node
 end
 
 function node(state: game.View): ui.Node
-    return modal.node("ROUND HISTORY", "H, ESC, OR A CLICK CLOSES THE HISTORY", body(state))
+    return modal.node("HAND HISTORY", "H, ESC, OR A CLICK CLOSES THE HISTORY", body(state))
 end
 
 return { node = node }

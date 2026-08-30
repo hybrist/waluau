@@ -1,19 +1,14 @@
 -- The help card: what the job is, what the four colors look like, the two
--- phases of a round, what each orb means, and every control. It is a column,
--- which is what it always was — it simply used to be a column written as
--- eighteen y coordinates that had to be kept in order by hand.
+-- phases of a hand, and every control.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local modal = require("./modal")
 local label = require("./label")
 local color_tile = require("./color_tile")
-local orb_track = require("./orb_track")
 
 const TILE_GAP: f64 = 16.0
 const LINE_GAP: f64 = 11.0
 const BLOCK_GAP: f64 = 26.0
-const LEGEND_GAP: f64 = 22.0
-const LEGEND_ORB: f64 = 20.0
 
 function colors(): ui.Node
     local tiles: {ui.Node} = {}
@@ -21,42 +16,6 @@ function colors(): ui.Node
         table.insert(tiles, color_tile.node(suit))
     end
     return ui.Node.flow(tiles, box.row(TILE_GAP, "center", "start")):wide()
-end
-
--- One outcome of a resolved round beside the orb that stands for it, so the
--- colours on the header band are readable from here.
-function legend_entry(edge: string, fill: string, caption: string): ui.Node
-    return ui.Node.flow(
-        {
-            ui.Node.sized(
-                LEGEND_ORB,
-                LEGEND_ORB,
-                function(surface: ui.Surface, bounds: box.Rect): unit
-                    orb_track.draw_orb(
-                        surface,
-                        bounds.x + bounds.width * 0.5,
-                        bounds.y + bounds.height * 0.5,
-                        edge,
-                        fill,
-                        true
-                    )
-                end
-            ),
-            label.left(caption, modal.body_size, modal.body_ink)
-        },
-        box.row(6.0, "start", "center")
-    )
-end
-
-function legend(): ui.Node
-    return ui.Node.flow(
-        {
-            legend_entry(orb_track.robbers_edge, orb_track.robbers_fill, "WIN"),
-            legend_entry(orb_track.arch_mage_edge, orb_track.arch_mage_fill, "LOSS"),
-            legend_entry(orb_track.stalemate_edge, orb_track.stalemate_fill, "TIE")
-        },
-        box.row(LEGEND_GAP, "start", "center")
-    )
 end
 
 function body(): ui.Node
@@ -72,14 +31,13 @@ function body(): ui.Node
             ui.Node.gap(0.0, BLOCK_GAP - LINE_GAP),
             modal.heading("2. PLAY"),
             modal.body_line("SELECT 2 CARDS. THE BEST 5 OF ALL 7 CARDS WINS."),
-            modal.body_line("ONE HAND SETTLES A DUEL. BOSS DUELS ARE FIRST TO TWO WINS."),
+            modal.body_line("WIN A HAND TO CLEAR THE DUEL. A LOSS COSTS ONE HEART."),
+            modal.body_line("A TIE LEAVES THE DUEL LIVE FOR ANOTHER HAND."),
             ui.Node.gap(0.0, BLOCK_GAP - LINE_GAP),
             modal.heading("3. THE TARGET"),
             modal.body_line(
                 "CLEARING A DUEL REQUIRES ITS TARGET IN GOLD." .. " WHAT IS LEFT CARRIES ON."
             ),
-            ui.Node.gap(0.0, BLOCK_GAP - LINE_GAP),
-            legend(),
             ui.Node.gap(0.0, BLOCK_GAP - LINE_GAP),
             modal.keys_line("ARROWS MOVE   SPACE SELECT   ENTER CONFIRM   H HISTORY"),
             modal.keys_line("C SORT BY COLOR   V SORT BY RANK   1 AND 2 USE SPELLS"),
@@ -92,7 +50,11 @@ end
 -- The target is separate from winning the hand: it is what leaving the duel
 -- costs, so it remains its own numbered block.
 function node(): ui.Node
-    return modal.node("THE JOB", "SURVIVE ONE HAND, THEN REACH THE GOLD TARGET TO CONTINUE", body())
+    return modal.node(
+        "THE JOB",
+        "WIN BEFORE YOUR HEARTS RUN OUT, THEN REACH THE GOLD TARGET",
+        body()
+    )
 end
 
 return { node = node }

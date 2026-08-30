@@ -6,8 +6,8 @@
 -- This module owns the shape of the sequence — which duel is live, how much
 -- gold it opens with, which duels are boss battles, and the spell loadout
 -- every duel is fought with — and nothing about the duel inside a duel.
--- Whether the live duel was won or lost is the rules module's answer, so
--- nothing here duplicates it. What the intermission between duels sells is the
+-- Whether the live duel was cleared is the rules module's answer, so nothing
+-- here duplicates it. What the intermission between duels sells is the
 -- shop's answer; item effects use this module's mutable run state to apply the
 -- purchase.
 local game = require("./game")
@@ -34,7 +34,7 @@ export type State = {
 }
 
 -- Every third duel is the boss battle variant, so a run's cadence is two
--- standard heists and then seven cards with no replacements.
+-- standard heists and then a seven-card hand.
 const BOSS_EVERY: i32 = 3
 -- Nine duels is the run the target table is written for: three acts of two
 -- heists and a boss, ending on one. The boss rush is a shorter, steeper sprint
@@ -144,18 +144,18 @@ function State:endless(): bool
     return self.duel > run_length(self.rush)
 end
 
--- The verdict of a fought duel, read as a moment in the run. Health, the duel,
--- or the target can end it; clearing it either advances or crosses the finish
--- line. This says which without applying any of them — one classifier, so the
--- screen showing a verdict and the settle that acts on it agree.
+-- The verdict of a fought duel, read as a moment in the run. Health or the
+-- target can end it; clearing it either advances or crosses the finish line.
+-- This says which without applying any of them — one classifier, so the screen
+-- showing a verdict and the settle that acts on it agree.
 --
 -- "won" is a milestone rather than a stop: the last duel of the table
 -- is cleared exactly the way any other is, and the run walks on into the
 -- endless city.
-export type Outcome = "none" | "lost-health" | "lost-vault" | "lost-target" | "advance" | "won"
+export type Outcome = "none" | "lost-health" | "lost-target" | "advance" | "won"
 
 function outcome_is_loss(outcome: Outcome): bool
-    return outcome == "lost-health" or outcome == "lost-vault" or outcome == "lost-target"
+    return outcome == "lost-health" or outcome == "lost-target"
 end
 
 function outcome_walks_on(outcome: Outcome): bool
@@ -169,7 +169,7 @@ function outcome_of(duel: i32, rush: bool, hearts: i32, cleared: bool, carried_g
         return "lost-health"
     end
     if not cleared then
-        return "lost-vault"
+        return "none"
     end
     if carried_gold < target_at(duel, rush) then
         return "lost-target"
@@ -224,14 +224,16 @@ end
 
 -- The live duel has been fought to a verdict. Taking it advances the run,
 -- charges the duel its target, and carries what is left into the next one;
--- losing the run — to health, the opponent, or a target the purse could not
--- cover — starts a fresh one. A duel the run already spent gold in is never
--- fought twice.
+-- losing the run — to health or a target the purse could not cover — starts a
+-- fresh one. A duel the run already spent gold in is never fought twice.
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished duel decided is not this module's to decide again.
 function State:settle(cleared: bool, carried_gold: i32): Outcome
     local outcome: Outcome = outcome_of(self.duel, self.rush, self.hearts, cleared, carried_gold)
+    if outcome == "none" then
+        return outcome
+    end
     if outcome_is_loss(outcome) then
         self:restart(self.start_spell, self.rush)
         return outcome
