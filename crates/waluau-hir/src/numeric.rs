@@ -1057,6 +1057,11 @@ fn parse_float_literal(value: &NumberLiteral) -> Result<f64, Diagnostic> {
             .map(|value| value as f64)
             .map_err(|_| Diagnostic::new("invalid number literal"));
     }
+    if let Some(binary) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
+        return u128::from_str_radix(binary, 2)
+            .map(|value| value as f64)
+            .map_err(|_| Diagnostic::new("invalid number literal"));
+    }
     raw.parse::<f64>()
         .map_err(|_| Diagnostic::new("invalid number literal"))
 }
@@ -1074,6 +1079,14 @@ where
 
     if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
         let value = u128::from_str_radix(hex, 16).map_err(|_| {
+            Diagnostic::new(format!("numeric literal is out of range for {ty_name}"))
+        })?;
+        return T::try_from(value).map_err(|_| {
+            Diagnostic::new(format!("numeric literal is out of range for {ty_name}"))
+        });
+    }
+    if let Some(binary) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
+        let value = u128::from_str_radix(binary, 2).map_err(|_| {
             Diagnostic::new(format!("numeric literal is out of range for {ty_name}"))
         })?;
         return T::try_from(value).map_err(|_| {

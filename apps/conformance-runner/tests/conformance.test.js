@@ -39,6 +39,7 @@ import particleScenes from '../../../fixtures/particles/scenes.walu?raw';
 import { createWaluauShaderSourceHost } from '../../../packages/vite-plugin-waluau/shaders.js';
 import transitiveAwaitStateMain from '../../../fixtures/coroutine-await-state/main.walu?raw';
 import transitiveAwaitStateWorker from '../../../fixtures/coroutine-await-state/worker.walu?raw';
+import luauConformancePreamble from '../src/luau-conformance-preamble.walu?raw';
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
   query: '?raw',
@@ -53,6 +54,9 @@ const includeModules = import.meta.glob('../../../{builtins,externs}/**/*.walu',
 
 function sourceForCase(testCase) {
   const includes = [];
+  if (testCase.name.startsWith('luau/')) {
+    includes.push(luauConformancePreamble);
+  }
   for (const resolved of conformanceIncludePaths(testCase.name, testCase.source)) {
     const globKey = `../../..${resolved}`;
     const source = includeModules[globKey];
@@ -260,6 +264,41 @@ async function runConformanceOutcome(fullSource, options) {
 }
 
 describe('browser conformance', () => {
+  it('scopes the Luau native fallback probe to imported conformance chunks', async () => {
+    const probe = 'assert(not is_native_if_supported())';
+    await expect(
+      compileAndInstantiate(
+        { '/main.walu': sourceForCase({ name: 'luau/harness-probe.walu', source: probe }) },
+        '/main.walu',
+      ),
+    ).resolves.toBeUndefined();
+
+    const productionOutcome = await runConformanceOutcome(probe);
+    expect(productionOutcome.failed).toBe(true);
+    expect(productionOutcome.message).toContain("unknown name 'is_native_if_supported'");
+  });
+
+  it('evaluates binary literals with Luau separators and existing numeric types', async () => {
+    const source = `
+      export function binary_default(): f64
+        return 0b0000_1000_0001_0000_0100_0010_0010_0101
+      end
+
+      export function binary_i32(): i32
+        return 0B_0111_1111_1111_1111_1111_1111_1111_1111_
+      end
+
+      export function binary_u32(): u32
+        return 0b1111_1111_1111_1111_1111_1111_1111_1111
+      end
+    `;
+    const exports = await compileAndInstantiateWithExports({ '/main.walu': source }, '/main.walu');
+
+    expect(exports.binary_default()).toBe(0x08104225);
+    expect(exports.binary_i32()).toBe(0x7fffffff);
+    expect(exports.binary_u32() >>> 0).toBe(0xffffffff);
+  });
+
   for (const { name, source } of cases) {
     if (DEDICATED_ASYNC_DOM_CASES.has(name)) continue;
 

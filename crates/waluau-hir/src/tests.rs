@@ -574,6 +574,34 @@ fn rejects_out_of_range_u64_literals() {
 }
 
 #[test]
+fn accepts_binary_literals_in_existing_numeric_types() {
+    let source = r#"
+        function values(): f64
+            local signed: i32 = 0b0111_1111_1111_1111_1111_1111_1111_1111
+            local unsigned: u32 = 0B1111_1111_1111_1111_1111_1111_1111_1111
+            local wide: f64 = 0b1_0000_0000_0000_0000_0000_0000_0000_0000
+            return signed::f64 + unsigned::f64 + wide
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("binary literals should use existing numeric types");
+}
+
+#[test]
+fn rejects_out_of_range_binary_u32_literals() {
+    let source = r#"
+        function entry(): u32
+            return 0b1_0000_0000_0000_0000_0000_0000_0000_0000
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "numeric literal is out of range for u32");
+}
+
+#[test]
 fn accepts_implicit_numeric_widening() {
     let source = r#"
         function widen(x: i32, y: f32, z: u32): f64

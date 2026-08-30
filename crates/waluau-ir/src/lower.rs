@@ -2483,12 +2483,20 @@ fn const_typed_array_bytes(kind: TypedArrayKind, elements: &[Expr]) -> Option<Ve
         if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
             return u128::from_str_radix(hex, 16).ok().map(|value| value as f64);
         }
+        if let Some(binary) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
+            return u128::from_str_radix(binary, 2)
+                .ok()
+                .map(|value| value as f64);
+        }
         raw.parse::<f64>().ok()
     }
 
     fn parse_const_integer(raw: &str) -> Option<i128> {
         if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
             return i128::from_str_radix(hex, 16).ok();
+        }
+        if let Some(binary) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
+            return i128::from_str_radix(binary, 2).ok();
         }
         raw.parse::<i128>().ok()
     }

@@ -65,6 +65,13 @@ directly; it has no Luau VM register file or Luau native/JIT tier for those
 assertions to observe. Implementing analogous Waluau optimizations would not
 make those VM-specific assertions conformance tests.
 
+The browser conformance runner supplies imported `luau/*` chunks with a small
+authored `is_native_if_supported(): bool` preamble that always returns `false`.
+That preserves upstream tests' ordinary fallback paths without introducing a
+production builtin or implying an optional native tier. Assertions that require
+the probe to become true still fail and remain in this intentional-deviation
+category.
+
 Impact: the 64 chunks in the table above remain intentionally pending. Where a
 file contains an ordinary language assertion independent of native execution,
 it should be split, as `native.46` already demonstrates.

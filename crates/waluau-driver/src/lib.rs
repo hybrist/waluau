@@ -1369,6 +1369,26 @@ mod tests {
     }
 
     #[test]
+    fn compiles_binary_number_literals_through_wasm_emission() {
+        super::compile_source(
+            r#"
+                export function binary_default(): f64
+                    return 0b0000_1000_0001_0000_0100_0010_0010_0101
+                end
+
+                export function binary_i32(): i32
+                    return 0B_0111_1111_1111_1111_1111_1111_1111_1111_
+                end
+
+                export function binary_u32(): u32
+                    return 0b1111_1111_1111_1111_1111_1111_1111_1111
+                end
+            "#,
+        )
+        .expect("binary literals should compile through wasm emission");
+    }
+
+    #[test]
     fn compiles_standalone_do_block_with_scoped_locals() {
         super::compile_source(
             r#"

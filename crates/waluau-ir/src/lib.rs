@@ -140,7 +140,9 @@ fn inference_diagnostic(
 
 fn expr_i32_literal(expr: &Expr) -> Option<i32> {
     match expr {
-        Expr::Number(number, _) => number.raw.replace('_', "").parse::<i32>().ok(),
+        Expr::Number(number, _) => number
+            .int_value()
+            .and_then(|value| i32::try_from(value).ok()),
         Expr::Unary {
             op: UnaryOp::Neg,
             expr,
