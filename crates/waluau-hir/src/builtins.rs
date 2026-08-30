@@ -167,7 +167,7 @@ fn buffer_scalar_kind(member: &str) -> Option<waluau_ast::TypedArrayKind> {
     }
 }
 
-/// Infer the fixed-size mutable `buffer` scalar API. Offsets deliberately
+/// Infer the fixed-size mutable `buffer` API. Offsets deliberately
 /// remain zero-based even though authored arrays are one-based.
 pub(super) fn infer_buffer_builtin_call(
     name: &str,
@@ -189,6 +189,36 @@ pub(super) fn infer_buffer_builtin_call(
             vec![Type::Buffer, Type::number(), Type::number(), Type::number()],
             Type::Unit,
         ),
+        "fromstring" => (vec![Type::String], Type::Buffer),
+        "tostring" => (vec![Type::Buffer], Type::String),
+        "readstring" => (
+            vec![Type::Buffer, Type::number(), Type::number()],
+            Type::String,
+        ),
+        "writestring" if matches!(args.len(), 3 | 4) => {
+            let mut params = vec![Type::Buffer, Type::number(), Type::String];
+            if args.len() == 4 {
+                params.push(Type::number());
+            }
+            (params, Type::Unit)
+        }
+        "copy" if (3..=5).contains(&args.len()) => {
+            let mut params = vec![Type::Buffer, Type::number(), Type::Buffer];
+            if args.len() >= 4 {
+                params.push(Type::number());
+            }
+            if args.len() == 5 {
+                params.push(Type::number());
+            }
+            (params, Type::Unit)
+        }
+        "fill" if matches!(args.len(), 3 | 4) => {
+            let mut params = vec![Type::Buffer, Type::number(), Type::number()];
+            if args.len() == 4 {
+                params.push(Type::number());
+            }
+            (params, Type::Unit)
+        }
         member if member.starts_with("read") => {
             let kind = buffer_scalar_kind(member.strip_prefix("read")?)?;
             (
@@ -223,17 +253,26 @@ pub(super) fn infer_buffer_builtin_call(
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if index > 0 || member == "create" {
-            if !actual.is_numeric() {
+        match param {
+            Type::Numeric(_) if !actual.is_numeric() => {
                 return Some(Err(Diagnostic::new(format!(
                     "{name} expects a numeric argument at position {}, got {actual}",
                     index + 1
                 ))));
             }
-        } else if actual != Type::Buffer {
-            return Some(Err(Diagnostic::new(format!(
-                "{name} expects buffer as its first argument, got {actual}"
-            ))));
+            Type::Buffer if actual != Type::Buffer => {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects buffer at position {}, got {actual}",
+                    index + 1
+                ))));
+            }
+            Type::String if actual != Type::String => {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects string at position {}, got {actual}",
+                    index + 1
+                ))));
+            }
+            _ => {}
         }
     }
     Some(coerce_type(result, expected))

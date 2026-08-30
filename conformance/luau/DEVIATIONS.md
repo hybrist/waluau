@@ -267,7 +267,7 @@ The audits linked bounded implementation work where Waluau intends to converge:
 
 | Gap | Bead | Current impact |
 | --- | --- | --- |
-| Remaining mutable-buffer bit operations and slow-call coverage | `waluau-q7qg.6.4`, `waluau-q7qg.6.6` | `buffers.20` bit slices and intentionally pending VM/environment aggregate `buffers.21`; `buffers.8`, `.9`, and `.11` carry their separately tracked dynamic-f32 and untyped-numeric blockers |
+| Remaining mutable-buffer slow-call/resource coverage | `waluau-q7qg.6.6` | Ordinary-size bit operations pass in `buffers.20_small_bitops`; `buffers.20` retains protected error and 1-GiB resource slices, while intentionally pending VM/environment aggregate `buffers.21` remains out of scope. `buffers.8`, `.9`, and `.11` carry their separately tracked dynamic-f32 and untyped-numeric blockers |
 | Typed math-library completion | `waluau-q7qg.11` | `math.{1,4.helper,9,15,17}`, `math.2.coercion`, `math.11.numeric`, and `math.17.multivalue`; direct scalar and exact-noise ranges are enabled, while the aggregate remains pending for its named dynamic, protected-call, multi-value, and source-loading blockers |
 | Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |

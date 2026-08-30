@@ -1034,6 +1034,156 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::LuauBufferFromString { string } => {
+                    verify_value_type(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *string,
+                        &Type::String,
+                        "buffer.fromstring input",
+                    )?;
+                }
+                Instruction::LuauBufferToString { buffer } => {
+                    verify_value_type(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        &Type::Buffer,
+                        "buffer.tostring input",
+                    )?;
+                }
+                Instruction::LuauBufferReadString {
+                    buffer,
+                    offset,
+                    count,
+                } => {
+                    verify_luau_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *offset,
+                    )?;
+                    verify_value_type(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *count,
+                        &Type::Numeric(NumericType::I32),
+                        "buffer.readstring count",
+                    )?;
+                }
+                Instruction::LuauBufferWriteString {
+                    buffer,
+                    offset,
+                    string,
+                    count,
+                } => {
+                    verify_luau_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *offset,
+                    )?;
+                    verify_value_type(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *string,
+                        &Type::String,
+                        "buffer.writestring input",
+                    )?;
+                    if let Some(count) = count {
+                        verify_value_type(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *count,
+                            &Type::Numeric(NumericType::I32),
+                            "buffer.writestring count",
+                        )?;
+                    }
+                }
+                Instruction::LuauBufferCopy {
+                    target,
+                    target_offset,
+                    source,
+                    source_offset,
+                    count,
+                } => {
+                    verify_luau_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *target,
+                        *target_offset,
+                    )?;
+                    verify_luau_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *source,
+                        *source_offset,
+                    )?;
+                    if let Some(count) = count {
+                        verify_value_type(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *count,
+                            &Type::Numeric(NumericType::I32),
+                            "buffer.copy count",
+                        )?;
+                    }
+                }
+                Instruction::LuauBufferFill {
+                    buffer,
+                    offset,
+                    value,
+                    count,
+                } => {
+                    verify_luau_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *offset,
+                    )?;
+                    verify_value_type(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                        &Type::Numeric(NumericType::I32),
+                        "buffer.fill value",
+                    )?;
+                    if let Some(count) = count {
+                        verify_value_type(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *count,
+                            &Type::Numeric(NumericType::I32),
+                            "buffer.fill count",
+                        )?;
+                    }
+                }
                 Instruction::StructNew { struct_ty, fields } => {
                     let Type::Record(record_fields) = struct_ty else {
                         return Err(Diagnostic::new(format!(
@@ -1510,6 +1660,26 @@ fn verify_luau_buffer_bit_access(
     Ok(())
 }
 
+fn verify_value_type(
+    definitions: &HashMap<ValueId, ValueDefinition>,
+    dominators: &HashMap<BlockId, HashSet<BlockId>>,
+    seen_in_block: &HashSet<ValueId>,
+    use_block: BlockId,
+    value: ValueId,
+    expected: &Type,
+    context: &str,
+) -> Result<(), Diagnostic> {
+    let actual =
+        require_dominating_definition(definitions, dominators, seen_in_block, use_block, value)?;
+    if &actual != expected {
+        return Err(Diagnostic::new(format!(
+            "{context} in block {:?} must be {}, got {}",
+            use_block, expected, actual
+        )));
+    }
+    Ok(())
+}
+
 fn require_dominating_definition(
     definitions: &HashMap<ValueId, ValueDefinition>,
     dominators: &HashMap<BlockId, HashSet<BlockId>>,
@@ -1666,6 +1836,13 @@ fn infer_instruction_type(
         Instruction::LuauBufferSet { .. } => Ok(Type::Unit),
         Instruction::LuauBufferReadBits { .. } => Ok(Type::Numeric(NumericType::U32)),
         Instruction::LuauBufferWriteBits { .. } => Ok(Type::Unit),
+        Instruction::LuauBufferFromString { .. } => Ok(Type::Buffer),
+        Instruction::LuauBufferToString { .. } | Instruction::LuauBufferReadString { .. } => {
+            Ok(Type::String)
+        }
+        Instruction::LuauBufferWriteString { .. }
+        | Instruction::LuauBufferCopy { .. }
+        | Instruction::LuauBufferFill { .. } => Ok(Type::Unit),
         Instruction::StructNew { struct_ty, .. } => Ok(struct_ty.clone()),
         Instruction::StructGet { field_ty, .. } => Ok(field_ty.clone()),
         Instruction::StructSet { .. } => Ok(Type::Unit),

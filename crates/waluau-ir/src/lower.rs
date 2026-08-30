@@ -10849,6 +10849,170 @@ impl Builder<'_> {
                 expected,
             ));
         }
+        if member == "fromstring" {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let string = match self.lower_expr(&args[0], scope, Some(Type::String)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = self.emit(Instruction::LuauBufferFromString { string });
+            return Some(self.coerce_value(value, Type::Buffer, expected));
+        }
+        if member == "tostring" {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let buffer = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = self.emit(Instruction::LuauBufferToString { buffer });
+            return Some(self.coerce_value(value, Type::String, expected));
+        }
+        if member == "readstring" {
+            if args.len() != 3 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let buffer = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let offset = match self.lower_luau_buffer_i32(&args[1], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let count = match self.lower_luau_buffer_i32(&args[2], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = self.emit(Instruction::LuauBufferReadString {
+                buffer,
+                offset,
+                count,
+            });
+            return Some(self.coerce_value(value, Type::String, expected));
+        }
+        if member == "writestring" {
+            if !matches!(args.len(), 3 | 4) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 3 or 4 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let buffer = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let offset = match self.lower_luau_buffer_i32(&args[1], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let string = match self.lower_expr(&args[2], scope, Some(Type::String)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let count = match args.get(3) {
+                Some(expr) => match self.lower_luau_buffer_i32(expr, scope) {
+                    Ok(value) => Some(value),
+                    Err(error) => return Some(Err(error)),
+                },
+                None => None,
+            };
+            let value = self.emit(Instruction::LuauBufferWriteString {
+                buffer,
+                offset,
+                string,
+                count,
+            });
+            return Some(self.coerce_value(value, Type::Unit, expected));
+        }
+        if member == "copy" {
+            if !(3..=5).contains(&args.len()) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 3 to 5 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let target = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let target_offset = match self.lower_luau_buffer_i32(&args[1], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let source = match self.lower_expr(&args[2], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let source_offset = match args.get(3) {
+                Some(expr) => match self.lower_luau_buffer_i32(expr, scope) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                },
+                None => self.emit_i32_const(0),
+            };
+            let count = match args.get(4) {
+                Some(expr) => match self.lower_luau_buffer_i32(expr, scope) {
+                    Ok(value) => Some(value),
+                    Err(error) => return Some(Err(error)),
+                },
+                None => None,
+            };
+            let value = self.emit(Instruction::LuauBufferCopy {
+                target,
+                target_offset,
+                source,
+                source_offset,
+                count,
+            });
+            return Some(self.coerce_value(value, Type::Unit, expected));
+        }
+        if member == "fill" {
+            if !matches!(args.len(), 3 | 4) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 3 or 4 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let buffer = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let offset = match self.lower_luau_buffer_i32(&args[1], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let stored = match self.lower_luau_buffer_i32(&args[2], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let count = match args.get(3) {
+                Some(expr) => match self.lower_luau_buffer_i32(expr, scope) {
+                    Ok(value) => Some(value),
+                    Err(error) => return Some(Err(error)),
+                },
+                None => None,
+            };
+            let value = self.emit(Instruction::LuauBufferFill {
+                buffer,
+                offset,
+                value: stored,
+                count,
+            });
+            return Some(self.coerce_value(value, Type::Unit, expected));
+        }
         let (write, kind) = if let Some(suffix) = member.strip_prefix("read") {
             (false, buffer_scalar_kind(suffix)?)
         } else {
@@ -10936,33 +11100,71 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         let member = name.strip_prefix("buffer.")?;
-        let (arity, result) = match member {
-            "create" => (1, Type::Buffer),
-            "len" => (1, Type::Numeric(NumericType::I32)),
-            "readbits" => (3, Type::Numeric(NumericType::U32)),
-            "writebits" => (4, Type::Unit),
+        let (params, result) = match member {
+            "create" => (vec![Type::number()], Type::Buffer),
+            "len" => (vec![Type::Buffer], Type::Numeric(NumericType::I32)),
+            "readbits" => (
+                vec![Type::Buffer, Type::number(), Type::number()],
+                Type::Numeric(NumericType::U32),
+            ),
+            "writebits" => (
+                vec![Type::Buffer, Type::number(), Type::number(), Type::number()],
+                Type::Unit,
+            ),
+            "fromstring" => (vec![Type::String], Type::Buffer),
+            "tostring" => (vec![Type::Buffer], Type::String),
+            "readstring" => (
+                vec![Type::Buffer, Type::number(), Type::number()],
+                Type::String,
+            ),
+            "writestring" if matches!(args.len(), 3 | 4) => {
+                let mut params = vec![Type::Buffer, Type::number(), Type::String];
+                if args.len() == 4 {
+                    params.push(Type::number());
+                }
+                (params, Type::Unit)
+            }
+            "copy" if (3..=5).contains(&args.len()) => {
+                let mut params = vec![Type::Buffer, Type::number(), Type::Buffer];
+                if args.len() >= 4 {
+                    params.push(Type::number());
+                }
+                if args.len() == 5 {
+                    params.push(Type::number());
+                }
+                (params, Type::Unit)
+            }
+            "fill" if matches!(args.len(), 3 | 4) => {
+                let mut params = vec![Type::Buffer, Type::number(), Type::number()];
+                if args.len() == 4 {
+                    params.push(Type::number());
+                }
+                (params, Type::Unit)
+            }
             member if member.starts_with("read") => {
                 let kind = buffer_scalar_kind(member.strip_prefix("read")?)?;
-                (2, Type::Numeric(kind.element_numeric_type()))
+                (
+                    vec![Type::Buffer, Type::number()],
+                    Type::Numeric(kind.element_numeric_type()),
+                )
             }
             member if member.starts_with("write") => {
                 buffer_scalar_kind(member.strip_prefix("write")?)?;
-                (3, Type::Unit)
+                (
+                    vec![Type::Buffer, Type::number(), Type::number()],
+                    Type::Unit,
+                )
             }
             _ => return None,
         };
-        if args.len() != arity {
+        if args.len() != params.len() {
             return Some(Err(Diagnostic::new(format!(
-                "{name} expects {arity} arguments, got {}",
+                "{name} expects {} arguments, got {}",
+                params.len(),
                 args.len()
             ))));
         }
-        for (index, arg) in args.iter().enumerate() {
-            let target = if index == 0 && member != "create" {
-                Type::Buffer
-            } else {
-                Type::number()
-            };
+        for (arg, target) in args.iter().zip(params) {
             if let Err(error) = self.infer_expr_type(arg, types, Some(target)) {
                 return Some(Err(error));
             }

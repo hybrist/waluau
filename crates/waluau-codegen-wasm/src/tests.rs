@@ -42,6 +42,31 @@ fn emits_gc_handle_and_unaligned_little_endian_mutable_buffer_access() {
 }
 
 #[test]
+fn emits_buffer_string_bridge_and_bulk_memory_operations() {
+    let source = r#"
+        function main(): ()
+            local a = buffer.fromstring("abcdef")
+            local b = buffer.create(6)
+            buffer.writestring(b, 0, buffer.tostring(a))
+            local part = buffer.readstring(b, 1, 3)
+            buffer.copy(b, 1, b, 0, 5)
+            buffer.fill(b, 2, 0x1ff)
+        end
+    "#;
+    let module = waluau_ir::build(&waluau_parser::parse(source).expect("parse")).expect("IR build");
+    let wasm = emit(&module).expect("buffer bulk module should emit");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("buffer bulk Wasm should validate");
+    let wat = print_bytes(&wasm).expect("Wasm should print");
+    assert!(wat.contains("\"buffer_string_len\""));
+    assert!(wat.contains("\"buffer_string_read\""));
+    assert!(wat.contains("\"buffer_string_write\""));
+    assert!(wat.contains("memory.copy"));
+    assert!(wat.contains("memory.fill"));
+}
+
+#[test]
 fn emits_bounded_buffer_bitfield_windows_and_checked_errors() {
     let source = r#"
         function main(): ()

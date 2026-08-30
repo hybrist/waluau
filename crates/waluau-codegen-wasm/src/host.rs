@@ -32,6 +32,9 @@ pub const IMPORT_JS_TOSTRING_UNKNOWN: &str = "js_tostring_unknown";
 /// value as `"<type_name>: 0x<id>"` with a stable per-object identity, for
 /// `tostring` on functions, tables, and threads.
 pub const IMPORT_JS_TOSTRING_NAMED: &str = "js_tostring_named";
+pub const IMPORT_BUFFER_STRING_LEN: &str = "buffer_string_len";
+pub const IMPORT_BUFFER_STRING_READ: &str = "buffer_string_read";
+pub const IMPORT_BUFFER_STRING_WRITE: &str = "buffer_string_write";
 pub const IMPORT_JS_TYPEOF_UNKNOWN: &str = "js_typeof_unknown";
 pub const IMPORT_JS_TONUMBER_STRING: &str = "js_tonumber_string";
 pub const IMPORT_JS_TONUMBER_UNKNOWN: &str = "js_tonumber_unknown";
@@ -46,7 +49,7 @@ pub const IMPORT_MATH_POW: &str = "math_pow";
 pub const IMPORT_MEMORY: &str = "memory";
 
 /// Maximum number of host function imports (when all are used).
-pub const HOST_IMPORT_COUNT: u32 = 26;
+pub const HOST_IMPORT_COUNT: u32 = 29;
 
 /// Canonical function-index slot for each host import.
 /// These are stable identifiers used as keys into [`HostImportMap`].
@@ -76,10 +79,13 @@ pub const IMPORT_ATTACH_PROMISE_FUNC: u32 = 22;
 pub const IMPORT_MATH_POW_FUNC: u32 = 23;
 pub const IMPORT_JS_EQ_UNKNOWN_FUNC: u32 = 24;
 pub const IMPORT_JS_TOSTRING_NAMED_FUNC: u32 = 25;
+pub const IMPORT_BUFFER_STRING_LEN_FUNC: u32 = 26;
+pub const IMPORT_BUFFER_STRING_READ_FUNC: u32 = 27;
+pub const IMPORT_BUFFER_STRING_WRITE_FUNC: u32 = 28;
 
 /// Number of host function types in the canonical type-slot table.
 /// The actual number emitted in a given module may be less if some slots are unused.
-pub const HOST_TYPE_COUNT: u32 = 14;
+pub const HOST_TYPE_COUNT: u32 = 16;
 
 /// Records which host functions are actually referenced by a module.
 #[derive(Clone, Debug, Default)]
@@ -103,6 +109,9 @@ pub struct UsedHostImports {
     pub js_tostring_bool: bool,
     pub js_tostring_unknown: bool,
     pub js_tostring_named: bool,
+    pub buffer_string_len: bool,
+    pub buffer_string_read: bool,
+    pub buffer_string_write: bool,
     pub js_typeof_unknown: bool,
     pub js_tonumber_string: bool,
     pub js_tonumber_unknown: bool,
@@ -168,6 +177,9 @@ impl UsedHostImports {
             (IMPORT_MATH_POW_FUNC, self.math_pow),
             (IMPORT_JS_EQ_UNKNOWN_FUNC, self.js_eq_unknown),
             (IMPORT_JS_TOSTRING_NAMED_FUNC, self.js_tostring_named),
+            (IMPORT_BUFFER_STRING_LEN_FUNC, self.buffer_string_len),
+            (IMPORT_BUFFER_STRING_READ_FUNC, self.buffer_string_read),
+            (IMPORT_BUFFER_STRING_WRITE_FUNC, self.buffer_string_write),
         ];
         let mut indices = [None; HOST_IMPORT_COUNT as usize];
         let mut next = 0u32;
@@ -255,6 +267,15 @@ pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT 
     if used.js_tostring_named {
         slots[13] = true;
     }
+    if used.buffer_string_read {
+        slots[14] = true;
+    }
+    if used.buffer_string_write {
+        slots[15] = true;
+    }
+    if used.buffer_string_len {
+        slots[8] = true;
+    }
     slots
 }
 
@@ -295,6 +316,17 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
         }
         IrInstruction::BytesLen { .. } => {
             used.bytes_len = true;
+        }
+        IrInstruction::LuauBufferFromString { .. } => {
+            used.buffer_string_len = true;
+            used.buffer_string_write = true;
+        }
+        IrInstruction::LuauBufferToString { .. } | IrInstruction::LuauBufferReadString { .. } => {
+            used.buffer_string_read = true;
+        }
+        IrInstruction::LuauBufferWriteString { .. } => {
+            used.buffer_string_len = true;
+            used.buffer_string_write = true;
         }
         IrInstruction::Print { .. } => {
             used.print = true;
@@ -420,6 +452,10 @@ pub const ERR_MOD_ZERO: &str = "attempt to perform 'n%0'";
 pub const ERR_BUFFER_OOB: &str = "buffer access out of bounds";
 pub const ERR_BUFFER_SIZE: &str = "invalid argument #1 to 'create' (size)";
 pub const ERR_BUFFER_ALLOC: &str = "buffer allocation failed";
+pub const ERR_BUFFER_STRING_BYTE: &str = "buffer string contains a code unit above 255";
+pub const ERR_BUFFER_READ_SIZE: &str = "invalid argument #3 to 'readstring' (size)";
+pub const ERR_BUFFER_WRITE_COUNT: &str = "invalid argument #4 to 'writestring' (count)";
+pub const ERR_BUFFER_STRING_OVERFLOW: &str = "string length overflow";
 pub const ERR_BUFFER_BIT_COUNT: &str = "bit count is out of range of [0; 32]";
 /// Error payload used when `pcall` catches a foreign (non-Waluau) exception
 /// raised by a host import.
@@ -460,6 +496,19 @@ pub(crate) fn runtime_error_messages(instruction: &IrInstruction) -> &'static [&
         IrInstruction::BufferGet { .. } | IrInstruction::BufferSet { .. } => &[ERR_BUFFER_OOB],
         IrInstruction::LuauBufferNew { .. } => &[ERR_BUFFER_SIZE, ERR_BUFFER_ALLOC],
         IrInstruction::LuauBufferGet { .. } | IrInstruction::LuauBufferSet { .. } => {
+            &[ERR_BUFFER_OOB]
+        }
+        IrInstruction::LuauBufferFromString { .. } => {
+            &[ERR_BUFFER_STRING_BYTE, ERR_BUFFER_SIZE, ERR_BUFFER_ALLOC]
+        }
+        IrInstruction::LuauBufferReadString { .. } => &[ERR_BUFFER_READ_SIZE, ERR_BUFFER_OOB],
+        IrInstruction::LuauBufferWriteString { .. } => &[
+            ERR_BUFFER_STRING_BYTE,
+            ERR_BUFFER_WRITE_COUNT,
+            ERR_BUFFER_STRING_OVERFLOW,
+            ERR_BUFFER_OOB,
+        ],
+        IrInstruction::LuauBufferCopy { .. } | IrInstruction::LuauBufferFill { .. } => {
             &[ERR_BUFFER_OOB]
         }
         IrInstruction::LuauBufferReadBits { .. } | IrInstruction::LuauBufferWriteBits { .. } => {

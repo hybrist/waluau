@@ -400,6 +400,42 @@ pub enum Instruction {
         bit_count: ValueId,
         value: ValueId,
     },
+    /// Allocate a buffer and copy one byte-projectable host string into it.
+    LuauBufferFromString {
+        string: ValueId,
+    },
+    /// Project every byte of a buffer to the matching U+0000..U+00FF code unit.
+    LuauBufferToString {
+        buffer: ValueId,
+    },
+    /// Read a checked byte range as a byte-projectable host string.
+    LuauBufferReadString {
+        buffer: ValueId,
+        offset: ValueId,
+        count: ValueId,
+    },
+    /// Copy a checked string prefix into a checked buffer range.
+    LuauBufferWriteString {
+        buffer: ValueId,
+        offset: ValueId,
+        string: ValueId,
+        count: Option<ValueId>,
+    },
+    /// Copy a checked byte range. `None` defaults to the source remainder.
+    LuauBufferCopy {
+        target: ValueId,
+        target_offset: ValueId,
+        source: ValueId,
+        source_offset: ValueId,
+        count: Option<ValueId>,
+    },
+    /// Fill a checked byte range. `None` defaults to the buffer remainder.
+    LuauBufferFill {
+        buffer: ValueId,
+        offset: ValueId,
+        value: ValueId,
+        count: Option<ValueId>,
+    },
     StructNew {
         struct_ty: Type,
         fields: Vec<ValueId>,
