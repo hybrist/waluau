@@ -1925,11 +1925,15 @@ pub(crate) fn build_function(
         discriminants: HashMap::new(),
         symbol_storage_types,
     };
+    let mut scope = Scope {
+        env,
+        types: type_env,
+    };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
             break;
         }
-        builder.lower_stmt(stmt, &mut env, &mut type_env)?;
+        builder.lower_stmt(stmt, &mut scope)?;
     }
     if builder.current_block != DEAD_BLOCK && builder.function.return_type == Type::Unit {
         let value = builder.emit(Instruction::Unit);
@@ -1973,6 +1977,33 @@ fn primary_stmt_span(stmt: &Stmt) -> Option<waluau_ast::Span> {
         | Stmt::LetMulti { values, .. }
         | Stmt::AssignMulti { values, .. } => values.first().and_then(Expr::span),
         Stmt::Break | Stmt::Continue => None,
+    }
+}
+
+/// Branch-local type narrowing derived from an `if` condition: the narrowed
+/// types to apply on entry to each arm (see `narrowed_type_scopes`).
+struct BranchNarrowing {
+    then_types: HashMap<SymbolId, Type>,
+    else_types: HashMap<SymbolId, Type>,
+}
+
+/// The lexical scope threaded through statement and expression lowering: the
+/// current SSA value for each named symbol together with its flow-narrowed
+/// source-level type. The two maps always travel together; forking clones both
+/// for a branch- or loop-local scope whose rebindings must not leak out.
+struct Scope {
+    /// Current SSA value (or mutable-capture cell) for each symbol.
+    env: HashMap<SymbolId, ValueId>,
+    /// Source-level type for each symbol, including branch-local narrowing.
+    types: HashMap<SymbolId, Type>,
+}
+
+impl Scope {
+    fn fork(&self) -> Scope {
+        Scope {
+            env: self.env.clone(),
+            types: self.types.clone(),
+        }
     }
 }
 
@@ -2759,22 +2790,21 @@ impl Builder<'_> {
         symbol_id: SymbolId,
         value: ValueId,
         ty: Type,
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) {
         if self.cell_names.contains(&symbol_id) {
             let cell = self.emit(Instruction::ArrayNew {
                 element_ty: to_runtime_type(&ty),
                 elements: vec![value],
             });
-            env.insert(symbol_id, cell);
+            scope.env.insert(symbol_id, cell);
             self.function.value_symbols.insert(cell, symbol_id);
         } else {
-            env.insert(symbol_id, value);
+            scope.env.insert(symbol_id, value);
         }
         self.function.value_symbols.insert(value, symbol_id);
         self.symbol_storage_types.insert(symbol_id, ty.clone());
-        types.insert(symbol_id, ty);
+        scope.types.insert(symbol_id, ty);
     }
 
     fn assign_local_value(
@@ -2854,8 +2884,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[&Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<(ValueId, Type), Diagnostic> {
         let (param_types, return_type) = self
             .cx
@@ -2873,7 +2902,7 @@ impl Builder<'_> {
         let lowered_args = args
             .iter()
             .zip(param_types.iter())
-            .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
+            .map(|(arg, param_ty)| self.lower_expr(arg, scope, Some(param_ty.clone())))
             .collect::<Result<Vec<_>, _>>()?;
         let value = if let Some(symbol_id) = self.cx.host_import_names.get(name).copied() {
             self.emit(Instruction::HostCall {
@@ -2899,10 +2928,9 @@ impl Builder<'_> {
         &mut self,
         args: &[Expr],
         param_types: &[Type],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<Vec<ValueId>, Diagnostic> {
-        let mut lowered = self.lower_expr_list(args, env, types, Some(param_types))?;
+        let mut lowered = self.lower_expr_list(args, scope, Some(param_types))?;
         if !call_arity_matches(param_types, lowered.len()) {
             return Err(Diagnostic::new(format!(
                 "function expects {} arguments, got {}",
@@ -3065,11 +3093,10 @@ impl Builder<'_> {
     fn lower_stmt(
         &mut self,
         stmt: &Stmt,
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let previous = std::mem::replace(&mut self.current_span, primary_stmt_span(stmt));
-        let result = self.lower_stmt_inner(stmt, env, types);
+        let result = self.lower_stmt_inner(stmt, scope);
         self.current_span = previous;
         result
     }
@@ -3077,8 +3104,7 @@ impl Builder<'_> {
     fn lower_stmt_inner(
         &mut self,
         stmt: &Stmt,
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         match stmt {
             Stmt::Let {
@@ -3097,7 +3123,7 @@ impl Builder<'_> {
                     Type::record(BTreeMap::new())
                 } else {
                     // A multi-value initializer collapses to its first value.
-                    match self.infer_expr_type(value, types, None)? {
+                    match self.infer_expr_type(value, &scope.types, None)? {
                         Type::Multi(mut parts) if !parts.is_empty() => parts.remove(0),
                         other => other,
                     }
@@ -3116,14 +3142,14 @@ impl Builder<'_> {
                         element_ty: to_runtime_type(&inferred_ty),
                         elements: Vec::new(),
                     });
-                    env.insert(symbol_id, cell);
-                    types.insert(symbol_id, inferred_ty.clone());
+                    scope.env.insert(symbol_id, cell);
+                    scope.types.insert(symbol_id, inferred_ty.clone());
                     self.symbol_storage_types
                         .insert(symbol_id, inferred_ty.clone());
                     self.function.value_symbols.insert(cell, symbol_id);
 
                     let value =
-                        self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
+                        self.lower_expr(value, scope, Some(inferred_ty.clone()))?;
                     let index0 = self.emit_i32_const(0);
                     self.emit(Instruction::ArraySet {
                         array: cell,
@@ -3134,7 +3160,7 @@ impl Builder<'_> {
                     self.function.value_symbols.insert(value, symbol_id);
                     return Ok(());
                 }
-                let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
+                let value = self.lower_expr(value, scope, Some(inferred_ty.clone()))?;
                 if let Some((global, _)) = self.cx.globals.get(&symbol_id) {
                     self.emit(Instruction::GlobalSet {
                         global: *global,
@@ -3144,17 +3170,17 @@ impl Builder<'_> {
                 } else {
                     // If this local is captured by any nested function, represent it as a 1-element
                     // array cell so closures can observe and mutate the same storage location.
-                    self.bind_local_value(symbol_id, value, inferred_ty, env, types);
+                    self.bind_local_value(symbol_id, value, inferred_ty, scope);
                 }
             }
             Stmt::Assign { op, name, symbol_id, value } => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
-                let ty = types.get(&symbol_id).cloned().ok_or_else(|| {
+                let ty = scope.types.get(&symbol_id).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
                 if let Some((global, _)) = self.cx.globals.get(&symbol_id).cloned() {
                     let stored = match op {
-                        AssignOp::Set => self.lower_expr(value, env, types, Some(ty.clone()))?,
+                        AssignOp::Set => self.lower_expr(value, scope, Some(ty.clone()))?,
                         AssignOp::Compound(bin_op) => {
                             if !bin_op.compound_target_ok(&ty) {
                                 return Err(Diagnostic::new(format!(
@@ -3168,7 +3194,7 @@ impl Builder<'_> {
                                 ty: to_runtime_type(&ty),
                             });
                             let rhs =
-                                self.lower_compound_rhs(*bin_op, value, &ty, env, types)?;
+                                self.lower_compound_rhs(*bin_op, value, &ty, scope)?;
                             self.emit(Instruction::Binary {
                                 op: *bin_op,
                                 left: current,
@@ -3186,7 +3212,7 @@ impl Builder<'_> {
                 } else if self.cell_names.contains(&symbol_id) {
                     // Captured local: stored in a 1-element array (cell). Perform ArraySet
                     // rather than rebinding the env entry.
-                    let cell = env.get(&symbol_id).copied().ok_or_else(|| {
+                    let cell = scope.env.get(&symbol_id).copied().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                     })?;
                     let index0 = self.emit(Instruction::Number {
@@ -3195,7 +3221,7 @@ impl Builder<'_> {
                     });
                     match op {
                         AssignOp::Set => {
-                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            let rhs = self.lower_expr(value, scope, Some(ty.clone()))?;
                             self.function.value_symbols.insert(rhs, symbol_id);
                             self.emit(Instruction::ArraySet {
                                 array: cell,
@@ -3219,7 +3245,7 @@ impl Builder<'_> {
                                 element_ty: ty.clone(),
                             });
                             let rhs =
-                                self.lower_compound_rhs(*bin_op, value, &ty, env, types)?;
+                                self.lower_compound_rhs(*bin_op, value, &ty, scope)?;
                             let sum = self.emit(Instruction::Binary {
                                 op: *bin_op,
                                 left: current,
@@ -3239,7 +3265,7 @@ impl Builder<'_> {
                     // Do not replace env entry -- it remains the cell.
                 } else {
                     let value = match op {
-                        AssignOp::Set => self.lower_expr(value, env, types, Some(ty))?,
+                        AssignOp::Set => self.lower_expr(value, scope, Some(ty))?,
                         AssignOp::Compound(bin_op) => {
                             if !bin_op.compound_target_ok(&ty) {
                                 return Err(Diagnostic::new(format!(
@@ -3248,13 +3274,13 @@ impl Builder<'_> {
                                     bin_op.compound_target_kind()
                                 )));
                             }
-                            let current = *env.get(&symbol_id).ok_or_else(|| {
+                            let current = *scope.env.get(&symbol_id).ok_or_else(|| {
                                 Diagnostic::new(format!(
                                     "unknown local '{name}' during IR lowering"
                                 ))
                             })?;
                             let rhs =
-                                self.lower_compound_rhs(*bin_op, value, &ty, env, types)?;
+                                self.lower_compound_rhs(*bin_op, value, &ty, scope)?;
                             self.emit(Instruction::Binary {
                                 op: *bin_op,
                                 left: current,
@@ -3264,7 +3290,7 @@ impl Builder<'_> {
                             })
                         }
                     };
-                    env.insert(symbol_id, value);
+                    scope.env.insert(symbol_id, value);
                     self.function.value_symbols.insert(value, symbol_id);
                 }
                 self.sever_discriminants(symbol_id);
@@ -3275,15 +3301,15 @@ impl Builder<'_> {
                 index,
                 value,
             } => {
-                let base_ty = self.infer_expr_type(base, types, None)?;
+                let base_ty = self.infer_expr_type(base, &scope.types, None)?;
                 if let Type::TypedArray(kind) = &base_ty {
                     let kind = *kind;
                     let element_ty = Type::Numeric(kind.element_numeric_type());
-                    let buffer = self.lower_expr(base, env, types, Some(base_ty.clone()))?;
-                    let index = self.lower_index_to_i32(index, env, types)?;
+                    let buffer = self.lower_expr(base, scope, Some(base_ty.clone()))?;
+                    let index = self.lower_index_to_i32(index, scope)?;
                     let stored = match op {
                         AssignOp::Set => {
-                            self.lower_numeric_to(value, &element_ty, env, types)?
+                            self.lower_numeric_to(value, &element_ty, scope)?
                         }
                         AssignOp::Compound(bin_op) => {
                             if !bin_op.compound_target_ok(&element_ty) {
@@ -3297,7 +3323,7 @@ impl Builder<'_> {
                                 index,
                                 kind,
                             });
-                            let rhs = self.lower_numeric_to(value, &element_ty, env, types)?;
+                            let rhs = self.lower_numeric_to(value, &element_ty, scope)?;
                             self.emit(Instruction::Binary {
                                 op: *bin_op,
                                 left: current,
@@ -3318,12 +3344,12 @@ impl Builder<'_> {
                 let element_ty = base_ty.element_type().ok_or_else(|| {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
-                let array = self.lower_expr(base, env, types, Some(base_ty))?;
+                let array = self.lower_expr(base, scope, Some(base_ty))?;
                 let index =
-                    self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
+                    self.lower_expr(index, scope, Some(Type::Numeric(NumericType::I32)))?;
                 let value = match op {
                     AssignOp::Set => {
-                        self.lower_expr(value, env, types, Some(element_ty.clone()))?
+                        self.lower_expr(value, scope, Some(element_ty.clone()))?
                     }
                     AssignOp::Compound(bin_op) => {
                         if !bin_op.compound_target_ok(&element_ty) {
@@ -3341,8 +3367,7 @@ impl Builder<'_> {
                             *bin_op,
                             value,
                             &element_ty,
-                            env,
-                            types,
+                            scope,
                         )?;
                         self.emit(Instruction::Binary {
                             op: *bin_op,
@@ -3371,7 +3396,7 @@ impl Builder<'_> {
                 else {
                     unreachable!();
                 };
-                let base_ty = self.infer_expr_type(base, types, None)?;
+                let base_ty = self.infer_expr_type(base, &scope.types, None)?;
                 if let Some((setter_name, params, return_type)) =
                     type_property_setter_signature(
                         &base_ty,
@@ -3396,8 +3421,8 @@ impl Builder<'_> {
                         )));
                     }
                     let receiver =
-                        self.lower_expr(base, env, types, Some(params[0].clone()))?;
-                    let stored = self.lower_expr(value, env, types, Some(params[1].clone()))?;
+                        self.lower_expr(base, scope, Some(params[0].clone()))?;
+                    let stored = self.lower_expr(value, scope, Some(params[1].clone()))?;
                     let symbol_id = self.cx.host_import_names.get(&setter_name).copied().ok_or_else(|| {
                         Diagnostic::new(format!(
                             "declared property setter '{setter_name}' is missing a host import symbol"
@@ -3412,21 +3437,21 @@ impl Builder<'_> {
                     return Ok(());
                 }
                 let (base_ty, field_ty) = if let Expr::Name(_base_name, Some(base_symbol_id), _) = base.as_ref() {
-                    let Some(Type::Record(mut fields)) = types.get(base_symbol_id).cloned() else {
+                    let Some(Type::Record(mut fields)) = scope.types.get(base_symbol_id).cloned() else {
                         return Err(Diagnostic::new("field assignment requires a record base"));
                     };
                     let existing_field = fields.get(name).cloned();
                     match existing_field {
                         Some(existing) => (Type::Record(fields), existing),
                         None => {
-                            let inferred = self.infer_expr_type(value, types, None)?;
+                            let inferred = self.infer_expr_type(value, &scope.types, None)?;
                             let previous_ty = Type::Record(fields.clone());
                             Arc::make_mut(&mut fields).insert(name.clone(), inferred.clone());
                             let updated_ty = Type::Record(fields.clone());
                             let base_value =
-                                self.lower_expr(base, env, types, Some(previous_ty.clone()))?;
+                                self.lower_expr(base, scope, Some(previous_ty.clone()))?;
                             let new_field_value =
-                                self.lower_expr(value, env, types, Some(inferred.clone()))?;
+                                self.lower_expr(value, scope, Some(inferred.clone()))?;
 
                             let mut lowered_fields = Vec::with_capacity(fields.len());
                             for (field_name, field_ty) in fields.iter() {
@@ -3444,11 +3469,11 @@ impl Builder<'_> {
                                 struct_ty: updated_ty.clone(),
                                 fields: lowered_fields,
                             });
-                            env.insert(*base_symbol_id, rebuilt);
+                            scope.env.insert(*base_symbol_id, rebuilt);
                             self.function.value_symbols.insert(rebuilt, *base_symbol_id);
                             self.symbol_storage_types
                                 .insert(*base_symbol_id, updated_ty.clone());
-                            types.insert(*base_symbol_id, updated_ty);
+                            scope.types.insert(*base_symbol_id, updated_ty);
                             return Ok(());
                         }
                     }
@@ -3458,9 +3483,9 @@ impl Builder<'_> {
                     })?;
                     (base_ty, field_ty)
                 };
-                let base = self.lower_expr(base, env, types, Some(base_ty))?;
+                let base = self.lower_expr(base, scope, Some(base_ty))?;
                 let value = match op {
-                    AssignOp::Set => self.lower_expr(value, env, types, Some(field_ty.clone()))?,
+                    AssignOp::Set => self.lower_expr(value, scope, Some(field_ty.clone()))?,
                     AssignOp::Compound(bin_op) => {
                         if !bin_op.compound_target_ok(&field_ty) {
                             return Err(Diagnostic::new(format!(
@@ -3477,8 +3502,7 @@ impl Builder<'_> {
                             *bin_op,
                             value,
                             &field_ty,
-                            env,
-                            types,
+                            scope,
                         )?;
                         self.emit(Instruction::Binary {
                             op: *bin_op,
@@ -3505,21 +3529,21 @@ impl Builder<'_> {
                 {
                     if let Expr::Name(name, _, _) = callee.as_ref() {
                         if name == ASSERT {
-                            self.lower_assert_call(args, *span, env, types)?;
+                            self.lower_assert_call(args, *span, scope)?;
                             // Code after `assert(cond)` only runs when the
                             // condition held: apply the then-branch narrowing.
-                            self.apply_assert_narrowing(&args[0], env, types);
+                            self.apply_assert_narrowing(&args[0], scope);
                             return Ok(());
                         }
                     }
                 }
-                let _ = self.lower_expr(expr, env, types, None)?;
+                let _ = self.lower_expr(expr, scope, None)?;
             }
             Stmt::Break => {
-                self.lower_break(env)?;
+                self.lower_break(&scope.env)?;
             }
             Stmt::Continue => {
-                self.lower_continue(env)?;
+                self.lower_continue(&scope.env)?;
             }
             Stmt::Return(expr) => {
                 let value = if matches!(expr, Expr::Nil(_))
@@ -3527,17 +3551,17 @@ impl Builder<'_> {
                 {
                     self.emit(Instruction::Unit)
                 } else {
-                    self.lower_expr(expr, env, types, Some(self.function.return_type.clone()))?
+                    self.lower_expr(expr, scope, Some(self.function.return_type.clone()))?
                 };
                 self.set_terminator(self.current_block, Terminator::Return(value));
                 self.current_block = DEAD_BLOCK;
             }
             Stmt::ReturnMulti(values) => {
                 let expected = match &self.function.return_type {
-                    Type::Multi(types) => types.clone(),
+                    Type::Multi(tys) => tys.clone(),
                     other => vec![other.clone()],
                 };
-                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                let lowered = self.lower_expr_list(values, scope, Some(&expected))?;
                 if lowered.len() != expected.len() {
                     return Err(Diagnostic::new(format!(
                         "return expects {} values, got {}",
@@ -3567,7 +3591,7 @@ impl Builder<'_> {
                     } else {
                         let mut inferred_types = Vec::new();
                         for expr in values {
-                            let ty = self.infer_expr_type(expr, types, None)?;
+                            let ty = self.infer_expr_type(expr, &scope.types, None)?;
                             match ty {
                                 Type::Multi(types_for_expr) => {
                                     inferred_types.extend(types_for_expr);
@@ -3588,7 +3612,7 @@ impl Builder<'_> {
                             .map(|(binding, inferred)| binding.ty.clone().unwrap_or(inferred))
                             .collect()
                     };
-                    let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                    let lowered = self.lower_expr_list(values, scope, Some(&expected))?;
                     if lowered.len() < expected.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
@@ -3600,12 +3624,12 @@ impl Builder<'_> {
                         bindings.iter().zip(lowered).zip(expected)
                     {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
-                        self.bind_local_value(symbol_id, value, expected_ty, env, types);
+                        self.bind_local_value(symbol_id, value, expected_ty, scope);
                     }
                 } else {
                     let mut inferred_types = Vec::new();
                     for expr in values {
-                        let ty = self.infer_expr_type(expr, types, None)?;
+                        let ty = self.infer_expr_type(expr, &scope.types, None)?;
                         match ty {
                             Type::Multi(types_for_expr) => {
                                 inferred_types.extend(types_for_expr);
@@ -3622,7 +3646,7 @@ impl Builder<'_> {
                             inferred_types.len()
                         )));
                     }
-                    let lowered = self.lower_expr_list(values, env, types, None)?;
+                    let lowered = self.lower_expr_list(values, scope, None)?;
                     if lowered.len() < bindings.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
@@ -3632,21 +3656,21 @@ impl Builder<'_> {
                     }
                     for ((binding, value), ty) in bindings.iter().zip(lowered).zip(inferred_types) {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
-                        self.bind_local_value(symbol_id, value, ty, env, types);
+                        self.bind_local_value(symbol_id, value, ty, scope);
                     }
                 }
-                self.record_pcall_discriminant(bindings, values, types);
+                self.record_pcall_discriminant(bindings, values, &scope.types);
             }
             Stmt::AssignMulti { targets, symbol_ids, values } => {
                 let ids = symbol_ids.as_ref().expect("symbol_ids should be resolved");
                 let mut expected = Vec::new();
                 for (target, id) in targets.iter().zip(ids) {
-                    let ty = types.get(id).cloned().ok_or_else(|| {
+                    let ty = scope.types.get(id).cloned().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{target}' during IR lowering"))
                     })?;
                     expected.push(ty);
                 }
-                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                let lowered = self.lower_expr_list(values, scope, Some(&expected))?;
                 if lowered.len() < expected.len() {
                     return Err(Diagnostic::new(format!(
                         "multi-assignment expects {} values, got {}",
@@ -3655,7 +3679,7 @@ impl Builder<'_> {
                     )));
                 }
                 for ((id, value), ty) in ids.iter().zip(lowered).zip(expected.iter()) {
-                    self.assign_local_value(*id, value, ty, env)?;
+                    self.assign_local_value(*id, value, ty, &mut scope.env)?;
                     self.sever_discriminants(*id);
                 }
             }
@@ -3664,7 +3688,7 @@ impl Builder<'_> {
                 then_body,
                 else_body,
             } => {
-                self.lower_if(condition, then_body, else_body, env, types)?;
+                self.lower_if(condition, then_body, else_body, scope)?;
             }
             Stmt::Match {
                 value,
@@ -3676,11 +3700,11 @@ impl Builder<'_> {
                 // is evaluated exactly once, then reuse the ordinary if/phi
                 // lowering for the exhaustive dispatch tree.
                 let match_symbol = SymbolId(usize::MAX);
-                let saved_value = env.insert(
+                let saved_value = scope.env.insert(
                     match_symbol,
-                    self.lower_expr(value, env, types, Some(enum_ty.clone()))?,
+                    self.lower_expr(value, scope, Some(enum_ty.clone()))?,
                 );
-                let saved_type = types.insert(match_symbol, enum_ty.clone());
+                let saved_type = scope.types.insert(match_symbol, enum_ty.clone());
                 let mut otherwise = arms
                     .last()
                     .expect("parser rejects empty matches")
@@ -3717,22 +3741,22 @@ impl Builder<'_> {
                     if self.current_block == DEAD_BLOCK {
                         break;
                     }
-                    self.lower_stmt(stmt, env, types)?;
+                    self.lower_stmt(stmt, scope)?;
                 }
                 match saved_value {
                     Some(value) => {
-                        env.insert(match_symbol, value);
+                        scope.env.insert(match_symbol, value);
                     }
                     None => {
-                        env.remove(&match_symbol);
+                        scope.env.remove(&match_symbol);
                     }
                 }
                 match saved_type {
                     Some(ty) => {
-                        types.insert(match_symbol, ty);
+                        scope.types.insert(match_symbol, ty);
                     }
                     None => {
-                        types.remove(&match_symbol);
+                        scope.types.remove(&match_symbol);
                     }
                 }
             }
@@ -3752,15 +3776,14 @@ impl Builder<'_> {
                         then_body,
                         else_body,
                     },
-                    env,
-                    types,
+                    scope,
                 )?;
             }
             Stmt::While { condition, body } => {
-                self.lower_while(condition, body, env, types)?;
+                self.lower_while(condition, body, scope)?;
             }
             Stmt::Repeat { body, condition } => {
-                self.lower_repeat(body, condition, env, types)?;
+                self.lower_repeat(body, condition, scope)?;
             }
             Stmt::NumericFor {
                 symbol_id,
@@ -3770,7 +3793,7 @@ impl Builder<'_> {
                 body,
                 ..
             } => {
-                self.lower_numeric_for(symbol_id, start, stop, step.as_ref(), body, env, types)?;
+                self.lower_numeric_for(symbol_id, start, stop, step.as_ref(), body, scope)?;
             }
             Stmt::ForIn {
                 symbol_ids,
@@ -3778,7 +3801,7 @@ impl Builder<'_> {
                 body,
                 ..
             } => {
-                self.lower_for_in(symbol_ids, iterators, body, env, types)?;
+                self.lower_for_in(symbol_ids, iterators, body, scope)?;
             }
         }
         Ok(())
@@ -3793,8 +3816,7 @@ impl Builder<'_> {
         pattern_expr: &Expr,
         ids: &[SymbolId],
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let i32_ty = Type::Numeric(NumericType::I32);
         let captures = waluau_ast::expr_pattern_captures(pattern_expr);
@@ -3818,8 +3840,8 @@ impl Builder<'_> {
             )));
         }
 
-        let haystack = self.lower_expr(haystack_expr, env, types, Some(Type::String))?;
-        let pattern = self.lower_expr(pattern_expr, env, types, Some(Type::String))?;
+        let haystack = self.lower_expr(haystack_expr, scope, Some(Type::String))?;
+        let pattern = self.lower_expr(pattern_expr, scope, Some(Type::String))?;
         let handle = self.emit_string_host_call(
             PM_GMATCH_HOST,
             vec![haystack, pattern],
@@ -3834,19 +3856,17 @@ impl Builder<'_> {
 
         let mutated = collect_assigned_names(body);
         self.current_block = header;
-        let loop_env = env.clone();
-        let loop_types = types.clone();
+        let mut loop_scope = scope.fork();
         let mut phis = HashMap::new();
         for id in &mutated {
-            if let Some(initial) = env.get(id).copied() {
+            if let Some(initial) = scope.env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
                 self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
         }
-        let mut loop_env = loop_env;
         for (id, phi) in &phis {
-            loop_env.insert(*id, *phi);
+            loop_scope.env.insert(*id, *phi);
         }
 
         let has = self.emit_string_host_call(PM_GMATCH_NEXT_HOST, vec![handle], i32_ty.clone())?;
@@ -3882,8 +3902,7 @@ impl Builder<'_> {
         );
 
         self.current_block = loop_body;
-        let mut body_env = loop_env.clone();
-        let mut body_types = loop_types.clone();
+        let mut body_scope = loop_scope.fork();
         for (id, (kind, capture_index)) in ids.iter().zip(slot_kinds.iter()) {
             let index_value = self.emit_i32_const(*capture_index);
             let (host, value_ty) = match kind {
@@ -3891,14 +3910,14 @@ impl Builder<'_> {
                 waluau_ast::LuaCaptureKind::Position => (PM_CAPTURE_POSITION_HOST, i32_ty.clone()),
             };
             let value = self.emit_string_host_call(host, vec![index_value], value_ty.clone())?;
-            self.bind_loop_var(*id, value, &value_ty, &mut body_env);
-            body_types.insert(*id, value_ty);
+            self.bind_loop_var(*id, value, &value_ty, &mut body_scope.env);
+            body_scope.types.insert(*id, value_ty);
         }
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+            self.lower_stmt(stmt, &mut body_scope)?;
         }
 
         let loop_ctx = self
@@ -3910,7 +3929,7 @@ impl Builder<'_> {
         if body_exit != DEAD_BLOCK {
             self.set_terminator(body_exit, Terminator::Jump(header));
             for (id, phi) in &phis {
-                if let Some(next_value) = body_env.get(id).copied() {
+                if let Some(next_value) = body_scope.env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
@@ -3918,7 +3937,7 @@ impl Builder<'_> {
 
         for (id, _) in phis {
             let exit_phi = exit_phis[&id];
-            env.insert(id, exit_phi);
+            scope.env.insert(id, exit_phi);
             self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
@@ -3929,8 +3948,7 @@ impl Builder<'_> {
         &mut self,
         args: &[Expr],
         span: Option<waluau_ast::Span>,
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         if !(1..=2).contains(&args.len()) {
             return Err(Diagnostic::new(format!(
@@ -3938,7 +3956,7 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let condition = self.lower_expr(&args[0], env, types, Some(Type::Bool))?;
+        let condition = self.lower_expr(&args[0], scope, Some(Type::Bool))?;
         let continue_block = self.new_block();
         let trap_block = self.new_block();
         self.set_terminator(
@@ -3952,7 +3970,7 @@ impl Builder<'_> {
         self.current_block = trap_block;
 
         let message = if let Some(message_expr) = args.get(1) {
-            self.lower_expr(message_expr, env, types, Some(Type::String))?
+            self.lower_expr(message_expr, scope, Some(Type::String))?
         } else {
             let assert_span = args[0].span().or(span);
             let msg_str = if let Some(sp) = assert_span {
@@ -3986,12 +4004,11 @@ impl Builder<'_> {
     fn apply_assert_narrowing(
         &mut self,
         condition: &Expr,
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) {
-        let (then_types_init, _) = self.narrowed_type_scopes(condition, types);
+        let (then_types_init, _) = self.narrowed_type_scopes(condition, &scope.types);
         for (symbol_id, narrowed_ty) in then_types_init {
-            let Some(original_ty) = types.get(&symbol_id).cloned() else {
+            let Some(original_ty) = scope.types.get(&symbol_id).cloned() else {
                 continue;
             };
             if original_ty == narrowed_ty {
@@ -4000,7 +4017,7 @@ impl Builder<'_> {
             if original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
                 || original_ty == Type::Unknown
             {
-                let Some(original_value) = env.get(&symbol_id).copied() else {
+                let Some(original_value) = scope.env.get(&symbol_id).copied() else {
                     continue;
                 };
                 let narrowed_value = self.emit(Instruction::Cast {
@@ -4008,17 +4025,17 @@ impl Builder<'_> {
                     from: original_ty,
                     to: narrowed_ty.clone(),
                 });
-                env.insert(symbol_id, narrowed_value);
+                scope.env.insert(symbol_id, narrowed_value);
                 self.function
                     .value_symbols
                     .insert(narrowed_value, symbol_id);
-                types.insert(symbol_id, narrowed_ty);
+                scope.types.insert(symbol_id, narrowed_ty);
             } else if matches!(original_ty, Type::TaggedUnion(_) | Type::TaggedVariant(_))
                 && matches!(narrowed_ty, Type::TaggedUnion(_) | Type::TaggedVariant(_))
             {
                 // Tagged-union values share the canonical record representation,
                 // so variant narrowing needs no cast.
-                types.insert(symbol_id, narrowed_ty);
+                scope.types.insert(symbol_id, narrowed_ty);
             }
         }
     }
@@ -4254,19 +4271,19 @@ impl Builder<'_> {
         condition: &Expr,
         then_body: &[Stmt],
         else_body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
-        let (then_types_init, else_types_init) = self.narrowed_type_scopes(condition, types);
-        let condition_value = self.lower_expr(condition, env, types, Some(Type::Bool))?;
+        let (then_types, else_types) = self.narrowed_type_scopes(condition, &scope.types);
+        let condition_value = self.lower_expr(condition, scope, Some(Type::Bool))?;
         self.lower_if_branches(
             condition_value,
             then_body,
             else_body,
-            env,
-            types,
-            then_types_init,
-            else_types_init,
+            scope,
+            BranchNarrowing {
+                then_types,
+                else_types,
+            },
             None,
         )
     }
@@ -4275,16 +4292,13 @@ impl Builder<'_> {
     /// value and the narrowed type scopes for each branch. `pattern_binding`, when
     /// present, additionally unboxes the tagged-variant payload from `base` and binds
     /// it to `symbol_id` at the start of the `then` branch (for `if Tag(x) = expr then`).
-    #[allow(clippy::too_many_arguments)]
     fn lower_if_branches(
         &mut self,
         condition: ValueId,
         then_body: &[Stmt],
         else_body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
-        then_types_init: HashMap<SymbolId, Type>,
-        else_types_init: HashMap<SymbolId, Type>,
+        scope: &mut Scope,
+        narrowing: BranchNarrowing,
         pattern_binding: Option<(SymbolId, ValueId, Type)>,
     ) -> Result<(), Diagnostic> {
         let then_block = self.new_block();
@@ -4299,13 +4313,12 @@ impl Builder<'_> {
             },
         );
 
-        let mut then_env = env.clone();
-        let mut then_types = types.clone();
+        let mut then_scope = scope.fork();
         let mut then_narrowed_values = HashMap::new();
         self.current_block = then_block;
-        for (symbol_id, narrowed_ty) in then_types_init {
+        for (symbol_id, narrowed_ty) in narrowing.then_types {
             if let (Some(original_ty), Some(original_value)) =
-                (types.get(&symbol_id), then_env.get(&symbol_id).copied())
+                (scope.types.get(&symbol_id), then_scope.env.get(&symbol_id).copied())
             {
                 if original_ty != &narrowed_ty
                     && (original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
@@ -4316,14 +4329,14 @@ impl Builder<'_> {
                         from: original_ty.clone(),
                         to: narrowed_ty.clone(),
                     });
-                    then_env.insert(symbol_id, narrowed_value);
+                    then_scope.env.insert(symbol_id, narrowed_value);
                     then_narrowed_values.insert(symbol_id, narrowed_value);
                     self.function
                         .value_symbols
                         .insert(narrowed_value, symbol_id);
                 }
             }
-            then_types.insert(symbol_id, narrowed_ty);
+            then_scope.types.insert(symbol_id, narrowed_ty);
         }
         if let Some((symbol_id, base, payload_ty)) = &pattern_binding {
             let unboxed = self.unbox_tagged_variant_value(*base, payload_ty)?;
@@ -4332,10 +4345,10 @@ impl Builder<'_> {
                     element_ty: to_runtime_type(payload_ty),
                     elements: vec![unboxed],
                 });
-                then_env.insert(*symbol_id, cell);
+                then_scope.env.insert(*symbol_id, cell);
                 self.function.value_symbols.insert(cell, *symbol_id);
             } else {
-                then_env.insert(*symbol_id, unboxed);
+                then_scope.env.insert(*symbol_id, unboxed);
                 self.function.value_symbols.insert(unboxed, *symbol_id);
             }
         }
@@ -4343,20 +4356,19 @@ impl Builder<'_> {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut then_env, &mut then_types)?;
+            self.lower_stmt(stmt, &mut then_scope)?;
         }
         let then_exit = self.current_block;
         if then_exit != DEAD_BLOCK {
             self.set_terminator(then_exit, Terminator::Jump(merge_block));
         }
 
-        let mut else_env = env.clone();
-        let mut else_types = types.clone();
+        let mut else_scope = scope.fork();
         let mut else_narrowed_values = HashMap::new();
         self.current_block = else_block;
-        for (symbol_id, narrowed_ty) in else_types_init {
+        for (symbol_id, narrowed_ty) in narrowing.else_types {
             if let (Some(original_ty), Some(original_value)) =
-                (types.get(&symbol_id), else_env.get(&symbol_id).copied())
+                (scope.types.get(&symbol_id), else_scope.env.get(&symbol_id).copied())
             {
                 if original_ty != &narrowed_ty
                     && (original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
@@ -4367,20 +4379,20 @@ impl Builder<'_> {
                         from: original_ty.clone(),
                         to: narrowed_ty.clone(),
                     });
-                    else_env.insert(symbol_id, narrowed_value);
+                    else_scope.env.insert(symbol_id, narrowed_value);
                     else_narrowed_values.insert(symbol_id, narrowed_value);
                     self.function
                         .value_symbols
                         .insert(narrowed_value, symbol_id);
                 }
             }
-            else_types.insert(symbol_id, narrowed_ty);
+            else_scope.types.insert(symbol_id, narrowed_ty);
         }
         for stmt in else_body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut else_env, &mut else_types)?;
+            self.lower_stmt(stmt, &mut else_scope)?;
         }
         let else_exit = self.current_block;
         if else_exit != DEAD_BLOCK {
@@ -4394,20 +4406,20 @@ impl Builder<'_> {
 
         self.current_block = merge_block;
         // Sorted for deterministic phi emission order (see create_exit_phis).
-        let mut merge_names: Vec<SymbolId> = env.keys().cloned().collect();
+        let mut merge_names: Vec<SymbolId> = scope.env.keys().cloned().collect();
         merge_names.sort_unstable();
         for name in merge_names {
-            let t = then_env
+            let t = then_scope.env
                 .get(&name)
                 .copied()
-                .or_else(|| env.get(&name).copied());
-            let e = else_env
+                .or_else(|| scope.env.get(&name).copied());
+            let e = else_scope.env
                 .get(&name)
                 .copied()
-                .or_else(|| env.get(&name).copied());
+                .or_else(|| scope.env.get(&name).copied());
             if let (Some(tv), Some(ev)) = (t, e) {
                 if tv != ev {
-                    let original = env.get(&name).copied();
+                    let original = scope.env.get(&name).copied();
                     let then_is_only_narrowed =
                         then_narrowed_values.get(&name).copied() == Some(tv) && original == Some(ev);
                     let else_is_only_narrowed =
@@ -4425,13 +4437,13 @@ impl Builder<'_> {
                     if then_exit == DEAD_BLOCK
                         && else_narrowed_values.get(&name).copied() == Some(ev)
                     {
-                        env.insert(name, ev);
+                        scope.env.insert(name, ev);
                         continue;
                     }
                     if else_exit == DEAD_BLOCK
                         && then_narrowed_values.get(&name).copied() == Some(tv)
                     {
-                        env.insert(name, tv);
+                        scope.env.insert(name, tv);
                         continue;
                     }
                     if then_is_only_narrowed || else_is_only_narrowed || both_narrowed {
@@ -4445,7 +4457,7 @@ impl Builder<'_> {
                         incoming.push((else_exit, ev));
                     }
                     let phi = self.emit(Instruction::Phi(incoming));
-                    env.insert(name, phi);
+                    scope.env.insert(name, phi);
                     self.function.value_symbols.insert(phi, name);
                 }
             }
@@ -4453,15 +4465,15 @@ impl Builder<'_> {
         // Propagate narrowed types from the surviving branch when one side diverges.
         // This enables narrowing to persist after `if result is X then return ... end`.
         if then_exit == DEAD_BLOCK {
-            for name in types.keys().cloned().collect::<Vec<_>>() {
-                if let Some(narrowed) = else_types.get(&name) {
-                    types.insert(name, narrowed.clone());
+            for name in scope.types.keys().cloned().collect::<Vec<_>>() {
+                if let Some(narrowed) = else_scope.types.get(&name) {
+                    scope.types.insert(name, narrowed.clone());
                 }
             }
         } else if else_exit == DEAD_BLOCK {
-            for name in types.keys().cloned().collect::<Vec<_>>() {
-                if let Some(narrowed) = then_types.get(&name) {
-                    types.insert(name, narrowed.clone());
+            for name in scope.types.keys().cloned().collect::<Vec<_>>() {
+                if let Some(narrowed) = then_scope.types.get(&name) {
+                    scope.types.insert(name, narrowed.clone());
                 }
             }
         }
@@ -4483,19 +4495,18 @@ impl Builder<'_> {
     fn lower_if_cast(
         &mut self,
         parts: IfCastParts<'_>,
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let binding_symbol_id = parts
             .binding_symbol_id
             .ok_or_else(|| Diagnostic::new("if-cast binding must have a symbol ID resolved"))?;
 
-        let scrutinee_ty = self.infer_expr_type(parts.value, types, None)?;
+        let scrutinee_ty = self.infer_expr_type(parts.value, &scope.types, None)?;
         if let Some(variant) = scrutinee_ty.tagged_variant(parts.target_name) {
             let payload_ty = (*variant.payload).clone();
 
             // Lower the scrutinee once; the underlying IR value is the canonical record.
-            let base = self.lower_expr(parts.value, env, types, None)?;
+            let base = self.lower_expr(parts.value, scope, None)?;
             let tag_id = self.variant_tag_id(parts.target_name)?;
             let tag_field_ty = Type::Numeric(NumericType::I32);
             let tag_val = self.emit(Instruction::StructGet {
@@ -4517,22 +4528,23 @@ impl Builder<'_> {
                 result_ty: Type::Bool,
             });
 
-            let mut then_types_init = types.clone();
-            then_types_init.insert(binding_symbol_id, payload_ty.clone());
-            let else_types_init = types.clone();
+            let mut then_types = scope.types.clone();
+            then_types.insert(binding_symbol_id, payload_ty.clone());
+            let else_types = scope.types.clone();
             return self.lower_if_branches(
                 condition_value,
                 parts.then_body,
                 parts.else_body,
-                env,
-                types,
-                then_types_init,
-                else_types_init,
+                scope,
+                BranchNarrowing {
+                    then_types,
+                    else_types,
+                },
                 Some((binding_symbol_id, base, payload_ty)),
             );
         }
 
-        let tested = self.lower_expr(parts.value, env, types, None)?;
+        let tested = self.lower_expr(parts.value, scope, None)?;
         let condition = self.emit(Instruction::ExternCastTest {
             value: tested,
             target_name: parts.target_name.to_string(),
@@ -4549,30 +4561,28 @@ impl Builder<'_> {
             },
         );
 
-        let mut then_env = env.clone();
-        let mut then_types = types.clone();
-        then_env.insert(binding_symbol_id, tested);
-        then_types.insert(binding_symbol_id, Type::Extern);
+        let mut then_scope = scope.fork();
+        then_scope.env.insert(binding_symbol_id, tested);
+        then_scope.types.insert(binding_symbol_id, Type::Extern);
         self.current_block = then_block;
         for stmt in parts.then_body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut then_env, &mut then_types)?;
+            self.lower_stmt(stmt, &mut then_scope)?;
         }
         let then_exit = self.current_block;
         if then_exit != DEAD_BLOCK {
             self.set_terminator(then_exit, Terminator::Jump(merge_block));
         }
 
-        let mut else_env = env.clone();
-        let mut else_types = types.clone();
+        let mut else_scope = scope.fork();
         self.current_block = else_block;
         for stmt in parts.else_body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut else_env, &mut else_types)?;
+            self.lower_stmt(stmt, &mut else_scope)?;
         }
         let else_exit = self.current_block;
         if else_exit != DEAD_BLOCK {
@@ -4586,17 +4596,17 @@ impl Builder<'_> {
 
         self.current_block = merge_block;
         // Sorted for deterministic phi emission order (see create_exit_phis).
-        let mut merge_names: Vec<SymbolId> = env.keys().cloned().collect();
+        let mut merge_names: Vec<SymbolId> = scope.env.keys().cloned().collect();
         merge_names.sort_unstable();
         for name in merge_names {
-            let t = then_env
+            let t = then_scope.env
                 .get(&name)
                 .copied()
-                .or_else(|| env.get(&name).copied());
-            let e = else_env
+                .or_else(|| scope.env.get(&name).copied());
+            let e = else_scope.env
                 .get(&name)
                 .copied()
-                .or_else(|| env.get(&name).copied());
+                .or_else(|| scope.env.get(&name).copied());
             if let (Some(tv), Some(ev)) = (t, e)
                 && tv != ev
             {
@@ -4608,7 +4618,7 @@ impl Builder<'_> {
                     incoming.push((else_exit, ev));
                 }
                 let phi = self.emit(Instruction::Phi(incoming));
-                env.insert(name, phi);
+                scope.env.insert(name, phi);
                 self.function.value_symbols.insert(phi, name);
             }
         }
@@ -4619,8 +4629,7 @@ impl Builder<'_> {
         &mut self,
         condition: &Expr,
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let preheader = self.current_block;
         let header = self.new_block();
@@ -4630,13 +4639,12 @@ impl Builder<'_> {
 
         let mutated = collect_assigned_names(body);
         self.current_block = header;
-        let mut loop_env = env.clone();
-        let loop_types = types.clone();
+        let mut loop_scope = scope.fork();
         let mut phis = HashMap::new();
         for id in &mutated {
-            if let Some(initial) = env.get(id).copied() {
+            if let Some(initial) = scope.env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(*id, phi);
+                loop_scope.env.insert(*id, phi);
                 self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
@@ -4655,7 +4663,7 @@ impl Builder<'_> {
         // Short-circuit conditions lower across several blocks; the loop
         // branch must come from wherever condition lowering ended, not
         // necessarily the header itself.
-        let cond_value = self.lower_expr(condition, &loop_env, &loop_types, Some(Type::Bool))?;
+        let cond_value = self.lower_expr(condition, &loop_scope, Some(Type::Bool))?;
         let cond_exit = self.current_block;
         self.set_terminator(
             cond_exit,
@@ -4670,13 +4678,12 @@ impl Builder<'_> {
         }
 
         self.current_block = loop_body;
-        let mut body_env = loop_env.clone();
-        let mut body_types = loop_types.clone();
+        let mut body_scope = loop_scope.fork();
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+            self.lower_stmt(stmt, &mut body_scope)?;
         }
         let loop_ctx = self
             .loop_stack
@@ -4687,7 +4694,7 @@ impl Builder<'_> {
         if body_exit != DEAD_BLOCK {
             self.set_terminator(body_exit, Terminator::Jump(header));
             for (id, phi) in &phis {
-                if let Some(next_value) = body_env.get(id).copied() {
+                if let Some(next_value) = body_scope.env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
@@ -4695,7 +4702,7 @@ impl Builder<'_> {
 
         for (id, _) in phis {
             let exit_phi = exit_phis[&id];
-            env.insert(id, exit_phi);
+            scope.env.insert(id, exit_phi);
             self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
@@ -4706,8 +4713,7 @@ impl Builder<'_> {
         &mut self,
         body: &[Stmt],
         condition: &Expr,
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let preheader = self.current_block;
         let loop_body = self.new_block();
@@ -4717,13 +4723,12 @@ impl Builder<'_> {
 
         let mutated = collect_assigned_names(body);
         self.current_block = loop_body;
-        let mut loop_env = env.clone();
-        let loop_types = types.clone();
+        let mut loop_scope = scope.fork();
         let mut phis = HashMap::new();
         for name in &mutated {
-            if let Some(initial) = env.get(name).copied() {
+            if let Some(initial) = scope.env.get(name).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(*name, phi);
+                loop_scope.env.insert(*name, phi);
                 self.function.value_symbols.insert(phi, *name);
                 phis.insert(*name, phi);
             }
@@ -4739,13 +4744,12 @@ impl Builder<'_> {
             exit_phis: exit_phis.clone(),
         });
 
-        let mut body_env = loop_env.clone();
-        let mut body_types = loop_types.clone();
+        let mut body_scope = loop_scope.fork();
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+            self.lower_stmt(stmt, &mut body_scope)?;
         }
         let loop_ctx = self
             .loop_stack
@@ -4758,7 +4762,7 @@ impl Builder<'_> {
             // exit phis they feed.
             for (name, _) in phis {
                 let exit_phi = exit_phis[&name];
-                env.insert(name, exit_phi);
+                scope.env.insert(name, exit_phi);
                 self.function.value_symbols.insert(exit_phi, name);
             }
             self.current_block = exit;
@@ -4769,7 +4773,7 @@ impl Builder<'_> {
         self.current_block = check;
         // Short-circuit conditions lower across several blocks; branch (and
         // register phi edges) from wherever condition lowering ended.
-        let cond_value = self.lower_expr(condition, &body_env, &body_types, Some(Type::Bool))?;
+        let cond_value = self.lower_expr(condition, &body_scope, Some(Type::Bool))?;
         let cond_exit = self.current_block;
         self.set_terminator(
             cond_exit,
@@ -4781,23 +4785,22 @@ impl Builder<'_> {
         );
 
         for (name, phi) in &phis {
-            if let Some(next_value) = body_env.get(name).copied() {
+            if let Some(next_value) = body_scope.env.get(name).copied() {
                 add_phi_incoming(&mut self.function, loop_body, *phi, (cond_exit, next_value));
             }
         }
 
         for (name, phi) in phis {
-            let val = body_env.get(&name).copied().unwrap_or(phi);
+            let val = body_scope.env.get(&name).copied().unwrap_or(phi);
             let exit_phi = exit_phis[&name];
             add_phi_incoming(&mut self.function, exit, exit_phi, (cond_exit, val));
-            env.insert(name, exit_phi);
+            scope.env.insert(name, exit_phi);
             self.function.value_symbols.insert(exit_phi, name);
         }
         self.current_block = exit;
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn lower_numeric_for(
         &mut self,
         symbol_id: &Option<SymbolId>,
@@ -4805,8 +4808,7 @@ impl Builder<'_> {
         stop: &Expr,
         step: Option<&Expr>,
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let symbol_id = symbol_id.expect("symbol_id should be resolved");
         let mut bounds = vec![start, stop];
@@ -4814,14 +4816,14 @@ impl Builder<'_> {
             bounds.push(step_expr);
         }
         let loop_ty = infer_numeric_for_loop_type(&bounds, |expr, expected| {
-            self.infer_expr_type(expr, types, expected)
+            self.infer_expr_type(expr, &scope.types, expected)
         })?;
         let Type::Numeric(numeric_ty) = loop_ty else {
             return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
         };
         let loop_ty = Type::Numeric(numeric_ty);
-        let start_value = self.lower_expr(start, env, types, Some(loop_ty.clone()))?;
-        let stop_init = self.lower_expr(stop, env, types, Some(loop_ty.clone()))?;
+        let start_value = self.lower_expr(start, scope, Some(loop_ty.clone()))?;
+        let stop_init = self.lower_expr(stop, scope, Some(loop_ty.clone()))?;
         let zero_value = self.emit(Instruction::Number {
             ty: numeric_ty,
             literal: NumberLiteral { raw: "0".into() },
@@ -4832,7 +4834,7 @@ impl Builder<'_> {
                 ty: loop_ty.clone(),
                 span: None,
             };
-            Some(self.lower_expr(&default_step_expr, env, types, Some(loop_ty.clone()))?)
+            Some(self.lower_expr(&default_step_expr, scope, Some(loop_ty.clone()))?)
         } else {
             None
         };
@@ -4845,13 +4847,12 @@ impl Builder<'_> {
 
         let mutated = collect_assigned_names(body);
         self.current_block = header;
-        let mut loop_env = env.clone();
-        let loop_types = types.clone();
+        let mut loop_scope = scope.fork();
         let mut phis = HashMap::new();
         for id in &mutated {
-            if let Some(initial) = env.get(id).copied() {
+            if let Some(initial) = scope.env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(*id, phi);
+                loop_scope.env.insert(*id, phi);
                 self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
@@ -4860,7 +4861,7 @@ impl Builder<'_> {
         let index_phi = self.emit(Instruction::Phi(vec![(preheader, start_value)]));
         self.function.value_symbols.insert(index_phi, symbol_id);
         let step_value = if let Some(step_expr) = step {
-            self.lower_expr(step_expr, &loop_env, &loop_types, Some(loop_ty.clone()))?
+            self.lower_expr(step_expr, &loop_scope, Some(loop_ty.clone()))?
         } else {
             default_step_value.expect("precomputed default step")
         };
@@ -4982,15 +4983,14 @@ impl Builder<'_> {
         );
 
         self.current_block = loop_body;
-        let mut body_env = loop_env.clone();
-        let mut body_types = loop_types.clone();
-        self.bind_loop_var(symbol_id, index_phi, &loop_ty, &mut body_env);
-        body_types.insert(symbol_id, loop_ty.clone());
+        let mut body_scope = loop_scope.fork();
+        self.bind_loop_var(symbol_id, index_phi, &loop_ty, &mut body_scope.env);
+        body_scope.types.insert(symbol_id, loop_ty.clone());
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+            self.lower_stmt(stmt, &mut body_scope)?;
         }
         let loop_ctx = self
             .loop_stack
@@ -5022,7 +5022,7 @@ impl Builder<'_> {
                 (body_exit, next_index),
             );
             for (id, phi) in &phis {
-                if let Some(next_value) = body_env.get(id).copied() {
+                if let Some(next_value) = body_scope.env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
@@ -5030,7 +5030,7 @@ impl Builder<'_> {
 
         for (id, _) in phis {
             let exit_phi = exit_phis[&id];
-            env.insert(id, exit_phi);
+            scope.env.insert(id, exit_phi);
             self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
@@ -5042,19 +5042,18 @@ impl Builder<'_> {
         symbol_ids: &Option<Vec<SymbolId>>,
         iterators: &[Expr],
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let ids = symbol_ids.as_ref().expect("symbol_ids should be resolved");
         if let [iterator] = iterators {
             if let Some((haystack_expr, pattern_expr)) = gmatch_iterator_args(iterator) {
                 return self
-                    .lower_for_in_gmatch(haystack_expr, pattern_expr, ids, body, env, types);
+                    .lower_for_in_gmatch(haystack_expr, pattern_expr, ids, body, scope);
             }
             if let Some(record_expr) = waluau_ast::pairs_call_arg(iterator) {
-                return self.lower_for_in_record_pairs(record_expr, ids, body, env, types);
+                return self.lower_for_in_record_pairs(record_expr, ids, body, scope);
             }
-            let iterator_ty = self.infer_expr_type(iterator, types, None)?;
+            let iterator_ty = self.infer_expr_type(iterator, &scope.types, None)?;
             if let Type::Multi(slots) = &iterator_ty {
                 // One expression producing `(iterator, state[, control])`:
                 // the value form of the generic-for protocol.
@@ -5065,8 +5064,7 @@ impl Builder<'_> {
                     },
                     ids,
                     body,
-                    env,
-                    types,
+                    scope,
                 );
             }
             if let Type::Array(element_ty) = &iterator_ty {
@@ -5076,15 +5074,14 @@ impl Builder<'_> {
                         ids.len()
                     )));
                 }
-                let array_val = self.lower_expr(iterator, env, types, Some(iterator_ty.clone()))?;
+                let array_val = self.lower_expr(iterator, scope, Some(iterator_ty.clone()))?;
                 return self.lower_indexed_for_in(
                     array_val,
                     element_ty,
                     IndexedLoopBindings::Array,
                     ids,
                     body,
-                    env,
-                    types,
+                    scope,
                 );
             }
 
@@ -5101,14 +5098,14 @@ impl Builder<'_> {
                     "for-in iterator function must not require parameters",
                 ));
             }
-            return self.lower_for_in_function(Arc::unwrap_or_clone(return_type), ids, iterator, body, env, types);
+            return self.lower_for_in_function(Arc::unwrap_or_clone(return_type), ids, iterator, body, scope);
         }
         // `for k[, v] in next, t[, nil]`: the builtin `next` iterates a
         // record's fields like `pairs`, or an array with the index bound
         // first (`next` yields keys first, unlike a plain array loop).
         if let Some(target) = waluau_ast::for_in_builtin_next_target(iterators) {
             let target = target?;
-            let target_ty = self.infer_expr_type(target, types, None)?;
+            let target_ty = self.infer_expr_type(target, &scope.types, None)?;
             if let Type::Array(element_ty) = &target_ty {
                 if ids.len() != 1 && ids.len() != 2 {
                     return Err(Diagnostic::new(format!(
@@ -5116,18 +5113,17 @@ impl Builder<'_> {
                         ids.len()
                     )));
                 }
-                let array_val = self.lower_expr(target, env, types, Some(target_ty.clone()))?;
+                let array_val = self.lower_expr(target, scope, Some(target_ty.clone()))?;
                 return self.lower_indexed_for_in(
                     array_val,
                     element_ty,
                     IndexedLoopBindings::ArrayNext,
                     ids,
                     body,
-                    env,
-                    types,
+                    scope,
                 );
             }
-            return self.lower_for_in_record_pairs(target, ids, body, env, types);
+            return self.lower_for_in_record_pairs(target, ids, body, scope);
         }
         self.lower_for_in_protocol(
             ProtocolSource::ExprList {
@@ -5137,8 +5133,7 @@ impl Builder<'_> {
             },
             ids,
             body,
-            env,
-            types,
+            scope,
         )
     }
 
@@ -5152,8 +5147,7 @@ impl Builder<'_> {
         source: ProtocolSource<'_>,
         ids: &[SymbolId],
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let (f_ty, f_val, state_val, control_start) = match source {
             ProtocolSource::ExprList {
@@ -5161,18 +5155,18 @@ impl Builder<'_> {
                 state,
                 control,
             } => {
-                let f_ty = self.infer_expr_type(function, types, None)?;
+                let f_ty = self.infer_expr_type(function, &scope.types, None)?;
                 let Some(protocol) = waluau_ast::iterator_protocol(&f_ty) else {
                     return Err(Diagnostic::new(
                         "for-in iterator list must start with an iterator function (state, control) -> (control?, values...)",
                     ));
                 };
-                let f_val = self.lower_expr(function, env, types, Some(f_ty.clone()))?;
+                let f_val = self.lower_expr(function, scope, Some(f_ty.clone()))?;
                 let state_val =
-                    self.lower_expr(state, env, types, Some(protocol.state_ty.clone()))?;
+                    self.lower_expr(state, scope, Some(protocol.state_ty.clone()))?;
                 let control_start = match control {
                     Some(expr) => {
-                        self.lower_expr(expr, env, types, Some(protocol.control_param_ty.clone()))?
+                        self.lower_expr(expr, scope, Some(protocol.control_param_ty.clone()))?
                     }
                     None => self.emit(Instruction::Null {
                         ty: protocol.control_param_ty.clone(),
@@ -5187,7 +5181,7 @@ impl Builder<'_> {
                         "for-in over a multi-value iterator expects (iterator, state[, control])",
                     ));
                 };
-                let multi_val = self.lower_expr(expr, env, types, None)?;
+                let multi_val = self.lower_expr(expr, scope, None)?;
                 let f_val = self.emit(Instruction::MultiGet {
                     value: multi_val,
                     index: 0,
@@ -5240,13 +5234,12 @@ impl Builder<'_> {
 
         let mutated = collect_assigned_names(body);
         self.current_block = header;
-        let mut loop_env = env.clone();
-        let loop_types = types.clone();
+        let mut loop_scope = scope.fork();
         let mut phis = HashMap::new();
         for id in &mutated {
-            if let Some(initial) = env.get(id).copied() {
+            if let Some(initial) = scope.env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(*id, phi);
+                loop_scope.env.insert(*id, phi);
                 self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
@@ -5289,8 +5282,7 @@ impl Builder<'_> {
         );
 
         self.current_block = loop_body;
-        let mut body_env = loop_env.clone();
-        let mut body_types = loop_types.clone();
+        let mut body_scope = loop_scope.fork();
         // Narrow the control result and compute the next control value before
         // any user statement runs, so continue edges can reuse it.
         let control_val = self.emit(Instruction::Cast {
@@ -5315,8 +5307,8 @@ impl Builder<'_> {
             exit_phis: exit_phis.clone(),
         });
 
-        self.bind_loop_var(ids[0], control_val, &protocol.control_ty, &mut body_env);
-        body_types.insert(ids[0], protocol.control_ty.clone());
+        self.bind_loop_var(ids[0], control_val, &protocol.control_ty, &mut body_scope.env);
+        body_scope.types.insert(ids[0], protocol.control_ty.clone());
         for (index, id) in ids.iter().enumerate().skip(1) {
             let slot_ty = protocol.return_slots[index].clone();
             let value = self.emit(Instruction::MultiGet {
@@ -5324,15 +5316,15 @@ impl Builder<'_> {
                 index,
                 ty: slot_ty.clone(),
             });
-            self.bind_loop_var(*id, value, &slot_ty, &mut body_env);
-            body_types.insert(*id, slot_ty);
+            self.bind_loop_var(*id, value, &slot_ty, &mut body_scope.env);
+            body_scope.types.insert(*id, slot_ty);
         }
 
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+            self.lower_stmt(stmt, &mut body_scope)?;
         }
 
         let loop_ctx = self
@@ -5350,7 +5342,7 @@ impl Builder<'_> {
                 (body_exit, next_control),
             );
             for (id, phi) in &phis {
-                if let Some(next_value) = body_env.get(id).copied() {
+                if let Some(next_value) = body_scope.env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
@@ -5358,7 +5350,7 @@ impl Builder<'_> {
 
         for (id, _) in phis {
             let exit_phi = exit_phis[&id];
-            env.insert(id, exit_phi);
+            scope.env.insert(id, exit_phi);
             self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
@@ -5375,8 +5367,7 @@ impl Builder<'_> {
         record_expr: &Expr,
         ids: &[SymbolId],
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         if ids.is_empty() || ids.len() > 2 {
             return Err(Diagnostic::new(format!(
@@ -5384,13 +5375,13 @@ impl Builder<'_> {
                 ids.len()
             )));
         }
-        let record_ty = self.infer_expr_type(record_expr, types, None)?;
+        let record_ty = self.infer_expr_type(record_expr, &scope.types, None)?;
         let Some(fields) = waluau_ast::pairs_record_fields(&record_ty).cloned() else {
             return Err(Diagnostic::new(
                 "pairs(...) requires an enum type or a record value",
             ));
         };
-        let record_val = self.lower_expr(record_expr, env, types, Some(record_ty.clone()))?;
+        let record_val = self.lower_expr(record_expr, scope, Some(record_ty.clone()))?;
         let name_vals: Vec<ValueId> = fields
             .keys()
             .map(|name| self.emit(Instruction::String(name.clone())))
@@ -5450,15 +5441,13 @@ impl Builder<'_> {
             IndexedLoopBindings::RecordPairs { values },
             ids,
             body,
-            env,
-            types,
+            scope,
         )
     }
 
     /// The shared index-driven loop behind array for-in and record `pairs`:
     /// walks `array_val` from 0 to its length, binding loop variables per
     /// `bindings` for each element.
-    #[allow(clippy::too_many_arguments)]
     fn lower_indexed_for_in(
         &mut self,
         array_val: ValueId,
@@ -5466,8 +5455,7 @@ impl Builder<'_> {
         bindings: IndexedLoopBindings,
         ids: &[SymbolId],
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         {
             let array_len_init = self.emit(Instruction::ArrayLen { array: array_val });
@@ -5488,13 +5476,12 @@ impl Builder<'_> {
 
             let mutated = collect_assigned_names(body);
             self.current_block = header;
-            let mut loop_env = env.clone();
-            let loop_types = types.clone();
+            let mut loop_scope = scope.fork();
             let mut phis = HashMap::new();
             for id in &mutated {
-                if let Some(initial) = env.get(id).copied() {
+                if let Some(initial) = scope.env.get(id).copied() {
                     let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                    loop_env.insert(*id, phi);
+                    loop_scope.env.insert(*id, phi);
                     self.function.value_symbols.insert(phi, *id);
                     phis.insert(*id, phi);
                 }
@@ -5544,8 +5531,7 @@ impl Builder<'_> {
             );
 
             self.current_block = loop_body;
-            let mut body_env = loop_env.clone();
-            let mut body_types = loop_types.clone();
+            let mut body_scope = loop_scope.fork();
 
             let element_val = self.emit(Instruction::ArrayGet {
                 array: array_val,
@@ -5556,18 +5542,18 @@ impl Builder<'_> {
             match &bindings {
                 IndexedLoopBindings::Array => {
                     if ids.len() == 1 {
-                        self.bind_loop_var(ids[0], element_val, element_ty, &mut body_env);
-                        body_types.insert(ids[0], element_ty.clone());
+                        self.bind_loop_var(ids[0], element_val, element_ty, &mut body_scope.env);
+                        body_scope.types.insert(ids[0], element_ty.clone());
                     } else {
                         self.bind_loop_var(
                             ids[0],
                             index_phi,
                             &Type::Numeric(NumericType::I32),
-                            &mut body_env,
+                            &mut body_scope.env,
                         );
-                        body_types.insert(ids[0], Type::Numeric(NumericType::I32));
-                        self.bind_loop_var(ids[1], element_val, element_ty, &mut body_env);
-                        body_types.insert(ids[1], element_ty.clone());
+                        body_scope.types.insert(ids[0], Type::Numeric(NumericType::I32));
+                        self.bind_loop_var(ids[1], element_val, element_ty, &mut body_scope.env);
+                        body_scope.types.insert(ids[1], element_ty.clone());
                     }
                 }
                 IndexedLoopBindings::ArrayNext => {
@@ -5575,25 +5561,25 @@ impl Builder<'_> {
                         ids[0],
                         index_phi,
                         &Type::Numeric(NumericType::I32),
-                        &mut body_env,
+                        &mut body_scope.env,
                     );
-                    body_types.insert(ids[0], Type::Numeric(NumericType::I32));
+                    body_scope.types.insert(ids[0], Type::Numeric(NumericType::I32));
                     if let Some(id) = ids.get(1) {
-                        self.bind_loop_var(*id, element_val, element_ty, &mut body_env);
-                        body_types.insert(*id, element_ty.clone());
+                        self.bind_loop_var(*id, element_val, element_ty, &mut body_scope.env);
+                        body_scope.types.insert(*id, element_ty.clone());
                     }
                 }
                 IndexedLoopBindings::RecordPairs { values } => {
-                    self.bind_loop_var(ids[0], element_val, element_ty, &mut body_env);
-                    body_types.insert(ids[0], element_ty.clone());
+                    self.bind_loop_var(ids[0], element_val, element_ty, &mut body_scope.env);
+                    body_scope.types.insert(ids[0], element_ty.clone());
                     if let Some((values_array, value_ty)) = values {
                         let value_val = self.emit(Instruction::ArrayGet {
                             array: *values_array,
                             index: index_phi,
                             element_ty: value_ty.clone(),
                         });
-                        self.bind_loop_var(ids[1], value_val, value_ty, &mut body_env);
-                        body_types.insert(ids[1], value_ty.clone());
+                        self.bind_loop_var(ids[1], value_val, value_ty, &mut body_scope.env);
+                        body_scope.types.insert(ids[1], value_ty.clone());
                     }
                 }
             }
@@ -5602,7 +5588,7 @@ impl Builder<'_> {
                 if self.current_block == DEAD_BLOCK {
                     break;
                 }
-                self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+                self.lower_stmt(stmt, &mut body_scope)?;
             }
 
             let loop_ctx = self
@@ -5640,7 +5626,7 @@ impl Builder<'_> {
                     (body_exit, next_index),
                 );
                 for (name, phi) in &phis {
-                    if let Some(next_value) = body_env.get(name).copied() {
+                    if let Some(next_value) = body_scope.env.get(name).copied() {
                         add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                     }
                 }
@@ -5648,7 +5634,7 @@ impl Builder<'_> {
 
             for (name, _) in phis {
                 let exit_phi = exit_phis[&name];
-                env.insert(name, exit_phi);
+                scope.env.insert(name, exit_phi);
                 self.function.value_symbols.insert(exit_phi, name);
             }
             self.current_block = exit;
@@ -5664,8 +5650,7 @@ impl Builder<'_> {
         ids: &[SymbolId],
         iterator: &Expr,
         body: &[Stmt],
-        env: &mut HashMap<SymbolId, ValueId>,
-        types: &mut HashMap<SymbolId, Type>,
+        scope: &mut Scope,
     ) -> Result<(), Diagnostic> {
         let return_values = match return_type {
             Type::Multi(values) => values,
@@ -5701,7 +5686,7 @@ impl Builder<'_> {
             _ => None,
         };
         let iterator_value = if direct_iterator_name.is_none() {
-            Some(self.lower_expr(iterator, env, types, None)?)
+            Some(self.lower_expr(iterator, scope, None)?)
         } else {
             None
         };
@@ -5714,13 +5699,12 @@ impl Builder<'_> {
 
         let mutated = collect_assigned_names(body);
         self.current_block = header;
-        let mut loop_env = env.clone();
-        let loop_types = types.clone();
+        let mut loop_scope = scope.fork();
         let mut phis = HashMap::new();
         for id in &mutated {
-            if let Some(initial) = env.get(id).copied() {
+            if let Some(initial) = scope.env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(*id, phi);
+                loop_scope.env.insert(*id, phi);
                 self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
@@ -5769,22 +5753,21 @@ impl Builder<'_> {
         );
 
         self.current_block = loop_body;
-        let mut body_env = loop_env.clone();
-        let mut body_types = loop_types.clone();
+        let mut body_scope = loop_scope.fork();
         for (index, (id, ty)) in ids.iter().zip(loop_value_types.iter()).enumerate() {
             let value = self.emit(Instruction::MultiGet {
                 value: call,
                 index: index + 1,
                 ty: ty.clone(),
             });
-            self.bind_loop_var(*id, value, ty, &mut body_env);
-            body_types.insert(*id, ty.clone());
+            self.bind_loop_var(*id, value, ty, &mut body_scope.env);
+            body_scope.types.insert(*id, ty.clone());
         }
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+            self.lower_stmt(stmt, &mut body_scope)?;
         }
 
         let loop_ctx = self
@@ -5796,7 +5779,7 @@ impl Builder<'_> {
         if body_exit != DEAD_BLOCK {
             self.set_terminator(body_exit, Terminator::Jump(header));
             for (id, phi) in &phis {
-                if let Some(next_value) = body_env.get(id).copied() {
+                if let Some(next_value) = body_scope.env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
@@ -5804,7 +5787,7 @@ impl Builder<'_> {
 
         for (id, _) in phis {
             let exit_phi = exit_phis[&id];
-            env.insert(id, exit_phi);
+            scope.env.insert(id, exit_phi);
             self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
@@ -5814,12 +5797,11 @@ impl Builder<'_> {
     fn lower_expr(
         &mut self,
         expr: &Expr,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let previous = std::mem::replace(&mut self.current_span, expr.span());
-        let result = self.lower_expr_inner(expr, env, types, expected);
+        let result = self.lower_expr_inner(expr, scope, expected);
         self.current_span = previous;
         result
     }
@@ -5827,13 +5809,12 @@ impl Builder<'_> {
     fn lower_expr_inner(
         &mut self,
         expr: &Expr,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let value = match expr {
             Expr::Number(number, _) => {
-                let ty = match self.infer_expr_type(expr, types, expected)? {
+                let ty = match self.infer_expr_type(expr, &scope.types, expected)? {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
                     Type::Unit => {
@@ -5936,7 +5917,7 @@ impl Builder<'_> {
                     Type::Unknown => {
                         // Boxing a bare literal into `unknown`: lower it at its
                         // default numeric type, then box the result into anyref.
-                        let ty = match self.infer_expr_type(expr, types, None)? {
+                        let ty = match self.infer_expr_type(expr, &scope.types, None)? {
                             Type::Numeric(ty) => ty,
                             other => {
                                 return Err(Diagnostic::new(format!(
@@ -5970,7 +5951,7 @@ impl Builder<'_> {
                     Some(Type::Unknown) => Type::Unknown,
                     Some(other) => {
                         return Err(Diagnostic::new(format!(
-                            "nil is only assignable to nullable types, got {other}"
+                            "nil is only assignable to nullable &scope.types, got {other}"
                         )));
                     }
                     None => Type::Extern,
@@ -6002,8 +5983,8 @@ impl Builder<'_> {
             }
             Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
-                if let Some(value) = env.get(&symbol_id).copied() {
-                    let actual = types.get(&symbol_id).cloned().ok_or_else(|| {
+                if let Some(value) = scope.env.get(&symbol_id).copied() {
+                    let actual = scope.types.get(&symbol_id).cloned().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                     })?;
                     if self.cell_names.contains(&symbol_id) {
@@ -6052,7 +6033,7 @@ impl Builder<'_> {
                 args,
                 ..
             } => {
-                let receiver_ty = self.infer_expr_type(receiver, types, None)?;
+                let receiver_ty = self.infer_expr_type(receiver, &scope.types, None)?;
                 if receiver_ty == Type::String {
                     let mut call_args = Vec::with_capacity(args.len() + 1);
                     call_args.push((**receiver).clone());
@@ -6077,8 +6058,7 @@ impl Builder<'_> {
                     if let Some(result) = self.lower_string_builtin_call(
                         builtin,
                         &call_args,
-                        env,
-                        types,
+                        scope,
                         expected.clone(),
                     ) {
                         return result;
@@ -6089,8 +6069,7 @@ impl Builder<'_> {
                     receiver,
                     name,
                     args,
-                    env,
-                    types,
+                    scope,
                     expected.clone(),
                 ) {
                     return result;
@@ -6147,7 +6126,7 @@ impl Builder<'_> {
                     )));
                 }
                 let receiver_value =
-                    self.lower_expr(receiver, env, types, Some(receiver_ty.clone()))?;
+                    self.lower_expr(receiver, scope, Some(receiver_ty.clone()))?;
                 let direct_name = self.direct_record_field_closure_name(receiver_value, name);
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
                 let lowered_receiver = self.coerce_method_receiver(
@@ -6157,7 +6136,7 @@ impl Builder<'_> {
                 )?;
                 lowered_args.push(lowered_receiver);
                 for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
-                    lowered_args.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
+                    lowered_args.push(self.lower_expr(arg, scope, Some(param_ty.clone()))?);
                 }
                 if !call_arity_matches(&param_types, lowered_args.len()) {
                     return Err(Diagnostic::new(format!(
@@ -6213,7 +6192,7 @@ impl Builder<'_> {
                     &receiver_ty,
                     &param_types[0],
                 )?;
-                let actual = self.infer_expr_type(expr, types, None)?;
+                let actual = self.infer_expr_type(expr, &scope.types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
             Expr::Unary {
@@ -6224,7 +6203,7 @@ impl Builder<'_> {
             } => {
                 if let Some(name) = resolved_name {
                     let (value, return_type) =
-                        self.lower_resolved_operator_call(name, &[expr.as_ref()], env, types)?;
+                        self.lower_resolved_operator_call(name, &[expr.as_ref()], scope)?;
                     return self.coerce_value(value, return_type, expected);
                 }
                 match op {
@@ -6232,7 +6211,7 @@ impl Builder<'_> {
                         // Only '-' propagates the result's expected type into
                         // its operand (so numeric literals adopt it); 'not'
                         // and '#' operands have unrelated types.
-                        let actual = self.infer_expr_type(expr, types, expected.clone())?;
+                        let actual = self.infer_expr_type(expr, &scope.types, expected.clone())?;
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
                             Type::StringLiteralUnion(_) => {
@@ -6300,7 +6279,7 @@ impl Builder<'_> {
                             }
                         };
                         let operand =
-                            self.lower_expr(expr, env, types, Some(Type::Numeric(operand_ty)))?;
+                            self.lower_expr(expr, scope, Some(Type::Numeric(operand_ty)))?;
                         let value = if matches!(operand_ty, NumericType::F32 | NumericType::F64) {
                             // Real float negation: `0 - x` would turn -0 into +0.
                             self.emit(Instruction::MathIntrinsic {
@@ -6327,7 +6306,7 @@ impl Builder<'_> {
                         self.coerce_value(value, Type::Numeric(operand_ty), expected)?
                     }
                     UnaryOp::Not => {
-                        let operand = self.lower_expr(expr, env, types, Some(Type::Bool))?;
+                        let operand = self.lower_expr(expr, scope, Some(Type::Bool))?;
                         let false_value = self.emit(Instruction::Bool(false));
                         let value = self.emit(Instruction::Binary {
                             op: BinaryOp::Eq,
@@ -6339,9 +6318,9 @@ impl Builder<'_> {
                         self.coerce_value(value, Type::Bool, expected)?
                     }
                     UnaryOp::Len => {
-                        let actual = self.infer_expr_type(expr, types, None)?;
+                        let actual = self.infer_expr_type(expr, &scope.types, None)?;
                         if actual == Type::String {
-                            let value = self.lower_expr(expr, env, types, Some(Type::String))?;
+                            let value = self.lower_expr(expr, scope, Some(Type::String))?;
                             let len = self.emit_string_host_call(
                                 STRING_LEN_HOST,
                                 vec![value],
@@ -6354,7 +6333,7 @@ impl Builder<'_> {
                             );
                         }
                         if actual == Type::Bytes {
-                            let bytes = self.lower_expr(expr, env, types, Some(Type::Bytes))?;
+                            let bytes = self.lower_expr(expr, scope, Some(Type::Bytes))?;
                             let len = self.emit(Instruction::BytesLen { bytes });
                             return self.coerce_value(
                                 len,
@@ -6363,7 +6342,7 @@ impl Builder<'_> {
                             );
                         }
                         if actual == Type::Unknown {
-                            let value = self.lower_expr(expr, env, types, Some(Type::Unknown))?;
+                            let value = self.lower_expr(expr, scope, Some(Type::Unknown))?;
                             let len = self.emit(Instruction::DynLen { value });
                             return self.coerce_value(
                                 len,
@@ -6372,7 +6351,7 @@ impl Builder<'_> {
                             );
                         }
                         if matches!(actual, Type::TypedArray(_)) {
-                            let buffer = self.lower_expr(expr, env, types, Some(actual))?;
+                            let buffer = self.lower_expr(expr, scope, Some(actual))?;
                             let len = self.emit(Instruction::BufferLen { buffer });
                             return self.coerce_value(
                                 len,
@@ -6385,7 +6364,7 @@ impl Builder<'_> {
                                 "# requires a string, array, or bytes operand",
                             ));
                         }
-                        let array = self.lower_expr(expr, env, types, Some(actual))?;
+                        let array = self.lower_expr(expr, scope, Some(actual))?;
                         let len = self.emit(Instruction::ArrayLen { array });
                         self.coerce_value(len, Type::Numeric(NumericType::I32), expected)?
                     }
@@ -6394,22 +6373,22 @@ impl Builder<'_> {
             Expr::Cast { expr, ty, .. } => {
                 // The unconstrained probe may itself fail (e.g. `{}` needs
                 // context); fall through to lowering against the cast target.
-                let probed = self.infer_expr_type(expr, types, None).ok();
+                let probed = self.infer_expr_type(expr, &scope.types, None).ok();
                 let cast = if let Some(actual) = probed
                     .filter(|actual| require_numeric_cast(actual.clone(), ty.clone()).is_ok())
                 {
-                    let value = self.lower_expr(expr, env, types, None)?;
+                    let value = self.lower_expr(expr, scope, None)?;
                     self.explicit_cast(value, actual, ty.clone())?
                 } else {
-                    let typed_actual = self.infer_expr_type(expr, types, Some(ty.clone()))?;
-                    let value = self.lower_expr(expr, env, types, Some(ty.clone()))?;
+                    let typed_actual = self.infer_expr_type(expr, &scope.types, Some(ty.clone()))?;
+                    let value = self.lower_expr(expr, scope, Some(ty.clone()))?;
                     self.coerce_value(value, typed_actual, Some(ty.clone()))?
                 };
                 self.coerce_value(cast, ty.clone(), expected)?
             }
             Expr::IsVariant { expr, tag, .. } => {
                 // Lower the base expression as-is (the underlying IR value is the canonical record).
-                let base = self.lower_expr(expr, env, types, None)?;
+                let base = self.lower_expr(expr, scope, None)?;
                 let tag_id = self.variant_tag_id(tag)?;
                 let tag_field_ty = Type::Numeric(NumericType::I32);
                 // StructGet "tag" field from the canonical record
@@ -6439,8 +6418,8 @@ impl Builder<'_> {
                 else_expr,
                 ..
             } => {
-                let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
-                let condition = self.lower_expr(condition, env, types, Some(Type::Bool))?;
+                let result_ty = self.infer_expr_type(expr, &scope.types, expected.clone())?;
+                let condition = self.lower_expr(condition, scope, Some(Type::Bool))?;
                 let then_block = self.new_block();
                 let else_block = self.new_block();
                 let merge_block = self.new_block();
@@ -6454,12 +6433,12 @@ impl Builder<'_> {
                 );
 
                 self.current_block = then_block;
-                let then_value = self.lower_expr(then_expr, env, types, Some(result_ty.clone()))?;
+                let then_value = self.lower_expr(then_expr, scope, Some(result_ty.clone()))?;
                 let then_exit = self.current_block;
                 self.set_terminator(then_exit, Terminator::Jump(merge_block));
 
                 self.current_block = else_block;
-                let else_value = self.lower_expr(else_expr, env, types, Some(result_ty.clone()))?;
+                let else_value = self.lower_expr(else_expr, scope, Some(result_ty.clone()))?;
                 let else_exit = self.current_block;
                 self.set_terminator(else_exit, Terminator::Jump(merge_block));
 
@@ -6479,14 +6458,14 @@ impl Builder<'_> {
                 BinaryOp::And | BinaryOp::Or => {
                     if matches!(op, BinaryOp::Or)
                         && let Some((nullable_ty, result_ty)) =
-                            self.nullable_or_types(left, right, types)?
+                            self.nullable_or_types(left, right, &scope.types)?
                     {
                         return self.lower_nullable_or(
-                            left, right, nullable_ty, result_ty, env, types, expected,
+                            left, right, nullable_ty, result_ty, scope, expected,
                         );
                     }
-                    let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
-                    let left_value = self.lower_expr(left, env, types, Some(Type::Bool))?;
+                    let result_ty = self.infer_expr_type(expr, &scope.types, expected.clone())?;
+                    let left_value = self.lower_expr(left, scope, Some(Type::Bool))?;
                     let rhs_block = self.new_block();
                     let short_block = self.new_block();
                     let merge_block = self.new_block();
@@ -6522,7 +6501,7 @@ impl Builder<'_> {
                     self.set_terminator(short_exit, Terminator::Jump(merge_block));
 
                     self.current_block = rhs_block;
-                    let rhs_value = self.lower_expr(right, env, types, Some(Type::Bool))?;
+                    let rhs_value = self.lower_expr(right, scope, Some(Type::Bool))?;
                     let rhs_exit = self.current_block;
                     self.set_terminator(rhs_exit, Terminator::Jump(merge_block));
 
@@ -6538,8 +6517,7 @@ impl Builder<'_> {
                         let (value, return_type) = self.lower_resolved_operator_call(
                             name,
                             &[left.as_ref(), right.as_ref()],
-                            env,
-                            types,
+                            scope,
                         )?;
                         return self.coerce_value(value, return_type, expected);
                     }
@@ -6553,14 +6531,14 @@ impl Builder<'_> {
                             left
                         };
                         let nullable_ty =
-                            first_of_multi(self.infer_expr_type(value_expr, types, None)?);
+                            first_of_multi(self.infer_expr_type(value_expr, &scope.types, None)?);
                         if matches!(&nullable_ty, Type::Multi(parts) if parts.is_empty()) {
                             // An empty multi-value result (e.g. `string.byte`
                             // with a statically empty range) adjusts to nil in
                             // scalar context, so the comparison is statically
                             // decided. The operand is still evaluated for its
                             // side effects.
-                            let _ = self.lower_expr(value_expr, env, types, None)?;
+                            let _ = self.lower_expr(value_expr, scope, None)?;
                             let result =
                                 self.emit(Instruction::Bool(matches!(op, BinaryOp::Eq)));
                             return self.coerce_value(result, Type::Bool, expected);
@@ -6569,7 +6547,7 @@ impl Builder<'_> {
                             Diagnostic::new("nil comparison requires a nullable operand")
                         })?;
                         let lowered =
-                            self.lower_expr(value_expr, env, types, Some(nullable_ty))?;
+                            self.lower_expr(value_expr, scope, Some(nullable_ty))?;
                         let mut is_null = self.emit(Instruction::IsNull {
                             value: lowered,
                             ty: inner_ty,
@@ -6587,25 +6565,25 @@ impl Builder<'_> {
                         return self.coerce_value(is_null, Type::Bool, expected);
                     }
                     let operand_ty =
-                        self.infer_binary_operand_type(left, right, op, types, expected.clone())?;
+                        self.infer_binary_operand_type(left, right, op, &scope.types, expected.clone())?;
                     if matches!(operand_ty, Type::Nullable(_))
                         && matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
                     {
                         return self.lower_nullable_equality(
-                            *op, left, right, operand_ty, env, types, expected,
+                            *op, left, right, operand_ty, scope, expected,
                         );
                     }
                     let (left, right) = if matches!(op, BinaryOp::Concat)
                         && operand_ty == Type::String
                     {
                         (
-                            self.lower_string_concat_operand(left, env, types)?,
-                            self.lower_string_concat_operand(right, env, types)?,
+                            self.lower_string_concat_operand(left, scope)?,
+                            self.lower_string_concat_operand(right, scope)?,
                         )
                     } else {
                         (
-                            self.lower_expr(left, env, types, Some(operand_ty.clone()))?,
-                            self.lower_expr(right, env, types, Some(operand_ty.clone()))?,
+                            self.lower_expr(left, scope, Some(operand_ty.clone()))?,
+                            self.lower_expr(right, scope, Some(operand_ty.clone()))?,
                         )
                     };
                     // Type the instruction by its operands; the coercion into
@@ -6614,7 +6592,7 @@ impl Builder<'_> {
                     // conversion is actually emitted rather than silently
                     // stamped onto the raw arithmetic result.
                     let raw_result_ty =
-                        self.infer_expr_type(expr, types, Some(operand_ty.clone()))?;
+                        self.infer_expr_type(expr, &scope.types, Some(operand_ty.clone()))?;
                     let value = self.emit(Instruction::Binary {
                         op: *op,
                         left,
@@ -6651,7 +6629,7 @@ impl Builder<'_> {
                                 )));
                             }
                             let payload_val =
-                                self.lower_expr(arg, env, types, Some(payload_ty.clone()))?;
+                                self.lower_expr(arg, scope, Some(payload_ty.clone()))?;
                             let boxed_val = self.emit(Instruction::Cast {
                                 value: payload_val,
                                 from: payload_ty,
@@ -6688,82 +6666,79 @@ impl Builder<'_> {
                         &name,
                         type_args,
                         args,
-                        env,
-                        types,
+                        scope,
                         expected.clone(),
                     ) {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_promise_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_promise_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_pcall_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_pcall_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_error_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_error_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_bit32_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_bit32_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) = self.lower_coroutine_builtin_call(
                         &name,
                         args,
-                        env,
-                        types,
+                        scope,
                         expected.clone(),
                     ) {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_select_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_select_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_tostring_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_tostring_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_type_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_type_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_tonumber_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_tonumber_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_table_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_table_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) = self.lower_typed_array_builtin_call(
                         &name,
                         args,
-                        env,
-                        types,
+                        scope,
                         expected.clone(),
                     ) {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_print_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_print_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_string_builtin_call(&name, args, env, types, expected.clone())
+                        self.lower_string_builtin_call(&name, args, scope, expected.clone())
                     {
                         return result;
                     }
@@ -6772,14 +6747,14 @@ impl Builder<'_> {
                     if let Some((param_types, return_type)) =
                         self.cx.host_import_signatures.get(symbol_id).cloned()
                     {
-                        let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
+                        let args = self.lower_fixed_call_args(args, &param_types, scope)?;
                         let value = self.emit(Instruction::HostCall {
                             name: name.clone(),
                             symbol_id: *symbol_id,
                             args,
                             return_type,
                         });
-                        let actual = self.infer_expr_type(expr, types, None)?;
+                        let actual = self.infer_expr_type(expr, &scope.types, None)?;
                         return self.coerce_value(value, actual, expected);
                     }
                     if let Some((param_types, _)) = self.cx.signatures.get(symbol_id).cloned() {
@@ -6787,32 +6762,32 @@ impl Builder<'_> {
                             param_types.last(),
                             Some(Type::Variadic(element)) if element.as_ref() == &Type::Unknown
                         ) {
-                            self.shape_vararg_call_args(&param_types, args, env, types)?
+                            self.shape_vararg_call_args(&param_types, args, scope)?
                         } else {
-                            self.lower_fixed_call_args(args, &param_types, env, types)?
+                            self.lower_fixed_call_args(args, &param_types, scope)?
                         };
                         let value = self.emit(Instruction::Call {
                             name: name.clone(),
                             symbol_id: Some(*symbol_id),
                             args,
                         });
-                        let actual = self.infer_expr_type(expr, types, None)?;
+                        let actual = self.infer_expr_type(expr, &scope.types, None)?;
                         return self.coerce_value(value, actual, expected);
                     }
                 }
                 if let Some((direct_name, param_types, _)) =
                     direct_field_call_name(callee.as_ref(), self.cx.field_call_signatures)
                 {
-                    let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
+                    let args = self.lower_fixed_call_args(args, &param_types, scope)?;
                     let value = self.emit(Instruction::Call {
                         name: direct_name,
                         symbol_id: None,
                         args,
                     });
-                    let actual = self.infer_expr_type(expr, types, None)?;
+                    let actual = self.infer_expr_type(expr, &scope.types, None)?;
                     return self.coerce_value(value, actual, expected);
                 }
-                let callee_ty = self.infer_expr_type(callee, types, None)?;
+                let callee_ty = self.infer_expr_type(callee, &scope.types, None)?;
                 let Type::Function {
                     params: param_types,
                     return_type,
@@ -6823,15 +6798,14 @@ impl Builder<'_> {
                 };
                 let callee_value = self.lower_expr(
                     callee,
-                    env,
-                    types,
+                    scope,
                     Some(Type::Function {
                         params: param_types.clone(),
                         return_type: return_type.clone(),
                         has_self: false,
                     }),
                 )?;
-                let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
+                let args = self.lower_fixed_call_args(args, &param_types, scope)?;
                 let value = self.emit(Instruction::CallValue {
                     callee: callee_value,
                     args: args.clone(),
@@ -6843,11 +6817,10 @@ impl Builder<'_> {
                 if let Some(method_call_origin) = method_call_origin {
                     if !args.is_empty() && !param_types.is_empty() {
                         // Lower the original receiver expression to get the "before coercion" value  
-                        let original_receiver_type = self.infer_expr_type(&method_call_origin.original_receiver, types, None)?;
+                        let original_receiver_type = self.infer_expr_type(&method_call_origin.original_receiver, &scope.types, None)?;
                         let original_receiver_value = self.lower_expr(
                             &method_call_origin.original_receiver,
-                            env,
-                            types,
+                            scope,
                             Some(original_receiver_type.clone()),
                         )?;
                         
@@ -6865,12 +6838,12 @@ impl Builder<'_> {
                     }
                 }
 
-                let actual = self.infer_expr_type(expr, types, None)?;
+                let actual = self.infer_expr_type(expr, &scope.types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
             Expr::Function(function) => {
-                let value = self.lower_function_expr(function, env, types)?;
-                let actual = self.infer_expr_type(expr, types, None)?;
+                let value = self.lower_function_expr(function, scope)?;
+                let actual = self.infer_expr_type(expr, &scope.types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
             Expr::Require(path, _) => {
@@ -6880,7 +6853,7 @@ impl Builder<'_> {
             }
             Expr::ArrayLiteral { elements, .. } => {
                 if let Some(Type::TypedArray(kind)) = expected.as_ref() {
-                    return self.lower_typed_array_literal(*kind, elements, env, types);
+                    return self.lower_typed_array_literal(*kind, elements, scope);
                 }
                 if elements.is_empty() && expected.as_ref().is_some_and(is_record_like) {
                     let expected_ty = expected.expect("checked above");
@@ -6896,7 +6869,7 @@ impl Builder<'_> {
                     });
                     return self.coerce_value(value, struct_ty, Some(expected_ty));
                 }
-                let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
+                let array_ty = self.infer_array_literal_type(elements, &scope.types, expected.clone())?;
                 // When the expected type is not an array (e.g. the literal is
                 // passed as `unknown`), the coercion above swallows the array
                 // shape; recover the literal's own type and let the final
@@ -6911,7 +6884,7 @@ impl Builder<'_> {
                     // the final coerce_value widens it back.
                     inner
                 } else {
-                    self.infer_array_literal_type(elements, types, None)?
+                    self.infer_array_literal_type(elements, &scope.types, None)?
                 };
                 let element_ty = array_ty
                     .element_type()
@@ -6920,7 +6893,7 @@ impl Builder<'_> {
                 // tagged-union constructor, say — simply reports "not a pack".
                 let trailing_ty = elements
                     .last()
-                    .and_then(|element| self.infer_expr_type(element, types, None).ok());
+                    .and_then(|element| self.infer_expr_type(element, &scope.types, None).ok());
                 let trailing_pack = trailing_ty.as_ref().is_some_and(|ty| match ty {
                     Type::Variadic(_) => true,
                     Type::Multi(parts) => {
@@ -6933,18 +6906,17 @@ impl Builder<'_> {
                     // prefix; the resulting table is always a fresh copy.
                     let mut prefix = elements[..elements.len() - 1]
                         .iter()
-                        .map(|element| self.lower_expr(element, env, types, Some(Type::Unknown)))
+                        .map(|element| self.lower_expr(element, scope, Some(Type::Unknown)))
                         .collect::<Result<Vec<_>, _>>()?;
                     let tail_expr = elements.last().expect("pack requires trailing expression");
                     let pack = match trailing_ty.expect("checked above") {
                         Type::Variadic(element_ty) => self.lower_expr(
                             tail_expr,
-                            env,
-                            types,
+                            scope,
                             Some(Type::Variadic(element_ty)),
                         )?,
                         Type::Multi(parts) => {
-                            let tuple = self.lower_expr(tail_expr, env, types, None)?;
+                            let tuple = self.lower_expr(tail_expr, scope, None)?;
                             let last_index = parts.len() - 1;
                             for (index, part) in parts[..last_index].iter().enumerate() {
                                 let value = self.emit(Instruction::MultiGet {
@@ -6982,7 +6954,7 @@ impl Builder<'_> {
                 }
                 let lowered = elements
                     .iter()
-                    .map(|element| self.lower_expr(element, env, types, Some(element_ty.clone())))
+                    .map(|element| self.lower_expr(element, scope, Some(element_ty.clone())))
                     .collect::<Result<Vec<_>, _>>()?;
                 let value = self.emit(Instruction::ArrayNew {
                     element_ty: to_runtime_type(&element_ty),
@@ -6991,24 +6963,24 @@ impl Builder<'_> {
                 self.coerce_value(value, array_ty, expected)?
             }
             Expr::Index { base, index, .. } => {
-                let base_ty = self.infer_expr_type(base, types, None)?;
+                let base_ty = self.infer_expr_type(base, &scope.types, None)?;
                 if base_ty == Type::Bytes {
-                    let bytes = self.lower_expr(base, env, types, Some(Type::Bytes))?;
+                    let bytes = self.lower_expr(base, scope, Some(Type::Bytes))?;
                     let index =
-                        self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
+                        self.lower_expr(index, scope, Some(Type::Numeric(NumericType::I32)))?;
                     let value = self.emit(Instruction::BytesGet { bytes, index });
                     return self.coerce_value(value, Type::Numeric(NumericType::I32), expected);
                 }
                 if base_ty == Type::Unknown {
-                    let base = self.lower_expr(base, env, types, Some(Type::Unknown))?;
-                    let index = self.lower_index_to_i32(index, env, types)?;
+                    let base = self.lower_expr(base, scope, Some(Type::Unknown))?;
+                    let index = self.lower_index_to_i32(index, scope)?;
                     let value = self.emit(Instruction::DynIndex { value: base, index });
                     return self.coerce_value(value, Type::Unknown, expected);
                 }
                 if let Type::TypedArray(kind) = &base_ty {
                     let kind = *kind;
-                    let buffer = self.lower_expr(base, env, types, Some(base_ty.clone()))?;
-                    let index = self.lower_index_to_i32(index, env, types)?;
+                    let buffer = self.lower_expr(base, scope, Some(base_ty.clone()))?;
+                    let index = self.lower_index_to_i32(index, scope)?;
                     let value = self.emit(Instruction::BufferGet {
                         buffer,
                         index,
@@ -7023,8 +6995,8 @@ impl Builder<'_> {
                 let element_ty = base_ty
                     .element_type()
                     .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?;
-                let array = self.lower_expr(base, env, types, Some(base_ty))?;
-                let index = self.lower_index_to_i32(index, env, types)?;
+                let array = self.lower_expr(base, scope, Some(base_ty))?;
+                let index = self.lower_index_to_i32(index, scope)?;
                 let value = self.emit(Instruction::ArrayGet {
                     array,
                     index,
@@ -7036,7 +7008,7 @@ impl Builder<'_> {
                 self.coerce_value(value, element_ty, expected)?
             }
             Expr::TableLiteral { fields, .. } => {
-                let inferred_ty = self.infer_expr_type(expr, types, expected.clone())?;
+                let inferred_ty = self.infer_expr_type(expr, &scope.types, expected.clone())?;
                 let Some(record_fields) = type_record_fields(&inferred_ty) else {
                     return Err(Diagnostic::new(
                         "table literal lowering requires a record type",
@@ -7053,7 +7025,7 @@ impl Builder<'_> {
                         Diagnostic::new(format!("unknown record field '{}'", field.name))
                     })?;
                     let field_value =
-                        self.lower_expr(&field.value, env, types, Some(field_ty.clone()))?;
+                        self.lower_expr(&field.value, scope, Some(field_ty.clone()))?;
                     values_by_name.insert(field.name.clone(), field_value);
                 }
                 let mut lowered_fields = Vec::with_capacity(record_fields.len());
@@ -7091,7 +7063,7 @@ impl Builder<'_> {
                     });
                     return self.coerce_value(value, Type::Numeric(numeric), expected);
                 }
-                let base_ty = self.infer_expr_type(base, types, None)?;
+                let base_ty = self.infer_expr_type(base, &scope.types, None)?;
                 if let Some((getter_name, params, return_type)) =
                     type_property_getter_signature(
                         &base_ty,
@@ -7106,7 +7078,7 @@ impl Builder<'_> {
                         )));
                     }
                     let receiver =
-                        self.lower_expr(base, env, types, Some(params[0].clone()))?;
+                        self.lower_expr(base, scope, Some(params[0].clone()))?;
                     let symbol_id = self.cx.host_import_names.get(&getter_name).copied().ok_or_else(|| {
                         Diagnostic::new(format!(
                             "declared property getter '{getter_name}' is missing a host import symbol"
@@ -7126,14 +7098,14 @@ impl Builder<'_> {
                 if matches!(&base_ty, Type::TaggedVariant(_)) && name == "value" {
                     let payload_ty = base_ty.record_field(name).expect("TaggedVariant has value field");
                     // Lower base without expected (avoids Record<->TaggedVariant coerce mismatch).
-                    let base_val = self.lower_expr(base, env, types, None)?;
+                    let base_val = self.lower_expr(base, scope, None)?;
                     let cast_val = self.unbox_tagged_variant_value(base_val, &payload_ty)?;
                     return self.coerce_value(cast_val, payload_ty, expected);
                 }
                 // `.n` on an array reads its length, so `table.pack(...).n`
                 // behaves like Lua's packed-table count field.
                 if matches!(base_ty, Type::Array(_)) && name == "n" {
-                    let array = self.lower_expr(base, env, types, Some(base_ty))?;
+                    let array = self.lower_expr(base, scope, Some(base_ty))?;
                     let value = self.emit(Instruction::ArrayLen { array });
                     return self.coerce_value(value, Type::Numeric(NumericType::I32), expected);
                 }
@@ -7148,7 +7120,7 @@ impl Builder<'_> {
                         .unwrap_or_else(|| field_ty.clone()),
                     _ => field_ty.clone(),
                 };
-                let base = self.lower_expr(base, env, types, Some(base_ty))?;
+                let base = self.lower_expr(base, scope, Some(base_ty))?;
                 let value = self.emit(Instruction::StructGet {
                     base,
                     field: name.clone(),
@@ -7172,13 +7144,12 @@ impl Builder<'_> {
     fn lower_expr_list(
         &mut self,
         exprs: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<&[Type]>,
     ) -> Result<Vec<ValueId>, Diagnostic> {
         let mut out = Vec::new();
         for expr in exprs {
-            let slot_expected = expected.and_then(|types| types.get(out.len()).cloned());
+            let slot_expected = expected.and_then(|tys| tys.get(out.len()).cloned());
             if let (
                 Expr::Call { callee, args, .. },
                 Some(expected_ty),
@@ -7188,8 +7159,7 @@ impl Builder<'_> {
                     if expected_ty.constructed_tagged_variant(tag).is_some() {
                         out.push(self.lower_expr(
                             expr,
-                            env,
-                            types,
+                            scope,
                             Some(expected_ty.clone()),
                         )?);
                         continue;
@@ -7197,8 +7167,8 @@ impl Builder<'_> {
                 }
             }
             let remaining_expected = expected
-                .and_then(|types| types.get(out.len()..))
-                .filter(|types| !types.is_empty());
+                .and_then(|tys| tys.get(out.len()..))
+                .filter(|tys| !tys.is_empty());
             let ty = if let Expr::Call { callee, .. } = expr {
                 let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
                     name == COROUTINE_RESUME
@@ -7215,29 +7185,28 @@ impl Builder<'_> {
                 if expands_multi {
                     self.infer_expr_type(
                         expr,
-                        types,
-                        remaining_expected.map(|types| Type::Multi(types.to_vec())),
+                        &scope.types,
+                        remaining_expected.map(|tys| Type::Multi(tys.to_vec())),
                     )?
                 } else if is_potential_constructor {
-                    self.infer_expr_type(expr, types, slot_expected.clone())?
+                    self.infer_expr_type(expr, &scope.types, slot_expected.clone())?
                 } else {
-                    self.infer_expr_type(expr, types, None)?
+                    self.infer_expr_type(expr, &scope.types, None)?
                 }
             } else if matches!(expr, Expr::MethodCall { .. }) {
-                self.infer_expr_type(expr, types, None)?
+                self.infer_expr_type(expr, &scope.types, None)?
             } else {
-                self.infer_expr_type(expr, types, slot_expected.clone())?
+                self.infer_expr_type(expr, &scope.types, slot_expected.clone())?
             };
             match ty {
                 Type::Variadic(element_ty) => {
                     let pack = self.lower_expr(
                         expr,
-                        env,
-                        types,
+                        scope,
                         Some(Type::Variadic(element_ty.clone())),
                     )?;
                     if matches!(
-                        remaining_expected.and_then(|types| types.first()),
+                        remaining_expected.and_then(|tys| tys.first()),
                         Some(Type::Variadic(_))
                     ) || remaining_expected.is_none()
                     {
@@ -7266,8 +7235,7 @@ impl Builder<'_> {
                     // variadic result into a statically sized tuple.
                     let tuple = self.lower_expr(
                         expr,
-                        env,
-                        types,
+                        scope,
                         Some(Type::Multi(multi_types.clone())),
                     )?;
                     for (index, part) in multi_types.into_iter().enumerate() {
@@ -7278,10 +7246,10 @@ impl Builder<'_> {
                                 ty: Type::Variadic(element_ty.clone()),
                             });
                             let remaining = expected
-                                .and_then(|types| types.get(out.len()..))
-                                .filter(|types| !types.is_empty());
+                                .and_then(|tys| tys.get(out.len()..))
+                                .filter(|tys| !tys.is_empty());
                             if matches!(
-                                remaining.and_then(|types| types.first()),
+                                remaining.and_then(|tys| tys.first()),
                                 Some(Type::Variadic(_))
                             ) || remaining.is_none()
                             {
@@ -7304,7 +7272,7 @@ impl Builder<'_> {
                             continue;
                         }
                         let coerced = if let Some(exp) =
-                            expected.and_then(|types| types.get(out.len()))
+                            expected.and_then(|tys| tys.get(out.len()))
                         {
                             coerce_type(part, Some(exp.clone()))?
                             } else {
@@ -7319,13 +7287,13 @@ impl Builder<'_> {
                     }
                 }
                 scalar => {
-                    let coerced = if let Some(exp) = expected.and_then(|types| types.get(out.len()))
+                    let coerced = if let Some(exp) = expected.and_then(|tys| tys.get(out.len()))
                     {
                         coerce_type(scalar, Some(exp.clone()))?
                     } else {
                         scalar
                     };
-                    let value = self.lower_expr(expr, env, types, Some(coerced))?;
+                    let value = self.lower_expr(expr, scope, Some(coerced))?;
                     out.push(value);
                 }
             }
@@ -7336,15 +7304,14 @@ impl Builder<'_> {
     fn lower_function_expr(
         &mut self,
         function: &waluau_ast::FunctionExpr,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
         let return_ty = Self::function_expr_return_type(function)?;
-        let captures = collect_captures(function, env, types, self.cx.signatures);
+        let captures = collect_captures(function, &scope.env, &scope.types, self.cx.signatures);
         let capture_values = captures
             .iter()
             .map(|(symbol_id, _)| {
-                env.get(symbol_id).copied().ok_or_else(|| {
+                scope.env.get(symbol_id).copied().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local symbol ID {:?} during IR lowering", symbol_id))
                 })
             })
@@ -7533,11 +7500,15 @@ impl Builder<'_> {
                 },
             );
         }
+        let mut nested_scope = Scope {
+            env: nested_env,
+            types: nested_types,
+        };
         for stmt in &function.body {
             if nested.current_block == DEAD_BLOCK {
                 break;
             }
-            nested.lower_stmt(stmt, &mut nested_env, &mut nested_types)?;
+            nested.lower_stmt(stmt, &mut nested_scope)?;
         }
         if nested.current_block != DEAD_BLOCK && nested.function.return_type == Type::Unit {
             let value = nested.emit(Instruction::Unit);
@@ -8652,8 +8623,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         let i32_ty = Type::Numeric(NumericType::I32);
@@ -8670,7 +8640,7 @@ impl Builder<'_> {
                     return_type: Arc::new(i32_ty.clone()),
                     has_self: false,
                 };
-                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
+                let coroutine_ty = match self.infer_expr_type(&args[0], &scope.types, None) {
                     Ok(ty) => ty,
                     Err(error) => return Some(Err(error)),
                 };
@@ -8679,7 +8649,7 @@ impl Builder<'_> {
                         "coroutine.create expects a zero-argument i32-returning function",
                     )));
                 }
-                let callee = match self.lower_expr(&args[0], env, types, Some(callee_ty)) {
+                let callee = match self.lower_expr(&args[0], scope, Some(callee_ty)) {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
@@ -8693,7 +8663,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let coroutine = match self.lower_expr(&args[0], env, types, Some(Type::Thread)) {
+                let coroutine = match self.lower_expr(&args[0], scope, Some(Type::Thread)) {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
@@ -8736,7 +8706,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let promise_ty = match self.infer_expr_type(&args[0], types, None) {
+                let promise_ty = match self.infer_expr_type(&args[0], &scope.types, None) {
                     Ok(ty) => ty,
                     Err(error) => return Some(Err(error)),
                 };
@@ -8745,7 +8715,7 @@ impl Builder<'_> {
                         "coroutine.await_promise expects an extern Promise-like value",
                     )));
                 }
-                let promise = match self.lower_expr(&args[0], env, types, Some(promise_ty)) {
+                let promise = match self.lower_expr(&args[0], scope, Some(promise_ty)) {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
@@ -8768,7 +8738,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let coroutine = match self.lower_expr(&args[0], env, types, Some(Type::Thread)) {
+                let coroutine = match self.lower_expr(&args[0], scope, Some(Type::Thread)) {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
@@ -8782,7 +8752,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let yield_value = match self.lower_expr(&args[0], env, types, Some(Type::Unknown))
+                let yield_value = match self.lower_expr(&args[0], scope, Some(Type::Unknown))
                 {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
@@ -8806,17 +8776,16 @@ impl Builder<'_> {
     fn lower_promise_await_value(
         &mut self,
         promise_expr: &Expr,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
-        let promise_ty = self.infer_expr_type(promise_expr, types, None)?;
+        let promise_ty = self.infer_expr_type(promise_expr, &scope.types, None)?;
         if !is_promise_like_extern(&promise_ty) {
             return Err(Diagnostic::new(
                 "promise.await expects a Promise<T> extern value",
             ));
         }
-        let promise = self.lower_expr(promise_expr, env, types, Some(promise_ty))?;
+        let promise = self.lower_expr(promise_expr, scope, Some(promise_ty))?;
         let resume_block = self.new_block();
         self.set_terminator(
             self.current_block,
@@ -8841,8 +8810,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         match name {
@@ -8853,7 +8821,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                Some(self.lower_promise_await_value(&args[0], env, types, expected))
+                Some(self.lower_promise_await_value(&args[0], scope, expected))
             }
             _ => None,
         }
@@ -8863,8 +8831,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != PCALL {
@@ -8873,7 +8840,7 @@ impl Builder<'_> {
         if args.is_empty() {
             return Some(Err(Diagnostic::new("{PCALL} expects at least 1 argument")));
         }
-        let callee_ty = match self.infer_expr_type(&args[0], types, None) {
+        let callee_ty = match self.infer_expr_type(&args[0], &scope.types, None) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
@@ -8894,11 +8861,11 @@ impl Builder<'_> {
                 args.len() - 1
             ))));
         }
-        let callee = match self.lower_expr(&args[0], env, types, Some(callee_ty)) {
+        let callee = match self.lower_expr(&args[0], scope, Some(callee_ty)) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
-        let lowered_args = match self.lower_fixed_call_args(&args[1..], &params, env, types) {
+        let lowered_args = match self.lower_fixed_call_args(&args[1..], &params, scope) {
             Ok(args) => args,
             Err(error) => return Some(Err(error)),
         };
@@ -8919,8 +8886,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != ERROR {
@@ -8932,15 +8898,14 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let message = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+        let message = match self.lower_expr(&args[0], scope, Some(Type::String)) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
         if args.len() == 2 {
             if let Err(error) = self.lower_expr(
                 &args[1],
-                env,
-                types,
+                scope,
                 Some(Type::Numeric(NumericType::I32)),
             ) {
                 return Some(Err(error));
@@ -8958,8 +8923,7 @@ impl Builder<'_> {
         receiver: &Expr,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != "await" {
@@ -8971,7 +8935,7 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        Some(self.lower_promise_await_value(receiver, env, types, expected))
+        Some(self.lower_promise_await_value(receiver, scope, expected))
     }
 
     fn infer_coroutine_builtin_call_type(
@@ -9209,8 +9173,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         let (intrinsic, arity, result_ty) = match name {
@@ -9251,7 +9214,7 @@ impl Builder<'_> {
                 } else {
                     u32_ty.clone()
                 };
-            match self.lower_expr(arg, env, types, Some(expected_arg)) {
+            match self.lower_expr(arg, scope, Some(expected_arg)) {
                 Ok(value) => lowered.push(value),
                 Err(error) => return Some(Err(error)),
             }
@@ -9269,8 +9232,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != TO_STRING {
@@ -9282,7 +9244,7 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+        let arg_ty = match self.infer_expr_type(&args[0], &scope.types, None) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
@@ -9295,7 +9257,7 @@ impl Builder<'_> {
             let value = self.emit(Instruction::String("nil".to_string()));
             return Some(self.coerce_value(value, Type::String, expected));
         }
-        let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+        let lowered = match self.lower_expr(&args[0], scope, Some(arg_ty.clone())) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
@@ -9325,18 +9287,17 @@ impl Builder<'_> {
     fn lower_string_concat_operand(
         &mut self,
         expr: &Expr,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
-        let actual = first_of_multi(self.infer_expr_type(expr, types, None)?);
+        let actual = first_of_multi(self.infer_expr_type(expr, &scope.types, None)?);
         if actual.is_numeric() {
-            let value = self.lower_expr(expr, env, types, Some(actual.clone()))?;
+            let value = self.lower_expr(expr, scope, Some(actual.clone()))?;
             Ok(self.emit(Instruction::ToString {
                 value,
                 from: actual,
             }))
         } else {
-            self.lower_expr(expr, env, types, Some(Type::String))
+            self.lower_expr(expr, scope, Some(Type::String))
         }
     }
 
@@ -9345,13 +9306,12 @@ impl Builder<'_> {
         op: BinaryOp,
         expr: &Expr,
         target_ty: &Type,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
         if op == BinaryOp::Concat && target_ty == &Type::String {
-            self.lower_string_concat_operand(expr, env, types)
+            self.lower_string_concat_operand(expr, scope)
         } else {
-            self.lower_expr(expr, env, types, Some(target_ty.clone()))
+            self.lower_expr(expr, scope, Some(target_ty.clone()))
         }
     }
 
@@ -9359,8 +9319,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if !matches!(name, TYPE | TYPEOF) {
@@ -9372,7 +9331,7 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+        let arg_ty = match self.infer_expr_type(&args[0], &scope.types, None) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
@@ -9380,7 +9339,7 @@ impl Builder<'_> {
         // multi-value result before classifying it (an empty result is `nil`).
         let arg_ty = adjust_to_single_value(arg_ty);
         let value = if arg_ty == Type::Unknown {
-            let lowered = match self.lower_expr(&args[0], env, types, Some(Type::Unknown)) {
+            let lowered = match self.lower_expr(&args[0], scope, Some(Type::Unknown)) {
                 Ok(value) => value,
                 Err(error) => return Some(Err(error)),
             };
@@ -9391,7 +9350,7 @@ impl Builder<'_> {
         } else if matches!(arg_ty, Type::Nullable(_)) {
             // A nullable value's type is only known at runtime ("nil" vs the
             // inner type's name); classify through the dynamic chain.
-            let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+            let lowered = match self.lower_expr(&args[0], scope, Some(arg_ty.clone())) {
                 Ok(value) => value,
                 Err(error) => return Some(Err(error)),
             };
@@ -9417,7 +9376,7 @@ impl Builder<'_> {
             // Lower without an expected type because the value is discarded;
             // this also preserves calls that return an empty multi-value pack,
             // which adjusts to nil for type()/typeof().
-            if let Err(error) = self.lower_expr(&args[0], env, types, None) {
+            if let Err(error) = self.lower_expr(&args[0], scope, None) {
                 return Some(Err(error));
             }
             self.emit(Instruction::String(type_name.to_string()))
@@ -9429,8 +9388,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != TO_NUMBER {
@@ -9442,7 +9400,7 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+        let arg_ty = match self.infer_expr_type(&args[0], &scope.types, None) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
@@ -9458,7 +9416,7 @@ impl Builder<'_> {
         }
         let result_ty = Type::Numeric(NumericType::F64);
         if args.len() == 1 && arg_ty.is_numeric() {
-            let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+            let lowered = match self.lower_expr(&args[0], scope, Some(arg_ty.clone())) {
                 Ok(value) => value,
                 Err(error) => return Some(Err(error)),
             };
@@ -9473,12 +9431,12 @@ impl Builder<'_> {
             };
             return Some(self.coerce_value(value, result_ty, expected));
         }
-        let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+        let lowered = match self.lower_expr(&args[0], scope, Some(arg_ty.clone())) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
         let base = if let Some(base) = args.get(1) {
-            match self.lower_expr(base, env, types, Some(Type::Numeric(NumericType::I32))) {
+            match self.lower_expr(base, scope, Some(Type::Numeric(NumericType::I32))) {
                 Ok(value) => Some(value),
                 Err(error) => return Some(Err(error)),
             }
@@ -9510,8 +9468,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != SELECT {
@@ -9525,7 +9482,7 @@ impl Builder<'_> {
         }
         let count_marker = matches!(&args[0], Expr::String(marker, _) if marker == "#");
         // First, infer the type to validate it's an array
-        let arg_ty = match self.infer_expr_type(&args[1], types, None) {
+        let arg_ty = match self.infer_expr_type(&args[1], &scope.types, None) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
@@ -9538,7 +9495,7 @@ impl Builder<'_> {
 
         let arg_is_pack = matches!(arg_ty, Type::Variadic(_));
         // Now lower the expression with the known array type
-        let array = match self.lower_expr(&args[1], env, types, Some(arg_ty)) {
+        let array = match self.lower_expr(&args[1], scope, Some(arg_ty)) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
@@ -9550,7 +9507,7 @@ impl Builder<'_> {
         // negative n counts from the end (`len + n`). Out-of-range positions
         // trap on the array bounds check where Lua raises "index out of
         // range".
-        let n = match self.lower_expr(&args[0], env, types, Some(Type::Numeric(NumericType::I32)))
+        let n = match self.lower_expr(&args[0], scope, Some(Type::Numeric(NumericType::I32)))
         {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
@@ -9633,8 +9590,7 @@ impl Builder<'_> {
         &mut self,
         param_types: &[Type],
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<Vec<ValueId>, Diagnostic> {
         let fixed_count = param_types.len() - 1;
         if args.len() > 1 {
@@ -9648,7 +9604,7 @@ impl Builder<'_> {
         }
         let trailing_pack_ty = args
             .last()
-            .map(|arg| self.infer_expr_type(arg, types, None))
+            .map(|arg| self.infer_expr_type(arg, &scope.types, None))
             .transpose()?;
         let has_trailing_pack = trailing_pack_ty.as_ref().is_some_and(|ty| match ty {
             Type::Variadic(_) => true,
@@ -9664,19 +9620,18 @@ impl Builder<'_> {
                     .filter(|_| index < fixed_count)
                     .cloned()
                     .unwrap_or(Type::Unknown);
-                let value = self.lower_expr(arg, env, types, Some(target.clone()))?;
+                let value = self.lower_expr(arg, scope, Some(target.clone()))?;
                 known.push((value, target));
             }
 
             let pack = match trailing_pack_ty.expect("checked above") {
                 Type::Variadic(element_ty) => self.lower_expr(
                     tail_expr,
-                    env,
-                    types,
+                    scope,
                     Some(Type::Variadic(element_ty)),
                 )?,
                 Type::Multi(parts) => {
-                    let tuple = self.lower_expr(tail_expr, env, types, None)?;
+                    let tuple = self.lower_expr(tail_expr, scope, None)?;
                     let last_index = parts.len() - 1;
                     for (index, part) in parts[..last_index].iter().enumerate() {
                         let value = self.emit(Instruction::MultiGet {
@@ -9766,7 +9721,7 @@ impl Builder<'_> {
         }
         let mut lowered = Vec::with_capacity(param_types.len());
         for (arg, param_ty) in explicit.iter().zip(param_types.iter().take(fixed_count)) {
-            lowered.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
+            lowered.push(self.lower_expr(arg, scope, Some(param_ty.clone()))?);
         }
         if !trailing_vararg {
             for param_ty in &param_types[lowered.len()..fixed_count] {
@@ -9775,7 +9730,7 @@ impl Builder<'_> {
         }
         let mut extras = Vec::new();
         for arg in explicit.iter().skip(fixed_count) {
-            extras.push(self.lower_expr(arg, env, types, Some(Type::Unknown))?);
+            extras.push(self.lower_expr(arg, scope, Some(Type::Unknown))?);
         }
         if !trailing_vararg {
             let tail = self.emit(Instruction::ArrayNew {
@@ -9831,14 +9786,13 @@ impl Builder<'_> {
     fn lower_index_to_i32(
         &mut self,
         index: &Expr,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
         let i32_ty = Type::Numeric(NumericType::I32);
         if !matches!(index, Expr::Number(..)) {
-            if let Ok(index_ty) = self.infer_expr_type(index, types, None).map(first_of_multi) {
+            if let Ok(index_ty) = self.infer_expr_type(index, &scope.types, None).map(first_of_multi) {
                 if index_ty.is_numeric() && index_ty != i32_ty {
-                    let value = self.lower_expr(index, env, types, Some(index_ty.clone()))?;
+                    let value = self.lower_expr(index, scope, Some(index_ty.clone()))?;
                     return Ok(self.emit(Instruction::Cast {
                         value,
                         from: index_ty,
@@ -9847,7 +9801,7 @@ impl Builder<'_> {
                 }
             }
         }
-        self.lower_expr(index, env, types, Some(i32_ty))
+        self.lower_expr(index, scope, Some(i32_ty))
     }
 
     /// Lower a numeric expression, inserting an explicit-cast-style conversion
@@ -9858,13 +9812,12 @@ impl Builder<'_> {
         &mut self,
         expr: &Expr,
         target: &Type,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
         if !matches!(expr, Expr::Number(..)) {
-            if let Ok(actual) = self.infer_expr_type(expr, types, None).map(first_of_multi) {
+            if let Ok(actual) = self.infer_expr_type(expr, &scope.types, None).map(first_of_multi) {
                 if actual.is_numeric() && &actual != target {
-                    let value = self.lower_expr(expr, env, types, Some(actual.clone()))?;
+                    let value = self.lower_expr(expr, scope, Some(actual.clone()))?;
                     return Ok(self.emit(Instruction::Cast {
                         value,
                         from: actual,
@@ -9873,7 +9826,7 @@ impl Builder<'_> {
                 }
             }
         }
-        self.lower_expr(expr, env, types, Some(target.clone()))
+        self.lower_expr(expr, scope, Some(target.clone()))
     }
 
     /// Lower a typed-array literal. Fully constant literals become a
@@ -9883,8 +9836,7 @@ impl Builder<'_> {
         &mut self,
         kind: TypedArrayKind,
         elements: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
         for element in elements {
             if matches!(element, Expr::Vararg(_)) {
@@ -9899,7 +9851,7 @@ impl Builder<'_> {
         let element_ty = Type::Numeric(kind.element_numeric_type());
         let lowered = elements
             .iter()
-            .map(|element| self.lower_numeric_to(element, &element_ty, env, types))
+            .map(|element| self.lower_numeric_to(element, &element_ty, scope))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(self.emit(Instruction::BufferNew {
             kind,
@@ -9911,8 +9863,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         let kind = typed_array_create_kind(name)?;
@@ -9922,7 +9873,7 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let len = match self.lower_index_to_i32(&args[0], env, types) {
+        let len = match self.lower_index_to_i32(&args[0], scope) {
             Ok(len) => len,
             Err(error) => return Some(Err(error)),
         };
@@ -10059,19 +10010,18 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         match name {
             TABLE_CONCAT => {}
-            TABLE_PACK => return Some(self.lower_table_pack(args, env, types, expected)),
-            TABLE_CREATE => return Some(self.lower_table_create(args, env, types, expected)),
-            TABLE_UNPACK => return Some(self.lower_table_unpack(args, env, types, expected)),
-            TABLE_GETN => return Some(self.lower_table_getn(args, env, types, expected)),
-            TABLE_INSERT => return Some(self.lower_table_insert(args, env, types, expected)),
-            TABLE_REMOVE => return Some(self.lower_table_remove(args, env, types, expected)),
-            TABLE_SORT => return Some(self.lower_table_sort(args, env, types, expected)),
+            TABLE_PACK => return Some(self.lower_table_pack(args, scope, expected)),
+            TABLE_CREATE => return Some(self.lower_table_create(args, scope, expected)),
+            TABLE_UNPACK => return Some(self.lower_table_unpack(args, scope, expected)),
+            TABLE_GETN => return Some(self.lower_table_getn(args, scope, expected)),
+            TABLE_INSERT => return Some(self.lower_table_insert(args, scope, expected)),
+            TABLE_REMOVE => return Some(self.lower_table_remove(args, scope, expected)),
+            TABLE_SORT => return Some(self.lower_table_sort(args, scope, expected)),
             _ => return None,
         }
         if args.is_empty() || args.len() > 2 {
@@ -10082,8 +10032,8 @@ impl Builder<'_> {
         }
         let array_ty = Type::Array(Arc::new(Type::String));
         let list_ty = match self
-            .infer_expr_type(&args[0], types, Some(array_ty.clone()))
-            .or_else(|_| self.infer_expr_type(&args[0], types, None))
+            .infer_expr_type(&args[0], &scope.types, Some(array_ty.clone()))
+            .or_else(|_| self.infer_expr_type(&args[0], &scope.types, None))
         {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
@@ -10093,13 +10043,13 @@ impl Builder<'_> {
                 "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
             ))));
         }
-        let array_value = match self.lower_expr(&args[0], env, types, Some(array_ty)) {
+        let array_value = match self.lower_expr(&args[0], scope, Some(array_ty)) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
         let empty_string = self.emit(Instruction::String(String::new()));
         let separator = if let Some(separator_expr) = args.get(1) {
-            match self.infer_expr_type(separator_expr, types, None) {
+            match self.infer_expr_type(separator_expr, &scope.types, None) {
                 Ok(Type::String) => {}
                 Ok(ty) => {
                     return Some(Err(Diagnostic::new(format!(
@@ -10108,7 +10058,7 @@ impl Builder<'_> {
                 }
                 Err(error) => return Some(Err(error)),
             }
-            match self.lower_expr(separator_expr, env, types, Some(Type::String)) {
+            match self.lower_expr(separator_expr, scope, Some(Type::String)) {
                 Ok(value) => value,
                 Err(error) => return Some(Err(error)),
             }
@@ -10216,8 +10166,7 @@ impl Builder<'_> {
     fn lower_table_getn(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         if args.len() != 1 {
@@ -10226,9 +10175,9 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let element_ty = self.table_array_element_type(TABLE_GETN, args, types)?;
+        let element_ty = self.table_array_element_type(TABLE_GETN, args, &scope.types)?;
         let array_ty = Type::Array(Arc::new(element_ty));
-        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let array = self.lower_expr(&args[0], scope, Some(array_ty))?;
         let len = self.emit(Instruction::ArrayLen { array });
         self.coerce_value(len, Type::Numeric(NumericType::I32), expected)
     }
@@ -10238,8 +10187,7 @@ impl Builder<'_> {
     fn lower_table_pack(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         if args.len() > 1 {
@@ -10260,7 +10208,7 @@ impl Builder<'_> {
         };
         let prefix = explicit
             .iter()
-            .map(|arg| self.lower_expr(arg, env, types, Some(Type::Unknown)))
+            .map(|arg| self.lower_expr(arg, scope, Some(Type::Unknown)))
             .collect::<Result<Vec<_>, _>>()?;
         if !trailing_vararg {
             let value = self.emit(Instruction::ArrayNew {
@@ -10297,8 +10245,7 @@ impl Builder<'_> {
     fn lower_table_create(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         if args.is_empty() || args.len() > 2 {
@@ -10312,16 +10259,16 @@ impl Builder<'_> {
             _ => None,
         };
         let element_ty = match args.get(1) {
-            Some(value) => first_of_multi(self.infer_expr_type(value, types, expected_element)?),
+            Some(value) => first_of_multi(self.infer_expr_type(value, &scope.types, expected_element)?),
             None => expected_element.unwrap_or(Type::Unknown),
         };
-        let count = self.lower_index_to_i32(&args[0], env, types)?;
+        let count = self.lower_index_to_i32(&args[0], scope)?;
         let array = self.emit(Instruction::ArrayNew {
             element_ty: element_ty.clone(),
             elements: Vec::new(),
         });
         if let Some(value_expr) = args.get(1) {
-            let value = self.lower_expr(value_expr, env, types, Some(element_ty.clone()))?;
+            let value = self.lower_expr(value_expr, scope, Some(element_ty.clone()))?;
             let i32_ty = Type::Numeric(NumericType::I32);
             let zero = self.emit_i32_const(0);
             let one = self.emit_i32_const(1);
@@ -10404,8 +10351,7 @@ impl Builder<'_> {
     fn lower_table_unpack(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         if args.is_empty() || args.len() > 3 {
@@ -10414,12 +10360,11 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let element_ty = self.table_array_element_type(TABLE_UNPACK, args, types)?;
+        let element_ty = self.table_array_element_type(TABLE_UNPACK, args, &scope.types)?;
         let indices = table_unpack_static_indices(args, expected.as_ref())?;
         let array = self.lower_expr(
             &args[0],
-            env,
-            types,
+            scope,
             Some(Type::Array(Arc::new(element_ty.clone()))),
         )?;
         // The bound arguments are compile-time literals (checked above), so
@@ -10444,8 +10389,7 @@ impl Builder<'_> {
     fn lower_table_insert(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         if args.len() < 2 || args.len() > 3 {
@@ -10454,18 +10398,18 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let element_ty = self.table_array_element_type(TABLE_INSERT, args, types)?;
+        let element_ty = self.table_array_element_type(TABLE_INSERT, args, &scope.types)?;
         // The value is lowered against the source element type, so a tagged-union
         // constructor still resolves against the variants the element declares;
         // the cells it is stored into are annotated with what they actually hold.
         let stored_ty = to_runtime_type(&element_ty);
         let array_ty = Type::Array(Arc::new(stored_ty.clone()));
-        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let array = self.lower_expr(&args[0], scope, Some(array_ty))?;
         let i32_ty = Type::Numeric(NumericType::I32);
 
         if args.len() == 2 {
             // table.insert(t, v): append at index #t.
-            let value = self.lower_expr(&args[1], env, types, Some(element_ty.clone()))?;
+            let value = self.lower_expr(&args[1], scope, Some(element_ty.clone()))?;
             let len = self.emit(Instruction::ArrayLen { array });
             self.emit(Instruction::ArraySet {
                 array,
@@ -10480,8 +10424,8 @@ impl Builder<'_> {
         // table.insert(t, pos, v): append v to grow by one, then shift
         // t[pos..n-1] one slot to the right and write v at pos (0-based; pos
         // outside 0..=#t traps via the array bounds checks).
-        let pos = self.lower_expr(&args[1], env, types, Some(i32_ty.clone()))?;
-        let value = self.lower_expr(&args[2], env, types, Some(element_ty.clone()))?;
+        let pos = self.lower_expr(&args[1], scope, Some(i32_ty.clone()))?;
+        let value = self.lower_expr(&args[2], scope, Some(element_ty.clone()))?;
         let element_ty = stored_ty;
         let n = self.emit(Instruction::ArrayLen { array });
         self.emit(Instruction::ArraySet {
@@ -10572,8 +10516,7 @@ impl Builder<'_> {
     fn lower_table_remove(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         if args.is_empty() || args.len() > 2 {
@@ -10582,16 +10525,16 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let element_ty = self.table_array_element_type(TABLE_REMOVE, args, types)?;
+        let element_ty = self.table_array_element_type(TABLE_REMOVE, args, &scope.types)?;
         let array_ty = Type::Array(Arc::new(element_ty.clone()));
-        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let array = self.lower_expr(&args[0], scope, Some(array_ty))?;
         let i32_ty = Type::Numeric(NumericType::I32);
 
         let n = self.emit(Instruction::ArrayLen { array });
         let zero = self.emit_i32_const(0);
         let one = self.emit_i32_const(1);
         let pos = if let Some(pos_arg) = args.get(1) {
-            self.lower_expr(pos_arg, env, types, Some(i32_ty.clone()))?
+            self.lower_expr(pos_arg, scope, Some(i32_ty.clone()))?
         } else {
             self.emit(Instruction::Binary {
                 op: BinaryOp::Sub,
@@ -10691,8 +10634,7 @@ impl Builder<'_> {
     fn lower_table_sort(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         if args.is_empty() || args.len() > 2 {
@@ -10701,9 +10643,9 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let element_ty = self.table_array_element_type(TABLE_SORT, args, types)?;
+        let element_ty = self.table_array_element_type(TABLE_SORT, args, &scope.types)?;
         let array_ty = Type::Array(Arc::new(element_ty.clone()));
-        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let array = self.lower_expr(&args[0], scope, Some(array_ty))?;
         let i32_ty = Type::Numeric(NumericType::I32);
 
         let comparator = if let Some(comparator_arg) = args.get(1) {
@@ -10712,7 +10654,7 @@ impl Builder<'_> {
                 return_type: Arc::new(Type::Bool),
                 has_self: false,
             };
-            Some(self.lower_expr(comparator_arg, env, types, Some(comparator_ty))?)
+            Some(self.lower_expr(comparator_arg, scope, Some(comparator_ty))?)
         } else {
             if !element_ty.is_numeric() && element_ty != Type::String {
                 return Err(Diagnostic::new(format!(
@@ -10887,8 +10829,7 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != PRINT {
@@ -10900,7 +10841,7 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+        let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
@@ -11287,8 +11228,7 @@ impl Builder<'_> {
         name: &str,
         type_args: &[Type],
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         match name {
@@ -11304,13 +11244,13 @@ impl Builder<'_> {
                         args.len()
                     )));
                 }
-                let value_ty = self.infer_expr_type(&args[0], types, None)?;
+                let value_ty = self.infer_expr_type(&args[0], &scope.types, None)?;
                 if !json_supported_type(&value_ty) {
                     return Err(Diagnostic::new(format!(
                         "json.pack does not support values of type {value_ty}"
                     )));
                 }
-                let value = self.lower_expr(&args[0], env, types, Some(value_ty.clone()))?;
+                let value = self.lower_expr(&args[0], scope, Some(value_ty.clone()))?;
                 self.emit_json_host_call(JSON_PACK_RESET_HOST, Vec::new(), Type::Unit)?;
                 let root = self.lower_json_pack_value(value, &value_ty)?;
                 let packed = self.emit_json_host_call(
@@ -11339,7 +11279,7 @@ impl Builder<'_> {
                         "json.unpack does not support values of type {target}"
                     )));
                 }
-                let text = self.lower_expr(&args[0], env, types, Some(Type::String))?;
+                let text = self.lower_expr(&args[0], scope, Some(Type::String))?;
                 let schema = self.emit(Instruction::String(json_schema(&target)?));
                 let error = self.emit_json_host_call(
                     JSON_UNPACK_START_HOST,
@@ -11948,14 +11888,13 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         let i32_ty = Type::Numeric(NumericType::I32);
         match name {
             STRING_FIND | STRING_MATCH | STRING_GSUB | STRING_GMATCH => {
-                return Some(self.lower_pattern_builtin(name, args, env, types, expected));
+                return Some(self.lower_pattern_builtin(name, args, scope, expected));
             }
             _ => {}
         }
@@ -11967,7 +11906,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
@@ -11980,16 +11919,16 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
-                let first = match self.lower_expr(&args[1], env, types, Some(i32_ty.clone())) {
+                let first = match self.lower_expr(&args[1], scope, Some(i32_ty.clone())) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
                 let last = match args.get(2) {
-                    Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                    Some(arg) => match self.lower_expr(arg, scope, Some(i32_ty.clone())) {
                         Ok(val) => val,
                         Err(error) => return Some(Err(error)),
                     },
@@ -12008,16 +11947,16 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
-                let count = match self.lower_expr(&args[1], env, types, Some(i32_ty.clone())) {
+                let count = match self.lower_expr(&args[1], scope, Some(i32_ty.clone())) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
                 let separator = match args.get(2) {
-                    Some(arg) => match self.lower_expr(arg, env, types, Some(Type::String)) {
+                    Some(arg) => match self.lower_expr(arg, scope, Some(Type::String)) {
                         Ok(val) => val,
                         Err(error) => return Some(Err(error)),
                     },
@@ -12036,13 +11975,13 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
                 if args.len() == 3 {
                     let expected_count = expected.as_ref().and_then(|ty| match ty {
-                        Type::Multi(types) => Some(types.len()),
+                        Type::Multi(tys) => Some(tys.len()),
                         _ => None,
                     });
                     let indices = if let Some(count) = expected_count {
@@ -12051,15 +11990,14 @@ impl Builder<'_> {
                         // materialize that prefix from the runtime start index.
                         let first = match self.lower_expr(
                             &args[1],
-                            env,
-                            types,
+                            scope,
                             Some(i32_ty.clone()),
                         ) {
                             Ok(first) => first,
                             Err(error) => return Some(Err(error)),
                         };
                         if let Err(error) =
-                            self.lower_expr(&args[2], env, types, Some(i32_ty.clone()))
+                            self.lower_expr(&args[2], scope, Some(i32_ty.clone()))
                         {
                             return Some(Err(error));
                         }
@@ -12100,11 +12038,14 @@ impl Builder<'_> {
                             Err(error) => return Some(Err(error)),
                         }
                     }
-                    let types = vec![i32_ty.clone(); values.len()];
-                    Ok(self.emit(Instruction::PackMulti { values, types }))
+                    let pack_types = vec![i32_ty.clone(); values.len()];
+                    Ok(self.emit(Instruction::PackMulti {
+                        values,
+                        types: pack_types,
+                    }))
                 } else {
                     let index = match args.get(1) {
-                        Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                        Some(arg) => match self.lower_expr(arg, scope, Some(i32_ty.clone())) {
                             Ok(val) => val,
                             Err(error) => return Some(Err(error)),
                         },
@@ -12139,7 +12080,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
@@ -12152,7 +12093,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                let value = match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
@@ -12166,16 +12107,16 @@ impl Builder<'_> {
             STRING_CHAR => {
                 let mut lowered_args = Vec::new();
                 for arg in args {
-                    let arg_ty = match self.infer_expr_type(arg, types, Some(i32_ty.clone())) {
+                    let arg_ty = match self.infer_expr_type(arg, &scope.types, Some(i32_ty.clone())) {
                         Ok(ty) => ty,
-                        Err(_) => match self.infer_expr_type(arg, types, None) {
+                        Err(_) => match self.infer_expr_type(arg, &scope.types, None) {
                             Ok(ty) => ty,
                             Err(error) => return Some(Err(error)),
                         },
                     };
                     match arg_ty {
                         Type::Multi(multi_types) => {
-                            let tuple = match self.lower_expr(arg, env, types, None) {
+                            let tuple = match self.lower_expr(arg, scope, None) {
                                 Ok(value) => value,
                                 Err(error) => return Some(Err(error)),
                             };
@@ -12198,7 +12139,7 @@ impl Builder<'_> {
                                     "{STRING_CHAR} expects i32 character codes, got {ty}"
                                 ))));
                             }
-                            match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                            match self.lower_expr(arg, scope, Some(i32_ty.clone())) {
                                 Ok(value) => lowered_args.push(value),
                                 Err(error) => return Some(Err(error)),
                             }
@@ -12222,18 +12163,18 @@ impl Builder<'_> {
                     ))));
                 }
                 let mut lowered_args = Vec::with_capacity(args.len());
-                match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => lowered_args.push(val),
                     Err(error) => return Some(Err(error)),
                 }
                 for arg in args.iter().skip(1) {
-                    let arg_ty = match self.infer_expr_type(arg, types, None) {
+                    let arg_ty = match self.infer_expr_type(arg, &scope.types, None) {
                         Ok(ty) => ty,
                         Err(error) => return Some(Err(error)),
                     };
                     match arg_ty {
                         Type::Multi(multi_types) => {
-                            let tuple = match self.lower_expr(arg, env, types, None) {
+                            let tuple = match self.lower_expr(arg, scope, None) {
                                 Ok(value) => value,
                                 Err(error) => return Some(Err(error)),
                             };
@@ -12262,7 +12203,7 @@ impl Builder<'_> {
                                 }
                             }
                         }
-                        _ => match self.lower_expr_to_string(arg, env, types) {
+                        _ => match self.lower_expr_to_string(arg, scope) {
                             Ok(val) => lowered_args.push(val),
                             Err(error) => return Some(Err(error)),
                         },
@@ -12284,12 +12225,12 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let source = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                let source = match self.lower_expr(&args[0], scope, Some(Type::String)) {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
                 let separator = match args.get(1) {
-                    Some(arg) => match self.lower_expr(arg, env, types, Some(Type::String)) {
+                    Some(arg) => match self.lower_expr(arg, scope, Some(Type::String)) {
                         Ok(val) => val,
                         Err(error) => return Some(Err(error)),
                     },
@@ -12420,21 +12361,19 @@ impl Builder<'_> {
     /// evaluated once and branched on nil: present means the unboxed left
     /// value, nil means the fallback. Only nil takes the fallback -- this
     /// never looks at truthiness the way Lua's `or` does.
-    #[allow(clippy::too_many_arguments)]
     fn lower_nullable_or(
         &mut self,
         left: &Expr,
         right: &Expr,
         nullable_ty: Type,
         result_ty: Type,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let inner = nullable_ty
             .nullable_inner()
             .expect("caller checked the nullable left operand");
-        let left_value = self.lower_expr(left, env, types, Some(nullable_ty.clone()))?;
+        let left_value = self.lower_expr(left, scope, Some(nullable_ty.clone()))?;
         let is_null = self.emit(Instruction::IsNull {
             value: left_value,
             ty: inner.clone(),
@@ -12469,7 +12408,7 @@ impl Builder<'_> {
         self.set_terminator(present_exit, Terminator::Jump(merge_block));
 
         self.current_block = fallback_block;
-        let fallback_value = self.lower_expr(right, env, types, Some(result_ty.clone()))?;
+        let fallback_value = self.lower_expr(right, scope, Some(result_ty.clone()))?;
         let fallback_exit = self.current_block;
         self.set_terminator(fallback_exit, Terminator::Jump(merge_block));
 
@@ -12487,23 +12426,21 @@ impl Builder<'_> {
     /// two reference-typed nullables). Reference-typed nullables share their
     /// inner wasm representation and use the null-safe host equality; boxed
     /// nullables (`i32?` etc.) branch on nil before unboxing.
-    #[allow(clippy::too_many_arguments)]
     fn lower_nullable_equality(
         &mut self,
         op: BinaryOp,
         left: &Expr,
         right: &Expr,
         nullable_ty: Type,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let inner = nullable_ty
             .nullable_inner()
             .expect("caller checked nullable operand");
         if !nullable_ty.is_boxed_nullable() {
-            let left_value = self.lower_expr(left, env, types, Some(nullable_ty.clone()))?;
-            let right_value = self.lower_expr(right, env, types, Some(nullable_ty))?;
+            let left_value = self.lower_expr(left, scope, Some(nullable_ty.clone()))?;
+            let right_value = self.lower_expr(right, scope, Some(nullable_ty))?;
             let value = self.emit(Instruction::Binary {
                 op,
                 left: left_value,
@@ -12516,7 +12453,7 @@ impl Builder<'_> {
 
         let side_is_nullable = |builder: &Self, side: &Expr| {
             builder
-                .infer_expr_type(side, types, None)
+                .infer_expr_type(side, &scope.types, None)
                 .map(first_of_multi)
                 .map(|ty| matches!(ty, Type::Nullable(_)))
                 .unwrap_or(false)
@@ -12529,9 +12466,7 @@ impl Builder<'_> {
                 left,
                 right,
                 nullable_ty,
-                inner,
-                env,
-                types,
+                scope,
                 expected,
             );
         }
@@ -12545,8 +12480,8 @@ impl Builder<'_> {
         } else {
             nullable_ty.clone()
         };
-        let left_value = self.lower_expr(left, env, types, Some(left_expected))?;
-        let right_value = self.lower_expr(right, env, types, Some(right_expected))?;
+        let left_value = self.lower_expr(left, scope, Some(left_expected))?;
+        let right_value = self.lower_expr(right, scope, Some(right_expected))?;
         let (boxed, plain) = if left_nullable {
             (left_value, right_value)
         } else {
@@ -12603,18 +12538,18 @@ impl Builder<'_> {
     /// and two present values compare by their unboxed contents. Lowered as
     /// nested diamonds so the unboxing casts only run where both sides are
     /// known to be non-nil.
-    #[allow(clippy::too_many_arguments)]
     fn lower_boxed_nullable_pair_equality(
         &mut self,
         op: BinaryOp,
         left: &Expr,
         right: &Expr,
         nullable_ty: Type,
-        inner: Type,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
+        let inner = nullable_ty
+            .nullable_inner()
+            .expect("caller checked nullable operand");
         // i64/u64/f32 have no `unknown` boxing yet (see waluau-agmp), so their
         // nullables cannot be unboxed for the value-vs-value arm.
         if !matches!(
@@ -12627,8 +12562,8 @@ impl Builder<'_> {
         }
         let is_eq = matches!(op, BinaryOp::Eq);
 
-        let left_value = self.lower_expr(left, env, types, Some(nullable_ty.clone()))?;
-        let right_value = self.lower_expr(right, env, types, Some(nullable_ty.clone()))?;
+        let left_value = self.lower_expr(left, scope, Some(nullable_ty.clone()))?;
+        let right_value = self.lower_expr(right, scope, Some(nullable_ty.clone()))?;
         let left_is_null = self.emit(Instruction::IsNull {
             value: left_value,
             ty: inner.clone(),
@@ -12746,14 +12681,13 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         match name {
-            STRING_FIND => self.lower_string_find(args, env, types, expected),
-            STRING_MATCH => self.lower_string_match(args, env, types, expected),
-            STRING_GSUB => self.lower_string_gsub(args, env, types, expected),
+            STRING_FIND => self.lower_string_find(args, scope, expected),
+            STRING_MATCH => self.lower_string_match(args, scope, expected),
+            STRING_GSUB => self.lower_string_gsub(args, scope, expected),
             _ => Err(Diagnostic::new(format!(
                 "{STRING_GMATCH} is only supported as a for-in iterator"
             ))),
@@ -12763,8 +12697,7 @@ impl Builder<'_> {
     fn lower_string_find(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let i32_ty = Type::Numeric(NumericType::I32);
@@ -12774,14 +12707,14 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let haystack = self.lower_expr(&args[0], env, types, Some(Type::String))?;
-        let pattern = self.lower_expr(&args[1], env, types, Some(Type::String))?;
+        let haystack = self.lower_expr(&args[0], scope, Some(Type::String))?;
+        let pattern = self.lower_expr(&args[1], scope, Some(Type::String))?;
         let init = match args.get(2) {
-            Some(arg) => self.lower_expr(arg, env, types, Some(i32_ty.clone()))?,
+            Some(arg) => self.lower_expr(arg, scope, Some(i32_ty.clone()))?,
             None => self.emit_i32_const(1),
         };
         let plain = match args.get(3) {
-            Some(arg) => self.lower_expr(arg, env, types, Some(Type::Bool))?,
+            Some(arg) => self.lower_expr(arg, scope, Some(Type::Bool))?,
             None => self.emit(Instruction::Bool(false)),
         };
         let matched = self.emit_string_host_call(
@@ -12799,8 +12732,7 @@ impl Builder<'_> {
     fn lower_string_match(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let i32_ty = Type::Numeric(NumericType::I32);
@@ -12810,10 +12742,10 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let haystack = self.lower_expr(&args[0], env, types, Some(Type::String))?;
-        let pattern = self.lower_expr(&args[1], env, types, Some(Type::String))?;
+        let haystack = self.lower_expr(&args[0], scope, Some(Type::String))?;
+        let pattern = self.lower_expr(&args[1], scope, Some(Type::String))?;
         let init = match args.get(2) {
-            Some(arg) => self.lower_expr(arg, env, types, Some(i32_ty.clone()))?,
+            Some(arg) => self.lower_expr(arg, scope, Some(i32_ty.clone()))?,
             None => self.emit_i32_const(1),
         };
         let matched =
@@ -12985,8 +12917,7 @@ impl Builder<'_> {
     fn lower_string_gsub(
         &mut self,
         args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let i32_ty = Type::Numeric(NumericType::I32);
@@ -12996,26 +12927,24 @@ impl Builder<'_> {
                 args.len()
             )));
         }
-        let source = self.lower_expr(&args[0], env, types, Some(Type::String))?;
-        let pattern = self.lower_expr(&args[1], env, types, Some(Type::String))?;
+        let source = self.lower_expr(&args[0], scope, Some(Type::String))?;
+        let pattern = self.lower_expr(&args[1], scope, Some(Type::String))?;
         let max_count = match args.get(3) {
-            Some(arg) => self.lower_expr(arg, env, types, Some(i32_ty.clone()))?,
+            Some(arg) => self.lower_expr(arg, scope, Some(i32_ty.clone()))?,
             None => self.emit_i32_const(-1),
         };
 
-        let repl_fn_ty = self.gsub_replacement_function_type(&args[1], &args[2], types)?;
+        let repl_fn_ty = self.gsub_replacement_function_type(&args[1], &args[2], &scope.types)?;
         let (out, count) = if let Some((param_tys, return_ty)) = repl_fn_ty {
             let repl_ty = Type::Function {
                 params: param_tys.clone(),
                 return_type: Arc::new(return_ty.clone()),
                 has_self: false,
             };
-            let repl = self.lower_expr(&args[2], env, types, Some(repl_ty))?;
-            self.lower_gsub_function_loop(
-                source, pattern, max_count, repl, &args[1], param_tys, return_ty,
-            )?
+            let repl = self.lower_expr(&args[2], scope, Some(repl_ty))?;
+            self.lower_gsub_function_loop(source, pattern, max_count, repl, &args[1], (param_tys, return_ty))?
         } else {
-            let repl = self.lower_expr(&args[2], env, types, Some(Type::String))?;
+            let repl = self.lower_expr(&args[2], scope, Some(Type::String))?;
             let out = self.emit_string_host_call(
                 PM_GSUB_HOST,
                 vec![source, pattern, repl, max_count],
@@ -13086,7 +13015,6 @@ impl Builder<'_> {
     /// gsub with a function replacement: the host walks the matches
     /// (pm_gsub_begin/next/finish) while the guest computes each
     /// replacement via an indirect call.
-    #[allow(clippy::too_many_arguments)]
     fn lower_gsub_function_loop(
         &mut self,
         source: ValueId,
@@ -13094,9 +13022,9 @@ impl Builder<'_> {
         max_count: ValueId,
         repl: ValueId,
         pattern_arg: &Expr,
-        param_tys: Vec<Type>,
-        return_ty: Type,
+        signature: (Vec<Type>, Type),
     ) -> Result<(ValueId, ValueId), Diagnostic> {
+        let (param_tys, return_ty) = signature;
         let i32_ty = Type::Numeric(NumericType::I32);
         let handle = self.emit_string_host_call(
             PM_GSUB_BEGIN_HOST,
@@ -13619,10 +13547,9 @@ impl Builder<'_> {
     fn lower_expr_to_string(
         &mut self,
         expr: &Expr,
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
+        scope: &Scope,
     ) -> Result<ValueId, Diagnostic> {
-        let arg_ty = self.infer_expr_type(expr, types, None)?;
+        let arg_ty = self.infer_expr_type(expr, &scope.types, None)?;
         if !(arg_ty.is_numeric()
             || arg_ty == Type::Bool
             || arg_ty == Type::String
@@ -13632,7 +13559,7 @@ impl Builder<'_> {
                 "{STRING_FORMAT} expects primitive format arguments, got {arg_ty}",
             )));
         }
-        let lowered = self.lower_expr(expr, env, types, Some(arg_ty.clone()))?;
+        let lowered = self.lower_expr(expr, scope, Some(arg_ty.clone()))?;
         if arg_ty == Type::String {
             Ok(lowered)
         } else {
