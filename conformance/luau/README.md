@@ -1,55 +1,79 @@
 # Imported Luau conformance tests
 
-This directory vendors the upstream **Luau** conformance test suite so Waluau can
-be measured against the behaviour of the reference language.
+This directory vendors the upstream **Luau** conformance suite so Waluau can
+measure the behavior it shares with the reference language and identify the
+places where its typed browser/Wasm-GC language differs deliberately.
 
 ## Provenance
 
 - **Source:** [`luau-lang/luau`](https://github.com/luau-lang/luau),
   `tests/conformance/*.luau`
 - **Commit:** `86d2a9dcd7cef396b73b1585371723e169e69a41`
-- **License:** MIT — see [`LICENSE`](./LICENSE) (copied verbatim from the
-  upstream `LICENSE.txt`). Copyright © Roblox Corporation and Lua.org, PUC-Rio.
+- **License:** MIT — see [`LICENSE`](./LICENSE), copied verbatim from the
+  upstream `LICENSE.txt`. Copyright © Roblox Corporation and Lua.org, PUC-Rio.
 
-Each test is the upstream `tests/conformance/<name>.luau` file copied **verbatim**,
-with two mechanical changes:
+Most test bodies are upstream text with only a `.walu` extension and a
+provenance header. Large upstream files may be split into numbered chunks so an
+independent passing section is not hidden behind an unrelated failure. A split
+header records its source interval and any upstream helper setup repeated to
+make the chunk runnable. A few explicitly named `*.patched.walu` companions
+adapt useful coverage to Waluau; their edits are marked in the file and do not
+replace the verbatim chunks.
 
-1. The file extension is changed from `.luau` to `.walu` so the conformance
-   runner (which globs `**/*.walu`) discovers it. The contents are otherwise
-   unmodified.
-2. A short header comment is prepended recording where the file came from and
-   marking it `-- conformance: pending` (see below).
+Do not silently edit an imported assertion. Preserve source order, keep every
+removed interval represented by another chunk, and repeat only setup needed for
+standalone execution.
 
-## Why every file is `pending`
+## Enabled and pending chunks
 
-These are full, untyped, dynamically-typed Lua/Luau programs that lean on the
-complete reference runtime: globals such as `print`, `select`, `tostring`,
-`pcall`/`error`, the `string`/`table`/`math`/`coroutine`/`buffer` libraries,
-metatables, varargs, and so on. Waluau today compiles a small, statically-typed
-subset of Luau to WebAssembly, so **none of these files compile yet** — every one
-currently fails (most at the parser, a few via deeper recursion limits).
+A chunk without `-- conformance: pending` must compile and pass in the browser.
+A pending chunk is expected to fail today; if it starts passing, the runner
+fails so the marker cannot become stale.
 
-The runner's [`pending`](../README.md#test-kinds) directive is exactly the tool
-for this situation: a pending test is one that *should* pass eventually but does
-not yet, and the runner only verifies that it currently fails (it does not care
-how). When Waluau grows enough of the language for one of these files to compile
-and instantiate cleanly, that file's `pending` test will go red — that is the
-signal to remove the `-- conformance: pending` directive from its header (and, if
-needed, adapt the test to Waluau's harness).
+Pending does **not** always mean “planned feature.” Some chunks expose a bounded
+language or library gap, while others test deliberate differences such as the
+typed coroutine API, runtime source compilation, native/JIT machinery, or
+sparse Lua tables. [`DEVIATIONS.md`](./DEVIATIONS.md) records those broad
+categories, their semantic impact, the exact affected chunk sets, and related
+beads.
 
-So this directory doubles as a backlog: the set of still-pending files is a
-running measure of how much of the Luau language Waluau does not yet implement.
+Splitting can increase both the total and pending chunk counts: one coarse
+pending program may become several focused pending chunks plus newly enabled
+chunks. The meaningful progress metric is enabled upstream coverage, not a
+monotonically decreasing pending count.
+
+Reproduce the current directory-level counts from the repository root with:
+
+```sh
+find conformance/luau -maxdepth 1 -name '*.walu' -print | wc -l
+rg -l '^-- conformance: pending$' conformance/luau -g '*.walu' | wc -l
+```
+
+The difference is the enabled count. The full behavior check is:
+
+```sh
+pnpm --filter conformance-runner test:browser
+```
+
+## Working a pending chunk
+
+1. Read its provenance header and find its category in
+   [`DEVIATIONS.md`](./DEVIATIONS.md).
+2. If it is a fixable gap, use the linked bead or create a discovered-from bead
+   under `waluau-q7qg` before changing code.
+3. If independent assertions already pass, split at upstream assertion
+   boundaries. Do not rewrite them merely to make the compiler accept them.
+4. Remove `-- conformance: pending` only when the complete resulting chunk
+   passes in the browser.
 
 ## Updating the import
 
 To re-sync against a newer upstream revision:
 
-1. Clone `luau-lang/luau` and copy `tests/conformance/*.luau` here, renaming each
-   to `*.walu` and prepending the provenance + `pending` header.
-2. Update the commit SHA above and in each file's header.
-3. Re-run the suite (`pnpm --filter conformance-runner test:browser`). Any file
-   that now passes should have its `pending` directive removed.
-
-Do not hand-edit the bodies of these files: keeping them byte-for-byte identical
-to upstream (modulo the header) is what makes them a meaningful conformance
-reference.
+1. Import the new upstream sources and license, preserving the distinction
+   between verbatim chunks and explicitly adapted companions.
+2. Update the commit SHA above and in every imported header.
+3. Reapply existing provenance-preserving splits against the new source ranges.
+4. Recompute the inventory in [`DEVIATIONS.md`](./DEVIATIONS.md), then run the
+   browser suite. Any pending chunk that now passes must be enabled or split so
+   its passing coverage is visible.
