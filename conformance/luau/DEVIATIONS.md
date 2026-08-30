@@ -28,12 +28,15 @@ for n in $(seq 1 25); do
 done
 ```
 
-After the exact `math.noise` split in `waluau-q7qg.11.2`, the directory has
-**1,085 chunks**: **377 enabled** and **708 pending**. These numbers are a
-snapshot, not a target.
-PR #642 split eight coarse inputs into 79 chunks; that raised the raw chunk
-count while exposing 42 enabled upstream slices. PRs #646 and #647 subsequently
-added one focused chunk and enabled five more upstream chunks.
+At the buffer-integration pass in `waluau-q7qg.6.6`, the directory has
+**1,090 chunks**: **407 enabled** and **683 pending**. These numbers are an
+exact filesystem snapshot, not a target. The final inventory bead
+`waluau-q7qg.16` will reconcile the global category mappings after all
+contemporaneous conformance PRs have landed.
+
+PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
+splits can likewise change both the total and the enabled/pending counts. The
+meaningful measure remains independently passing upstream coverage.
 
 ## Intentional execution-model inventory
 
@@ -232,6 +235,30 @@ Embedded NUL and all 256 byte values therefore round-trip, while wider Unicode
 input is rejected catchably. Use immutable `bytes` when browser text projection
 is not part of the operation.
 
+### Mutable buffers
+
+Waluau now implements Luau's fixed-size mutable `buffer` value over browser
+Wasm linear memory: zero-based scalar access, binary string projection, bulk
+copy/fill, and bit-field access all have browser conformance coverage. The
+1-GiB allocation and 6-GiBit offset path is part of enabled `buffers.20`; it no
+longer needs a pending resource-stress carve-out in the routine browser suite.
+
+The imported source is represented by **24 current chunks**, of which **22 are
+enabled**: `buffers.{1-20}`, `buffers.8_bulk_bounds`, and
+`buffers.20_small_bitops`. The two remaining pending chunks fail for reasons
+outside the buffer API:
+
+- `buffers.18_untyped_table` passes an unannotated table parameter. Waluau
+  keeps that parameter `unknown`, so `t16[index]` and `#t16` are rejected rather
+  than refined from the call site. This broad unknown-indexing/static-typing
+  gap is tracked by `waluau-2dow`; it does not justify adding sparse or mixed
+  Lua tables.
+- `buffers.21` repeats the buffer assertions from the preceding source ranges
+  under a final `getfenv()` call whose purpose is to force Luau's VM slow-call
+  paths. Waluau resolves environments ahead of time and exposes no mutable
+  `getfenv` execution environment, and this aggregate adds no unique buffer
+  semantics. It therefore remains an intentional VM/environment deviation.
+
 ### Sparse, mixed, and hash tables
 
 Waluau separates contiguous homogeneous arrays from statically shaped records.
@@ -298,7 +325,7 @@ The audits linked bounded implementation work where Waluau intends to converge:
 
 | Gap | Bead | Current impact |
 | --- | --- | --- |
-| Remaining mutable-buffer slow-call/resource coverage | `waluau-q7qg.6.6` | Ordinary-size bit operations pass in `buffers.20_small_bitops`; `buffers.20` retains protected error and 1-GiB resource slices, while intentionally pending VM/environment aggregate `buffers.21` remains out of scope. `buffers.8`, `.9`, and `.11` carry their separately tracked dynamic-f32 and untyped-numeric blockers |
+| Mutable-buffer conformance integration | `waluau-q7qg.6.1`–`waluau-q7qg.6.6` | Complete buffer behavior, including protected error paths and the 1-GiB/6-GiBit case, is enabled across 22 chunks. Only `buffers.18_untyped_table` (broad unknown indexing, `waluau-2dow`) and `buffers.21` (intentional `getfenv`/VM slow-call aggregate) remain pending |
 | Typed math-library completion | `waluau-q7qg.11` | `math.{1,4.helper,9,15,17}`, `math.2.coercion`, `math.11.numeric`, and `math.17.multivalue`; direct scalar and exact-noise ranges are enabled, while the aggregate remains pending for its named dynamic, protected-call, multi-value, and source-loading blockers |
 | Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |

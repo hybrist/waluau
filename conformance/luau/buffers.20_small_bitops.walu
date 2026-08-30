@@ -3,8 +3,8 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- Split from conformance/luau/buffers.20.walu in original source order.
--- This chunk owns the ordinary-size bitops invocations. The protected error
--- assertions and 1-GiB resource invocation remain pending in buffers.20.
+-- This chunk owns the ordinary-size bitops invocations. Enabled buffers.20
+-- owns the protected error assertions and 1-GiB/6-GiBit invocation.
 -- The helper parameters and result carry Waluau annotations because Waluau
 -- deliberately does not refine unannotated parameters from call sites; the
 -- upstream buffer assertions and their order are unchanged.
