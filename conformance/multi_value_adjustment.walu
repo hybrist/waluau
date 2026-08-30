@@ -1,0 +1,40 @@
+-- Lua's multi-value adjustment rule: a multi-value expression expands only
+-- in the last position of an expression list (call arguments, return lists,
+-- multi-value locals); anywhere else it adjusts to its first value.
+function multi(): (i32, i32)
+    return 2, 5
+end
+
+function add(a: i32, b: i32): i32
+    return a + b
+end
+
+-- Final argument expands to fill the remaining parameters.
+assert(add(multi()) == 7)
+
+-- A non-final argument keeps only its first value.
+assert(add(multi(), 100) == 102)
+
+-- The same rule applies to multi-value locals...
+local a, b = multi(), 100
+assert(a == 2 and b == 100)
+
+local p, q, r = 100, multi()
+assert(p == 100 and q == 2 and r == 5)
+
+-- ...and to return lists.
+function pair(): (i32, i32)
+    return multi(), 100
+end
+
+local x, y = pair()
+assert(x == 2 and y == 100)
+
+-- Builtins with statically expanded argument lists follow the same rule.
+function chars(): (i32, i32)
+    return 66, 67
+end
+
+assert(string.format("%d|%s|%d", multi(), "s", 9) == "2|s|9")
+assert(string.char(65, chars(), 68) == "ABD")
+assert(string.char(65, chars()) == "ABC")

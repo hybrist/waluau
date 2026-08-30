@@ -7148,7 +7148,8 @@ impl Builder<'_> {
         expected: Option<&[Type]>,
     ) -> Result<Vec<ValueId>, Diagnostic> {
         let mut out = Vec::new();
-        for expr in exprs {
+        for (expr_index, expr) in exprs.iter().enumerate() {
+            let is_last = expr_index + 1 == exprs.len();
             let slot_expected = expected.and_then(|tys| tys.get(out.len()).cloned());
             if let (
                 Expr::Call { callee, args, .. },
@@ -7238,6 +7239,31 @@ impl Builder<'_> {
                         scope,
                         Some(Type::Multi(multi_types.clone())),
                     )?;
+                    // Lua adjusts a multi-value expression to its first value
+                    // in every position but the last of an expression list;
+                    // only the final expression expands. Packs (a leading
+                    // Variadic) keep the existing forwarding behavior.
+                    if !is_last
+                        && matches!(
+                            multi_types.first(),
+                            Some(first) if !matches!(first, Type::Variadic(_))
+                        )
+                    {
+                        let mut multi_types = multi_types;
+                        let first = multi_types.remove(0);
+                        let coerced = if let Some(exp) = expected.and_then(|tys| tys.get(out.len()))
+                        {
+                            coerce_type(first, Some(exp.clone()))?
+                        } else {
+                            first
+                        };
+                        out.push(self.emit(Instruction::MultiGet {
+                            value: tuple,
+                            index: 0,
+                            ty: coerced,
+                        }));
+                        continue;
+                    }
                     for (index, part) in multi_types.into_iter().enumerate() {
                         if let Type::Variadic(element_ty) = part {
                             let pack = self.emit(Instruction::MultiGet {
@@ -10846,11 +10872,13 @@ impl Builder<'_> {
         if name != PRINT {
             return None;
         }
-        // Luau semantics: stringify every argument, expand multi-value
-        // results in place, and join the pieces with tabs into the single
-        // string the host's `print` import receives.
+        // Luau semantics: stringify every argument and join the pieces with
+        // tabs into the single string the host's `print` import receives. A
+        // multi-value result expands only in the last argument position;
+        // anywhere else Lua's adjustment rule keeps its first value.
         let mut pieces: Vec<ValueId> = Vec::new();
-        for arg in args {
+        for (arg_index, arg) in args.iter().enumerate() {
+            let is_last = arg_index + 1 == args.len();
             let arg_ty = match self.infer_expr_type(arg, &scope.types, None) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
@@ -10860,7 +10888,8 @@ impl Builder<'_> {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
-                for (index, part) in parts.into_iter().enumerate() {
+                let printed = if is_last { parts.len() } else { 1.min(parts.len()) };
+                for (index, part) in parts.into_iter().take(printed).enumerate() {
                     if !tostring_supported_type(&part) {
                         return Some(Err(Diagnostic::new(format!(
                             "{PRINT} cannot convert a {part} value",
@@ -11199,13 +11228,17 @@ impl Builder<'_> {
         let Expr::Call { args, .. } = call else {
             return None;
         };
-        for arg in args {
+        for (arg_index, arg) in args.iter().enumerate() {
+            let is_last = arg_index + 1 == args.len();
             let arg_ty = match self.infer_expr_type(arg, types, None) {
                 Ok(ty) => ty,
                 Err(error) => return Some(Err(error)),
             };
             let parts = match arg_ty {
-                Type::Multi(parts) => parts,
+                // A multi-value result expands only in the last argument
+                // position; anywhere else it adjusts to its first value.
+                Type::Multi(parts) if is_last => parts,
+                Type::Multi(parts) => parts.into_iter().take(1).collect(),
                 ty => vec![ty],
             };
             for part in parts {
@@ -12171,13 +12204,29 @@ impl Builder<'_> {
             }
             STRING_CHAR => {
                 let mut lowered_args = Vec::new();
-                for arg in args {
-                    let arg_ty = match self.infer_expr_type(arg, &scope.types, Some(i32_ty.clone())) {
-                        Ok(ty) => ty,
-                        Err(_) => match self.infer_expr_type(arg, &scope.types, None) {
+                for (arg_index, arg) in args.iter().enumerate() {
+                    let is_last = arg_index + 1 == args.len();
+                    // Calls are inferred without an expectation first so a
+                    // multi-value result stays visible; an i32 expectation
+                    // would collapse it to its first value before the
+                    // adjustment rule below can see it.
+                    let is_call = matches!(arg, Expr::Call { .. } | Expr::MethodCall { .. });
+                    let arg_ty = if is_call {
+                        match self.infer_expr_type(arg, &scope.types, None) {
                             Ok(ty) => ty,
-                            Err(error) => return Some(Err(error)),
-                        },
+                            Err(_) => match self.infer_expr_type(arg, &scope.types, Some(i32_ty.clone())) {
+                                Ok(ty) => ty,
+                                Err(error) => return Some(Err(error)),
+                            },
+                        }
+                    } else {
+                        match self.infer_expr_type(arg, &scope.types, Some(i32_ty.clone())) {
+                            Ok(ty) => ty,
+                            Err(_) => match self.infer_expr_type(arg, &scope.types, None) {
+                                Ok(ty) => ty,
+                                Err(error) => return Some(Err(error)),
+                            },
+                        }
                     };
                     match arg_ty {
                         Type::Multi(multi_types) => {
@@ -12185,7 +12234,14 @@ impl Builder<'_> {
                                 Ok(value) => value,
                                 Err(error) => return Some(Err(error)),
                             };
-                            for (index, part) in multi_types.into_iter().enumerate() {
+                            // Only the last argument expands its multi-value
+                            // result; earlier ones adjust to their first value.
+                            let expanded = if is_last {
+                                multi_types.len()
+                            } else {
+                                1.min(multi_types.len())
+                            };
+                            for (index, part) in multi_types.into_iter().take(expanded).enumerate() {
                                 if part != i32_ty {
                                     return Some(Err(Diagnostic::new(format!(
                                         "{STRING_CHAR} expects i32 character codes, got {part}"
@@ -12232,7 +12288,8 @@ impl Builder<'_> {
                     Ok(val) => lowered_args.push(val),
                     Err(error) => return Some(Err(error)),
                 }
-                for arg in args.iter().skip(1) {
+                for (arg_index, arg) in args.iter().enumerate().skip(1) {
+                    let is_last = arg_index + 1 == args.len();
                     let arg_ty = match self.infer_expr_type(arg, &scope.types, None) {
                         Ok(ty) => ty,
                         Err(error) => return Some(Err(error)),
@@ -12243,7 +12300,14 @@ impl Builder<'_> {
                                 Ok(value) => value,
                                 Err(error) => return Some(Err(error)),
                             };
-                            for (index, part) in multi_types.into_iter().enumerate() {
+                            // Only the last argument expands its multi-value
+                            // result; earlier ones adjust to their first value.
+                            let expanded = if is_last {
+                                multi_types.len()
+                            } else {
+                                1.min(multi_types.len())
+                            };
+                            for (index, part) in multi_types.into_iter().take(expanded).enumerate() {
                                 if !(part.is_numeric()
                                     || part == Type::Bool
                                     || part == Type::String

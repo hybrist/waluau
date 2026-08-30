@@ -1,6 +1,7 @@
 -- `print` accepts any number of tostring-able arguments: values stringify
--- like `tostring` (including `__tostring` dispatch), multi-value results
--- expand in place, and the pieces join with tabs into one console line.
+-- like `tostring` (including `__tostring` dispatch) and the pieces join with
+-- tabs into one console line. Multi-value results follow Lua's adjustment
+-- rule: only the final argument expands; earlier ones keep their first value.
 function multi(): (i32, string)
     return 7, "mid"
 end
