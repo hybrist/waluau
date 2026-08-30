@@ -9,10 +9,5 @@
       "destination": "/storybook/",
       "permanent": true
     }
-  ],
-  "git": {
-    "deploymentEnabled": {
-      "__dolt_remote_info__": false
-    }
-  }
+  ]
 }
