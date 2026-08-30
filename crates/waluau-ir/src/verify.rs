@@ -736,6 +736,21 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::DynNumber { value: operand } => {
+                    let operand_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *operand,
+                    )?;
+                    if operand_ty != Type::Unknown {
+                        return Err(Diagnostic::new(format!(
+                            "dyn.number operand in block {:?} must be unknown, got {}",
+                            block.id, operand_ty
+                        )));
+                    }
+                }
                 Instruction::ArraySlice {
                     array,
                     start,
@@ -1818,6 +1833,7 @@ fn infer_instruction_type(
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::DynLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::DynIndex { .. } => Ok(Type::Unknown),
+        Instruction::DynNumber { .. } => Ok(Type::Numeric(NumericType::F64)),
         Instruction::ArrayPop { .. } => Ok(Type::Unit),
         Instruction::ArraySlice { element_ty, .. } => Ok(Type::Array(Arc::new(element_ty.clone()))),
         Instruction::BytesGet { .. } => Ok(Type::Numeric(NumericType::I32)),

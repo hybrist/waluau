@@ -2408,6 +2408,50 @@ fn pcall_emits_try_table_and_exception_tag() {
 }
 
 #[test]
+fn dynamic_numeric_ops_emit_checked_i31_and_f64_dispatch() {
+    let source = r#"
+        function subtract_one(value): number
+            return value - 1
+        end
+
+        function negate(value): number
+            return -value
+        end
+
+        function run(): number
+            local small: i32 = 3
+            return subtract_one(small) + negate(2.5)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("ref.test (ref i31)"),
+        "should test the i31 number box:\n{wat}"
+    );
+    assert!(
+        wat.contains("ref.i31"),
+        "should create an i31 number box:\n{wat}"
+    );
+    assert!(
+        wat.contains("struct.get 2 0"),
+        "should read the f64 box:\n{wat}"
+    );
+    assert!(
+        wat.contains("throw"),
+        "bad dynamic operands should raise the Lua tag:\n{wat}"
+    );
+}
+
+#[test]
 fn unknown_pcall_emits_canonical_dynamic_closure_wrappers() {
     let source = r#"
         function protect(fn, ...): bool, unknown

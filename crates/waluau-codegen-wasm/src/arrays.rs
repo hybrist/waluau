@@ -730,6 +730,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::CoroutineClose { .. }
         | IrInstruction::ArrayLen { .. }
         | IrInstruction::DynLen { .. }
+        | IrInstruction::DynNumber { .. }
         | IrInstruction::DynIndex { .. }
         | IrInstruction::BytesGet { .. }
         | IrInstruction::BytesLen { .. }

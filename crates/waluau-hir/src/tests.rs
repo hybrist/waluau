@@ -87,6 +87,24 @@ fn type_checks_mutable_buffer_string_and_bulk_api() {
 }
 
 #[test]
+fn type_checks_numeric_operators_on_untyped_parameters() {
+    let source = r#"
+        local function subtract_one(value)
+            return value - 1
+        end
+
+        local function negate(value)
+            return -value
+        end
+
+        local a: number = subtract_one(4)
+        local b: number = negate(2.5)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("dynamic numeric operands should type check");
+}
+
+#[test]
 fn rejects_invalid_bit32_intrinsic_arities() {
     for source in [
         "local x: u32 = bit32.lshift(1)",
@@ -4672,7 +4690,7 @@ fn narrows_pcall_payload_after_diverging_branch() {
 }
 
 #[test]
-fn pcall_narrowing_severed_by_reassignment() {
+fn reassigned_pcall_discriminant_leaves_payload_for_dynamic_numeric_check() {
     let source = r#"
         function entry(): f64
             local ok, value = pcall(function(): f64
@@ -4686,8 +4704,9 @@ fn pcall_narrowing_severed_by_reassignment() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    super::type_check(&program)
-        .expect_err("reassigning the discriminant must sever pcall narrowing");
+    super::type_check(&program).expect(
+        "reassigning the discriminant severs static narrowing, but the unknown payload may still be checked as a number at runtime",
+    );
 }
 
 #[test]

@@ -6680,10 +6680,33 @@ impl Builder<'_> {
                 }
                 match op {
                     UnaryOp::Neg => {
+                        let untyped_actual = first_of_multi(
+                            self.infer_expr_type(expr, &scope.types, None)?,
+                        );
+                        if untyped_actual == Type::Unknown {
+                            let boxed = self.lower_expr(expr, scope, Some(Type::Unknown))?;
+                            let operand = self.emit(Instruction::DynNumber { value: boxed });
+                            let number_ty = Type::Numeric(NumericType::F64);
+                            let value = self.emit(Instruction::MathIntrinsic {
+                                intrinsic: MathIntrinsic::Neg,
+                                args: vec![operand],
+                                operand_ty: number_ty.clone(),
+                                result_ty: number_ty.clone(),
+                            });
+                            return self.coerce_value(value, number_ty, expected);
+                        }
                         // Only '-' propagates the result's expected type into
                         // its operand (so numeric literals adopt it); 'not'
                         // and '#' operands have unrelated types.
-                        let actual = self.infer_expr_type(expr, &scope.types, expected.clone())?;
+                        let operand_expected = match &expected {
+                            Some(Type::Numeric(_)) => expected.clone(),
+                            Some(Type::Nullable(inner)) if inner.is_numeric() => {
+                                Some((**inner).clone())
+                            }
+                            _ => None,
+                        };
+                        let actual =
+                            self.infer_expr_type(expr, &scope.types, operand_expected)?;
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
                             Type::StringLiteralUnion(_) => {
@@ -7047,12 +7070,31 @@ impl Builder<'_> {
                             *op, left, right, operand_ty, scope, expected,
                         );
                     }
+                    let dynamic_numeric = matches!(
+                        op,
+                        BinaryOp::Add
+                            | BinaryOp::Sub
+                            | BinaryOp::Mul
+                            | BinaryOp::Div
+                            | BinaryOp::FloorDiv
+                            | BinaryOp::Mod
+                            | BinaryOp::Pow
+                            | BinaryOp::Less
+                            | BinaryOp::LessEq
+                            | BinaryOp::Greater
+                            | BinaryOp::GreaterEq
+                    );
                     let (left, right) = if matches!(op, BinaryOp::Concat)
                         && operand_ty == Type::String
                     {
                         (
                             self.lower_string_concat_operand(left, scope)?,
                             self.lower_string_concat_operand(right, scope)?,
+                        )
+                    } else if dynamic_numeric {
+                        (
+                            self.lower_checked_numeric_operand(left, &operand_ty, scope)?,
+                            self.lower_checked_numeric_operand(right, &operand_ty, scope)?,
                         )
                     } else {
                         (
@@ -8366,7 +8408,20 @@ impl Builder<'_> {
                         )?;
                         return coerce_type(return_type, expected);
                     }
-                    let actual = self.infer_expr_type(expr, types, expected.clone())?;
+                    let untyped_actual = first_of_multi(
+                        self.infer_expr_type(expr, types, None)?,
+                    );
+                    if untyped_actual == Type::Unknown {
+                        return coerce_type(Type::number(), expected);
+                    }
+                    let operand_expected = match &expected {
+                        Some(Type::Numeric(_)) => expected.clone(),
+                        Some(Type::Nullable(inner)) if inner.is_numeric() => {
+                            Some((**inner).clone())
+                        }
+                        _ => None,
+                    };
+                    let actual = self.infer_expr_type(expr, types, operand_expected)?;
                     match actual {
                         Type::Numeric(_) => coerce_type(actual, expected),
                         Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
@@ -10697,6 +10752,26 @@ impl Builder<'_> {
                     }));
                 }
             }
+        }
+        self.lower_expr(expr, scope, Some(target.clone()))
+    }
+
+    /// Lower one numeric-operator operand. A statically `unknown` source is
+    /// narrowed by `DynNumber`, which accepts both Lua number boxes and raises
+    /// a catchable Lua error for every non-number. Statically typed operands
+    /// retain the existing numeric lowering and coercion path.
+    fn lower_checked_numeric_operand(
+        &mut self,
+        expr: &Expr,
+        target: &Type,
+        scope: &Scope,
+    ) -> Result<ValueId, Diagnostic> {
+        let actual = first_of_multi(self.infer_expr_type(expr, &scope.types, None)?);
+        if actual == Type::Unknown {
+            let boxed = self.lower_expr(expr, scope, Some(Type::Unknown))?;
+            let number = self.emit(Instruction::DynNumber { value: boxed });
+            let number_ty = Type::Numeric(NumericType::F64);
+            return self.coerce_value(number, number_ty, Some(target.clone()));
         }
         self.lower_expr(expr, scope, Some(target.clone()))
     }
@@ -15228,6 +15303,9 @@ fn infer_numeric_for_loop_type(
 
 fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
+        (Type::Unknown, Type::Unknown)
+        | (Type::Unknown, Type::Numeric(_))
+        | (Type::Numeric(_), Type::Unknown) => Ok(Type::number()),
         (Type::Numeric(left), Type::Numeric(right)) => {
             left.common(right).map(Type::Numeric).ok_or_else(|| {
                 inference_diagnostic(

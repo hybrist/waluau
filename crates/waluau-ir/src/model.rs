@@ -320,6 +320,14 @@ pub enum Instruction {
         value: ValueId,
         index: ValueId,
     },
+    /// Narrow an `unknown` Lua value to its numeric value at runtime.
+    ///
+    /// Both canonical number boxes (`i31ref` and `$boxed_f64`) produce f64.
+    /// Any other value raises the Lua error tag instead of trapping, so the
+    /// failure remains observable through `pcall`.
+    DynNumber {
+        value: ValueId,
+    },
     BytesGet {
         bytes: ValueId,
         index: ValueId,
