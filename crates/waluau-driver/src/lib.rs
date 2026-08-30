@@ -2047,6 +2047,31 @@ mod tests {
     }
 
     #[test]
+    fn compiles_math_noise_arity_and_width_overloads() {
+        let source = r#"
+            function noise32(x: f32, y: f32, z: f32): f32
+                return math.noise(x) + math.noise(x, y) + math.noise(x, y, z)
+            end
+
+            function noise64(x: f64, y: f64, z: f64): f64
+                return math.noise(x) + math.noise(x, y) + math.noise(x, y, z)
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("typed math.noise calls should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wat should print");
+        assert_eq!(
+            wat.matches("(import \"waluau\" \"math.noise\" ").count(),
+            6,
+            "expected one math.noise import per arity and width:\n{wat}"
+        );
+        assert!(
+            wat.contains("(param f32 f32 f32) (result f32)")
+                && wat.contains("(param f64 f64 f64) (result f64)"),
+            "expected narrow and wide three-dimensional signatures:\n{wat}"
+        );
+    }
+
+    #[test]
     fn compiles_immediately_invoked_function_expression() {
         // Anonymous functions that omit a return type annotation now have it
         // inferred (and backfilled onto the AST) so they lower to wasm. This is

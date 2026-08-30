@@ -35,6 +35,117 @@ export function luauToString(value) {
   return String(Number(value.toPrecision(14)));
 }
 
+// Exact permutation and gradient tables from Luau's math.noise implementation
+// (VM/src/lmathlib.cpp at the conformance import's pinned commit 86d2a9d).
+// The repeated final hash entry permits the algorithm's `index + 1` reads.
+const LUAU_PERLIN_HASH = new Uint8Array([
+  151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225,
+  140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148,
+  247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32,
+  57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175,
+  74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229,
+  122, 60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244, 102,
+  143, 54, 65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89,
+  18, 169, 200, 196, 135, 130, 116, 188, 159, 86, 164, 100, 109, 198,
+  173, 186, 3, 64, 52, 217, 226, 250, 124, 123, 5, 202, 38, 147, 118,
+  126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189,
+  28, 42, 223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221,
+  153, 101, 155, 167, 43, 172, 9, 129, 22, 39, 253, 19, 98, 108, 110,
+  79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228, 251, 34,
+  242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235,
+  249, 14, 239, 107, 49, 192, 214, 31, 181, 199, 106, 157, 184, 84,
+  204, 176, 115, 121, 50, 45, 127, 4, 150, 254, 138, 236, 205, 93,
+  222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156,
+  180, 151,
+]);
+
+const LUAU_PERLIN_GRAD = [
+  [1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0],
+  [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
+  [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1],
+  [1, 1, 0], [0, -1, 1], [-1, 1, 0], [0, -1, -1],
+];
+
+// Keep every intermediate at f32 precision. Merely narrowing the final result
+// would evaluate a different noise function from Luau's C++ float algorithm.
+const perlinF32 = Math.fround;
+function luauPerlinFade(t) {
+  const t2 = perlinF32(t * t);
+  const t3 = perlinF32(t2 * t);
+  const polynomial = perlinF32(perlinF32(t * perlinF32(perlinF32(t * 6) - 15)) + 10);
+  return perlinF32(t3 * polynomial);
+}
+
+function luauPerlinLerp(t, a, b) {
+  return perlinF32(a + perlinF32(t * perlinF32(b - a)));
+}
+
+function luauPerlinGrad(hash, x, y, z) {
+  const gradient = LUAU_PERLIN_GRAD[hash & 15];
+  const xy = perlinF32(perlinF32(gradient[0] * x) + perlinF32(gradient[1] * y));
+  return perlinF32(xy + perlinF32(gradient[2] * z));
+}
+
+function luauMathNoise(x, y = 0, z = 0) {
+  // Luau numbers are doubles, while Perlin evaluation is float. Luau wraps
+  // the exactly periodic input before narrowing so large finite coordinates
+  // retain their fractional component instead of collapsing to lattice points.
+  const xf32 = perlinF32(x % 256);
+  const yf32 = perlinF32(y % 256);
+  const zf32 = perlinF32(z % 256);
+
+  const xFloor = perlinF32(Math.floor(xf32));
+  const yFloor = perlinF32(Math.floor(yf32));
+  const zFloor = perlinF32(Math.floor(zf32));
+  const xi = Math.floor(xf32) & 255;
+  const yi = Math.floor(yf32) & 255;
+  const zi = Math.floor(zf32) & 255;
+
+  const xFraction = perlinF32(xf32 - xFloor);
+  const yFraction = perlinF32(yf32 - yFloor);
+  const zFraction = perlinF32(zf32 - zFloor);
+  const u = luauPerlinFade(xFraction);
+  const v = luauPerlinFade(yFraction);
+  const w = luauPerlinFade(zFraction);
+
+  const a = (LUAU_PERLIN_HASH[xi] + yi) & 255;
+  const aa = (LUAU_PERLIN_HASH[a] + zi) & 255;
+  const ab = (LUAU_PERLIN_HASH[a + 1] + zi) & 255;
+  const b = (LUAU_PERLIN_HASH[xi + 1] + yi) & 255;
+  const ba = (LUAU_PERLIN_HASH[b] + zi) & 255;
+  const bb = (LUAU_PERLIN_HASH[b + 1] + zi) & 255;
+
+  const xMinusOne = perlinF32(xFraction - 1);
+  const yMinusOne = perlinF32(yFraction - 1);
+  const zMinusOne = perlinF32(zFraction - 1);
+  const lowerA = luauPerlinLerp(
+    u,
+    luauPerlinGrad(LUAU_PERLIN_HASH[aa], xFraction, yFraction, zFraction),
+    luauPerlinGrad(LUAU_PERLIN_HASH[ba], xMinusOne, yFraction, zFraction),
+  );
+  const lowerB = luauPerlinLerp(
+    u,
+    luauPerlinGrad(LUAU_PERLIN_HASH[ab], xFraction, yMinusOne, zFraction),
+    luauPerlinGrad(LUAU_PERLIN_HASH[bb], xMinusOne, yMinusOne, zFraction),
+  );
+  const upperA = luauPerlinLerp(
+    u,
+    luauPerlinGrad(LUAU_PERLIN_HASH[aa + 1], xFraction, yFraction, zMinusOne),
+    luauPerlinGrad(LUAU_PERLIN_HASH[ba + 1], xMinusOne, yFraction, zMinusOne),
+  );
+  const upperB = luauPerlinLerp(
+    u,
+    luauPerlinGrad(LUAU_PERLIN_HASH[ab + 1], xFraction, yMinusOne, zMinusOne),
+    luauPerlinGrad(LUAU_PERLIN_HASH[bb + 1], xMinusOne, yMinusOne, zMinusOne),
+  );
+
+  return luauPerlinLerp(
+    w,
+    luauPerlinLerp(v, lowerA, lowerB),
+    luauPerlinLerp(v, upperA, upperB),
+  );
+}
+
 // Classifies a value that reached the JS host through the dynamic `type()` /
 // `typeof()` chain. Wasm-side classification already handled nil, numbers,
 // booleans, and GC references (functions, tables, threads), so objects seen
@@ -2511,6 +2622,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     'math.isnan': Number.isNaN,
     'math.isinf': (x) => x === Infinity || x === -Infinity,
     'math.isfinite': Number.isFinite,
+    'math.noise': luauMathNoise,
     // Lua-style math.random / math.randomseed. The generator (mulberry32) is
     // host-owned, per-instance state: unseeded runs start from a random
     // seed, and math.randomseed(x) makes the following sequence fully

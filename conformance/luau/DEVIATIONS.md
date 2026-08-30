@@ -28,8 +28,8 @@ for n in $(seq 1 25); do
 done
 ```
 
-After the deterministic typed-math split in `waluau-q7qg.11.1`, the directory
-has **1,084 chunks**: **374 enabled** and **710 pending**. These numbers are a
+After the exact `math.noise` split in `waluau-q7qg.11.2`, the directory has
+**1,085 chunks**: **377 enabled** and **708 pending**. These numbers are a
 snapshot, not a target.
 PR #642 split eight coarse inputs into 79 chunks; that raised the raw chunk
 count while exposing 42 enabled upstream slices. PRs #646 and #647 subsequently
@@ -263,7 +263,7 @@ The audits linked bounded implementation work where Waluau intends to converge:
 | Gap | Bead | Current impact |
 | --- | --- | --- |
 | Mutable Luau buffer namespace | `waluau-q7qg.6` | `buffers.{1-21}`, with later splitting for independent dynamic/native checks |
-| Typed math-library completion | `waluau-q7qg.11` | `math.{1,4.helper,9,15,17}`, `math.2.coercion`, `math.11.numeric`, and `math.17.multivalue`; the direct scalar ranges are enabled, while exact noise remains in child `.11.2` |
+| Typed math-library completion | `waluau-q7qg.11` | `math.{1,4.helper,9,15,17}`, `math.2.coercion`, `math.11.numeric`, and `math.17.multivalue`; direct scalar and exact-noise ranges are enabled, while the aggregate remains pending for its named dynamic, protected-call, multi-value, and source-loading blockers |
 | Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |
 | Builtin functions as values | `waluau-390t` | Higher-order library checks outside native harness families |

@@ -4140,6 +4140,64 @@ fn lowers_plain_and_overloaded_host_import_values_through_adapters() {
 }
 
 #[test]
+fn lowers_math_noise_style_overloads_with_exact_host_arities() {
+    let source = r#"
+        declare function math.noise(x: f32): f32
+        declare function math.noise(x: f64): f64
+        declare function math.noise(x: f32, y: f32): f32
+        declare function math.noise(x: f64, y: f64): f64
+        declare function math.noise(x: f32, y: f32, z: f32): f32
+        declare function math.noise(x: f64, y: f64, z: f64): f64
+
+        function noise1f32(x: f32): f32 return math.noise(x) end
+        function noise1f64(x: f64): f64 return math.noise(x) end
+        function noise2f32(x: f32): f32 return math.noise(x, x) end
+        function noise2f64(x: f64): f64 return math.noise(x, x) end
+        function noise3f32(x: f32): f32 return math.noise(x, x, x) end
+        function noise3f64(x: f64): f64 return math.noise(x, x, x) end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("math.noise IR should verify");
+
+    let imports = module
+        .declared_imports
+        .iter()
+        .filter(|declared| declared.host_name == "math.noise")
+        .collect::<Vec<_>>();
+    assert_eq!(imports.len(), 6);
+
+    let mut calls = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::HostCall {
+                name,
+                args,
+                return_type,
+                ..
+            } if name.starts_with("math.noise$overload") => Some((args.len(), return_type.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    calls.sort_by_key(|(arity, ty)| (*arity, ty.to_string()));
+    assert_eq!(
+        calls,
+        vec![
+            (1, Type::Numeric(NumericType::F32)),
+            (1, Type::Numeric(NumericType::F64)),
+            (2, Type::Numeric(NumericType::F32)),
+            (2, Type::Numeric(NumericType::F64)),
+            (3, Type::Numeric(NumericType::F32)),
+            (3, Type::Numeric(NumericType::F64)),
+        ]
+    );
+}
+
+#[test]
 fn lowers_compiler_builtin_values_through_typed_adapters() {
     let source = r#"
         function entry(): u32

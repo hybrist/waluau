@@ -5,7 +5,8 @@
 -- conformance: pending
 -- Pending for named independent blockers retained in this upstream aggregate:
 -- overloaded host functions as pcall values, untyped noinline/pcall erasure,
--- exact Luau math.noise (waluau-q7qg.11.2), and string-to-number coercion.
+-- and string-to-number coercion. The direct typed math.noise range is split
+-- into the enabled math.17.noise sibling; its noinline calls remain here.
 -- Direct typed ranges are also split into independently runnable sibling chunks.
 --
 -- Split from conformance/luau/math.walu. Helper setup is repeated as needed
