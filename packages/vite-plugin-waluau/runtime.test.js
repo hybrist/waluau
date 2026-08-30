@@ -76,7 +76,7 @@ test('implements Luau scalar math edge semantics', () => {
   const names = [
     'math.min', 'math.max', 'math.modf', 'math.frexp', 'math.ldexp',
     'math.log', 'math.sign', 'math.clamp', 'math.round', 'math.lerp',
-    'math.isnan', 'math.isinf', 'math.isfinite',
+    'math.isnan', 'math.isinf', 'math.isfinite', 'math.noise',
   ];
   const math = buildWaluauImports(null, undefined, {
     requiredImports: names.map(name => ({
@@ -109,4 +109,19 @@ test('implements Luau scalar math edge semantics', () => {
   assert.equal(math['math.isnan'](NaN), true);
   assert.equal(math['math.isinf'](-Infinity), true);
   assert.equal(math['math.isfinite'](123.45), true);
+  // Golden values cross-checked against Luau 86d2a9d with
+  // FFlagFixMathNoisePrecision enabled.
+  assert.equal(math['math.noise'](0.5), 0);
+  assert.equal(math['math.noise'](0.5, 0.5), -0.25);
+  assert.equal(math['math.noise'](0.5, 0.5, -0.5), 0.125);
+  assert.equal(
+    math['math.noise'](455.7204209769105, 340.80410508750134, 121.80087666537628),
+    0.5010709762573242,
+  );
+  assert.equal(math['math.noise'](-1.25, 2.75, -3.5), 0.40050268173217773);
+  assert.equal(math['math.noise'](-1.25 + 256, 2.75 - 512, -3.5 + 768), 0.40050268173217773);
+  assert.equal(math['math.noise'](2 ** 40 + 0.25), 0.146484375);
+  assert.equal(math['math.noise'](-(2 ** 40) - 0.25), -0.3017578125);
+  assert.ok(Number.isNaN(math['math.noise'](NaN)));
+  assert.ok(Number.isNaN(math['math.noise'](Infinity)));
 });

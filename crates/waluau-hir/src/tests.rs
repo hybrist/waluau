@@ -4695,6 +4695,59 @@ fn resolves_declared_import_overloads_by_parameter_type() {
 }
 
 #[test]
+fn resolves_math_noise_style_overloads_by_dimension_and_width() {
+    let source = r#"
+        declare function math.noise(x: f32): f32
+        declare function math.noise(x: f64): f64
+        declare function math.noise(x: f32, y: f32): f32
+        declare function math.noise(x: f64, y: f64): f64
+        declare function math.noise(x: f32, y: f32, z: f32): f32
+        declare function math.noise(x: f64, y: f64, z: f64): f64
+
+        function noise1f32(x: f32): f32 return math.noise(x) end
+        function noise1f64(x: f64): f64 return math.noise(x) end
+        function noise2f32(x: f32): f32 return math.noise(x, x) end
+        function noise2f64(x: f64): f64 return math.noise(x, x) end
+        function noise3f32(x: f32): f32 return math.noise(x, x, x) end
+        function noise3f64(x: f64): f64 return math.noise(x, x, x) end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("noise overloads should resolve");
+
+    let imports = typed
+        .declared_imports
+        .iter()
+        .filter(|declared| declared.host_name == "math.noise")
+        .collect::<Vec<_>>();
+    assert_eq!(imports.len(), 6);
+    for (index, import) in imports.iter().enumerate() {
+        assert_eq!(import.name, format!("math.noise$overload{index}"));
+    }
+
+    for (function_name, overload) in [
+        ("noise1f32", 0),
+        ("noise1f64", 1),
+        ("noise2f32", 2),
+        ("noise2f64", 3),
+        ("noise3f32", 4),
+        ("noise3f64", 5),
+    ] {
+        let function = typed
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == function_name)
+            .expect("function should exist");
+        let Stmt::Return(Expr::Call { callee, .. }) = &function.body[0] else {
+            panic!("expected returned call in {function_name}");
+        };
+        let Expr::Name(name, _, _) = callee.as_ref() else {
+            panic!("expected resolved name in {function_name}");
+        };
+        assert_eq!(name, &format!("math.noise$overload{overload}"));
+    }
+}
+
+#[test]
 fn resolves_declared_method_overloads_by_arity() {
     let source = r#"
         type Ctx = extern

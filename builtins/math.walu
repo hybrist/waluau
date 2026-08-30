@@ -126,6 +126,16 @@ declare function math.isinf(x: f64): bool
 declare function math.isfinite(x: f32): bool
 declare function math.isfinite(x: f64): bool
 
+-- Luau-compatible improved Perlin noise. The implementation evaluates in
+-- f32 internally, as Luau does, and promotes that exact sample for f64 calls.
+-- Omitted dimensions default to zero through these fixed-arity overloads.
+declare function math.noise(x: f32): f32
+declare function math.noise(x: f64): f64
+declare function math.noise(x: f32, y: f32): f32
+declare function math.noise(x: f64, y: f64): f64
+declare function math.noise(x: f32, y: f32, z: f32): f32
+declare function math.noise(x: f64, y: f64, z: f64): f64
+
 -- Pseudo-random numbers, following Lua's math.random family. The host owns
 -- the generator state; math.randomseed makes the sequence deterministic.
 --
