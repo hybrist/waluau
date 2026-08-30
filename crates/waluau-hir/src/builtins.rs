@@ -181,6 +181,14 @@ pub(super) fn infer_buffer_builtin_call(
     let (params, result) = match member {
         "create" => (vec![Type::number()], Type::Buffer),
         "len" => (vec![Type::Buffer], Type::Numeric(NumericType::I32)),
+        "readbits" => (
+            vec![Type::Buffer, Type::number(), Type::number()],
+            Type::Numeric(NumericType::U32),
+        ),
+        "writebits" => (
+            vec![Type::Buffer, Type::number(), Type::number(), Type::number()],
+            Type::Unit,
+        ),
         member if member.starts_with("read") => {
             let kind = buffer_scalar_kind(member.strip_prefix("read")?)?;
             (

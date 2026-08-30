@@ -420,6 +420,7 @@ pub const ERR_MOD_ZERO: &str = "attempt to perform 'n%0'";
 pub const ERR_BUFFER_OOB: &str = "buffer access out of bounds";
 pub const ERR_BUFFER_SIZE: &str = "invalid argument #1 to 'create' (size)";
 pub const ERR_BUFFER_ALLOC: &str = "buffer allocation failed";
+pub const ERR_BUFFER_BIT_COUNT: &str = "bit count is out of range of [0; 32]";
 /// Error payload used when `pcall` catches a foreign (non-Waluau) exception
 /// raised by a host import.
 pub const ERR_FOREIGN_EXCEPTION: &str = "uncaught host exception";
@@ -460,6 +461,9 @@ pub(crate) fn runtime_error_messages(instruction: &IrInstruction) -> &'static [&
         IrInstruction::LuauBufferNew { .. } => &[ERR_BUFFER_SIZE, ERR_BUFFER_ALLOC],
         IrInstruction::LuauBufferGet { .. } | IrInstruction::LuauBufferSet { .. } => {
             &[ERR_BUFFER_OOB]
+        }
+        IrInstruction::LuauBufferReadBits { .. } | IrInstruction::LuauBufferWriteBits { .. } => {
+            &[ERR_BUFFER_OOB, ERR_BUFFER_BIT_COUNT]
         }
         IrInstruction::ProtectedCall { .. } => &[ERR_FOREIGN_EXCEPTION],
         IrInstruction::ProtectedCallUnknown { .. } => &[

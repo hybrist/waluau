@@ -1,34 +1,18 @@
--- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- Adapted from the Luau conformance suite (luau-lang/luau),
 -- tests/conformance/buffers.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- Dynamic pcall and binary literals now work; this chunk remains blocked by
--- readbits/writebits and its separately tracked 1-GiB resource slice
--- (waluau-q7qg.6.4 and waluau-q7qg.6.6).
--- This chunk contains only buffers.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
---
--- Split from conformance/luau/buffers.walu. Common helper setup is repeated
--- as needed so each numbered chunk is independently discoverable by the
--- conformance runner.
+-- Split from conformance/luau/buffers.20.walu in original source order.
+-- This chunk owns the ordinary-size bitops invocations. The protected error
+-- assertions and 1-GiB resource invocation remain pending in buffers.20.
+-- The helper parameters and result carry Waluau annotations because Waluau
+-- deliberately does not refine unannotated parameters from call sites; the
+-- upstream buffer assertions and their order are unchanged.
 
 -- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 print("testing byte buffer library")
 
-function call(fn, ...)
-  local ok, res = pcall(fn, ...)
-  assert(ok)
-  return res
-end
-
-function ecall(fn, ...)
-  local ok, err = pcall(fn, ...)
-  assert(not ok)
-  return err:sub((err:find(": ") or -1) + 2, #err)
-end
-
-local function bitops(size, base)
+local function bitops(size: number, base: number): buffer
   local native_check = is_native_if_supported()
   local b = buffer.create(size)
 
@@ -90,24 +74,12 @@ local function bitops(size, base)
   assert(buffer.readbits(b, base, 0) == 0)
   assert(buffer.readbits(b, size * 8, 0) == 0)
 
-  -- bounds
-  assert(ecall(function() buffer.readbits(b, -1, 0) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.readbits(b, size * 8, 1) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.readbits(b, size * 8 - 1, 2) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.readbits(b, 0, 64) end) == "bit count is out of range of [0; 32]")
-
-  assert(ecall(function() buffer.writebits(b, -1, 0, 1) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.writebits(b, size * 8, 1, 1) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.writebits(b, size * 8 - 1, 2, 1) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.writebits(b, 0, 64, 1) end) == "bit count is out of range of [0; 32]")
-
-
   assert(not native_check or is_native_if_supported())
 
   return b
 end
 
 do
-  -- a very large buffer and bit offsets can now be over 32 bits
-  bitops(1024 * 1024 * 1024, 6 * 1024 * 1024 * 1024)
+  bitops(16, 0)
+  bitops(17, 8)
 end

@@ -1,0 +1,88 @@
+local function read_bits(value: buffer, offset: number, count: number): u32
+    return buffer.readbits(value, offset, count)
+end
+
+local function write_bits(value: buffer, offset: number, count: number, bits: number): unit
+    buffer.writebits(value, offset, count, bits)
+end
+
+local function expect_read_error(
+    value: buffer,
+    offset: number,
+    count: number,
+    message: string
+): unit
+    local ok, result = pcall(read_bits, value, offset, count)
+    assert(not ok)
+    assert(result == message)
+end
+
+local function expect_write_error(
+    value: buffer,
+    offset: number,
+    count: number,
+    bits: number,
+    message: string
+): unit
+    local ok, result = pcall(write_bits, value, offset, count, bits)
+    assert(not ok)
+    assert(result == message)
+end
+
+-- Every supported field width round-trips through an unaligned window. The
+-- 32-bit case crosses five bytes.
+for count = 0::i32, 32::i32 do
+    local value = buffer.create(8)
+    buffer.writebits(value, 3, count, 0xdeadbeef)
+    local expected: u32 = 0
+    if count == 0 then
+        expected = 0
+    elseif count == 32 then
+        expected = 0xdeadbeef
+    else
+        expected = bit32.extract(0xdeadbeef, 0, count)
+    end
+    assert(buffer.readbits(value, 3, count) == expected)
+end
+
+-- Bit zero is the least-significant bit of byte zero, matching scalar reads.
+local scalar = buffer.create(8)
+buffer.writeu32(scalar, 0, 0x12345678)
+assert(buffer.readbits(scalar, 0, 8) == buffer.readu8(scalar, 0))
+assert(buffer.readbits(scalar, 0, 16) == buffer.readu16(scalar, 0))
+assert(buffer.readbits(scalar, 0, 32) == buffer.readu32(scalar, 0))
+
+-- A masked write preserves both neighboring sides of a five-byte window.
+local neighbors = buffer.create(8)
+buffer.writeu32(neighbors, 0, 0xffffffff)
+buffer.writeu32(neighbors, 4, 0xffffffff)
+buffer.writebits(neighbors, 5, 32, 0)
+assert(buffer.readbits(neighbors, 0, 5) == 0x1f)
+assert(buffer.readbits(neighbors, 5, 32) == 0)
+assert(buffer.readbits(neighbors, 37, 27) == 0x7ffffff)
+
+-- Zero-width access at the exact end is valid and never touches memory.
+local empty = buffer.create(0)
+buffer.writebits(empty, 0, 0, 0xffffffff)
+assert(buffer.readbits(empty, 0, 0) == 0)
+
+local checked = buffer.create(8)
+expect_read_error(checked, -1, 0, "buffer access out of bounds")
+expect_read_error(checked, 64, 1, "buffer access out of bounds")
+expect_read_error(checked, 63, 2, "buffer access out of bounds")
+expect_read_error(checked, 4294967296, 0, "buffer access out of bounds")
+expect_read_error(checked, 1.5, 1, "buffer access out of bounds")
+expect_read_error(checked, 0, -1, "bit count is out of range of [0; 32]")
+expect_read_error(checked, 0, 1.5, "bit count is out of range of [0; 32]")
+expect_read_error(checked, 0, 33, "bit count is out of range of [0; 32]")
+expect_read_error(checked, 0, 64, "bit count is out of range of [0; 32]")
+
+expect_write_error(checked, -1, 0, 1, "buffer access out of bounds")
+expect_write_error(checked, 64, 1, 1, "buffer access out of bounds")
+expect_write_error(checked, 63, 2, 1, "buffer access out of bounds")
+expect_write_error(checked, 4294967296, 0, 1, "buffer access out of bounds")
+expect_write_error(checked, 1.5, 1, 1, "buffer access out of bounds")
+expect_write_error(checked, 0, -1, 1, "bit count is out of range of [0; 32]")
+expect_write_error(checked, 0, 1.5, 1, "bit count is out of range of [0; 32]")
+expect_write_error(checked, 0, 33, 1, "bit count is out of range of [0; 32]")
+expect_write_error(checked, 0, 64, 1, "bit count is out of range of [0; 32]")

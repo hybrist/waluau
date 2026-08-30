@@ -140,6 +140,8 @@ fn lowers_mutable_buffer_scalar_operations_as_distinct_ir() {
             buffer.writei32(b, 1, 0x1234567812)
             local value = buffer.readu16(b, 2)
             local length = buffer.len(b)
+            buffer.writebits(b, 3, 17, 0x1ffff)
+            local bits = buffer.readbits(b, 3, 17)
         end
     "#;
     let module =
@@ -174,6 +176,16 @@ fn lowers_mutable_buffer_scalar_operations_as_distinct_ir() {
         instructions
             .iter()
             .any(|instruction| { matches!(instruction, Instruction::LuauBufferLen { .. }) })
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| { matches!(instruction, Instruction::LuauBufferWriteBits { .. }) })
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| { matches!(instruction, Instruction::LuauBufferReadBits { .. }) })
     );
 }
 

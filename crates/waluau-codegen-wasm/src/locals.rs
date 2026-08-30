@@ -51,9 +51,21 @@ pub(crate) struct LocalPlan {
     /// Scratch i32 local holding a freshly allocated typed-array pointer while
     /// `BufferNew`/`BufferConst` initialize the allocation.
     pub(crate) buffer_scratch: Option<u32>,
+    /// Shared scratch locals for bounded Luau buffer bit-field loads/stores.
+    pub(crate) buffer_bit_scratch: Option<BufferBitScratch>,
     /// Scratch f64 local for spilling a `js_tonumber_*` host result while its
     /// success flag is branched on.
     pub(crate) tonumber_scratch: Option<u32>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct BufferBitScratch {
+    pub(crate) byte_offset: u32,
+    pub(crate) bit_shift: u32,
+    pub(crate) bit_count: u32,
+    pub(crate) byte_count: u32,
+    pub(crate) window: u32,
+    pub(crate) mask: u32,
 }
 
 #[derive(Clone)]
@@ -295,6 +307,41 @@ pub(crate) fn build_local_plan(
         None
     };
 
+    let needs_buffer_bit_scratch = function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                IrInstruction::LuauBufferReadBits { .. }
+                    | IrInstruction::LuauBufferWriteBits { .. }
+            )
+        })
+    });
+    let buffer_bit_scratch = if needs_buffer_bit_scratch {
+        let mut next = || {
+            let slot = function.params.len() as u32 + extra_locals.len() as u32;
+            extra_locals.push(ValType::I32);
+            slot
+        };
+        let byte_offset = next();
+        let bit_shift = next();
+        let bit_count = next();
+        let byte_count = next();
+        let window = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(ValType::I64);
+        let mask = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(ValType::I64);
+        Some(BufferBitScratch {
+            byte_offset,
+            bit_shift,
+            bit_count,
+            byte_count,
+            window,
+            mask,
+        })
+    } else {
+        None
+    };
+
     let needs_tonumber_scratch = function.blocks.values().any(|block| {
         block.instructions.iter().any(|(_, instruction)| {
             matches!(
@@ -332,6 +379,7 @@ pub(crate) fn build_local_plan(
         protected_call_value_tmp,
         array_scratch,
         buffer_scratch,
+        buffer_bit_scratch,
         tonumber_scratch,
     })
 }
@@ -446,6 +494,8 @@ pub(crate) fn infer_value_types(
                     Type::Numeric(kind.element_numeric_type())
                 }
                 IrInstruction::LuauBufferSet { .. } => Type::Unit,
+                IrInstruction::LuauBufferReadBits { .. } => Type::Numeric(NumericType::U32),
+                IrInstruction::LuauBufferWriteBits { .. } => Type::Unit,
                 IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
                 IrInstruction::StructGet { field_ty, .. } => field_ty.clone(),
                 IrInstruction::StructSet { .. } => Type::Unit,
@@ -886,6 +936,17 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             value,
             ..
         } => vec![*buffer, *offset, *value],
+        IrInstruction::LuauBufferReadBits {
+            buffer,
+            bit_offset,
+            bit_count,
+        } => vec![*buffer, *bit_offset, *bit_count],
+        IrInstruction::LuauBufferWriteBits {
+            buffer,
+            bit_offset,
+            bit_count,
+            value,
+        } => vec![*buffer, *bit_offset, *bit_count, *value],
         IrInstruction::StructNew { fields, .. } => fields.clone(),
         IrInstruction::StructGet { base, .. } => vec![*base],
         IrInstruction::StructSet { base, value, .. } => vec![*base, *value],
@@ -1016,6 +1077,9 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::LuauBufferNew { .. }
         | IrInstruction::LuauBufferGet { .. }
         | IrInstruction::LuauBufferSet { .. } => false,
+        IrInstruction::LuauBufferReadBits { .. } | IrInstruction::LuauBufferWriteBits { .. } => {
+            false
+        }
         IrInstruction::LuauBufferLen { buffer } => *buffer == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),
         IrInstruction::StructGet { base, .. } => *base == value,
@@ -1080,6 +1144,12 @@ pub(crate) fn buffer_scratch_local(local_plan: &LocalPlan) -> Result<u32, Diagno
     local_plan
         .buffer_scratch
         .ok_or_else(|| Diagnostic::new("missing typed-array scratch local"))
+}
+
+pub(crate) fn buffer_bit_scratch(local_plan: &LocalPlan) -> Result<BufferBitScratch, Diagnostic> {
+    local_plan
+        .buffer_bit_scratch
+        .ok_or_else(|| Diagnostic::new("missing Luau buffer bit-operation scratch locals"))
 }
 
 pub(crate) fn tonumber_scratch_local(local_plan: &LocalPlan) -> Result<u32, Diagnostic> {

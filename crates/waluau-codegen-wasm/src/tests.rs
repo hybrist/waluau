@@ -41,6 +41,30 @@ fn emits_gc_handle_and_unaligned_little_endian_mutable_buffer_access() {
     assert!(wat.contains("throw"));
 }
 
+#[test]
+fn emits_bounded_buffer_bitfield_windows_and_checked_errors() {
+    let source = r#"
+        function main(): ()
+            local b = buffer.create(8)
+            buffer.writebits(b, 7, 32, 0x78563412)
+            local value: u32 = buffer.readbits(b, 7, 32)
+            assert(value == 0x78563412)
+        end
+    "#;
+    let module = waluau_ir::build(&waluau_parser::parse(source).expect("parse")).expect("IR build");
+    let wasm = emit(&module).expect("bitfield module should emit");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("buffer bitfield Wasm should validate");
+    let wat = print_bytes(&wasm).expect("Wasm should print");
+    assert!(wat.matches("i32.load8_u").count() >= 5);
+    assert!(wat.matches("i32.store8").count() >= 5);
+    assert!(wat.contains("i64.shr_u"));
+    assert!(wat.contains("i64.shl"));
+    assert!(wat.contains("f64.floor"));
+    assert!(wat.contains("throw"));
+}
+
 fn wasm_export_func_index(wasm: &[u8], name: &str) -> Option<u32> {
     for payload in Parser::new(0).parse_all(wasm) {
         let payload = payload.expect("wasm should parse");
