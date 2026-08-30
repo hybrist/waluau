@@ -503,24 +503,22 @@ fn build_inner(
             )
         })
         .collect::<HashMap<_, _>>();
+    let cx = ModuleLoweringContext {
+        signatures: &signatures,
+        host_import_signatures: &host_import_signatures,
+        host_import_names: &host_import_names,
+        field_call_signatures: &field_call_signatures,
+        declared_constants: &declared_constants,
+        globals: &global_indices,
+        sources: &monomorphic.sources,
+        source_file_ids: &source_file_ids,
+        tag_ids: &tag_ids,
+    };
     #[cfg(target_family = "wasm")]
     let lowered_functions = monomorphic
         .functions
         .iter()
-        .map(|function| {
-            build_function(
-                function,
-                &signatures,
-                &host_import_signatures,
-                &host_import_names,
-                &field_call_signatures,
-                &declared_constants,
-                &global_indices,
-                &monomorphic.sources,
-                &source_file_ids,
-                &tag_ids,
-            )
-        })
+        .map(|function| build_function(function, &cx))
         .collect::<Vec<_>>();
     #[cfg(not(target_family = "wasm"))]
     let lowered_functions = std::thread::scope(|scope| {
@@ -532,32 +530,11 @@ fn build_inner(
             .functions
             .chunks(chunk_size)
             .map(|chunk| {
-                let signatures = &signatures;
-                let host_import_signatures = &host_import_signatures;
-                let host_import_names = &host_import_names;
-                let field_call_signatures = &field_call_signatures;
-                let declared_constants = &declared_constants;
-                let global_indices = &global_indices;
-                let sources = &monomorphic.sources;
-                let source_file_ids = &source_file_ids;
-                let tag_ids = &tag_ids;
+                let cx = &cx;
                 scope.spawn(move || {
                     chunk
                         .iter()
-                        .map(|function| {
-                            build_function(
-                                function,
-                                signatures,
-                                host_import_signatures,
-                                host_import_names,
-                                field_call_signatures,
-                                declared_constants,
-                                global_indices,
-                                sources,
-                                source_file_ids,
-                                tag_ids,
-                            )
-                        })
+                        .map(|function| build_function(function, cx))
                         .collect::<Vec<_>>()
                 })
             })
@@ -846,18 +823,18 @@ fn try_build_incremental(
         .enumerate()
         .map(|(index, file)| (file.path.clone(), SourceFileId(index as u32)))
         .collect::<HashMap<_, _>>();
-    let lowered = build_function(
-        &monomorphic.functions[monomorphic_index],
-        &signatures,
-        &host_import_signatures,
-        &host_import_names,
-        &field_call_signatures,
-        &declared_constants,
-        &global_indices,
-        &monomorphic.sources,
-        &source_file_ids,
-        &tag_ids,
-    )?;
+    let cx = ModuleLoweringContext {
+        signatures: &signatures,
+        host_import_signatures: &host_import_signatures,
+        host_import_names: &host_import_names,
+        field_call_signatures: &field_call_signatures,
+        declared_constants: &declared_constants,
+        globals: &global_indices,
+        sources: &monomorphic.sources,
+        source_file_ids: &source_file_ids,
+        tag_ids: &tag_ids,
+    };
+    let lowered = build_function(&monomorphic.functions[monomorphic_index], &cx)?;
     let lowered_at = started.elapsed();
     if lowered.len() != 1 || lowered[0].name != name {
         return Ok(None);
@@ -1804,20 +1781,31 @@ fn to_runtime_type(ty: &Type) -> Type {
     ty.runtime_representation()
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Module-wide lookup tables shared by every function lowering. Built once per
+/// module and passed by shared reference, so the parallel lowering workers can
+/// borrow one context across `std::thread::scope`.
+pub(crate) struct ModuleLoweringContext<'a> {
+    pub(crate) signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
+    pub(crate) host_import_signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
+    pub(crate) host_import_names: &'a HashMap<String, SymbolId>,
+    pub(crate) field_call_signatures: &'a HashMap<String, (Vec<Type>, Type)>,
+    /// Declared namespace constants (`declare const math.pi: f64 = ...`),
+    /// keyed by qualified name; field reads fold to the literal.
+    pub(crate) declared_constants: &'a HashMap<String, (Type, NumberLiteral)>,
+    pub(crate) globals: &'a HashMap<SymbolId, (usize, Type)>,
+    pub(crate) sources: &'a BTreeMap<String, String>,
+    pub(crate) source_file_ids: &'a HashMap<String, SourceFileId>,
+    /// Stable discriminant IDs for tagged-union variant names, shared across the
+    /// whole module so constructors and checks in different functions agree.
+    pub(crate) tag_ids: &'a BTreeMap<String, i32>,
+}
+
 pub(crate) fn build_function(
     function: &AstFunction,
-    signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
-    host_import_signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
-    host_import_names: &HashMap<String, SymbolId>,
-    field_call_signatures: &HashMap<String, (Vec<Type>, Type)>,
-    declared_constants: &HashMap<String, (Type, NumberLiteral)>,
-    globals: &HashMap<SymbolId, (usize, Type)>,
-    sources: &BTreeMap<String, String>,
-    source_file_ids: &HashMap<String, SourceFileId>,
-    tag_ids: &BTreeMap<String, i32>,
+    cx: &ModuleLoweringContext<'_>,
 ) -> Result<Vec<Function>, Diagnostic> {
-    let source_file = source_file_ids
+    let source_file = cx
+        .source_file_ids
         .get(&function.file_path)
         .copied()
         .expect("lowered function source must be interned");
@@ -1877,7 +1865,8 @@ pub(crate) fn build_function(
     );
 
     let mut env = HashMap::new();
-    let mut type_env = globals
+    let mut type_env = cx
+        .globals
         .iter()
         .map(|(symbol_id, (_, ty))| (*symbol_id, ty.clone()))
         .collect::<HashMap<_, _>>();
@@ -1923,22 +1912,14 @@ pub(crate) fn build_function(
         function: out,
         current_block: BlockId(0),
         next_block: 1,
-        signatures,
-        host_import_signatures,
-        host_import_names,
-        field_call_signatures,
-        declared_constants,
-        globals,
+        cx,
         lifted_functions: Vec::new(),
         lambda_counter: 0,
         loop_stack: Vec::new(),
         cell_names: captured_symbols,
-        sources,
         file_path: function.file_path.clone(),
         source_file: function.span.map(|_| source_file),
-        source_file_ids,
         current_span: None,
-        tag_ids,
         vararg_value,
         vararg_element,
         discriminants: HashMap::new(),
@@ -1999,29 +1980,17 @@ struct Builder<'a> {
     function: Function,
     current_block: BlockId,
     next_block: usize,
-    signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
-    host_import_signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
-    host_import_names: &'a HashMap<String, SymbolId>,
-    field_call_signatures: &'a HashMap<String, (Vec<Type>, Type)>,
-    /// Declared namespace constants (`declare const math.pi: f64 = ...`),
-    /// keyed by qualified name; field reads fold to the literal.
-    declared_constants: &'a HashMap<String, (Type, NumberLiteral)>,
-    globals: &'a HashMap<SymbolId, (usize, Type)>,
+    cx: &'a ModuleLoweringContext<'a>,
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
     loop_stack: Vec<LoopContext>,
     /// SymbolIds that are represented as 1-element array "cells" to support mutable capture.
     cell_names: HashSet<SymbolId>,
-    sources: &'a BTreeMap<String, String>,
     file_path: String,
     source_file: Option<SourceFileId>,
-    source_file_ids: &'a HashMap<String, SourceFileId>,
     /// Current authored expression/statement. `None` means emitted scaffolding
     /// is compiler-synthesized and must remain unmapped.
     current_span: Option<waluau_ast::Span>,
-    /// Stable discriminant IDs for tagged-union variant names, shared across the
-    /// whole module so constructors and checks in different functions agree.
-    tag_ids: &'a BTreeMap<String, i32>,
     vararg_value: Option<ValueId>,
     /// The annotated element type of the enclosing function's `...` (from
     /// `function f(...: T)`), when one was written. Static only: the pack
@@ -2889,6 +2858,7 @@ impl Builder<'_> {
         types: &HashMap<SymbolId, Type>,
     ) -> Result<(ValueId, Type), Diagnostic> {
         let (param_types, return_type) = self
+            .cx
             .field_call_signatures
             .get(name)
             .cloned()
@@ -2905,7 +2875,7 @@ impl Builder<'_> {
             .zip(param_types.iter())
             .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
             .collect::<Result<Vec<_>, _>>()?;
-        let value = if let Some(symbol_id) = self.host_import_names.get(name).copied() {
+        let value = if let Some(symbol_id) = self.cx.host_import_names.get(name).copied() {
             self.emit(Instruction::HostCall {
                 name: name.to_string(),
                 symbol_id,
@@ -2965,7 +2935,7 @@ impl Builder<'_> {
 
     /// Return the stable i32 discriminant for a tagged-union variant name.
     fn variant_tag_id(&self, name: &str) -> Result<i32, Diagnostic> {
-        self.tag_ids
+        self.cx.tag_ids
             .get(name)
             .copied()
             .ok_or_else(|| Diagnostic::new(format!("unknown tagged-union variant '{name}'")))
@@ -3133,7 +3103,7 @@ impl Builder<'_> {
                     }
                 };
                 let lexical_function_declaration = stmt.lexical_function_declaration().is_some();
-                if lexical_function_declaration && !self.globals.contains_key(&symbol_id) {
+                if lexical_function_declaration && !self.cx.globals.contains_key(&symbol_id) {
                     // A non-global closure captures its own lexical binding.
                     // Allocate that binding's cell first, then append the
                     // closure after it has captured the cell. Rebinding updates
@@ -3165,7 +3135,7 @@ impl Builder<'_> {
                     return Ok(());
                 }
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
-                if let Some((global, _)) = self.globals.get(&symbol_id) {
+                if let Some((global, _)) = self.cx.globals.get(&symbol_id) {
                     self.emit(Instruction::GlobalSet {
                         global: *global,
                         value,
@@ -3182,7 +3152,7 @@ impl Builder<'_> {
                 let ty = types.get(&symbol_id).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
-                if let Some((global, _)) = self.globals.get(&symbol_id).cloned() {
+                if let Some((global, _)) = self.cx.globals.get(&symbol_id).cloned() {
                     let stored = match op {
                         AssignOp::Set => self.lower_expr(value, env, types, Some(ty.clone()))?,
                         AssignOp::Compound(bin_op) => {
@@ -3407,7 +3377,7 @@ impl Builder<'_> {
                         &base_ty,
                         resolved_name.as_deref(),
                         name,
-                        self.field_call_signatures,
+                        self.cx.field_call_signatures,
                     )
                 {
                     if *op != AssignOp::Set {
@@ -3428,7 +3398,7 @@ impl Builder<'_> {
                     let receiver =
                         self.lower_expr(base, env, types, Some(params[0].clone()))?;
                     let stored = self.lower_expr(value, env, types, Some(params[1].clone()))?;
-                    let symbol_id = self.host_import_names.get(&setter_name).copied().ok_or_else(|| {
+                    let symbol_id = self.cx.host_import_names.get(&setter_name).copied().ok_or_else(|| {
                         Diagnostic::new(format!(
                             "declared property setter '{setter_name}' is missing a host import symbol"
                         ))
@@ -3986,7 +3956,7 @@ impl Builder<'_> {
         } else {
             let assert_span = args[0].span().or(span);
             let msg_str = if let Some(sp) = assert_span {
-                if let Some(source) = self.sources.get(&self.file_path) {
+                if let Some(source) = self.cx.sources.get(&self.file_path) {
                     let (line, expr_text) = resolve_span_to_line_and_text(source, sp);
                     format!(
                         "Assertion failed: {} at {}:{}",
@@ -5721,7 +5691,7 @@ impl Builder<'_> {
                 .collect(),
         );
         let direct_iterator_name = match iterator {
-            Expr::Name(name, Some(symbol_id), _) => self.signatures.get(symbol_id).and_then(|(params, ret)| {
+            Expr::Name(name, Some(symbol_id), _) => self.cx.signatures.get(symbol_id).and_then(|(params, ret)| {
                 if params.is_empty() && *ret == return_ty {
                     Some(name.clone())
                 } else {
@@ -6050,13 +6020,13 @@ impl Builder<'_> {
                     } else {
                         self.coerce_value(value, actual, expected)?
                     }
-                } else if let Some((global, actual)) = self.globals.get(&symbol_id).cloned() {
+                } else if let Some((global, actual)) = self.cx.globals.get(&symbol_id).cloned() {
                     let value = self.emit(Instruction::GlobalGet {
                         global,
                         ty: to_runtime_type(&actual),
                     });
                     self.coerce_value(value, actual, expected)?
-                } else if let Some((params, return_type)) = self.signatures.get(&symbol_id).cloned() {
+                } else if let Some((params, return_type)) = self.cx.signatures.get(&symbol_id).cloned() {
                     let value = self.emit(Instruction::Closure {
                         name: name.clone(),
                         captures: Vec::new(),
@@ -6130,7 +6100,7 @@ impl Builder<'_> {
                         &receiver_ty,
                         resolved_name.as_deref(),
                         name,
-                        self.field_call_signatures,
+                        self.cx.field_call_signatures,
                     );
                 // HIR resolves the nominal target before opaque aliases are
                 // erased. A guarded recursive field is `unknown` at the
@@ -6144,7 +6114,7 @@ impl Builder<'_> {
                 {
                     (params, Arc::new(return_type))
                 } else if let Some(signature) =
-                    method_signature(receiver, name, self.field_call_signatures)
+                    method_signature(receiver, name, self.cx.field_call_signatures)
                 {
                     let (params, return_type) = signature;
                     (params, Arc::new(return_type))
@@ -6200,7 +6170,7 @@ impl Builder<'_> {
                     lowered_args.push(self.emit_omitted_nullable_arg(param_ty)?);
                 }
                 let value = if let Some((direct_name, _, return_type)) = type_method {
-                    if let Some(symbol_id) = self.host_import_names.get(&direct_name) {
+                    if let Some(symbol_id) = self.cx.host_import_names.get(&direct_name) {
                         self.emit(Instruction::HostCall {
                             name: direct_name,
                             symbol_id: *symbol_id,
@@ -6800,7 +6770,7 @@ impl Builder<'_> {
                 }
                 if let Expr::Name(name, Some(symbol_id), _) = callee.as_ref() {
                     if let Some((param_types, return_type)) =
-                        self.host_import_signatures.get(symbol_id).cloned()
+                        self.cx.host_import_signatures.get(symbol_id).cloned()
                     {
                         let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
                         let value = self.emit(Instruction::HostCall {
@@ -6812,7 +6782,7 @@ impl Builder<'_> {
                         let actual = self.infer_expr_type(expr, types, None)?;
                         return self.coerce_value(value, actual, expected);
                     }
-                    if let Some((param_types, _)) = self.signatures.get(symbol_id).cloned() {
+                    if let Some((param_types, _)) = self.cx.signatures.get(symbol_id).cloned() {
                         let args = if matches!(
                             param_types.last(),
                             Some(Type::Variadic(element)) if element.as_ref() == &Type::Unknown
@@ -6831,7 +6801,7 @@ impl Builder<'_> {
                     }
                 }
                 if let Some((direct_name, param_types, _)) =
-                    direct_field_call_name(callee.as_ref(), self.field_call_signatures)
+                    direct_field_call_name(callee.as_ref(), self.cx.field_call_signatures)
                 {
                     let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
                     let value = self.emit(Instruction::Call {
@@ -7127,7 +7097,7 @@ impl Builder<'_> {
                         &base_ty,
                         resolved_name.as_deref(),
                         name,
-                        self.field_call_signatures,
+                        self.cx.field_call_signatures,
                     )
                 {
                     if params.len() != 1 || !method_receiver_matches(&params[0], &base_ty) {
@@ -7137,7 +7107,7 @@ impl Builder<'_> {
                     }
                     let receiver =
                         self.lower_expr(base, env, types, Some(params[0].clone()))?;
-                    let symbol_id = self.host_import_names.get(&getter_name).copied().ok_or_else(|| {
+                    let symbol_id = self.cx.host_import_names.get(&getter_name).copied().ok_or_else(|| {
                         Diagnostic::new(format!(
                             "declared property getter '{getter_name}' is missing a host import symbol"
                         ))
@@ -7370,7 +7340,7 @@ impl Builder<'_> {
         types: &HashMap<SymbolId, Type>,
     ) -> Result<ValueId, Diagnostic> {
         let return_ty = Self::function_expr_return_type(function)?;
-        let captures = collect_captures(function, env, types, self.signatures);
+        let captures = collect_captures(function, env, types, self.cx.signatures);
         let capture_values = captures
             .iter()
             .map(|(symbol_id, _)| {
@@ -7384,6 +7354,7 @@ impl Builder<'_> {
 
         let capture_count = captures.len();
         let source_file = self
+            .cx
             .source_file_ids
             .get(&function.file_path)
             .copied()
@@ -7431,6 +7402,7 @@ impl Builder<'_> {
 
         let mut nested_env = HashMap::new();
         let mut nested_types = self
+            .cx
             .globals
             .iter()
             .map(|(symbol_id, (_, ty))| (*symbol_id, ty.clone()))
@@ -7503,22 +7475,14 @@ impl Builder<'_> {
             function: lifted,
             current_block: BlockId(0),
             next_block: 1,
-            signatures: self.signatures,
-            host_import_signatures: self.host_import_signatures,
-            host_import_names: self.host_import_names,
-            field_call_signatures: self.field_call_signatures,
-            declared_constants: self.declared_constants,
-            globals: self.globals,
+            cx: self.cx,
             lifted_functions: Vec::new(),
             lambda_counter: 0,
             loop_stack: Vec::new(),
             cell_names: capture_param_symbols,
-            sources: self.sources,
             file_path: function.file_path.clone(),
             source_file: function.span.map(|_| source_file),
-            source_file_ids: self.source_file_ids,
             current_span: None,
-            tag_ids: self.tag_ids,
             vararg_value: None,
             vararg_element: None,
             discriminants: HashMap::new(),
@@ -7610,7 +7574,7 @@ impl Builder<'_> {
         let Expr::Name(base_name, _, _) = base else {
             return None;
         };
-        self.declared_constants
+        self.cx.declared_constants
             .get(&format!("{base_name}.{name}"))
             .cloned()
     }
@@ -7711,7 +7675,7 @@ impl Builder<'_> {
                     // `unknown` values, nullable widening, ...); callers that
                     // only probe the raw type still get it on mismatch.
                     Ok(coerce_type(ty.clone(), expected).unwrap_or_else(|_| ty.clone()))
-                } else if let Some((params, ret)) = self.signatures.get(&symbol_id) {
+                } else if let Some((params, ret)) = self.cx.signatures.get(&symbol_id) {
                     Ok(Type::Function {
                         params: params.clone(),
                         return_type: Arc::new(ret.clone()),
@@ -7768,7 +7732,7 @@ impl Builder<'_> {
                     &receiver_ty,
                     resolved_name.as_deref(),
                     name,
-                    self.field_call_signatures,
+                    self.cx.field_call_signatures,
                 );
                 // See the lowering path above: HIR's resolved target is the
                 // source-level proof for an `unknown` recursive runtime edge.
@@ -7777,7 +7741,7 @@ impl Builder<'_> {
                 let (params, return_type) = if let Some((_, params, return_type)) = type_method {
                     (params, Arc::new(return_type))
                 } else if let Some(signature) =
-                    method_signature(receiver, name, self.field_call_signatures)
+                    method_signature(receiver, name, self.cx.field_call_signatures)
                 {
                     let (params, return_type) = signature;
                     (params, Arc::new(return_type))
@@ -7839,7 +7803,7 @@ impl Builder<'_> {
             } => match op {
                 UnaryOp::Neg => {
                     if let Some(name) = resolved_name {
-                        let (_, return_type) = self.field_call_signatures.get(name).cloned().ok_or_else(
+                        let (_, return_type) = self.cx.field_call_signatures.get(name).cloned().ok_or_else(
                             || Diagnostic::new(format!("operator overload '{name}' is not declared")),
                         )?;
                         return coerce_type(return_type, expected);
@@ -8078,7 +8042,7 @@ impl Builder<'_> {
                         &base_ty,
                         resolved_name.as_deref(),
                         name,
-                        self.field_call_signatures,
+                        self.cx.field_call_signatures,
                     )
                 {
                     if params.len() == 1 && method_receiver_matches(&params[0], &base_ty) {
@@ -8131,7 +8095,7 @@ impl Builder<'_> {
                 | BinaryOp::Pow
                 | BinaryOp::Concat => {
                     if let Some(name) = resolved_name {
-                        let (_, return_type) = self.field_call_signatures.get(name).cloned().ok_or_else(
+                        let (_, return_type) = self.cx.field_call_signatures.get(name).cloned().ok_or_else(
                             || Diagnostic::new(format!("operator overload '{name}' is not declared")),
                         )?;
                         return coerce_type(return_type, expected);
@@ -13594,6 +13558,7 @@ impl Builder<'_> {
         return_type: Type,
     ) -> Result<ValueId, Diagnostic> {
         let symbol_id = self
+            .cx
             .host_import_names
             .get(host_name)
             .copied()
