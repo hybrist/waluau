@@ -57,10 +57,11 @@ use arrays::{
     ArrayTypeRegistry, NullableBoxKind, RuntimeGcTypes, array_storage_type, record_storage_type,
 };
 use buffers::{
-    BUFFER_HEAP_BASE, BufferPlan, LUAU_BUFFER_LEN_FIELD, MEMORY_EXPORT_NAME, element_size_log2,
-    emit_buffer_alloc_function, emit_buffer_element_address, emit_buffer_len_from_stack,
-    emit_buffer_load, emit_buffer_store, emit_luau_buffer_address, emit_luau_buffer_alloc_function,
-    emit_luau_buffer_load, emit_luau_buffer_store,
+    BUFFER_HEAP_BASE, BufferBitContext, BufferPlan, LUAU_BUFFER_LEN_FIELD, MEMORY_EXPORT_NAME,
+    element_size_log2, emit_buffer_alloc_function, emit_buffer_element_address,
+    emit_buffer_len_from_stack, emit_buffer_load, emit_buffer_store, emit_luau_buffer_address,
+    emit_luau_buffer_alloc_function, emit_luau_buffer_load, emit_luau_buffer_read_bits,
+    emit_luau_buffer_store, emit_luau_buffer_write_bits,
 };
 use coroutines::{
     AWAIT_STATUS_FULFILLED, AWAIT_STATUS_NONE, AWAIT_STATUS_REJECTED, CoroutinePlan,
@@ -6184,6 +6185,57 @@ impl FunctionEmission<'_> {
                     );
                     emit_value_operand(out, local_plan, *stored)?;
                     emit_luau_buffer_store(out, *kind);
+                }
+                IrInstruction::LuauBufferReadBits {
+                    buffer,
+                    bit_offset,
+                    bit_count,
+                } => {
+                    emit_luau_buffer_read_bits(
+                        out,
+                        BufferBitContext {
+                            buffer_type: ctx.array_registry.luau_buffer_struct_type()?,
+                            buffer_local: local(local_plan, *buffer)?,
+                            bit_offset_local: local(local_plan, *bit_offset)?,
+                            bit_count_local: local(local_plan, *bit_count)?,
+                            scratch: locals::buffer_bit_scratch(local_plan)?,
+                            oob_message_global: host::string_constant_index(
+                                ctx.string_constants,
+                                host::ERR_BUFFER_OOB,
+                            )?,
+                            count_message_global: host::string_constant_index(
+                                ctx.string_constants,
+                                host::ERR_BUFFER_BIT_COUNT,
+                            )?,
+                        },
+                    );
+                    emit_value_store(out, local_plan, *value)?;
+                }
+                IrInstruction::LuauBufferWriteBits {
+                    buffer,
+                    bit_offset,
+                    bit_count,
+                    value: stored,
+                } => {
+                    emit_luau_buffer_write_bits(
+                        out,
+                        BufferBitContext {
+                            buffer_type: ctx.array_registry.luau_buffer_struct_type()?,
+                            buffer_local: local(local_plan, *buffer)?,
+                            bit_offset_local: local(local_plan, *bit_offset)?,
+                            bit_count_local: local(local_plan, *bit_count)?,
+                            scratch: locals::buffer_bit_scratch(local_plan)?,
+                            oob_message_global: host::string_constant_index(
+                                ctx.string_constants,
+                                host::ERR_BUFFER_OOB,
+                            )?,
+                            count_message_global: host::string_constant_index(
+                                ctx.string_constants,
+                                host::ERR_BUFFER_BIT_COUNT,
+                            )?,
+                        },
+                        local(local_plan, *stored)?,
+                    );
                 }
                 IrInstruction::StructNew { struct_ty, fields } => {
                     let struct_type_index = ctx.array_registry.record_index(struct_ty)?;

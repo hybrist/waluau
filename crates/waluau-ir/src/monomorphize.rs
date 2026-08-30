@@ -2150,6 +2150,7 @@ impl<'a> Monomorphizer<'a> {
             "tostring" => Ok(Some(Type::String)),
             "buffer.create" => Ok(Some(Type::Buffer)),
             "buffer.len" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
+            "buffer.readbits" => Ok(Some(Type::Numeric(waluau_ast::NumericType::U32))),
             "buffer.readi8" | "buffer.readi16" | "buffer.readi32" => {
                 Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)))
             }
@@ -2165,7 +2166,8 @@ impl<'a> Monomorphizer<'a> {
             | "buffer.writei32"
             | "buffer.writeu32"
             | "buffer.writef32"
-            | "buffer.writef64" => Ok(Some(Type::Unit)),
+            | "buffer.writef64"
+            | "buffer.writebits" => Ok(Some(Type::Unit)),
             "coroutine.create" => Ok(Some(Type::Thread)),
             "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "coroutine.close" => Ok(Some(Type::Bool)),

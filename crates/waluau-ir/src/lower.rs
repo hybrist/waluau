@@ -10792,6 +10792,63 @@ impl Builder<'_> {
                 expected,
             ));
         }
+        if member == "readbits" || member == "writebits" {
+            let write = member == "writebits";
+            let arity = if write { 4 } else { 3 };
+            if args.len() != arity {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects {arity} arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let buffer = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let f64_ty = Type::Numeric(NumericType::F64);
+            let bit_offset = match self.lower_numeric_to(&args[1], &f64_ty, scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let bit_count = match self.lower_numeric_to(&args[2], &f64_ty, scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            if write {
+                let i64_ty = Type::Numeric(NumericType::I64);
+                let number = match self.lower_numeric_to(&args[3], &f64_ty, scope) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                };
+                let wide = self.emit(Instruction::Cast {
+                    value: number,
+                    from: f64_ty,
+                    to: i64_ty.clone(),
+                });
+                let stored = self.emit(Instruction::Cast {
+                    value: wide,
+                    from: i64_ty,
+                    to: Type::Numeric(NumericType::I32),
+                });
+                let value = self.emit(Instruction::LuauBufferWriteBits {
+                    buffer,
+                    bit_offset,
+                    bit_count,
+                    value: stored,
+                });
+                return Some(self.coerce_value(value, Type::Unit, expected));
+            }
+            let value = self.emit(Instruction::LuauBufferReadBits {
+                buffer,
+                bit_offset,
+                bit_count,
+            });
+            return Some(self.coerce_value(
+                value,
+                Type::Numeric(NumericType::U32),
+                expected,
+            ));
+        }
         let (write, kind) = if let Some(suffix) = member.strip_prefix("read") {
             (false, buffer_scalar_kind(suffix)?)
         } else {
@@ -10882,6 +10939,8 @@ impl Builder<'_> {
         let (arity, result) = match member {
             "create" => (1, Type::Buffer),
             "len" => (1, Type::Numeric(NumericType::I32)),
+            "readbits" => (3, Type::Numeric(NumericType::U32)),
+            "writebits" => (4, Type::Unit),
             member if member.starts_with("read") => {
                 let kind = buffer_scalar_kind(member.strip_prefix("read")?)?;
                 (2, Type::Numeric(kind.element_numeric_type()))

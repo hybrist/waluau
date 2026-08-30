@@ -57,6 +57,8 @@ fn type_checks_mutable_buffer_scalar_api_and_unknown_roundtrip() {
         local e: f32 = buffer.readf32(b, 7)
         local f: f64 = buffer.readf64(b, 11)
         local n: i32 = buffer.len(b)
+        local bits: u32 = buffer.readbits(b, 3, 17)
+        buffer.writebits(b, 5, 32, 0xffffffff)
         local dynamic: unknown = b
         local same: buffer = dynamic
         assert(same == b)

@@ -386,6 +386,20 @@ pub enum Instruction {
         value: ValueId,
         kind: TypedArrayKind,
     },
+    /// Read up to 32 bits at a zero-based bit offset. Both offset and count
+    /// stay f64 until codegen validates their exact integer ranges.
+    LuauBufferReadBits {
+        buffer: ValueId,
+        bit_offset: ValueId,
+        bit_count: ValueId,
+    },
+    /// Write the low `bit_count` bits of `value` at a zero-based bit offset.
+    LuauBufferWriteBits {
+        buffer: ValueId,
+        bit_offset: ValueId,
+        bit_count: ValueId,
+        value: ValueId,
+    },
     StructNew {
         struct_ty: Type,
         fields: Vec<ValueId>,

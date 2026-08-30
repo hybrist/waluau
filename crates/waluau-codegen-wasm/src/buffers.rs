@@ -25,6 +25,8 @@ use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Instruction as IrInstruction, Module};
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
+use crate::locals::BufferBitScratch;
+
 /// Byte offset from the data pointer back to the element-count header field.
 pub(crate) const BUFFER_HEADER_SIZE: i32 = 8;
 
@@ -36,6 +38,17 @@ pub(crate) const BUFFER_HEAP_BASE: i32 = 16;
 pub(crate) const MEMORY_EXPORT_NAME: &str = "memory";
 pub(crate) const LUAU_BUFFER_DATA_FIELD: u32 = 0;
 pub(crate) const LUAU_BUFFER_LEN_FIELD: u32 = 1;
+
+#[derive(Clone, Copy)]
+pub(crate) struct BufferBitContext {
+    pub(crate) buffer_type: u32,
+    pub(crate) buffer_local: u32,
+    pub(crate) bit_offset_local: u32,
+    pub(crate) bit_count_local: u32,
+    pub(crate) scratch: BufferBitScratch,
+    pub(crate) oob_message_global: u32,
+    pub(crate) count_message_global: u32,
+}
 
 pub(crate) const fn element_size_log2(kind: TypedArrayKind) -> i32 {
     match kind.element_size() {
@@ -82,7 +95,9 @@ impl BufferPlan {
                         IrInstruction::LuauBufferNew { .. }
                         | IrInstruction::LuauBufferLen { .. }
                         | IrInstruction::LuauBufferGet { .. }
-                        | IrInstruction::LuauBufferSet { .. } => {
+                        | IrInstruction::LuauBufferSet { .. }
+                        | IrInstruction::LuauBufferReadBits { .. }
+                        | IrInstruction::LuauBufferWriteBits { .. } => {
                             plan.uses_memory = true;
                             plan.uses_luau_buffer = true;
                         }
@@ -450,6 +465,245 @@ pub(crate) fn emit_luau_buffer_address(
     });
     out.instruction(&Instruction::LocalGet(offset_local));
     out.instruction(&Instruction::I32Add);
+}
+
+/// Validate a Luau buffer bit range and initialize the shared scratch locals.
+/// Offset/count deliberately remain f64 until after all range checks so the
+/// 1-GiB limit's final valid bit offset (2^33) is representable.
+fn emit_luau_buffer_bit_range(out: &mut Function, context: BufferBitContext) {
+    let BufferBitContext {
+        buffer_type,
+        buffer_local,
+        bit_offset_local,
+        bit_count_local,
+        scratch,
+        oob_message_global,
+        count_message_global,
+    } = context;
+    // count must be an exact integer in [0, 32]. floor(count) != count also
+    // rejects NaN without risking a trapping conversion.
+    out.instruction(&Instruction::LocalGet(bit_count_local));
+    out.instruction(&Instruction::F64Const(0.0));
+    out.instruction(&Instruction::F64Lt);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, count_message_global);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalGet(bit_count_local));
+    out.instruction(&Instruction::F64Const(32.0));
+    out.instruction(&Instruction::F64Gt);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, count_message_global);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalGet(bit_count_local));
+    out.instruction(&Instruction::F64Floor);
+    out.instruction(&Instruction::LocalGet(bit_count_local));
+    out.instruction(&Instruction::F64Ne);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, count_message_global);
+    out.instruction(&Instruction::End);
+
+    // Offset must be a nonnegative exact integer, and offset+count must fit in
+    // len*8. This permits offset==len*8 only when count==0.
+    out.instruction(&Instruction::LocalGet(bit_offset_local));
+    out.instruction(&Instruction::F64Const(0.0));
+    out.instruction(&Instruction::F64Lt);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, oob_message_global);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalGet(bit_offset_local));
+    out.instruction(&Instruction::F64Floor);
+    out.instruction(&Instruction::LocalGet(bit_offset_local));
+    out.instruction(&Instruction::F64Ne);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, oob_message_global);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalGet(bit_offset_local));
+    out.instruction(&Instruction::LocalGet(bit_count_local));
+    out.instruction(&Instruction::F64Add);
+    out.instruction(&Instruction::LocalGet(buffer_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: buffer_type,
+        field_index: LUAU_BUFFER_LEN_FIELD,
+    });
+    out.instruction(&Instruction::F64ConvertI32U);
+    out.instruction(&Instruction::F64Const(8.0));
+    out.instruction(&Instruction::F64Mul);
+    out.instruction(&Instruction::F64Gt);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, oob_message_global);
+    out.instruction(&Instruction::End);
+
+    // The validated offset is at most 2^33. Keep it i64 long enough to derive
+    // both the byte address and the within-byte shift without wrapping.
+    out.instruction(&Instruction::LocalGet(bit_offset_local));
+    out.instruction(&Instruction::I64TruncF64U);
+    out.instruction(&Instruction::I64Const(3));
+    out.instruction(&Instruction::I64ShrU);
+    out.instruction(&Instruction::I32WrapI64);
+    out.instruction(&Instruction::LocalSet(scratch.byte_offset));
+    out.instruction(&Instruction::LocalGet(bit_offset_local));
+    out.instruction(&Instruction::I64TruncF64U);
+    out.instruction(&Instruction::I32WrapI64);
+    out.instruction(&Instruction::I32Const(7));
+    out.instruction(&Instruction::I32And);
+    out.instruction(&Instruction::LocalSet(scratch.bit_shift));
+    out.instruction(&Instruction::LocalGet(bit_count_local));
+    out.instruction(&Instruction::I32TruncF64U);
+    out.instruction(&Instruction::LocalSet(scratch.bit_count));
+
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::LocalSet(scratch.byte_count));
+    out.instruction(&Instruction::LocalGet(scratch.bit_count));
+    out.instruction(&Instruction::I32Eqz);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::LocalGet(scratch.bit_shift));
+    out.instruction(&Instruction::LocalGet(scratch.bit_count));
+    out.instruction(&Instruction::I32Add);
+    out.instruction(&Instruction::I32Const(7));
+    out.instruction(&Instruction::I32Add);
+    out.instruction(&Instruction::I32Const(3));
+    out.instruction(&Instruction::I32ShrU);
+    out.instruction(&Instruction::LocalSet(scratch.byte_count));
+    out.instruction(&Instruction::End);
+}
+
+fn emit_luau_buffer_bit_window_load(
+    out: &mut Function,
+    buffer_type: u32,
+    buffer_local: u32,
+    scratch: BufferBitScratch,
+) {
+    out.instruction(&Instruction::I64Const(0));
+    out.instruction(&Instruction::LocalSet(scratch.window));
+    for byte in 0..5i32 {
+        out.instruction(&Instruction::LocalGet(scratch.byte_count));
+        out.instruction(&Instruction::I32Const(byte));
+        out.instruction(&Instruction::I32GtU);
+        out.instruction(&Instruction::If(BlockType::Empty));
+        out.instruction(&Instruction::LocalGet(scratch.window));
+        out.instruction(&Instruction::LocalGet(buffer_local));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: buffer_type,
+            field_index: LUAU_BUFFER_DATA_FIELD,
+        });
+        out.instruction(&Instruction::LocalGet(scratch.byte_offset));
+        out.instruction(&Instruction::I32Add);
+        if byte != 0 {
+            out.instruction(&Instruction::I32Const(byte));
+            out.instruction(&Instruction::I32Add);
+        }
+        out.instruction(&Instruction::I32Load8U(unaligned_mem_arg(0)));
+        out.instruction(&Instruction::I64ExtendI32U);
+        if byte != 0 {
+            out.instruction(&Instruction::I64Const(i64::from(byte * 8)));
+            out.instruction(&Instruction::I64Shl);
+        }
+        out.instruction(&Instruction::I64Or);
+        out.instruction(&Instruction::LocalSet(scratch.window));
+        out.instruction(&Instruction::End);
+    }
+}
+
+fn emit_luau_buffer_bit_mask(out: &mut Function, scratch: BufferBitScratch) {
+    // Build the unshifted mask without a shift-by-32 edge case, then place it
+    // over the selected field in the at-most-40-bit window.
+    out.instruction(&Instruction::I64Const(0xffff_ffff));
+    out.instruction(&Instruction::LocalSet(scratch.mask));
+    out.instruction(&Instruction::LocalGet(scratch.bit_count));
+    out.instruction(&Instruction::I32Const(32));
+    out.instruction(&Instruction::I32Ne);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::I64Const(1));
+    out.instruction(&Instruction::LocalGet(scratch.bit_count));
+    out.instruction(&Instruction::I64ExtendI32U);
+    out.instruction(&Instruction::I64Shl);
+    out.instruction(&Instruction::I64Const(1));
+    out.instruction(&Instruction::I64Sub);
+    out.instruction(&Instruction::LocalSet(scratch.mask));
+    out.instruction(&Instruction::End);
+}
+
+pub(crate) fn emit_luau_buffer_read_bits(out: &mut Function, context: BufferBitContext) {
+    let BufferBitContext {
+        buffer_type,
+        buffer_local,
+        scratch,
+        ..
+    } = context;
+    emit_luau_buffer_bit_range(out, context);
+    emit_luau_buffer_bit_window_load(out, buffer_type, buffer_local, scratch);
+    emit_luau_buffer_bit_mask(out, scratch);
+    out.instruction(&Instruction::LocalGet(scratch.window));
+    out.instruction(&Instruction::LocalGet(scratch.bit_shift));
+    out.instruction(&Instruction::I64ExtendI32U);
+    out.instruction(&Instruction::I64ShrU);
+    out.instruction(&Instruction::LocalGet(scratch.mask));
+    out.instruction(&Instruction::I64And);
+    out.instruction(&Instruction::I32WrapI64);
+}
+
+pub(crate) fn emit_luau_buffer_write_bits(
+    out: &mut Function,
+    context: BufferBitContext,
+    value_local: u32,
+) {
+    let BufferBitContext {
+        buffer_type,
+        buffer_local,
+        scratch,
+        ..
+    } = context;
+    emit_luau_buffer_bit_range(out, context);
+    emit_luau_buffer_bit_window_load(out, buffer_type, buffer_local, scratch);
+    emit_luau_buffer_bit_mask(out, scratch);
+
+    // Shift the mask into position and merge only the low requested bits.
+    out.instruction(&Instruction::LocalGet(scratch.mask));
+    out.instruction(&Instruction::LocalGet(scratch.bit_shift));
+    out.instruction(&Instruction::I64ExtendI32U);
+    out.instruction(&Instruction::I64Shl);
+    out.instruction(&Instruction::LocalSet(scratch.mask));
+    out.instruction(&Instruction::LocalGet(scratch.window));
+    out.instruction(&Instruction::LocalGet(scratch.mask));
+    out.instruction(&Instruction::I64Const(-1));
+    out.instruction(&Instruction::I64Xor);
+    out.instruction(&Instruction::I64And);
+    out.instruction(&Instruction::LocalGet(value_local));
+    out.instruction(&Instruction::I64ExtendI32U);
+    out.instruction(&Instruction::LocalGet(scratch.bit_shift));
+    out.instruction(&Instruction::I64ExtendI32U);
+    out.instruction(&Instruction::I64Shl);
+    out.instruction(&Instruction::LocalGet(scratch.mask));
+    out.instruction(&Instruction::I64And);
+    out.instruction(&Instruction::I64Or);
+    out.instruction(&Instruction::LocalSet(scratch.window));
+
+    for byte in 0..5i32 {
+        out.instruction(&Instruction::LocalGet(scratch.byte_count));
+        out.instruction(&Instruction::I32Const(byte));
+        out.instruction(&Instruction::I32GtU);
+        out.instruction(&Instruction::If(BlockType::Empty));
+        out.instruction(&Instruction::LocalGet(buffer_local));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: buffer_type,
+            field_index: LUAU_BUFFER_DATA_FIELD,
+        });
+        out.instruction(&Instruction::LocalGet(scratch.byte_offset));
+        out.instruction(&Instruction::I32Add);
+        if byte != 0 {
+            out.instruction(&Instruction::I32Const(byte));
+            out.instruction(&Instruction::I32Add);
+        }
+        out.instruction(&Instruction::LocalGet(scratch.window));
+        if byte != 0 {
+            out.instruction(&Instruction::I64Const(i64::from(byte * 8)));
+            out.instruction(&Instruction::I64ShrU);
+        }
+        out.instruction(&Instruction::I32WrapI64);
+        out.instruction(&Instruction::I32Store8(unaligned_mem_arg(0)));
+        out.instruction(&Instruction::End);
+    }
 }
 
 /// Emit the typed load for one element; expects the element address on the

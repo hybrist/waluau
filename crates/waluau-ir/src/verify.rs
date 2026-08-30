@@ -990,6 +990,50 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::LuauBufferReadBits {
+                    buffer,
+                    bit_offset,
+                    bit_count,
+                } => {
+                    verify_luau_buffer_bit_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *bit_offset,
+                        *bit_count,
+                    )?;
+                }
+                Instruction::LuauBufferWriteBits {
+                    buffer,
+                    bit_offset,
+                    bit_count,
+                    value,
+                } => {
+                    verify_luau_buffer_bit_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *bit_offset,
+                        *bit_count,
+                    )?;
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if value_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "Luau buffer bit write in block {:?} has type {}, expected i32",
+                            block.id, value_ty
+                        )));
+                    }
+                }
                 Instruction::StructNew { struct_ty, fields } => {
                     let Type::Record(record_fields) = struct_ty else {
                         return Err(Diagnostic::new(format!(
@@ -1431,6 +1475,41 @@ fn verify_luau_buffer_access(
     Ok(())
 }
 
+fn verify_luau_buffer_bit_access(
+    definitions: &HashMap<ValueId, ValueDefinition>,
+    dominators: &HashMap<BlockId, HashSet<BlockId>>,
+    seen_in_block: &HashSet<ValueId>,
+    use_block: BlockId,
+    buffer: ValueId,
+    bit_offset: ValueId,
+    bit_count: ValueId,
+) -> Result<(), Diagnostic> {
+    let buffer_ty =
+        require_dominating_definition(definitions, dominators, seen_in_block, use_block, buffer)?;
+    if buffer_ty != Type::Buffer {
+        return Err(Diagnostic::new(format!(
+            "Luau buffer bit access in block {:?} expects buffer, got {}",
+            use_block, buffer_ty
+        )));
+    }
+    for (label, operand) in [("offset", bit_offset), ("count", bit_count)] {
+        let ty = require_dominating_definition(
+            definitions,
+            dominators,
+            seen_in_block,
+            use_block,
+            operand,
+        )?;
+        if ty != Type::Numeric(NumericType::F64) {
+            return Err(Diagnostic::new(format!(
+                "Luau buffer bit {label} in block {:?} must be f64, got {}",
+                use_block, ty
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn require_dominating_definition(
     definitions: &HashMap<ValueId, ValueDefinition>,
     dominators: &HashMap<BlockId, HashSet<BlockId>>,
@@ -1585,6 +1664,8 @@ fn infer_instruction_type(
             Ok(Type::Numeric(kind.element_numeric_type()))
         }
         Instruction::LuauBufferSet { .. } => Ok(Type::Unit),
+        Instruction::LuauBufferReadBits { .. } => Ok(Type::Numeric(NumericType::U32)),
+        Instruction::LuauBufferWriteBits { .. } => Ok(Type::Unit),
         Instruction::StructNew { struct_ty, .. } => Ok(struct_ty.clone()),
         Instruction::StructGet { field_ty, .. } => Ok(field_ty.clone()),
         Instruction::StructSet { .. } => Ok(Type::Unit),
