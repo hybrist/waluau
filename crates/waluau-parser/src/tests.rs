@@ -2558,6 +2558,32 @@ fn parses_generic_call_with_type_arguments() {
 }
 
 #[test]
+fn parses_and_preserves_surplus_call_arguments_in_source_order() {
+    let source = r#"
+        function entry(target: (i32) -> i32): i32
+            return target(first(), second(), third())
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let waluau_ast::Stmt::Return(waluau_ast::Expr::Call { args, .. }) =
+        &program.functions[0].body[0]
+    else {
+        panic!("expected return of call");
+    };
+    let names = args
+        .iter()
+        .map(|arg| match arg {
+            waluau_ast::Expr::Call { callee, .. } => match callee.as_ref() {
+                waluau_ast::Expr::Name(name, ..) => name.as_str(),
+                other => panic!("expected named callee, got {other:?}"),
+            },
+            other => panic!("expected call argument, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["first", "second", "third"]);
+}
+
+#[test]
 fn parses_generic_type_annotation() {
     let source = r#"
         type Array<T> = {T}

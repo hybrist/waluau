@@ -78,7 +78,7 @@ pub(super) fn required_param_count(params: &[Type]) -> usize {
 }
 
 pub(super) fn call_arity_matches(params: &[Type], actual: usize) -> bool {
-    (required_param_count(params)..=params.len()).contains(&actual)
+    actual >= required_param_count(params)
 }
 
 pub(super) fn inference_diagnostic(

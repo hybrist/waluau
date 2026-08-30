@@ -2921,9 +2921,10 @@ impl Builder<'_> {
         Ok((value, return_type))
     }
 
-    /// Lower a fixed call's explicit arguments and materialize omitted trailing
-    /// nullable parameters as typed null values. Wasm calls retain their full
-    /// declared arity even when the source call uses the shorter form.
+    /// Lower every explicit argument to preserve source-order side effects,
+    /// discard values beyond the fixed parameter list, and materialize omitted
+    /// trailing nullable parameters as typed null values. Wasm calls always
+    /// retain their declared arity.
     fn lower_fixed_call_args(
         &mut self,
         args: &[Expr],
@@ -2938,6 +2939,7 @@ impl Builder<'_> {
                 lowered.len()
             )));
         }
+        lowered.truncate(param_types.len());
         for param_ty in &param_types[lowered.len()..] {
             lowered.push(self.emit_omitted_nullable_arg(param_ty)?);
         }
@@ -5962,6 +5964,7 @@ impl Builder<'_> {
                     // nil as an `unknown` value is a null anyref (e.g. nil
                     // passed through varargs or compared dynamically).
                     Some(Type::Unknown) => Type::Unknown,
+                    Some(Type::Nil) => Type::Nil,
                     Some(other) => {
                         return Err(Diagnostic::new(format!(
                             "nil is only assignable to nullable &scope.types, got {other}"
@@ -6141,26 +6144,18 @@ impl Builder<'_> {
                 let receiver_value =
                     self.lower_expr(receiver, scope, Some(receiver_ty.clone()))?;
                 let direct_name = self.direct_record_field_closure_name(receiver_value, name);
-                let mut lowered_args = Vec::with_capacity(args.len() + 1);
+                let mut lowered_args = Vec::with_capacity(param_types.len());
                 let lowered_receiver = self.coerce_method_receiver(
                     receiver_value,
                     &receiver_ty,
                     &param_types[0],
                 )?;
                 lowered_args.push(lowered_receiver);
-                for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
-                    lowered_args.push(self.lower_expr(arg, scope, Some(param_ty.clone()))?);
-                }
-                if !call_arity_matches(&param_types, lowered_args.len()) {
-                    return Err(Diagnostic::new(format!(
-                        "function expects {} arguments, got {}",
-                        param_types.len(),
-                        lowered_args.len()
-                    )));
-                }
-                for param_ty in &param_types[lowered_args.len()..] {
-                    lowered_args.push(self.emit_omitted_nullable_arg(param_ty)?);
-                }
+                lowered_args.extend(self.lower_fixed_call_args(
+                    args,
+                    &param_types[1..],
+                    scope,
+                )?);
                 let value = if let Some((direct_name, _, return_type)) = type_method {
                     if let Some(symbol_id) = self.cx.host_import_names.get(&direct_name) {
                         self.emit(Instruction::HostCall {
@@ -6545,7 +6540,9 @@ impl Builder<'_> {
                         };
                         let nullable_ty =
                             first_of_multi(self.infer_expr_type(value_expr, &scope.types, None)?);
-                        if matches!(&nullable_ty, Type::Multi(parts) if parts.is_empty()) {
+                        if nullable_ty == Type::Nil
+                            || matches!(&nullable_ty, Type::Multi(parts) if parts.is_empty())
+                        {
                             // An empty multi-value result (e.g. `string.byte`
                             // with a statically empty range) adjusts to nil in
                             // scalar context, so the comparison is statically
@@ -8203,7 +8200,7 @@ impl Builder<'_> {
                     };
                     let value_ty =
                         first_of_multi(self.infer_expr_type(value, types, None)?);
-                    if matches!(value_ty, Type::Nullable(_)) {
+                    if matches!(value_ty, Type::Nil | Type::Nullable(_)) {
                         return Ok(Type::Bool);
                     }
                     // An empty multi-value result (e.g. `string.byte` with a
@@ -10811,9 +10808,9 @@ impl Builder<'_> {
         scope: &Scope,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
-        if args.is_empty() || args.len() > 2 {
+        if args.is_empty() {
             return Err(Diagnostic::new(format!(
-                "{TABLE_SORT} expects 1 or 2 arguments, got {}",
+                "{TABLE_SORT} expects at least 1 argument, got {}",
                 args.len()
             )));
         }
@@ -10837,6 +10834,9 @@ impl Builder<'_> {
             }
             None
         };
+        for arg in args.iter().skip(2) {
+            let _ = self.lower_expr(arg, scope, None)?;
+        }
 
         let n = self.emit(Instruction::ArrayLen { array });
         let zero = self.emit_i32_const(0);
@@ -14118,7 +14118,7 @@ fn required_param_count(params: &[Type]) -> usize {
 }
 
 fn call_arity_matches(params: &[Type], actual: usize) -> bool {
-    (required_param_count(params)..=params.len()).contains(&actual)
+    actual >= required_param_count(params)
 }
 
 fn type_record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {

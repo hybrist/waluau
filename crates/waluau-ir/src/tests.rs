@@ -493,6 +493,47 @@ fn lowers_omitted_trailing_nullable_args_as_typed_nulls() {
 }
 
 #[test]
+fn lowers_surplus_call_arguments_for_effects_but_keeps_fixed_ir_arity() {
+    let source = r#"
+        function mark(value: i32): i32
+            return value
+        end
+
+        function take(value: i32): i32
+            return value
+        end
+
+        function entry(): i32
+            return take(mark(1), mark(2), mark(3))
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("surplus-call IR should verify");
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function");
+    let calls = entry
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::Call { name, args, .. } => Some((name.as_str(), args.len())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls,
+        [("mark", 1), ("mark", 1), ("mark", 1), ("take", 1)],
+        "every surplus expression must lower left-to-right before the fixed call:\n{}",
+        entry.dump()
+    );
+}
+
+#[test]
 fn lowers_nil_for_declared_nullable_callback_parameter() {
     let source = r#"
         type Event = extern

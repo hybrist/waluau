@@ -491,6 +491,13 @@ pub(super) fn infer_pcall_builtin_call(
             return Some(Err(error));
         }
     }
+    for arg in args.iter().skip(params.len() + 1) {
+        if let Err(error) =
+            super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)
+        {
+            return Some(Err(error));
+        }
+    }
     Some(coerce_type(
         Type::Multi(vec![Type::Bool, Type::Unknown]),
         expected,
@@ -1217,9 +1224,9 @@ pub(super) fn infer_table_builtin_call(
             return Some(coerce_type(element_ty, expected));
         }
         TABLE_SORT => {
-            if args.is_empty() || args.len() > 2 {
+            if args.is_empty() {
                 return Some(Err(Diagnostic::new(format!(
-                    "{TABLE_SORT} expects 1 or 2 arguments, got {}",
+                    "{TABLE_SORT} expects at least 1 argument, got {}",
                     args.len()
                 ))));
             }
@@ -1258,6 +1265,17 @@ pub(super) fn infer_table_builtin_call(
                 return Some(Err(Diagnostic::new(format!(
                     "{TABLE_SORT} without a comparator requires numeric or string elements, got {element_ty}"
                 ))));
+            }
+            for arg in args.iter().skip(2) {
+                if let Err(error) = super::expressions::infer_expr(
+                    arg,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                ) {
+                    return Some(Err(error));
+                }
             }
             return Some(coerce_type(Type::Unit, expected));
         }

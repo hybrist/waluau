@@ -583,6 +583,26 @@ fn authored_main_takes_the_public_name_while_runtime_init_keeps_its_internal_exp
 }
 
 #[test]
+fn emits_valid_wasm_for_calls_with_surplus_source_arguments() {
+    let source = r#"
+        function mark(value: i32): i32 return value end
+        function take(value: i32): i32 return value end
+
+        function entry(): i32
+            local zero: () -> i32 = function(): i32 return 4 end
+            return take(mark(1), mark(2)) + zero(mark(3))
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("surplus arguments must not alter fixed Wasm call signatures");
+}
+
+#[test]
 fn emits_valid_wasm_for_nominal_enum_match() {
     let source = r#"
         enum Direction { north, east, south }
