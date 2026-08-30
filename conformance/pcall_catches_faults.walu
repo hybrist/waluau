@@ -33,7 +33,7 @@ local negative_ok, negative_err = pcall(
 assert(not negative_ok)
 assert(negative_err == "array index out of bounds")
 
--- Writes past the append position (index == #t) are caught.
+-- Writes past the authored append position (index == #t + 1) are caught.
 local write_ok, write_err = pcall(
     function(index: i32): unit
         local xs: {i32} = {1, 2}

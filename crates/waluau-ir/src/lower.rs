@@ -10459,14 +10459,60 @@ impl Builder<'_> {
         let value = self.lower_expr(&args[2], scope, Some(element_ty.clone()))?;
         let element_ty = stored_ty;
         let n = self.emit(Instruction::ArrayLen { array });
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+
+        // Validate before growing: authored positions 1..=#t + 1 map to
+        // physical offsets 0..=#t. Without this guard, #t + 2 would become
+        // the append position after the temporary growth below and append a
+        // second element instead of failing.
+        let non_negative = self.emit(Instruction::Binary {
+            op: BinaryOp::GreaterEq,
+            left: pos,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let within_append_position = self.emit(Instruction::Binary {
+            op: BinaryOp::LessEq,
+            left: pos,
+            right: n,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let valid = self.emit(Instruction::Binary {
+            op: BinaryOp::And,
+            left: non_negative,
+            right: within_append_position,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let insert_block = self.new_block();
+        let trap_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: valid,
+                then_block: insert_block,
+                else_block: trap_block,
+            },
+        );
+        self.current_block = trap_block;
+        let error = self.emit(Instruction::String("array index out of bounds".to_string()));
+        self.emit(Instruction::Throw { error });
+        self.set_terminator(
+            trap_block,
+            Terminator::Unreachable {
+                span: args[1].span(),
+            },
+        );
+        self.current_block = insert_block;
         self.emit(Instruction::ArraySet {
             array,
             index: n,
             value,
             element_ty: element_ty.clone(),
         });
-        let zero = self.emit_i32_const(0);
-        let one = self.emit_i32_const(1);
 
         // for i = n down to pos + 1: t[i] = t[i-1]
         let preheader = self.current_block;

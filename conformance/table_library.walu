@@ -19,6 +19,26 @@ table.insert(t, 5, 55)
 assert(#t == 5)
 assert(t[5] == 55)
 
+-- Positional insertion accepts exactly 1 through #t + 1 and validates the
+-- position before growing the array.
+local insert_low_ok, insert_low_err = pcall(
+    function(): unit
+        table.insert(t, 0, 44)
+    end
+)
+assert(not insert_low_ok)
+assert(insert_low_err == "array index out of bounds")
+assert(#t == 5)
+
+local insert_high_ok, insert_high_err = pcall(
+    function(): unit
+        table.insert(t, #t + 2, 66)
+    end
+)
+assert(not insert_high_ok)
+assert(insert_high_err == "array index out of bounds")
+assert(#t == 5)
+
 -- table.remove(t, pos) returns the removed element and shifts left.
 local removed: i32 = table.remove(t, 1)
 assert(removed == 99)
