@@ -13,6 +13,11 @@ run() {
 if command -v cargo >/dev/null 2>&1; then
   run "Formatting Rust" cargo fmt --all
   run "Applying clippy fixes" cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+  if command -v pnpm >/dev/null 2>&1; then
+    run "Formatting Waluau" pnpm format:waluau
+  else
+    echo "Skipping Waluau formatting: pnpm not found"
+  fi
 else
   echo "Skipping Rust checks: cargo not found"
 fi

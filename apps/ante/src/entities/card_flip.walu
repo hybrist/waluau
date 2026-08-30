@@ -1,28 +1,124 @@
 -- The shared visual for one card turning over in place. It lives beside the
 -- card presenter so stories can exercise the animation without importing the
 -- whole retained board composition.
+--
+-- The flip is a hand's move: fingers take the right edge and pull it up —
+-- that edge climbs while the rest of the card barely stirs — the whole card
+-- comes off the table as it nears standing, the turn completes over the top
+-- midair, and the same edge comes down on the far side as the card settles
+-- flat onto its own spot. Posed as card_warp geometry that is one rotation
+-- about the card's vertical axis riding a rise of half the card's width
+-- plus a hand's pick-up, all times the sine of the turn. The half width
+-- keeps the low edge level with the surface as the card turns; the pick-up
+-- on top of it is what makes this a card in a hand rather than on a hinge —
+-- the low edge hovers clear of the table mid-flip, and nothing is ever
+-- pinned to the surface. The card stays centred over its spot the whole
+-- way: the direction of the flip lives in which edge is up and in the lean
+-- that turns height into screen motion, not in dragging the silhouette
+-- toward an anchor.
 local game = require("../game")
 local easing = require("../easing")
 local ui = require("../ui/node")
 local card = require("./card")
+local card_warp = require("../card_warp")
+local graphics_module = require("waluau:engine/graphics")
 
 const FLIP_SECONDS: f64 = 0.55
 
--- Fakes a card picked up off the table and turned over midair: cos collapses
--- the width (back, edge-on, then face) while sin lifts the card toward the
--- viewer. Everything inherits the transform stack, so the regular card
--- presenter draws both halves of the flip.
-function draw(
+-- The sheet stays rigid through a flip, so the grid is only as fine as the
+-- perspective needs: enough cells that the foreshortened texture bends with
+-- the projection instead of creasing across a few big triangles.
+const COLUMNS: i32 = 8
+const ROWS: i32 = 12
+
+-- How much higher than the bare turn the whole card rides, scaled by the
+-- turn — the hand's contribution. This is what carries the low edge off
+-- the table: it leaves the surface as the turn starts, hovers by this much
+-- at the top, and touches back down as the turn completes, while the held
+-- edge climbs the card's standing width on top of it.
+const PICK_UP: f64 = 24.0
+
+-- How far the card leans back toward the viewer while airborne, scaled by
+-- the turn. The board looks straight down at the table, and under that
+-- camera height off the surface projects as nothing but a little
+-- magnification — an edge flip becomes a silhouette closing and opening,
+-- which reads as a spin about the middle, or worse, as the card being
+-- dragged flat by something under the table. The lean is the borrowed
+-- three-quarter view: it shears the raised edge up the screen by its
+-- height and brings it back down as the card lands, which is what makes
+-- the lift look like a lift.
+const TILT: f64 = 0.35
+
+-- The margin the capture's density carries for perspective: the card's
+-- nearest edge at the top of the lift is magnified by about the pose's
+-- focal length over the focal length less the flight's height, and a
+-- capture without that margin goes soft exactly when the card is closest.
+const LOOM: f64 = 1.2
+
+-- One grid, reused: a card flipped sixty times a second should not be sixty
+-- allocations. Both of the board's reveal flips share it, because each draw
+-- builds it fresh from its own pose.
+local sheet: card_warp.Mesh = card_warp.Mesh.new(COLUMNS, ROWS)
+
+-- The pose of the flip at a moment, for a card resting at x, y. Exported so
+-- the geometry — the pinned pivot edge, the standing card at the top, which
+-- face the viewer gets — can be checked without a canvas.
+function pose_at(x: f64, y: f64, progress: f64): card_warp.Pose
+    local turn: f64 = easing.in_out_cubic(progress)
+    local angle: f64 = turn * math.pi
+    local depth: f64 = math.sin(angle)
+    local pose: card_warp.Pose = card_warp.Pose.rest(
+        card.width,
+        card.height,
+        x + card.width * 0.5,
+        y + card.height * 0.5
+    )
+    -- Negative, so the right edge is the one that comes toward the viewer —
+    -- the lift — and crosses to the left as the turn completes.
+    pose.flip = -angle
+    pose.rise = (card.width * 0.5 + PICK_UP) * depth
+    pose.tilt = TILT * depth
+    -- The lean shears screen-y by depth before the bulk rise, which sends
+    -- the raised edge up the screen but would push the low edge down into
+    -- the table by the same shear. Lifting the whole card up-screen by the
+    -- rise's share of it puts the low edge just above the table line — the
+    -- hand's hover — so what moves is the card climbing, never sinking.
+    pose.center_y -= math.sin(pose.tilt) * pose.rise
+    return pose
+end
+
+-- The narrowest the shadow's footprint gets, as a share of the card's width.
+-- A card standing on edge still blocks the light with its whole raised body,
+-- so the shadow thins toward the pivot without ever vanishing.
+const SHADOW_FLOOR: f64 = 0.22
+
+-- The grounding under the flip. The captured sheet carries no drop shadow —
+-- captures are the bare paper — so without this the card detaches from the
+-- table the moment the flip begins. The footprint is the card's horizontal
+-- extent, which closes toward the middle as the card stands and opens again
+-- as it lands, and the whole patch fades as the body rises off it.
+function draw_shadow(graphics: ui.Graphics, x: f64, y: f64, angle: f64, depth: f64): unit
+    local footprint: f64 = math.abs(math.cos(angle))
+    if footprint < SHADOW_FLOOR then
+        footprint = SHADOW_FLOOR
+    end
+    local width: f64 = card.width * footprint
+    local left: f64 = x + (card.width - width) * 0.5
+    graphics:set_color_rgba(0.03, 0.02, 0.04, 0.2 - 0.08 * depth)
+    graphics:fill_rounded_rectangle(left, y + 2.0, width, card.height, card.corner_radius)
+end
+
+-- The affine stand-in for when the card cannot be captured yet: the old
+-- centre-axis turn, which keeps the reveal legible until assets are ready.
+function draw_flat(
     surface: ui.Surface,
     value: game.Card,
     x: f64,
     y: f64,
-    clock: f64,
-    delay: f64,
+    progress: f64,
     colored: bool
 ): unit
     local graphics = surface.graphics
-    local progress: f64 = easing.clamp01((clock - delay) / FLIP_SECONDS)
     local turn: f64 = easing.in_out_cubic(progress)
     local angle: f64 = turn * math.pi
     local flat: f64 = math.cos(angle)
@@ -36,9 +132,6 @@ function draw(
     graphics:push()
     graphics:translate(x + card.width * 0.5, y + card.height * 0.5 - 10.0 * depth)
     graphics:apply_transform(width_scale * lift, 0.18 * depth, 0.0, lift, 0.0, 0.0)
-    -- A card being turned over is on its way to public: whether the other side
-    -- knew it a moment ago stops mattering the instant it lands face up, so no
-    -- eye rides the flip.
     card.draw_at(
         surface,
         card.look(value, false, false, hidden, colored, false),
@@ -48,4 +141,74 @@ function draw(
     graphics:pop()
 end
 
-return { draw = draw, seconds = FLIP_SECONDS }
+function draw(
+    surface: ui.Surface,
+    value: game.Card,
+    x: f64,
+    y: f64,
+    clock: f64,
+    delay: f64,
+    colored: bool
+): unit
+    local progress: f64 = easing.clamp01((clock - delay) / FLIP_SECONDS)
+    -- At rest — before the flip and after it — the card is the ordinary
+    -- presenter, drop shadow and all, so a revealed card sitting in its slot
+    -- is indistinguishable from its neighbours and costs no capture.
+    if progress <= 0.0 then
+        card.draw_at(surface, card.look(value, false, false, true, colored, false), x, y)
+        return
+    end
+    if progress >= 1.0 then
+        card.draw_at(surface, card.look(value, false, false, false, colored, false), x, y)
+        return
+    end
+    local graphics = surface.graphics
+    local pose: card_warp.Pose = pose_at(x, y, progress)
+    local hidden: bool = pose:facing_front()
+    -- A card being turned over is on its way to public: whether the other side
+    -- knew it a moment ago stops mattering the instant it lands face up, so no
+    -- eye rides the flip.
+    --
+    -- The capture matches the screen's own density, plus the margin the
+    -- perspective adds when the card looms nearest, so swapping the live
+    -- card for its capture costs no sharpness the eye can find.
+    local target: graphics_module.RenderTarget? = card.capture_at_density(
+        surface,
+        card.look(value, false, false, hidden, colored, false),
+        graphics:on_screen_density() * LOOM
+    )
+    if target == nil then
+        draw_flat(surface, value, x, y, progress, colored)
+        return
+    end
+    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+    draw_shadow(graphics, x, y, -pose.flip, math.sin(-pose.flip))
+    sheet:build(pose)
+    -- Seen from behind, a card's face reads the wrong way round unless its
+    -- source region is taken right to left. Source rectangles are in the
+    -- capture's own texels, which the density made more of than the card
+    -- has logical pixels.
+    local source_x: f64 = 0.0
+    local source_width: f64 = captured.width::f64
+    if not hidden then
+        source_x = captured.width::f64
+        source_width = -(captured.width::f64)
+    end
+    local texture: graphics_module.Texture = graphics:texture_from_render_target(captured)
+    graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
+    graphics:draw_sprite_mesh(
+        texture,
+        sheet.columns,
+        sheet.rows,
+        sheet.xs,
+        sheet.ys,
+        sheet.shades,
+        source_x,
+        0.0,
+        source_width,
+        captured.height::f64
+    )
+    graphics:release_render_target(captured)
+end
+
+return { draw = draw, pose_at = pose_at, seconds = FLIP_SECONDS }
