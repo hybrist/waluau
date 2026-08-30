@@ -2275,6 +2275,19 @@ fn type_checks_if_expression() {
 }
 
 #[test]
+fn type_checks_chained_nested_and_operator_position_if_expressions() {
+    let source = r#"
+        function choose(first: bool, second: bool, third: bool): i32
+            local chained: f64 = 7 + if first then 10 elseif second then 20 elseif third then 30 else 40
+            local nested: i32 = if if first then false else second then 1 else 2
+            return nested
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("all if-expression forms should type check");
+}
+
+#[test]
 fn rejects_if_expression_type_mismatch() {
     let source = r#"
         function entry(flag: bool, x: i32): i32

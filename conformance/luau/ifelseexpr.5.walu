@@ -2,23 +2,17 @@
 -- tests/conformance/ifelseexpr.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk retains checks from the upstream source that still fail in
--- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/ifelseexpr.walu in original source order.
--- Upstream source lines 60-69.
--- Required upstream helper setup from line 24-26 is repeated for standalone execution.
+-- Upstream source lines 56-59.
+-- Required upstream helper setup from line 16-22 is repeated for standalone execution.
 
-function EvalElseifChain(condition1, condition2, condition3)
-  return if condition1 then 10 elseif condition2 then 20 elseif condition3 then 30 else 40
+function True()
+  return true
 end
--- Test evaluation of a "chain" of if/elseif/else in an expression
-assert(EvalElseifChain(false, false, false) == 40)
-assert(EvalElseifChain(false, false, true) == 30)
-assert(EvalElseifChain(false, true, false) == 20)
-assert(EvalElseifChain(false, true, true) == 20)
-assert(EvalElseifChain(true, false, false) == 10)
-assert(EvalElseifChain(true, false, true) == 10)
-assert(EvalElseifChain(true, true, false) == 10)
-assert(EvalElseifChain(true, true, true) == 10)
 
+function False()
+  return false
+end
+-- Test expression using non-constant condition
+assert(if True() then true else false)
+assert(if False() then false else true)

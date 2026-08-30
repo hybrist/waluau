@@ -1,0 +1,37 @@
+function chained(first: bool, second: bool, third: bool): i32
+    return if first then 10 elseif second then 20 elseif third then 30 else 40
+end
+
+function nested_condition(first: bool, second: bool): i32
+    return if if first then false else second then 10 else 20
+end
+
+function operator_position(first: bool): f64
+    return 7 + if first then 10 else 20
+end
+
+local counter: i32 = 0
+
+function counted(value: i32): i32
+    counter += value
+    return value
+end
+
+function lazy_chain(first: bool, second: bool): i32
+    counter = 0
+    local result: i32 = if first then counted(1) elseif second then counted(10) else counted(100)
+    assert(counter == result)
+    return result
+end
+
+assert(chained(false, false, false) == 40)
+assert(chained(false, false, true) == 30)
+assert(chained(false, true, true) == 20)
+assert(chained(true, true, true) == 10)
+assert(nested_condition(true, true) == 20)
+assert(nested_condition(false, true) == 10)
+assert(operator_position(true) == 17)
+assert(operator_position(false) == 27)
+assert(lazy_chain(true, true) == 1)
+assert(lazy_chain(false, true) == 10)
+assert(lazy_chain(false, false) == 100)

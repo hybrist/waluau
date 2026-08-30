@@ -844,6 +844,34 @@ fn lowers_if_expression_with_phi_result() {
 }
 
 #[test]
+fn lowers_chained_and_nested_if_expressions_with_lazy_branch_cfgs() {
+    let source = r#"
+        function choose(first: bool, second: bool, third: bool): f64
+            local chained: f64 = 7 + if first then 10 elseif second then 20 elseif third then 30 else 40
+            local nested: i32 = if if first then false else second then 1 else 2
+            return chained + nested
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("IR build should succeed");
+    verify(&module).expect("nested if-expression IR should verify");
+    let function = &module.functions[0];
+    let branch_phis = function
+        .blocks
+        .values()
+        .flat_map(|block| &block.instructions)
+        .filter(|(_, instruction)| {
+            matches!(instruction, Instruction::Phi(incoming) if incoming.len() == 2)
+        })
+        .count();
+    assert!(
+        branch_phis >= 5,
+        "each nested if-expression should retain branch-local CFG evaluation:\n{}",
+        function.dump()
+    );
+}
+
+#[test]
 fn inserts_phi_for_loop_carried_variable() {
     let source = r#"
         function entry(limit: i32): i32

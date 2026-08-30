@@ -720,11 +720,28 @@ impl Parser {
     fn parse_if_expr(&mut self) -> Result<Node, Diagnostic> {
         let mut c = Vec::new();
         self.bump(&mut c); // `if`
+        self.parse_if_expr_clause(c)
+    }
+
+    /// Parse an if-expression clause whose leading `if` or `elseif` token is
+    /// already in `c`. Chained clauses form nested `IfExpr` CST nodes so token
+    /// provenance and comments stay attached to the exact clause they precede.
+    fn parse_if_expr_clause(&mut self, mut c: Vec<Node>) -> Result<Node, Diagnostic> {
         c.push(self.parse_expr()?);
         self.expect(&TokenKind::Then, &mut c, "expected 'then'")?;
         c.push(self.parse_expr()?);
-        self.expect(&TokenKind::Else, &mut c, "expected 'else' in if-expression")?;
-        c.push(self.parse_expr()?);
+        if self.at(&TokenKind::ElseIf) {
+            let mut elseif = Vec::new();
+            self.bump(&mut elseif);
+            c.push(self.parse_if_expr_clause(elseif)?);
+        } else {
+            self.expect(
+                &TokenKind::Else,
+                &mut c,
+                "expected 'else' or 'elseif' in if-expression",
+            )?;
+            c.push(self.parse_expr()?);
+        }
         Ok(Self::tree(SyntaxKind::IfExpr, c))
     }
 
@@ -955,6 +972,7 @@ impl Parser {
                 self.bump(&mut c);
                 Ok(Self::tree(SyntaxKind::VarargExpr, c))
             }
+            Some(TokenKind::If) => self.parse_if_expr(),
             Some(TokenKind::Function) => self.parse_function_expr(),
             Some(TokenKind::LBrace) => self.parse_brace(),
             Some(TokenKind::LParen) => {

@@ -171,6 +171,18 @@ fn formats_if_cast_targets_including_module_qualified_names() {
 }
 
 #[test]
+fn formats_chained_nested_and_operator_position_if_expressions() {
+    assert_eq!(
+        fmt("local x=7+if first then 10 elseif second then 20 elseif third then 30 else 40\n"),
+        "local x = 7 + if first then 10 elseif second then 20 elseif third then 30 else 40\n"
+    );
+    assert_eq!(
+        fmt("local x=if if first then false else second then 1 else 2\n"),
+        "local x = if if first then false else second then 1 else 2\n"
+    );
+}
+
+#[test]
 fn preserves_vararg_type_annotations() {
     let src = "function sum(base:f64,...:number):f64\nreturn base\nend\n";
     assert_eq!(

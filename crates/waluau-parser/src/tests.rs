@@ -2006,6 +2006,62 @@ fn parses_if_expression_in_return() {
 }
 
 #[test]
+fn parses_chained_nested_and_operator_position_if_expressions() {
+    let source = r#"
+        function choose(first: bool, second: bool, third: bool): i32
+            local offset: i32 = 7 + if first then 10 elseif second then 20 elseif third then 30 else 40
+            local nested: i32 = if if first then false else second then 1 else 2
+            if first then
+                return offset
+            else
+                return nested
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("all Luau if-expression positions should parse");
+    let function = &program.functions[0];
+
+    let Stmt::Let { value: offset, .. } = &function.body[0] else {
+        panic!("expected offset local");
+    };
+    let Expr::Binary {
+        op: BinaryOp::Add,
+        right,
+        ..
+    } = offset
+    else {
+        panic!("expected if-expression as addition's right operand");
+    };
+    let Expr::If { else_expr, .. } = right.as_ref() else {
+        panic!("expected outer if-expression");
+    };
+    let Expr::If {
+        else_expr: final_clause,
+        ..
+    } = else_expr.as_ref()
+    else {
+        panic!("expected first elseif to lower to a nested if-expression");
+    };
+    assert!(
+        matches!(final_clause.as_ref(), Expr::If { .. }),
+        "expected second elseif to lower to a nested if-expression"
+    );
+
+    let Stmt::Let { value: nested, .. } = &function.body[1] else {
+        panic!("expected nested local");
+    };
+    assert!(matches!(
+        nested,
+        Expr::If { condition, .. } if matches!(condition.as_ref(), Expr::If { .. })
+    ));
+    assert!(
+        matches!(&function.body[2], Stmt::If { .. }),
+        "statement if parsing must remain distinct"
+    );
+}
+
+#[test]
 fn parses_multi_return_signature_and_statement() {
     let source = r#"
         function pair(x: i32, y: bool): i32, bool
@@ -2215,7 +2271,39 @@ fn rejects_if_expression_without_else() {
     assert!(
         error
             .to_string()
-            .contains("expected 'else' in if expression")
+            .contains("expected 'else' or 'elseif' in if expression")
+    );
+}
+
+#[test]
+fn recovers_after_malformed_elseif_expression() {
+    let source = r#"
+        function broken(first: bool, second: bool): i32
+            return if first then 1 elseif second 2 else 3
+        end
+
+        function healthy(): i32
+            return 4
+        end
+    "#;
+
+    let outcome = crate::parse_with_recovery(source, "if-expression.walu");
+    assert!(
+        outcome.diagnostics.iter().any(|diagnostic| diagnostic
+            .to_string()
+            .contains("expected 'then' after if condition")),
+        "expected a targeted malformed-elseif diagnostic: {:?}",
+        outcome.diagnostics
+    );
+    assert!(outcome.diagnostics.iter().all(|diagnostic| {
+        diagnostic.span().is_some()
+            && diagnostic.source_location().is_some()
+            && diagnostic.file_path() == Some("if-expression.walu")
+    }));
+    assert!(
+        outcome.program.functions.iter().any(
+            |function| matches!(&function.name, FunctionName::Simple(name) if name == "healthy")
+        )
     );
 }
 
