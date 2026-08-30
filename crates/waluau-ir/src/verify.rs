@@ -413,6 +413,34 @@ fn verify_function(
                         }
                     }
                 }
+                Instruction::ProtectedCallUnknown { callee, args } => {
+                    let callee_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *callee,
+                    )?;
+                    if callee_ty != Type::Unknown {
+                        return Err(Diagnostic::new(format!(
+                            "dynamic protected call in block {:?} expects unknown callee, got {}",
+                            block.id, callee_ty
+                        )));
+                    }
+                    let args_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *args,
+                    )?;
+                    if args_ty != Type::Array(Arc::new(Type::Unknown)) {
+                        return Err(Diagnostic::new(format!(
+                            "dynamic protected call in block {:?} expects unknown argument pack, got {}",
+                            block.id, args_ty
+                        )));
+                    }
+                }
                 Instruction::CoroutineCreate { callee } => {
                     let callee_ty = require_dominating_definition(
                         &definitions,
@@ -1516,7 +1544,9 @@ fn infer_instruction_type(
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
         Instruction::HostCall { return_type, .. } => Ok(return_type.clone()),
         Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
-        Instruction::ProtectedCall { .. } => Ok(Type::Multi(vec![Type::Bool, Type::Unknown])),
+        Instruction::ProtectedCall { .. } | Instruction::ProtectedCallUnknown { .. } => {
+            Ok(Type::Multi(vec![Type::Bool, Type::Unknown]))
+        }
         Instruction::CoroutineCreate { .. } => Ok(Type::Thread),
         Instruction::CoroutineResume { .. } => {
             Ok(Type::Multi(vec![Type::Bool, Type::Unknown]))

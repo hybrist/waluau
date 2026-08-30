@@ -4516,6 +4516,52 @@ fn narrows_pcall_payload_in_if_branches() {
 }
 
 #[test]
+fn permits_unknown_callee_only_at_pcall_boundary() {
+    let source = r#"
+        function protect(fn, ...): bool
+            local ok, value = pcall(fn, ...)
+            return ok
+        end
+
+        function direct(fn): unit
+            fn()
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("ordinary unknown calls stay illegal");
+    assert!(
+        error
+            .to_string()
+            .contains("attempt to call non-function value of type unknown"),
+        "unexpected diagnostic: {error}"
+    );
+
+    let protected_only = parse(
+        r#"
+            function protect(fn, ...): bool
+                local ok, value = pcall(fn, ...)
+                return ok
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&protected_only).expect("pcall should accept an unknown callee");
+
+    let dynamic_error_narrowing = parse(
+        r#"
+            function protected_message(fn, ...): string
+                local ok, err = pcall(fn, ...)
+                assert(not ok)
+                return err:sub(1, #err)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&dynamic_error_narrowing)
+        .expect("a failed dynamic pcall should narrow its error payload to string");
+}
+
+#[test]
 fn preserves_recursive_local_function_scope_during_multi_binding_annotation() {
     let source = r#"
         function entry(): f64

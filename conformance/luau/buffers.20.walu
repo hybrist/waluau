@@ -3,6 +3,9 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
+-- Dynamic pcall and binary literals now work; this chunk remains blocked by
+-- readbits/writebits and its separately tracked 1-GiB resource slice
+-- (waluau-q7qg.6.4 and waluau-q7qg.6.6).
 -- This chunk contains only buffers.luau checks that currently fail in Waluau.
 -- Remove this directive when the whole chunk passes.
 --

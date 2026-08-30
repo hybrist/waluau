@@ -700,6 +700,24 @@ pub(super) fn infer_pcall_builtin_call(
             Err(error) => return Some(Err(error)),
         }
     };
+    if callee_ty == Type::Unknown {
+        // `pcall` is the one dynamic invocation boundary: an unannotated
+        // helper may protect a runtime closure value without making ordinary
+        // `unknown(...)` calls type-correct. The dynamic wrapper validates the
+        // callee and arguments at runtime, so only require that every argument
+        // expression itself is well-typed here.
+        for arg in args.iter().skip(1) {
+            if let Err(error) =
+                super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)
+            {
+                return Some(Err(error));
+            }
+        }
+        return Some(coerce_type(
+            Type::Multi(vec![Type::Bool, Type::Unknown]),
+            expected,
+        ));
+    }
     let Type::Function {
         params,
         return_type: _,

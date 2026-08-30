@@ -423,6 +423,13 @@ pub const ERR_BUFFER_ALLOC: &str = "buffer allocation failed";
 /// Error payload used when `pcall` catches a foreign (non-Waluau) exception
 /// raised by a host import.
 pub const ERR_FOREIGN_EXCEPTION: &str = "uncaught host exception";
+/// Error message when dynamic `pcall` receives a non-function value.
+pub const ERR_PCALL_NON_FUNCTION: &str = "attempt to call a non-function value";
+/// Error message when a dynamic closure is missing required arguments.
+pub const ERR_PCALL_ARITY: &str = "not enough arguments for protected function";
+/// Error message when a boxed dynamic argument is incompatible with the
+/// protected closure's declared parameter type.
+pub const ERR_PCALL_ARGUMENT_TYPE: &str = "protected function argument type mismatch";
 /// Error message for invalid `bit32.extract`/`bit32.replace` field ranges.
 pub const ERR_BIT32_FIELD: &str = "bit field range is out of bounds";
 
@@ -455,6 +462,12 @@ pub(crate) fn runtime_error_messages(instruction: &IrInstruction) -> &'static [&
             &[ERR_BUFFER_OOB]
         }
         IrInstruction::ProtectedCall { .. } => &[ERR_FOREIGN_EXCEPTION],
+        IrInstruction::ProtectedCallUnknown { .. } => &[
+            ERR_FOREIGN_EXCEPTION,
+            ERR_PCALL_NON_FUNCTION,
+            ERR_PCALL_ARITY,
+            ERR_PCALL_ARGUMENT_TYPE,
+        ],
         IrInstruction::BitwiseIntrinsic {
             intrinsic: BitwiseIntrinsic::Extract | BitwiseIntrinsic::Replace,
             ..
@@ -519,7 +532,9 @@ fn collect_from_function<'a>(
                     from: Type::Unknown,
                     ..
                 } => {
-                    for literal in ["boolean", "nil", "number", "function", "table", "thread"] {
+                    for literal in [
+                        "boolean", "nil", "number", "function", "table", "thread", "buffer",
+                    ] {
                         if indices.insert(literal, strings.len() as u32).is_none() {
                             strings.push(literal.to_string());
                         }
@@ -531,7 +546,7 @@ fn collect_from_function<'a>(
                 } => {
                     // The dynamic tostring chain reads the "nil" constant and
                     // passes reference-type prefixes to js_tostring_named.
-                    for literal in ["nil", "function", "table", "thread"] {
+                    for literal in ["nil", "function", "table", "thread", "buffer"] {
                         if indices.insert(literal, strings.len() as u32).is_none() {
                             strings.push(literal.to_string());
                         }

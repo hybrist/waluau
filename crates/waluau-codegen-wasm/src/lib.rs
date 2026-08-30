@@ -250,6 +250,16 @@ fn needs_lua_error_tag(module: &Module) -> bool {
     })
 }
 
+fn needs_dynamic_pcall(module: &Module) -> bool {
+    module.functions.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(instruction, IrInstruction::ProtectedCallUnknown { .. })
+            })
+        })
+    })
+}
+
 /// Returns `true` if the module uses any features that require the closure GC types
 /// (`$anyref_array`, `$func_val`, `$boxed_f64`, `$boxed_bool`) to be declared in
 /// the type section.
@@ -284,7 +294,8 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
                     // Closure creation and indirect calls require all three GC types.
                     IrInstruction::Closure { .. }
                     | IrInstruction::CallValue { .. }
-                    | IrInstruction::ProtectedCall { .. } => {
+                    | IrInstruction::ProtectedCall { .. }
+                    | IrInstruction::ProtectedCallUnknown { .. } => {
                         return true;
                     }
                     // Dynamic array reads box f64/bool elements on the fly.
@@ -384,6 +395,7 @@ struct IncrementalEmitContext {
     coroutine_body_wrapper_type: Option<u32>,
     coroutine_push_frame_func: Option<u32>,
     closure_wrapper_slots: HashMap<String, u32>,
+    dynamic_closure_wrapper_slots: HashMap<String, u32>,
     import_map: host::HostImportMap,
     declared_import_indices: HashMap<SymbolId, u32>,
     import_func_count: u32,
@@ -405,6 +417,7 @@ impl IncrementalEmitContext {
             coroutine_plan: &self.coroutine_plan,
             coroutine_body_wrapper_type: self.coroutine_body_wrapper_type,
             closure_wrapper_slots: &self.closure_wrapper_slots,
+            dynamic_closure_wrapper_slots: &self.dynamic_closure_wrapper_slots,
             import_map: &self.import_map,
             declared_import_indices: &self.declared_import_indices,
             import_func_count: self.import_func_count,
@@ -1093,7 +1106,8 @@ fn emit_inner(
         // $func_val = (struct {
         //   func_idx: i32 (mut)    — original function's table slot (for coroutine use)
         //   env: ref null $anyref_array (mut) — capture-cell env for wrapper calls
-        //   wrapper_idx: i32 (mut) — wrapper table slot (for call_indirect)
+        //   wrapper_idx: i32 (mut) — typed wrapper table slot
+        //   dynamic_wrapper_idx: i32 (mut) — (env, {unknown}) -> unknown wrapper slot
         // })
         types.ty().struct_(vec![
             FieldType {
@@ -1105,6 +1119,10 @@ fn emit_inner(
                     nullable: true,
                     heap_type: HeapType::Concrete(anyref_array_type),
                 })),
+                mutable: true,
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
                 mutable: true,
             },
             FieldType {
@@ -1701,6 +1719,26 @@ fn emit_inner(
         .enumerate()
         .map(|(i, name)| (name.clone(), module.functions.len() as u32 + i as u32))
         .collect();
+    let dynamic_pcall = needs_dynamic_pcall(module);
+    let dynamic_closure_wrapper_slots: HashMap<String, u32> = if dynamic_pcall {
+        closure_targets
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                (
+                    name.clone(),
+                    module.functions.len() as u32 + closure_targets.len() as u32 + i as u32,
+                )
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    let dynamic_wrapper_count = if dynamic_pcall {
+        closure_targets.len() as u32
+    } else {
+        0
+    };
 
     // The bump-allocation helper is the last defined function; its index must
     // be known while user function bodies are emitted, so pre-compute it from
@@ -1726,6 +1764,7 @@ fn emit_inner(
             + module.functions.len() as u32
             + u32::from(start_thunk.is_some())
             + closure_targets.len() as u32
+            + dynamic_wrapper_count
             + trampoline_func_count
             - 1
     });
@@ -1738,6 +1777,7 @@ fn emit_inner(
         + module.functions.len() as u32
         + u32::from(start_thunk.is_some())
         + closure_targets.len() as u32
+        + dynamic_wrapper_count
         + trampoline_func_count
         + record_helper_func_count
         + nullable_box_helper_func_count;
@@ -1884,6 +1924,7 @@ fn emit_inner(
         coroutine_plan: &coroutine_plan,
         coroutine_body_wrapper_type,
         closure_wrapper_slots: &closure_wrapper_slots,
+        dynamic_closure_wrapper_slots: &dynamic_closure_wrapper_slots,
         import_map: &import_map,
         declared_import_indices: &declared_import_indices,
         import_func_count,
@@ -2022,8 +2063,57 @@ fn emit_inner(
         ));
     }
 
-    let mut helper_func_idx_counter =
-        module.functions.len() as u32 + thunk_offset + closure_targets.len() as u32;
+    if dynamic_pcall {
+        let dynamic_wrapper_type_idx = signature_registry
+            .get_wrapper_type_index(
+                user_type_base,
+                &[Type::Array(Arc::new(Type::Unknown))],
+                &Type::Unknown,
+            )
+            .ok_or_else(|| Diagnostic::new("missing dynamic protected-call wrapper type"))?;
+        let arity_error = host::string_constant_index(&string_constants, host::ERR_PCALL_ARITY)?;
+        let type_error =
+            host::string_constant_index(&string_constants, host::ERR_PCALL_ARGUMENT_TYPE)?;
+        for (wrapper_idx, name) in closure_targets.iter().enumerate() {
+            let target_fn = module
+                .functions
+                .iter()
+                .find(|function| function.name == *name)
+                .ok_or_else(|| {
+                    Diagnostic::new(format!("closure target '{name}' not found in module"))
+                })?;
+            let target_sig = signatures.get(name).ok_or_else(|| {
+                Diagnostic::new(format!("missing signature for closure target '{name}'"))
+            })?;
+            let logical_params: Vec<Type> = target_fn.params[target_fn.capture_count..]
+                .iter()
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            functions.function(dynamic_wrapper_type_idx);
+            codes.function(&emit_dynamic_closure_wrapper(
+                target_fn,
+                target_sig,
+                &logical_params,
+                &array_registry,
+                import_func_count,
+                arity_error,
+                type_error,
+            )?);
+            function_names.push((
+                import_func_count
+                    + module.functions.len() as u32
+                    + thunk_offset
+                    + closure_targets.len() as u32
+                    + wrapper_idx as u32,
+                format!("{name}$dynamic_wrapper"),
+            ));
+        }
+    }
+
+    let mut helper_func_idx_counter = module.functions.len() as u32
+        + thunk_offset
+        + closure_targets.len() as u32
+        + dynamic_wrapper_count;
     if let Some(type_idx) = callback_event_unit_trampoline_type_idx {
         functions.function(type_idx);
         exports.export(
@@ -2306,7 +2396,7 @@ fn emit_inner(
     let _ = helper_func_idx_counter;
 
     let defined_func_count = module.functions.len() as u64;
-    let wrapper_count = closure_targets.len() as u64;
+    let wrapper_count = closure_targets.len() as u64 + dynamic_wrapper_count as u64;
     let table_size = import_func_count as u64 + defined_func_count + wrapper_count;
     tables.table(TableType {
         element_type: RefType::FUNCREF,
@@ -2322,6 +2412,14 @@ fn emit_inner(
     for i in 0..closure_targets.len() as u32 {
         let wrapper_module_idx =
             import_func_count + module.functions.len() as u32 + thunk_offset + i;
+        table_inits.push(wrapper_module_idx);
+    }
+    for i in 0..dynamic_wrapper_count {
+        let wrapper_module_idx = import_func_count
+            + module.functions.len() as u32
+            + thunk_offset
+            + closure_targets.len() as u32
+            + i;
         table_inits.push(wrapper_module_idx);
     }
     elements.active(
@@ -2451,6 +2549,7 @@ fn emit_inner(
             coroutine_body_wrapper_type,
             coroutine_push_frame_func,
             closure_wrapper_slots,
+            dynamic_closure_wrapper_slots,
             import_map,
             declared_import_indices,
             import_func_count,
@@ -2832,6 +2931,8 @@ struct EmissionContext<'a> {
     coroutine_body_wrapper_type: Option<u32>,
     /// Map from closure-target function name to its wrapper table slot index.
     closure_wrapper_slots: &'a HashMap<String, u32>,
+    /// Map from closure target to its canonical dynamic protected-call wrapper.
+    dynamic_closure_wrapper_slots: &'a HashMap<String, u32>,
     /// Remapping from canonical host-import slots to actual Wasm function indices.
     import_map: &'a host::HostImportMap,
     declared_import_indices: &'a HashMap<SymbolId, u32>,
@@ -3165,6 +3266,333 @@ fn emit_closure_wrapper(
 
     // Call the original function (which takes capture_cells... + logical_params...).
     out.instruction(&Instruction::Call(import_count + target_sig.index));
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
+fn emit_throw_global(out: &mut Function, message_global: u32) {
+    out.instruction(&Instruction::GlobalGet(message_global));
+    out.instruction(&Instruction::AnyConvertExtern);
+    out.instruction(&Instruction::Throw(ERROR_TAG_INDEX));
+}
+
+fn dynamic_abi_type_supported(ty: &Type, is_return: bool) -> bool {
+    match ty {
+        Type::Unit => is_return,
+        Type::Numeric(NumericType::I32 | NumericType::U32 | NumericType::F64)
+        | Type::Bool
+        | Type::String
+        | Type::Bytes
+        | Type::Extern
+        | Type::ExternSubtype(_)
+        | Type::Nil
+        | Type::Array(_)
+        | Type::Function { .. }
+        | Type::Record(_)
+        | Type::Thread
+        | Type::Buffer
+        | Type::Unknown => true,
+        Type::Nullable(inner) => dynamic_abi_type_supported(inner, false),
+        _ => false,
+    }
+}
+
+fn emit_dynamic_argument_value(
+    out: &mut Function,
+    param: &Type,
+    array_registry: &ArrayTypeRegistry,
+    value_local: u32,
+    f64_local: u32,
+    type_error_global: u32,
+) -> Result<(), Diagnostic> {
+    let emit_mismatch = |out: &mut Function| emit_throw_global(out, type_error_global);
+    match param {
+        Type::Unknown => {
+            out.instruction(&Instruction::LocalGet(value_local));
+        }
+        Type::Numeric(target @ (NumericType::I32 | NumericType::U32 | NumericType::F64)) => {
+            let result = if *target == NumericType::F64 {
+                ValType::F64
+            } else {
+                ValType::I32
+            };
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefTestNonNull(i31_heap_type()));
+            out.instruction(&Instruction::If(BlockType::Result(result)));
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
+            out.instruction(&Instruction::I31GetS);
+            if *target == NumericType::F64 {
+                out.instruction(&Instruction::F64ConvertI32S);
+            }
+            out.instruction(&Instruction::Else);
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+                array_registry.boxed_f64_struct_type,
+            )));
+            out.instruction(&Instruction::If(BlockType::Result(result)));
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                array_registry.boxed_f64_struct_type,
+            )));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: array_registry.boxed_f64_struct_type,
+                field_index: 0,
+            });
+            if *target != NumericType::F64 {
+                out.instruction(&Instruction::LocalSet(f64_local));
+                // Reject NaN and values outside the non-trapping truncation
+                // range before converting. Fractional numbers retain the
+                // existing truncating numeric-coercion behavior.
+                out.instruction(&Instruction::LocalGet(f64_local));
+                out.instruction(&Instruction::LocalGet(f64_local));
+                out.instruction(&Instruction::F64Ne);
+                out.instruction(&Instruction::If(BlockType::Empty));
+                emit_mismatch(out);
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::LocalGet(f64_local));
+                out.instruction(&Instruction::F64Const(if *target == NumericType::I32 {
+                    -2147483648.0
+                } else {
+                    0.0
+                }));
+                out.instruction(&Instruction::F64Lt);
+                out.instruction(&Instruction::LocalGet(f64_local));
+                out.instruction(&Instruction::F64Const(if *target == NumericType::I32 {
+                    2147483648.0
+                } else {
+                    4294967296.0
+                }));
+                out.instruction(&Instruction::F64Ge);
+                out.instruction(&Instruction::I32Or);
+                out.instruction(&Instruction::If(BlockType::Empty));
+                emit_mismatch(out);
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::LocalGet(f64_local));
+                out.instruction(if *target == NumericType::I32 {
+                    &Instruction::I32TruncF64S
+                } else {
+                    &Instruction::I32TruncF64U
+                });
+            }
+            out.instruction(&Instruction::Else);
+            emit_mismatch(out);
+            out.instruction(&Instruction::End);
+            out.instruction(&Instruction::End);
+        }
+        Type::Bool => {
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+                array_registry.boxed_bool_struct_type,
+            )));
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                array_registry.boxed_bool_struct_type,
+            )));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: array_registry.boxed_bool_struct_type,
+                field_index: 0,
+            });
+            out.instruction(&Instruction::Else);
+            emit_mismatch(out);
+            out.instruction(&Instruction::End);
+        }
+        Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) => {
+            let extern_heap = HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Extern,
+            };
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefTestNonNull(extern_heap));
+            out.instruction(&Instruction::If(BlockType::Result(
+                externref_nonnull_val_type(),
+            )));
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::ExternConvertAny);
+            out.instruction(&Instruction::RefAsNonNull);
+            out.instruction(&Instruction::Else);
+            emit_mismatch(out);
+            out.instruction(&Instruction::End);
+        }
+        Type::Nil => {
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefIsNull);
+            out.instruction(&Instruction::If(BlockType::Empty));
+            out.instruction(&Instruction::Else);
+            emit_mismatch(out);
+            out.instruction(&Instruction::End);
+            emit_ref_null(out, param, array_registry)?;
+        }
+        Type::Array(element) => {
+            let heap = HeapType::Concrete(array_registry.growable_array_index(element)?);
+            emit_checked_concrete_ref(out, value_local, heap, type_error_global);
+        }
+        Type::Function { .. } => emit_checked_concrete_ref(
+            out,
+            value_local,
+            HeapType::Concrete(array_registry.func_val_struct_type),
+            type_error_global,
+        ),
+        Type::Record(_) => emit_checked_concrete_ref(
+            out,
+            value_local,
+            HeapType::Concrete(array_registry.record_index(param)?),
+            type_error_global,
+        ),
+        Type::Thread => emit_checked_concrete_ref(
+            out,
+            value_local,
+            HeapType::Concrete(array_registry.coroutine_state_type()?),
+            type_error_global,
+        ),
+        Type::Buffer => emit_checked_concrete_ref(
+            out,
+            value_local,
+            HeapType::Concrete(array_registry.luau_buffer_struct_type()?),
+            type_error_global,
+        ),
+        Type::Nullable(inner) => {
+            let result_ty = wasm_type(param, array_registry)?;
+            out.instruction(&Instruction::LocalGet(value_local));
+            out.instruction(&Instruction::RefIsNull);
+            out.instruction(&Instruction::If(BlockType::Result(result_ty)));
+            emit_ref_null(out, param, array_registry)?;
+            out.instruction(&Instruction::Else);
+            emit_dynamic_argument_value(
+                out,
+                inner,
+                array_registry,
+                value_local,
+                f64_local,
+                type_error_global,
+            )?;
+            out.instruction(&Instruction::End);
+        }
+        other => {
+            return Err(Diagnostic::new(format!(
+                "unsupported dynamic protected-call parameter type {other}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn emit_checked_concrete_ref(
+    out: &mut Function,
+    value_local: u32,
+    heap: HeapType,
+    type_error_global: u32,
+) {
+    out.instruction(&Instruction::LocalGet(value_local));
+    out.instruction(&Instruction::RefTestNonNull(heap));
+    out.instruction(&Instruction::If(BlockType::Result(ValType::Ref(RefType {
+        nullable: false,
+        heap_type: heap,
+    }))));
+    out.instruction(&Instruction::LocalGet(value_local));
+    out.instruction(&Instruction::RefCastNonNull(heap));
+    out.instruction(&Instruction::Else);
+    emit_throw_global(out, type_error_global);
+    out.instruction(&Instruction::End);
+}
+
+/// Canonical protected-call wrapper ABI for an otherwise statically-typed
+/// guest closure: `(env, boxed_args) -> boxed_result`.
+fn emit_dynamic_closure_wrapper(
+    target_fn: &IrFunction,
+    target_sig: &FunctionSignature,
+    logical_params: &[Type],
+    array_registry: &ArrayTypeRegistry,
+    import_count: u32,
+    arity_error_global: u32,
+    type_error_global: u32,
+) -> Result<Function, Diagnostic> {
+    let mut out = Function::new(vec![(1, anyref_val_type()), (1, ValType::F64)]);
+    let value_local = 2;
+    let f64_local = 3;
+    if logical_params
+        .iter()
+        .any(|param| !dynamic_abi_type_supported(param, false))
+        || !dynamic_abi_type_supported(&target_fn.return_type, true)
+    {
+        emit_throw_global(&mut out, type_error_global);
+        out.instruction(&Instruction::End);
+        return Ok(out);
+    }
+
+    let args_wrapper = array_registry.growable_array_index(&Type::Unknown)?;
+    let args_storage = array_registry.index(&Type::Array(Arc::new(Type::Unknown)))?;
+    let required = logical_params
+        .iter()
+        .rposition(|param| !matches!(param, Type::Nullable(_)))
+        .map_or(0, |index| index + 1);
+    out.instruction(&Instruction::LocalGet(1));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: args_wrapper,
+        field_index: GROWABLE_LEN_FIELD,
+    });
+    out.instruction(&Instruction::I32Const(required as i32));
+    out.instruction(&Instruction::I32LtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_throw_global(&mut out, arity_error_global);
+    out.instruction(&Instruction::End);
+
+    for i in 0..target_fn.capture_count {
+        let capture_ty = &target_fn.params[i].1;
+        out.instruction(&Instruction::LocalGet(0));
+        out.instruction(&Instruction::I32Const(i as i32));
+        out.instruction(&Instruction::ArrayGet(array_registry.anyref_array_type));
+        let Type::Array(capture_element) = capture_ty else {
+            return Err(Diagnostic::new(format!(
+                "capture cell param must be an array type, got {capture_ty}"
+            )));
+        };
+        out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+            array_registry.growable_array_index(capture_element)?,
+        )));
+    }
+
+    for (index, param) in logical_params.iter().enumerate() {
+        let optional = matches!(param, Type::Nullable(_));
+        if optional {
+            out.instruction(&Instruction::LocalGet(1));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: args_wrapper,
+                field_index: GROWABLE_LEN_FIELD,
+            });
+            out.instruction(&Instruction::I32Const(index as i32));
+            out.instruction(&Instruction::I32LeU);
+            out.instruction(&Instruction::If(BlockType::Result(wasm_type(
+                param,
+                array_registry,
+            )?)));
+            emit_ref_null(&mut out, param, array_registry)?;
+            out.instruction(&Instruction::Else);
+        }
+        out.instruction(&Instruction::LocalGet(1));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: args_wrapper,
+            field_index: GROWABLE_STORAGE_FIELD,
+        });
+        out.instruction(&Instruction::I32Const(index as i32));
+        out.instruction(&Instruction::ArrayGet(args_storage));
+        out.instruction(&Instruction::LocalSet(value_local));
+        emit_dynamic_argument_value(
+            &mut out,
+            param,
+            array_registry,
+            value_local,
+            f64_local,
+            type_error_global,
+        )?;
+        if optional {
+            out.instruction(&Instruction::End);
+        }
+    }
+
+    out.instruction(&Instruction::Call(import_count + target_sig.index));
+    emit_box(&mut out, &target_fn.return_type, array_registry)?;
     out.instruction(&Instruction::End);
     Ok(out)
 }
@@ -4830,6 +5258,83 @@ impl FunctionEmission<'_> {
                     out.instruction(&Instruction::End);
                     out.instruction(&Instruction::LocalSet(value_slot));
                 }
+                IrInstruction::ProtectedCallUnknown { callee, args } => {
+                    let slots = local_plan
+                        .multi_slots
+                        .get(value)
+                        .ok_or_else(|| Diagnostic::new("dynamic pcall result has no slots"))?;
+                    let ok_slot = slots[0];
+                    let value_slot = slots[1];
+                    let value_tmp = local_plan.protected_call_value_tmp.ok_or_else(|| {
+                        Diagnostic::new("missing protected-call value scratch local")
+                    })?;
+                    let func_heap = HeapType::Concrete(ctx.array_registry.func_val_struct_type);
+
+                    out.instruction(&Instruction::I32Const(0));
+                    out.instruction(&Instruction::LocalSet(ok_slot));
+                    out.instruction(&Instruction::Block(BlockType::Result(anyref_val_type())));
+                    out.instruction(&Instruction::Block(BlockType::Empty));
+                    out.instruction(&Instruction::TryTable(
+                        BlockType::Result(anyref_val_type()),
+                        Cow::Owned(vec![
+                            Catch::One {
+                                tag: ERROR_TAG_INDEX,
+                                label: 1,
+                            },
+                            Catch::All { label: 0 },
+                        ]),
+                    ));
+                    emit_value_operand(out, local_plan, *callee)?;
+                    out.instruction(&Instruction::RefTestNonNull(func_heap));
+                    out.instruction(&Instruction::If(BlockType::Empty));
+                    out.instruction(&Instruction::Else);
+                    emit_throw_message(out, ctx, host::ERR_PCALL_NON_FUNCTION)?;
+                    out.instruction(&Instruction::End);
+
+                    // Canonical dynamic closure ABI: (env, boxed_args) -> unknown.
+                    emit_value_operand(out, local_plan, *callee)?;
+                    out.instruction(&Instruction::RefCastNonNull(func_heap));
+                    out.instruction(&Instruction::StructGet {
+                        struct_type_index: ctx.array_registry.func_val_struct_type,
+                        field_index: 1,
+                    });
+                    emit_value_operand(out, local_plan, *args)?;
+                    emit_value_operand(out, local_plan, *callee)?;
+                    out.instruction(&Instruction::RefCastNonNull(func_heap));
+                    out.instruction(&Instruction::StructGet {
+                        struct_type_index: ctx.array_registry.func_val_struct_type,
+                        field_index: 3,
+                    });
+                    let dynamic_type = ctx
+                        .signature_registry
+                        .get_wrapper_type_index(
+                            ctx.user_type_base,
+                            &[Type::Array(Arc::new(Type::Unknown))],
+                            &Type::Unknown,
+                        )
+                        .ok_or_else(|| {
+                            Diagnostic::new("missing dynamic protected-call wrapper type")
+                        })?;
+                    out.instruction(&Instruction::CallIndirect {
+                        type_index: dynamic_type,
+                        table_index: 0,
+                    });
+                    out.instruction(&Instruction::LocalSet(value_tmp));
+                    out.instruction(&Instruction::I32Const(1));
+                    out.instruction(&Instruction::LocalSet(ok_slot));
+                    out.instruction(&Instruction::LocalGet(value_tmp));
+                    out.instruction(&Instruction::End);
+                    out.instruction(&Instruction::Br(1));
+                    out.instruction(&Instruction::End);
+                    let foreign_message = host::string_constant_index(
+                        ctx.string_constants,
+                        host::ERR_FOREIGN_EXCEPTION,
+                    )?;
+                    out.instruction(&Instruction::GlobalGet(foreign_message));
+                    out.instruction(&Instruction::AnyConvertExtern);
+                    out.instruction(&Instruction::End);
+                    out.instruction(&Instruction::LocalSet(value_slot));
+                }
                 IrInstruction::CoroutineCreate { callee } => {
                     let state_ty = ctx.coroutine_state_type()?;
                     // struct.new $coroutine_state {
@@ -5185,8 +5690,13 @@ impl FunctionEmission<'_> {
                             .ok_or_else(|| {
                                 Diagnostic::new(format!("no wrapper slot for closure '{name}'"))
                             })?;
-                    // Build a $func_val struct: { orig_idx, env, wrapper_idx }.
-                    // struct.new expects fields in declaration order: field 0, field 1, field 2.
+                    let dynamic_wrapper_slot = ctx
+                        .dynamic_closure_wrapper_slots
+                        .get(name)
+                        .copied()
+                        .unwrap_or(wrapper_slot);
+                    // Build a $func_val struct:
+                    // { orig_idx, env, typed_wrapper_idx, dynamic_wrapper_idx }.
                     out.instruction(&Instruction::I32Const(orig_sig.index as i32));
                     // Build the env array: pack capture-cell refs as anyref elements.
                     if captures.is_empty() {
@@ -5204,6 +5714,7 @@ impl FunctionEmission<'_> {
                         });
                     }
                     out.instruction(&Instruction::I32Const(wrapper_slot as i32));
+                    out.instruction(&Instruction::I32Const(dynamic_wrapper_slot as i32));
                     out.instruction(&Instruction::StructNew(
                         ctx.array_registry.func_val_struct_type,
                     ));
@@ -5829,6 +6340,12 @@ fn emit_ref_null(
         Type::Thread => {
             out.instruction(&Instruction::RefNull(HeapType::Concrete(
                 array_registry.coroutine_state_type()?,
+            )));
+            Ok(())
+        }
+        Type::Buffer => {
+            out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                array_registry.luau_buffer_struct_type()?,
             )));
             Ok(())
         }
