@@ -37,3 +37,37 @@ test('builds and validates typed JSON through compiler host primitives', () => {
   assert.match(json.__json_unpack_start('{"name":9,"score":42}', schema), /\$\.name: expected string/);
   assert.match(json.__json_unpack_start('{', schema), /^invalid JSON:/);
 });
+
+test('formats large finite numbers as fixed-point decimals', () => {
+  const format = buildWaluauImports(null, undefined, {
+    requiredImports: [
+      { module: WALUAU_IMPORT_MODULE, name: 'string_format1', kind: 'function' },
+    ],
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE].string_format1;
+
+  assert.equal(format('%.0f', 1e21), '1000000000000000000000');
+  assert.equal(format('%.6f', 1e21), '1000000000000000000000.000000');
+
+  const exactNegative = BigInt(-1e308).toString();
+  assert.equal(format('%.99f', -1e308), `${exactNegative}.${'0'.repeat(99)}`);
+  assert.equal(format('%30.2f', -1e21), '    -1000000000000000000000.00');
+  assert.equal(format('%-30.2f', 1e21), '1000000000000000000000.00     ');
+});
+
+test('fixed-point formatting preserves ordinary values, specials, and errors', () => {
+  const format = buildWaluauImports(null, undefined, {
+    requiredImports: [
+      { module: WALUAU_IMPORT_MODULE, name: 'string_format1', kind: 'function' },
+    ],
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE].string_format1;
+
+  assert.equal(format('%f', 1.5), '1.500000');
+  assert.equal(format('%.2f', -0), '0.00');
+  assert.equal(format('%f', NaN), 'NaN');
+  assert.equal(format('%f', Infinity), 'Infinity');
+  assert.equal(format('%f', -Infinity), '-Infinity');
+  assert.throws(() => format('%.123f', 1), /invalid string\.format precision/);
+  assert.throws(() => format('%?', 1), /unsupported string\.format specifier/);
+});
