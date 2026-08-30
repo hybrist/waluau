@@ -87,6 +87,13 @@ assert(s[1] == "apple")
 assert(s[2] == "orange")
 assert(s[3] == "pear")
 
+-- table.concat's optional inclusive positions are authored 1-based too.
+assert(table.concat(s, ":", 2, 3) == "orange:pear")
+local concat_start: i32 = 1
+local concat_stop: i32 = 2
+assert(table.concat(s, "-", concat_start, concat_stop) == "apple-orange")
+assert(table.concat(s, ",", 3, 2) == "")
+
 -- Sorting an empty or single-element array is a no-op.
 local empty: {i32} = {}
 table.sort(empty)

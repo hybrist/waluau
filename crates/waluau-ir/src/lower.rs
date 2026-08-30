@@ -10056,9 +10056,9 @@ impl Builder<'_> {
             TABLE_SORT => return Some(self.lower_table_sort(args, scope, expected)),
             _ => return None,
         }
-        if args.is_empty() || args.len() > 2 {
+        if args.is_empty() || args.len() > 4 {
             return Some(Err(Diagnostic::new(format!(
-                "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+                "{TABLE_CONCAT} expects 1 to 4 arguments, got {}",
                 args.len()
             ))));
         }
@@ -10107,6 +10107,25 @@ impl Builder<'_> {
             ty: NumericType::I32,
             literal: NumberLiteral { raw: "1".into() },
         });
+        // Authored table.concat bounds are 1-based and inclusive. A physical
+        // start of `i - 1` paired with an exclusive stop of authored `j`
+        // expresses that range directly while preserving empty i > j ranges.
+        let start = if let Some(start_expr) = args.get(2) {
+            match self.lower_authored_array_index(start_expr, scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            zero
+        };
+        let stop = if let Some(stop_expr) = args.get(3) {
+            match self.lower_index_to_i32(stop_expr, scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            len
+        };
 
         // Naive lowering: result = "" then for each element, result = result .. prefix .. element,
         // where prefix starts as "" and becomes the separator after the first element. This avoids
@@ -10118,13 +10137,13 @@ impl Builder<'_> {
         self.set_terminator(preheader, Terminator::Jump(header));
 
         self.current_block = header;
-        let index_phi = self.emit(Instruction::Phi(vec![(preheader, zero)]));
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, start)]));
         let acc_phi = self.emit(Instruction::Phi(vec![(preheader, empty_string)]));
         let prefix_phi = self.emit(Instruction::Phi(vec![(preheader, empty_string)]));
         // `len` is loop-invariant, but it must still be threaded through a phi (with a
         // trivial `+ 0` self-edge) so the local allocator's liveness analysis treats it as
         // live across the back-edge — mirrors `array_len_phi` in `lower_for_in`.
-        let len_phi = self.emit(Instruction::Phi(vec![(preheader, len)]));
+        let len_phi = self.emit(Instruction::Phi(vec![(preheader, stop)]));
         let cond = self.emit(Instruction::Binary {
             op: BinaryOp::Less,
             left: index_phi,
@@ -11172,9 +11191,9 @@ impl Builder<'_> {
             }
             _ => {}
         }
-        if args.is_empty() || args.len() > 2 {
+        if args.is_empty() || args.len() > 4 {
             return Some(Err(Diagnostic::new(format!(
-                "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+                "{TABLE_CONCAT} expects 1 to 4 arguments, got {}",
                 args.len()
             ))));
         }
@@ -11199,6 +11218,15 @@ impl Builder<'_> {
                     ))));
                 }
                 Err(error) => return Some(Err(error)),
+            }
+        }
+        for bound in args.iter().skip(2) {
+            if let Err(error) = self.infer_expr_type(
+                bound,
+                types,
+                Some(Type::Numeric(NumericType::I32)),
+            ) {
+                return Some(Err(error));
             }
         }
         Some(Ok(Type::String))

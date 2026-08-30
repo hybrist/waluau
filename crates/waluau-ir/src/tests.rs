@@ -2665,7 +2665,7 @@ fn lowers_table_concat_builtin_call_to_naive_concat_loop() {
     let source = r#"
         function entry(): string
             local words: {string} = {"a", "b", "c"}
-            return table.concat(words, ", ")
+            return table.concat(words, ", ", 2, 3)
         end
     "#;
     let program = parse(source).expect("parse should succeed");
@@ -2685,6 +2685,17 @@ fn lowers_table_concat_builtin_call_to_naive_concat_loop() {
             .instructions
             .iter()
             .any(|(_, instruction)| matches!(instruction, Instruction::ArrayGet { .. }))
+    }));
+    assert!(function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::Binary {
+                    op: BinaryOp::Sub,
+                    ..
+                }
+            )
+        })
     }));
     let concat_count: usize = function
         .blocks

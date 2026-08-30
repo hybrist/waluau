@@ -4037,12 +4037,13 @@ fn rejects_tostring_for_unit_inputs() {
 }
 
 #[test]
-fn type_checks_table_concat_with_and_without_separator() {
+fn type_checks_table_concat_with_separator_and_bounds() {
     let source = r#"
-        function entry(words: {string}): string
+        function entry(words: {string}, first: i32, last: i32): string
             local a: string = table.concat(words, ", ")
             local b: string = table.concat(words)
-            return a .. b
+            local c: string = table.concat(words, ", ", first, last)
+            return a .. b .. c
         end
     "#;
     let program = parse(source).expect("parse should succeed");

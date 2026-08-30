@@ -1167,9 +1167,9 @@ pub(super) fn infer_table_builtin_call(
         TABLE_CONCAT => {}
         _ => return None,
     }
-    if args.is_empty() || args.len() > 2 {
+    if args.is_empty() || args.len() > 4 {
         return Some(Err(Diagnostic::new(format!(
-            "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+            "{TABLE_CONCAT} expects 1 to 4 arguments, got {}",
             args.len()
         ))));
     }
@@ -1211,6 +1211,17 @@ pub(super) fn infer_table_builtin_call(
                 ))));
             }
             Err(error) => return Some(Err(error)),
+        }
+    }
+    for bound in args.iter().skip(2) {
+        if let Err(error) = super::expressions::infer_expr(
+            bound,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(Type::Numeric(NumericType::I32)),
+        ) {
+            return Some(Err(error));
         }
     }
     Some(coerce_type(Type::String, expected))
