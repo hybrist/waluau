@@ -1,0 +1,55 @@
+-- Lua value-list adjustment fills missing trailing multi-binding values with
+-- nil, drops surplus values only after evaluating every RHS expression, and
+-- preserves the fixed shape of multi-return calls.
+local effects: i32 = 0
+
+function mark(value: i32): i32
+    effects = effects * 10 + value
+    return value
+end
+
+function pair(): i32, bool
+    return 7, true
+end
+
+function nothing(): ()
+end
+
+-- A scalar and a fixed multi-return both pad trailing unannotated names.
+local scalar, scalar_nil_a, scalar_nil_b = mark(1)
+assert(scalar == 1 and scalar_nil_a == nil and scalar_nil_b == nil)
+
+local first, second, pair_nil = pair()
+assert(first == 7 and second and pair_nil == nil)
+
+-- An empty return list pads every name.
+local empty_a, empty_b = nothing()
+assert(empty_a == nil and empty_b == nil)
+
+-- Nullable annotations retain their declared runtime representation.
+local nullable_number: i32?, nullable_string: string? = mark(2)
+assert(nullable_number == 2 and nullable_string == nil)
+
+-- Multi-assignment follows the established target types. Unknown and nullable
+-- targets can receive nil; concrete non-null targets are rejected statically.
+function pad_unknown(left, right): bool
+    left, right = mark(3)
+    return left == 3 and type(right) == "nil"
+end
+
+assert(pad_unknown(0, 0))
+
+local assigned: i32?, assigned_nil: i32? = 4::i32, 5::i32
+assigned, assigned_nil = mark(4)
+assert(assigned == 4 and assigned_nil == nil)
+
+-- Surplus expressions still execute exactly once, left to right; only their
+-- values are truncated to the available names.
+local kept_a, kept_b = mark(5), mark(6), mark(7)
+assert(kept_a == 5 and kept_b == 6)
+
+-- A no-result call in a non-final position adjusts to one nil instead of
+-- disappearing, while the following expression still runs normally.
+local empty_mid, after_empty = nothing(), mark(8)
+assert(empty_mid == nil and after_empty == 8)
+assert(effects == 12345678)

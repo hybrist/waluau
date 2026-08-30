@@ -2188,6 +2188,19 @@ pub(super) fn infer_expr_list(
         } else {
             infer_expr(expr, vars, fn_signatures, active_type_params, next_expected)?
         };
+        // A call returning `()` produces no values in the final position of a
+        // Lua expression list. In any earlier position it is adjusted to one
+        // nil value, just like every other non-final call.
+        if ty == Type::Unit && matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
+            if !is_last {
+                out_exprs.push(expr);
+                out.push(coerce_type(
+                    Type::Nil,
+                    expected.and_then(|types| types.get(out.len()).cloned()),
+                )?);
+            }
+            continue;
+        }
         match ty {
             Type::Variadic(element) => {
                 if matches!(

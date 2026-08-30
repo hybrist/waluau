@@ -534,6 +534,70 @@ fn lowers_surplus_call_arguments_for_effects_but_keeps_fixed_ir_arity() {
 }
 
 #[test]
+fn lowers_nil_padded_multi_bindings_after_all_rhs_effects() {
+    let source = r#"
+        function scalar(value: i32): i32
+            return value
+        end
+
+        function pair(): i32, bool
+            return 7, true
+        end
+
+        function nothing(): ()
+        end
+
+        function entry(): bool
+            local a, b, c = scalar(1)
+            local d, e, f = pair()
+            local g: string?, h: i32? = nothing()
+            local x: i32?, y: i32? = 1::i32, 2::i32
+            x, y = scalar(3)
+            local kept_a, kept_b = scalar(4), scalar(5), scalar(6)
+            return a == 1 and b == nil and c == nil
+                and d == 7 and e and f == nil
+                and g == nil and h == nil and y == nil
+                and kept_a == 4 and kept_b == 5
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("nil-padded multi-binding IR should verify");
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function");
+    let scalar_calls = entry
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter(|(_, instruction)| {
+            matches!(instruction, Instruction::Call { name, .. } if name == "scalar")
+        })
+        .count();
+    assert_eq!(
+        scalar_calls,
+        5,
+        "surplus RHS calls must all remain in the IR:\n{}",
+        entry.dump()
+    );
+    assert!(entry.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::Null { ty: Type::String }))
+    }));
+    assert!(entry.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::Null { ty: Type::Nil }))
+    }));
+}
+
+#[test]
 fn lowers_nil_for_declared_nullable_callback_parameter() {
     let source = r#"
         type Event = extern

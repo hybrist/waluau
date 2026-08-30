@@ -3149,19 +3149,61 @@ fn rejects_mixed_annotation_multi_binding_value_mismatch() {
 }
 
 #[test]
-fn rejects_mixed_annotation_multi_binding_arity_mismatch() {
+fn pads_missing_untyped_slot_in_mixed_annotation_multi_binding() {
     let source = r#"
-        function entry(x: i32): i32
+        function entry(x: i32): bool
             local a: i32, b = x
-            return a
+            return a == x and b == nil
         end
     "#;
     let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn pads_short_multi_bindings_and_nullable_assignments_but_rejects_non_null_targets() {
+    let source = r#"
+        function pair(x: i32): i32, bool
+            return x, true
+        end
+
+        function entry(x: i32): bool
+            local a, b, c = pair(x)
+            local d: i32, e: bool, f: string? = pair(x)
+            local g: i32?, h: i32? = 1, 2
+            g, h = 3
+            return a == x and b and c == nil and d == x and e and f == nil and h == nil
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+
+    let non_null_assignment = r#"
+        function entry(x: i32): i32
+            local a: i32, b: i32 = x, x
+            a, b = x
+            return a
+        end
+    "#;
+    let program = parse(non_null_assignment).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "multi-binding declaration expects 2 values, got 1"
+        "multi-assignment expects 2 values, got 1"
     );
+}
+
+#[test]
+fn accepts_surplus_multi_binding_values_after_checking_all_expressions() {
+    let source = r#"
+        function entry(): i32
+            local a, b = 1::i32, 2::i32, 3
+            local c: i32, d: i32 = 4::i32, 5::i32, 6
+            return a + b + c + d
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
 }
 
 #[test]

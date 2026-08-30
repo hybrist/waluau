@@ -1149,6 +1149,7 @@ fn annotate_inferred_stmt_locals(
                 } else {
                     infer_expr_list(values, vars, fn_signatures, active_type_params, None)?
                 };
+                let actual = statements::nil_pad_binding_types(bindings, actual)?;
                 let discriminant_link = statements::pcall_discriminant_types(
                     bindings,
                     values,

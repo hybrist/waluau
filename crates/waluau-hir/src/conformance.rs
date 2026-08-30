@@ -25,7 +25,9 @@ use waluau_ast::{
 use waluau_diagnostics::Diagnostic;
 
 use crate::builtins::TABLE_SORT;
-use crate::expressions::{builtin_name, infer_expr, method_signature, type_method_signature};
+use crate::expressions::{
+    builtin_name, infer_expr, infer_expr_list, method_signature, type_method_signature,
+};
 use crate::signatures::{FnSignature, active_type_param_set};
 use crate::statements::{checked_if_cast_scopes, narrowed_scopes};
 use crate::{
@@ -1325,14 +1327,14 @@ impl CoercionRewriter<'_> {
                     };
                     self.rewrite_expr(value, expected.as_ref(), vars, active);
                 }
+                let actual = infer_expr_list(values, vars, self.fn_signatures, active, None)
+                    .and_then(|actual| crate::statements::nil_pad_binding_types(bindings, actual))
+                    .unwrap_or_else(|_| vec![Type::Unknown; bindings.len()]);
                 for (index, binding) in bindings.iter().enumerate() {
                     let ty = if let Some(ty) = &binding.ty {
                         ty.clone()
-                    } else if one_to_one {
-                        infer_expr(&values[index], vars, self.fn_signatures, active, None)
-                            .unwrap_or(Type::Unknown)
                     } else {
-                        Type::Unknown
+                        actual.get(index).cloned().unwrap_or(Type::Unknown)
                     };
                     vars.insert(binding.name.clone(), binding_for(ty, binding.rebindability));
                 }
