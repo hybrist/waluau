@@ -606,11 +606,37 @@ end
 -- card be handed whole to an effect that has to treat it as a surface rather
 -- than as the dozen primitives it is drawn from.
 function capture(surface: ui.Surface, value: Look): graphics_module.RenderTarget?
+    return capture_at_density(surface, value, 1.0)
+end
+
+-- The same capture, allocated at a chosen density in texels per logical
+-- pixel. A capture shown at the card's own place on screen wants the
+-- screen's density (graphics:on_screen_density()), or the dense display
+-- gets fewer texels than it has pixels and the card goes soft the moment
+-- an effect swaps the live drawing for its capture. Texel-unit source
+-- rectangles must be read off the returned target's width and height, not
+-- the card's logical size.
+function capture_at_density(
+    surface: ui.Surface,
+    value: Look,
+    density: f64
+): graphics_module.RenderTarget?
     local graphics = surface.graphics
+    local scale: f64 = density
+    if scale < 1.0 then
+        scale = 1.0
+    end
+    -- Densities past the sharpest common case — a retina display under a
+    -- modest viewport scale plus an effect's own looming — buy texels no
+    -- screen shows; the cap keeps a mistaken transform from allocating a
+    -- huge target sixty times a second.
+    if scale > 4.0 then
+        scale = 4.0
+    end
     ink.stop_effect(graphics)
     local result: graphics_module.RenderTargetResult = graphics:create_render_target(
-        WIDTH::i32,
-        HEIGHT::i32
+        math.floor(WIDTH * scale + 0.5)::i32,
+        math.floor(HEIGHT * scale + 0.5)::i32
     )
     if not result.ok then
         return nil
@@ -623,8 +649,10 @@ function capture(surface: ui.Surface, value: Look): graphics_module.RenderTarget
     -- A capture draws in the target's own pixels, whatever transform the
     -- screen was under. Without this, a board drawn at a viewport scale
     -- captures a card too large for its target and every consumer of the
-    -- capture shows a zoomed crop of a face.
+    -- capture shows a zoomed crop of a face. The density is its own scale
+    -- on top of that own-pixel space, filling the larger target.
     graphics:push_identity()
+    graphics:apply_transform(scale, 0.0, 0.0, scale, 0.0, 0.0)
     graphics:clear("#00000000")
     local captured: Look = look(value.card, false, false, value.hidden, value.colored, value.known)
     -- Captures contain the paper itself, not the board-space drop shadow.
@@ -704,6 +732,7 @@ return {
     rank_marks = rank_marks,
     draw_eye = draw_eye,
     capture = capture,
+    capture_at_density = capture_at_density,
     capture_face = capture_face,
     use_color_field = use_color_field,
     width = WIDTH,

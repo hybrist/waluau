@@ -49,6 +49,12 @@ const PICK_UP: f64 = 24.0
 -- the lift look like a lift.
 const TILT: f64 = 0.35
 
+-- The margin the capture's density carries for perspective: the card's
+-- nearest edge at the top of the lift is magnified by about the pose's
+-- focal length over the focal length less the flight's height, and a
+-- capture without that margin goes soft exactly when the card is closest.
+const LOOM: f64 = 1.2
+
 -- One grid, reused: a card flipped sixty times a second should not be sixty
 -- allocations. Both of the board's reveal flips share it, because each draw
 -- builds it fresh from its own pose.
@@ -161,9 +167,14 @@ function draw(
     -- A card being turned over is on its way to public: whether the other side
     -- knew it a moment ago stops mattering the instant it lands face up, so no
     -- eye rides the flip.
-    local target: graphics_module.RenderTarget? = card.capture(
+    --
+    -- The capture matches the screen's own density, plus the margin the
+    -- perspective adds when the card looms nearest, so swapping the live
+    -- card for its capture costs no sharpness the eye can find.
+    local target: graphics_module.RenderTarget? = card.capture_at_density(
         surface,
-        card.look(value, false, false, hidden, colored, false)
+        card.look(value, false, false, hidden, colored, false),
+        graphics:on_screen_density() * LOOM
     )
     if target == nil then
         draw_flat(surface, value, x, y, progress, colored)
@@ -173,12 +184,14 @@ function draw(
     draw_shadow(graphics, x, y, -pose.flip, math.sin(-pose.flip))
     sheet:build(pose)
     -- Seen from behind, a card's face reads the wrong way round unless its
-    -- source region is taken right to left.
+    -- source region is taken right to left. Source rectangles are in the
+    -- capture's own texels, which the density made more of than the card
+    -- has logical pixels.
     local source_x: f64 = 0.0
-    local source_width: f64 = card.width
+    local source_width: f64 = captured.width::f64
     if not hidden then
-        source_x = card.width
-        source_width = -card.width
+        source_x = captured.width::f64
+        source_width = -(captured.width::f64)
     end
     local texture: graphics_module.Texture = graphics:texture_from_render_target(captured)
     graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
@@ -192,7 +205,7 @@ function draw(
         source_x,
         0.0,
         source_width,
-        card.height
+        captured.height::f64
     )
     graphics:release_render_target(captured)
 end
