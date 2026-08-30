@@ -1592,6 +1592,46 @@ function Graphics:fill_circle(x: f64, y: f64, radius: f64): unit
     end
 end
 
+-- A rounded rectangle as one watertight surface: three rectangles and four
+-- quarter-circle fans that share edges instead of overlapping. The same shape
+-- can be composed from fill_rectangle and fill_circle, but those pieces cover
+-- their interior more than once, and a translucent color doubles up wherever
+-- they do — this fill stays uniform at any alpha.
+function Graphics:fill_rounded_rectangle(x: f64, y: f64, width: f64, height: f64, radius: f64): unit
+    local r: f64 = math.min(radius, math.min(width, height) * 0.5)
+    if r <= 0.0 then
+        self:emit_rectangle(x, y, width, height)
+        return
+    end
+    self:emit_rectangle(x, y + r, width, height - r * 2.0)
+    self:emit_rectangle(x + r, y, width - r * 2.0, r)
+    self:emit_rectangle(x + r, y + height - r, width - r * 2.0, r)
+    -- Corner centres in angle order, so each quarter arc starts where the
+    -- previous corner's would end: bottom-right, bottom-left, top-left,
+    -- top-right.
+    local centers_x: {f64} = {x + width - r, x + r, x + r, x + width - r}
+    local centers_y: {f64} = {y + height - r, y + height - r, y + r, y + r}
+    local segments: i32 = CIRCLE_SEGMENTS / 4
+    local step: f64 = math.pi * 0.5 / (segments::f64)
+    for corner = 0::i32, 3::i32 do
+        local center_x: f64 = centers_x[corner]
+        local center_y: f64 = centers_y[corner]
+        local start: f64 = (corner::f64) * math.pi * 0.5
+        for segment = 0::i32, segments - 1 do
+            local from: f64 = start + (segment::f64) * step
+            local to: f64 = from + step
+            self:emit_triangle(
+                center_x,
+                center_y,
+                center_x + math.cos(from) * r,
+                center_y + math.sin(from) * r,
+                center_x + math.cos(to) * r,
+                center_y + math.sin(to) * r
+            )
+        end
+    end
+end
+
 -- Lines are thin quads offset by half the line width perpendicular to the
 -- segment, so they batch with every other primitive.
 function Graphics:line(x1: f64, y1: f64, x2: f64, y2: f64): unit

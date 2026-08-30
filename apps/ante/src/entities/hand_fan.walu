@@ -122,6 +122,39 @@ function part_target(index: i32, focus: i32): f64
     return 0.0
 end
 
+-- How far the contact shadow reaches past the card's sides, and how far the
+-- whole shadow sits below the paper. The reach is small enough that a card's
+-- shadow stays inside the overlap onto its left neighbour instead of leaking
+-- past the neighbour's far edge.
+const SHADOW_FRINGE: f64 = 2.5
+const SHADOW_RIM: f64 = 1.0
+
+-- A slight contact shadow under one fanned card, in the card's own tilted
+-- frame. Cards overlap in the fan, and the paper's built-in offset shadow only
+-- clears their bottom edges, so a covering card's left edge melts into the
+-- card beneath it. Two translucent layers — a wide faint fringe under a tight
+-- darker rim — hug the card's sides and base, flush with its top so nothing
+-- halos above the paper. The shadow anchors to the slot, not the paper: a
+-- selected card lifts off its shadow rather than carrying it along.
+function draw_contact_shadow(graphics: ui.Graphics, x: f64, y: f64): unit
+    graphics:set_color("#07060a24")
+    graphics:fill_rounded_rectangle(
+        x - SHADOW_FRINGE,
+        y,
+        card.width + SHADOW_FRINGE * 2.0,
+        card.height + SHADOW_FRINGE * 2.0,
+        card.corner_radius + SHADOW_FRINGE
+    )
+    graphics:set_color("#07060a30")
+    graphics:fill_rounded_rectangle(
+        x - SHADOW_RIM,
+        y + 0.5,
+        card.width + SHADOW_RIM * 2.0,
+        card.height + SHADOW_RIM * 2.0,
+        card.corner_radius + SHADOW_RIM
+    )
+end
+
 -- One card in the fan. Drawing it about its own centre lets the tilt carry
 -- everything with it — the select lift rises along the card's own axis rather
 -- than straight up the screen, and the focus edge stays square to the card.
@@ -141,6 +174,7 @@ function draw_slot(
     graphics:push()
     graphics:translate(x + card.width * 0.5, y + card.height * 0.5)
     graphics:rotate(angle_at(index, part, count))
+    draw_contact_shadow(graphics, -(card.width * 0.5), -(card.height * 0.5))
     card.draw_at(surface, value, -(card.width * 0.5), -(card.height * 0.5))
     graphics:pop()
 end
