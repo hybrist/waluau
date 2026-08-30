@@ -1073,6 +1073,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         | Type::Numeric(_)
         | Type::String
         | Type::Bytes
+        | Type::Buffer
         | Type::Extern
         | Type::Nil
         | Type::Unknown
@@ -2210,7 +2211,7 @@ fn json_tag_payload_supported(ty: &Type) -> bool {
         Type::Nullable(ty) => json_tag_payload_supported(ty),
         // Tagged payloads are stored in `unknown` (anyref). Strings and bytes
         // are externref-shaped and cannot be boxed into that slot.
-        Type::String | Type::Bytes | Type::StringLiteralUnion(_) => false,
+        Type::String | Type::Bytes | Type::Buffer | Type::StringLiteralUnion(_) => false,
         _ => json_supported_type(ty),
     }
 }
@@ -2228,6 +2229,7 @@ fn json_supported_type(ty: &Type) -> bool {
         Type::Nullable(ty)
         | Type::Array(ty) => json_supported_type(ty),
         Type::TypedArray(_) => true,
+        Type::Buffer => false,
         Type::Record(fields) => fields.values().all(json_supported_type),
         Type::TaggedVariant(variant) => json_tag_payload_supported(&variant.payload),
         Type::TaggedUnion(variants) => variants
@@ -2457,6 +2459,20 @@ fn typed_array_create_kind(name: &str) -> Option<TypedArrayKind> {
         return None;
     }
     TypedArrayKind::from_type_name(type_name)
+}
+
+fn buffer_scalar_kind(member: &str) -> Option<TypedArrayKind> {
+    match member {
+        "i8" => Some(TypedArrayKind::I8),
+        "u8" => Some(TypedArrayKind::U8),
+        "i16" => Some(TypedArrayKind::I16),
+        "u16" => Some(TypedArrayKind::U16),
+        "i32" => Some(TypedArrayKind::I32),
+        "u32" => Some(TypedArrayKind::U32),
+        "f32" => Some(TypedArrayKind::F32),
+        "f64" => Some(TypedArrayKind::F64),
+        _ => None,
+    }
 }
 
 /// When every element of a typed-array literal is a compile-time numeric
@@ -6247,6 +6263,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to bytes",
                         ));
                     }
+                    Type::Buffer => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to buffer",
+                        ));
+                    }
                     Type::Extern | Type::ExternSubtype(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to extern",
@@ -6659,7 +6680,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Bytes => {
+                            Type::Bytes | Type::Buffer => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -7157,6 +7178,11 @@ impl Builder<'_> {
                         scope,
                         expected.clone(),
                     ) {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.lower_buffer_builtin_call(&name, args, scope, expected.clone())
+                    {
                         return result;
                     }
                     if let Some(result) =
@@ -8103,6 +8129,9 @@ impl Builder<'_> {
                 Some(Type::Bytes) => Err(Diagnostic::new(
                     "numeric literal is not assignable to bytes",
                 )),
+                Some(Type::Buffer) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to buffer",
+                )),
                 Some(Type::Extern) | Some(Type::ExternSubtype(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to extern",
                 )),
@@ -8319,7 +8348,7 @@ impl Builder<'_> {
                         Type::String => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Bytes => {
+                        Type::Bytes | Type::Buffer => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Extern | Type::ExternSubtype(_) => {
@@ -8482,6 +8511,11 @@ impl Builder<'_> {
                     }
                     if let Some(result) =
                         self.infer_typed_array_builtin_call_type(&name, args, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.infer_buffer_builtin_call_type(&name, args, types, expected.clone())
                     {
                         return result;
                     }
@@ -8800,8 +8834,8 @@ impl Builder<'_> {
                             "could not resolve operand type during IR lowering",
                         ))
                     }
-                } else if matches!(left_ty, Type::TypedArray(_)) {
-                    // Typed arrays compare by identity (same allocation).
+                } else if matches!(left_ty, Type::TypedArray(_) | Type::Buffer) {
+                    // Typed arrays and mutable buffers compare by identity.
                     let right_ty = self.infer_expr_type(right, types, Some(left_ty.clone()))?;
                     if right_ty == left_ty {
                         Ok(left_ty)
@@ -10615,6 +10649,165 @@ impl Builder<'_> {
         };
         let value = self.emit(Instruction::BufferNewSized { kind, len });
         Some(self.coerce_value(value, Type::TypedArray(kind), expected))
+    }
+
+    fn lower_buffer_offset(
+        &mut self,
+        expr: &Expr,
+        scope: &Scope,
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let i64_ty = Type::Numeric(NumericType::I64);
+        let wide = self.lower_numeric_to(expr, &i64_ty, scope)?;
+        Ok(self.emit(Instruction::Cast {
+            value: wide,
+            from: i64_ty,
+            to: i32_ty,
+        }))
+    }
+
+    fn lower_buffer_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &Scope,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        let member = name.strip_prefix("buffer.")?;
+        if member == "create" {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let len = match self.lower_index_to_i32(&args[0], scope) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = self.emit(Instruction::LuauBufferNew { len });
+            return Some(self.coerce_value(value, Type::Buffer, expected));
+        }
+        if member == "len" {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let buffer = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = self.emit(Instruction::LuauBufferLen { buffer });
+            return Some(self.coerce_value(
+                value,
+                Type::Numeric(NumericType::I32),
+                expected,
+            ));
+        }
+        let (write, kind) = if let Some(suffix) = member.strip_prefix("read") {
+            (false, buffer_scalar_kind(suffix)?)
+        } else {
+            let suffix = member.strip_prefix("write")?;
+            (true, buffer_scalar_kind(suffix)?)
+        };
+        let arity = if write { 3 } else { 2 };
+        if args.len() != arity {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects {arity} arguments, got {}",
+                args.len()
+            ))));
+        }
+        let buffer = match self.lower_expr(&args[0], scope, Some(Type::Buffer)) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let offset = match self.lower_buffer_offset(&args[1], scope) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        if write {
+            let stored = match kind {
+                TypedArrayKind::F32 | TypedArrayKind::F64 => {
+                    let target = Type::Numeric(kind.element_numeric_type());
+                    match self.lower_numeric_to(&args[2], &target, scope) {
+                        Ok(value) => value,
+                        Err(error) => return Some(Err(error)),
+                    }
+                }
+                _ => {
+                    let i64_ty = Type::Numeric(NumericType::I64);
+                    let wide = match self.lower_numeric_to(&args[2], &i64_ty, scope) {
+                        Ok(value) => value,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    self.emit(Instruction::Cast {
+                        value: wide,
+                        from: i64_ty,
+                        to: Type::Numeric(NumericType::I32),
+                    })
+                }
+            };
+            let value = self.emit(Instruction::LuauBufferSet {
+                buffer,
+                offset,
+                value: stored,
+                kind,
+            });
+            Some(self.coerce_value(value, Type::Unit, expected))
+        } else {
+            let value = self.emit(Instruction::LuauBufferGet {
+                buffer,
+                offset,
+                kind,
+            });
+            Some(self.coerce_value(
+                value,
+                Type::Numeric(kind.element_numeric_type()),
+                expected,
+            ))
+        }
+    }
+
+    fn infer_buffer_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        let member = name.strip_prefix("buffer.")?;
+        let (arity, result) = match member {
+            "create" => (1, Type::Buffer),
+            "len" => (1, Type::Numeric(NumericType::I32)),
+            member if member.starts_with("read") => {
+                let kind = buffer_scalar_kind(member.strip_prefix("read")?)?;
+                (2, Type::Numeric(kind.element_numeric_type()))
+            }
+            member if member.starts_with("write") => {
+                buffer_scalar_kind(member.strip_prefix("write")?)?;
+                (3, Type::Unit)
+            }
+            _ => return None,
+        };
+        if args.len() != arity {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects {arity} arguments, got {}",
+                args.len()
+            ))));
+        }
+        for (index, arg) in args.iter().enumerate() {
+            let target = if index == 0 && member != "create" {
+                Type::Buffer
+            } else {
+                Type::number()
+            };
+            if let Err(error) = self.infer_expr_type(arg, types, Some(target)) {
+                return Some(Err(error));
+            }
+        }
+        Some(coerce_type(result, expected))
     }
 
     fn infer_typed_array_builtin_call_type(
@@ -14723,7 +14916,7 @@ fn lua_type_name(ty: &Type) -> Option<&'static str> {
         Type::Function { .. } => "function",
         Type::Thread => "thread",
         // Matches Luau, where typeof(buffer.create(n)) == "buffer".
-        Type::TypedArray(_) => "buffer",
+        Type::TypedArray(_) | Type::Buffer => "buffer",
         Type::Extern | Type::ExternSubtype(_) => "userdata",
         Type::Nullable(_) => "nil",
         // A nominal alias (`type Point = { x: number }`) is transparent to
@@ -14912,6 +15105,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
+            ))),
+            Type::Buffer => Err(Diagnostic::new(format!(
+                "cannot implicitly convert buffer to {expected_numeric}",
             ))),
             Type::Extern | Type::ExternSubtype(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",

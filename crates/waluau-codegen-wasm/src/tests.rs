@@ -14,6 +14,33 @@ fn emit(module: &waluau_ir::Module) -> Result<Vec<u8>, waluau_diagnostics::Diagn
     .map(|r| r.wasm)
 }
 
+#[test]
+fn emits_gc_handle_and_unaligned_little_endian_mutable_buffer_access() {
+    let source = r#"
+        function main(): ()
+            local b = buffer.create(24)
+            buffer.writei32(b, 1, 0x78563412)
+            buffer.writef64(b, 5, 1.5)
+            local a = buffer.readu16(b, 2)
+            local f = buffer.readf64(b, 5)
+            assert(buffer.len(b) == 24)
+        end
+    "#;
+    let module = waluau_ir::build(&waluau_parser::parse(source).expect("parse")).expect("IR build");
+    let wasm = emit(&module).expect("buffer module should emit");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("buffer Wasm should validate");
+    let wat = print_bytes(&wasm).expect("Wasm should print");
+    assert!(wat.contains("struct.new"));
+    assert!(wat.contains("i32.store align=1"));
+    assert!(wat.contains("f64.store align=1"));
+    assert!(wat.contains("i32.load16_u align=1"));
+    assert!(wat.contains("f64.load align=1"));
+    assert!(wat.contains("memory.grow"));
+    assert!(wat.contains("throw"));
+}
+
 fn wasm_export_func_index(wasm: &[u8], name: &str) -> Option<u32> {
     for payload in Parser::new(0).parse_all(wasm) {
         let payload = payload.expect("wasm should parse");
@@ -1155,6 +1182,7 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
             func_val_struct_type: 0,
             boxed_f64_struct_type: 0,
             boxed_bool_struct_type: 0,
+            luau_buffer_struct_type: None,
         },
     );
     let local_plan = super::build_local_plan(function, &value_types, &array_registry, None)

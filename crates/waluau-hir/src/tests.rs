@@ -43,6 +43,29 @@ fn type_checks_complete_bit32_intrinsic_signatures() {
 }
 
 #[test]
+fn type_checks_mutable_buffer_scalar_api_and_unknown_roundtrip() {
+    let source = r#"
+        local b: buffer = buffer.create(32)
+        buffer.writei8(b, 0, 255)
+        buffer.writeu16(b, 1, -1)
+        buffer.writei32(b, 3, 0x1234567812)
+        buffer.writef32(b, 7, 1.5)
+        buffer.writef64(b, 11, 2.5)
+        local a: i32 = buffer.readi8(b, 0)
+        local c: u32 = buffer.readu16(b, 1)
+        local d: i32 = buffer.readi32(b, 3)
+        local e: f32 = buffer.readf32(b, 7)
+        local f: f64 = buffer.readf64(b, 11)
+        local n: i32 = buffer.len(b)
+        local dynamic: unknown = b
+        local same: buffer = dynamic
+        assert(same == b)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("buffer scalar API should type check");
+}
+
+#[test]
 fn rejects_invalid_bit32_intrinsic_arities() {
     for source in [
         "local x: u32 = bit32.lshift(1)",

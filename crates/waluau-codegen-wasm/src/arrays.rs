@@ -96,6 +96,8 @@ pub(crate) struct ArrayTypeRegistry {
     /// Type index of `$boxed_bool = (struct (field i32))`, used to box `bool`
     /// values into `anyref` (`unknown`).
     pub(crate) boxed_bool_struct_type: u32,
+    /// Type index of the Luau mutable-buffer handle `{data_ptr, len}`.
+    pub(crate) luau_buffer_struct_type: Option<u32>,
     /// Whether the closure GC types (including `$boxed_f64`) were emitted for
     /// this module. When absent, `boxed_f64_struct_type` is a dummy index and
     /// no boxed f64 can exist at runtime.
@@ -119,6 +121,7 @@ pub(crate) struct RuntimeGcTypes {
     pub(crate) func_val_struct_type: u32,
     pub(crate) boxed_f64_struct_type: u32,
     pub(crate) boxed_bool_struct_type: u32,
+    pub(crate) luau_buffer_struct_type: Option<u32>,
 }
 
 impl ArrayTypeRegistry {
@@ -192,6 +195,7 @@ impl ArrayTypeRegistry {
             func_val_struct_type: runtime_gc_types.func_val_struct_type,
             boxed_f64_struct_type: runtime_gc_types.boxed_f64_struct_type,
             boxed_bool_struct_type: runtime_gc_types.boxed_bool_struct_type,
+            luau_buffer_struct_type: runtime_gc_types.luau_buffer_struct_type,
             closure_gc_present: false,
             growable_array_indices,
             growable_array_element_types,
@@ -208,6 +212,11 @@ impl ArrayTypeRegistry {
     pub(crate) fn coroutine_state_type(&self) -> Result<u32, Diagnostic> {
         self.coroutine_state_type
             .ok_or_else(|| Diagnostic::new("missing coroutine state struct type"))
+    }
+
+    pub(crate) fn luau_buffer_struct_type(&self) -> Result<u32, Diagnostic> {
+        self.luau_buffer_struct_type
+            .ok_or_else(|| Diagnostic::new("missing Luau buffer handle struct type"))
     }
 
     pub(crate) fn record_index(&self, record_ty: &Type) -> Result<u32, Diagnostic> {
@@ -452,6 +461,7 @@ fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
         | Type::Bool
         | Type::String
         | Type::Bytes
+        | Type::Buffer
         | Type::Extern
         | Type::Nil
         | Type::Named { .. }
@@ -727,6 +737,10 @@ fn collect_record_types_from_instruction(
         | IrInstruction::BufferGet { .. }
         | IrInstruction::BufferSet { .. }
         | IrInstruction::BufferLen { .. }
+        | IrInstruction::LuauBufferNew { .. }
+        | IrInstruction::LuauBufferLen { .. }
+        | IrInstruction::LuauBufferGet { .. }
+        | IrInstruction::LuauBufferSet { .. }
         | IrInstruction::MultiGet { .. } => {}
     }
 }
@@ -754,6 +768,10 @@ pub(crate) fn array_storage_type(
         Type::Nullable(inner) => array_storage_type(inner, registry),
         // Typed arrays are i32 pointers into linear memory.
         Type::TypedArray(_) => Ok(StorageType::Val(ValType::I32)),
+        Type::Buffer => Ok(StorageType::Val(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(registry.luau_buffer_struct_type()?),
+        }))),
         Type::Unknown => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
         // Array values are growable wrapper structs. `array_types` is
         // depth-sorted and each wrapper struct is emitted right after its raw
@@ -819,6 +837,10 @@ pub(crate) fn record_storage_type(
         Type::Nullable(inner) => record_storage_type(inner, registry),
         // Typed arrays are i32 pointers into linear memory.
         Type::TypedArray(_) => Ok(StorageType::Val(ValType::I32)),
+        Type::Buffer => Ok(StorageType::Val(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(registry.luau_buffer_struct_type()?),
+        }))),
         Type::Array(inner) | Type::Variadic(inner) => {
             let index = registry.growable_array_index(inner)?;
             Ok(StorageType::Val(ValType::Ref(RefType {

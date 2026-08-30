@@ -671,6 +671,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
             ))),
+            Type::Buffer => Err(Diagnostic::new(format!(
+                "cannot implicitly convert buffer to {expected_numeric}",
+            ))),
             Type::Extern | Type::ExternSubtype(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",
             ))),
@@ -977,6 +980,9 @@ pub(super) fn resolve_number_literal(
         )),
         Some(Type::Bytes) => Err(Diagnostic::new(
             "numeric literal is not assignable to bytes",
+        )),
+        Some(Type::Buffer) => Err(Diagnostic::new(
+            "numeric literal is not assignable to buffer",
         )),
         Some(Type::Extern) | Some(Type::ExternSubtype(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to extern",

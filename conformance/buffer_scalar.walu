@@ -1,0 +1,60 @@
+-- Waluau-specific focused coverage for the Luau-compatible mutable buffer
+-- scalar API. Raw buffer offsets are zero-based and deliberately distinct
+-- from authored array indices.
+local b = buffer.create(40)
+assert(buffer.len(b) == 40)
+assert(buffer.readu32(b, 0) == 0)
+
+buffer.writeu32(b, 1, 0x78563412)
+assert(buffer.readu8(b, 1) == 0x12)
+assert(buffer.readu16(b, 2) == 0x5634)
+assert(buffer.readu8(b, 4) == 0x78)
+
+buffer.writei8(b, 7, 255)
+assert(buffer.readi8(b, 7) == -1)
+assert(buffer.readu8(b, 7) == 255)
+buffer.writei16(b, 8, -2)
+assert(buffer.readi16(b, 8) == -2)
+assert(buffer.readu16(b, 8) == 65534)
+buffer.writei32(b, 10, 0x1234567812)
+assert(buffer.readu32(b, 10) == 0x34567812)
+
+buffer.writei32(b, 15, 0x3f800000)
+assert(buffer.readf32(b, 15) == 1.0)
+buffer.writef64(b, 21, 1.437576533064206)
+assert(buffer.readu32(b, 21) == 0x40302010)
+assert(buffer.readu32(b, 25) == 0x3ff70050)
+
+local dynamic: unknown = b
+local same: buffer = dynamic
+assert(same == b)
+assert(buffer.create(0) ~= buffer.create(0))
+assert(type(b) == "buffer")
+assert(typeof(dynamic) == "buffer")
+
+local ok_negative = pcall(
+    function()
+        buffer.create(-1)
+    end
+)
+assert(not ok_negative)
+local ok_large = pcall(
+    function()
+        buffer.create(0x40000001)
+    end
+)
+assert(not ok_large)
+local ok_oob = pcall(
+    function()
+        buffer.readi32(b, 37)
+    end
+)
+assert(not ok_oob)
+local ok_negative_offset = pcall(
+    function()
+        buffer.writef64(b, -1, 0)
+    end
+)
+assert(not ok_negative_offset)
+
+print("buffer scalar ok")

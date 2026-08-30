@@ -2415,6 +2415,7 @@ impl Rewriter<'_> {
             | Type::Unknown
             | Type::String
             | Type::Bytes
+            | Type::Buffer
             | Type::Extern
             | Type::Nil
             | Type::TypeParam(_)

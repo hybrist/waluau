@@ -110,6 +110,51 @@ fn lowers_complete_bit32_intrinsics_and_default_field_widths() {
 }
 
 #[test]
+fn lowers_mutable_buffer_scalar_operations_as_distinct_ir() {
+    let source = r#"
+        function main(): ()
+            local b = buffer.create(16)
+            buffer.writei32(b, 1, 0x1234567812)
+            local value = buffer.readu16(b, 2)
+            local length = buffer.len(b)
+        end
+    "#;
+    let module =
+        build(&parse(source).expect("parse should succeed")).expect("IR build should succeed");
+    verify(&module).expect("buffer IR should verify");
+    let instructions = module.functions[0]
+        .blocks
+        .values()
+        .flat_map(|block| {
+            block
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| { matches!(instruction, Instruction::LuauBufferNew { .. }) })
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| { matches!(instruction, Instruction::LuauBufferSet { .. }) })
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| { matches!(instruction, Instruction::LuauBufferGet { .. }) })
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| { matches!(instruction, Instruction::LuauBufferLen { .. }) })
+    );
+}
+
+#[test]
 fn leaves_compiler_generated_function_bodies_unmapped() {
     let source = "local value: i32 = 42\n";
     let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");

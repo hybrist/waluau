@@ -57,9 +57,10 @@ use arrays::{
     ArrayTypeRegistry, NullableBoxKind, RuntimeGcTypes, array_storage_type, record_storage_type,
 };
 use buffers::{
-    BUFFER_HEAP_BASE, BufferPlan, MEMORY_EXPORT_NAME, element_size_log2,
+    BUFFER_HEAP_BASE, BufferPlan, LUAU_BUFFER_LEN_FIELD, MEMORY_EXPORT_NAME, element_size_log2,
     emit_buffer_alloc_function, emit_buffer_element_address, emit_buffer_len_from_stack,
-    emit_buffer_load, emit_buffer_store,
+    emit_buffer_load, emit_buffer_store, emit_luau_buffer_address, emit_luau_buffer_alloc_function,
+    emit_luau_buffer_load, emit_luau_buffer_store,
 };
 use coroutines::{
     AWAIT_STATUS_FULFILLED, AWAIT_STATUS_NONE, AWAIT_STATUS_REJECTED, CoroutinePlan,
@@ -388,6 +389,7 @@ struct IncrementalEmitContext {
     import_func_count: u32,
     buffer_plan: BufferPlan,
     buffer_alloc_func: Option<u32>,
+    luau_buffer_alloc_func: Option<u32>,
 }
 
 impl IncrementalEmitContext {
@@ -408,6 +410,7 @@ impl IncrementalEmitContext {
             import_func_count: self.import_func_count,
             buffer_plan: &self.buffer_plan,
             buffer_alloc_func: self.buffer_alloc_func,
+            luau_buffer_alloc_func: self.luau_buffer_alloc_func,
             coroutine_push_frame_func: self.coroutine_push_frame_func,
         }
     }
@@ -832,7 +835,10 @@ fn emit_inner(
     // Typed nullable box structs (`$nullable_box_K`, backing `i32?` etc.) come
     // first in the type section so array/record storage types can reference
     // them as backward references.
-    let array_type_base = nullable_box_kinds.len() as u32;
+    let luau_buffer_struct_type = buffer_plan
+        .uses_luau_buffer
+        .then_some(nullable_box_kinds.len() as u32);
+    let array_type_base = nullable_box_kinds.len() as u32 + u32::from(buffer_plan.uses_luau_buffer);
     // Each array type occupies two type-section slots: the raw storage array
     // followed by its growable wrapper struct (see ArrayTypeRegistry).
     let host_type_base = array_type_base + 2 * array_types.len() as u32;
@@ -917,6 +923,7 @@ fn emit_inner(
             func_val_struct_type,
             boxed_f64_struct_type,
             boxed_bool_struct_type,
+            luau_buffer_struct_type,
         },
     );
     array_registry.coroutine_state_type = coroutine_state_type;
@@ -980,6 +987,21 @@ fn emit_inner(
             element_type: StorageType::Val(kind.payload_val_type()),
             mutable: true,
         }]);
+    }
+    if buffer_plan.uses_luau_buffer {
+        // `$buffer = (struct (field data_ptr:i32) (field len:i32))`.
+        // The immutable GC handle gives raw bytes reference identity while
+        // keeping the physical storage in browser-owned Wasm linear memory.
+        types.ty().struct_(vec![
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
+                mutable: false,
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
+                mutable: false,
+            },
+        ]);
     }
     // Emit array types next so function types can reference them. Each array
     // type is an interleaved pair: the raw storage array immediately followed
@@ -1352,11 +1374,19 @@ fn emit_inner(
         None
     };
     // Typed-array bump-allocation helper: (len, elem_size_log2) -> data ptr.
-    let buffer_alloc_type_idx = if buffer_plan.uses_memory {
+    let buffer_alloc_type_idx = if buffer_plan.uses_typed_arrays {
         let type_idx = type_idx_counter;
         types
             .ty()
             .function(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
+    let luau_buffer_alloc_type_idx = if buffer_plan.uses_luau_buffer {
+        let type_idx = type_idx_counter;
+        types.ty().function(vec![ValType::I32], vec![ValType::I32]);
         type_idx_counter += 1;
         Some(type_idx)
     } else {
@@ -1704,15 +1734,19 @@ fn emit_inner(
         .map(|info| 1 + info.getter_type_indices.len() as u32)
         .sum::<u32>();
     let nullable_box_helper_func_count = 2 * nullable_box_helpers.len() as u32;
-    let buffer_alloc_func = buffer_plan.uses_memory.then(|| {
-        import_func_count
-            + module.functions.len() as u32
-            + u32::from(start_thunk.is_some())
-            + closure_targets.len() as u32
-            + trampoline_func_count
-            + record_helper_func_count
-            + nullable_box_helper_func_count
-    });
+    let allocation_helpers_base = import_func_count
+        + module.functions.len() as u32
+        + u32::from(start_thunk.is_some())
+        + closure_targets.len() as u32
+        + trampoline_func_count
+        + record_helper_func_count
+        + nullable_box_helper_func_count;
+    let buffer_alloc_func = buffer_plan
+        .uses_typed_arrays
+        .then_some(allocation_helpers_base);
+    let luau_buffer_alloc_func = buffer_plan
+        .uses_luau_buffer
+        .then(|| allocation_helpers_base + u32::from(buffer_plan.uses_typed_arrays));
     // Defined globals follow the imported string constants. Module bindings
     // come first, then the active coroutine instance and linear-memory heap.
     let buffer_heap_ptr_global =
@@ -1855,6 +1889,7 @@ fn emit_inner(
         import_func_count,
         buffer_plan: &buffer_plan,
         buffer_alloc_func,
+        luau_buffer_alloc_func,
         coroutine_push_frame_func,
     };
     #[cfg(target_family = "wasm")]
@@ -2246,6 +2281,26 @@ fn emit_inner(
         ));
         helper_func_idx_counter += 1;
         codes.function(&emit_buffer_alloc_function(buffer_heap_ptr_global));
+    }
+    if let Some(type_idx) = luau_buffer_alloc_type_idx {
+        functions.function(type_idx);
+        debug_assert_eq!(
+            luau_buffer_alloc_func,
+            Some(import_func_count + helper_func_idx_counter),
+            "pre-computed Luau buffer alloc index must match emission order"
+        );
+        function_names.push((
+            import_func_count + helper_func_idx_counter,
+            "__waluau_luau_buffer_alloc".to_string(),
+        ));
+        helper_func_idx_counter += 1;
+        codes.function(&emit_luau_buffer_alloc_function(
+            buffer_heap_ptr_global,
+            host::string_constant_index(&string_constants, host::ERR_BUFFER_SIZE)?,
+            host::string_constant_index(&string_constants, host::ERR_BUFFER_ALLOC)?,
+        ));
+    }
+    if buffer_plan.uses_memory {
         exports.export(MEMORY_EXPORT_NAME, ExportKind::Memory, 0);
     }
     let _ = helper_func_idx_counter;
@@ -2401,6 +2456,7 @@ fn emit_inner(
             import_func_count,
             buffer_plan,
             buffer_alloc_func,
+            luau_buffer_alloc_func,
         });
         cache.image = code_image;
         cache.record_type_indices = result.record_type_indices.clone();
@@ -2784,6 +2840,8 @@ struct EmissionContext<'a> {
     buffer_plan: &'a BufferPlan,
     /// Function index of the typed-array bump-allocation helper.
     buffer_alloc_func: Option<u32>,
+    /// Function index of the checked Luau buffer byte allocator.
+    luau_buffer_alloc_func: Option<u32>,
     /// Function index of the coroutine frame-push helper.
     coroutine_push_frame_func: Option<u32>,
 }
@@ -2823,6 +2881,11 @@ impl EmissionContext<'_> {
     fn buffer_alloc_func(&self) -> Result<u32, Diagnostic> {
         self.buffer_alloc_func
             .ok_or_else(|| Diagnostic::new("missing typed-array allocation helper"))
+    }
+
+    fn luau_buffer_alloc_func(&self) -> Result<u32, Diagnostic> {
+        self.luau_buffer_alloc_func
+            .ok_or_else(|| Diagnostic::new("missing Luau buffer allocation helper"))
     }
 
     fn coroutine_push_frame_func(&self) -> Result<u32, Diagnostic> {
@@ -5561,6 +5624,56 @@ impl FunctionEmission<'_> {
                     emit_buffer_len_from_stack(out);
                     emit_value_store(out, local_plan, *value)?;
                 }
+                IrInstruction::LuauBufferNew { len } => {
+                    emit_value_operand(out, local_plan, *len)?;
+                    out.instruction(&Instruction::Call(ctx.luau_buffer_alloc_func()?));
+                    emit_value_operand(out, local_plan, *len)?;
+                    out.instruction(&Instruction::StructNew(
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                    ));
+                    emit_value_store(out, local_plan, *value)?;
+                }
+                IrInstruction::LuauBufferLen { buffer } => {
+                    emit_value_operand(out, local_plan, *buffer)?;
+                    out.instruction(&Instruction::StructGet {
+                        struct_type_index: ctx.array_registry.luau_buffer_struct_type()?,
+                        field_index: LUAU_BUFFER_LEN_FIELD,
+                    });
+                    emit_value_store(out, local_plan, *value)?;
+                }
+                IrInstruction::LuauBufferGet {
+                    buffer,
+                    offset,
+                    kind,
+                } => {
+                    emit_luau_buffer_address(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                        *kind,
+                        host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
+                    );
+                    emit_luau_buffer_load(out, *kind);
+                    emit_value_store(out, local_plan, *value)?;
+                }
+                IrInstruction::LuauBufferSet {
+                    buffer,
+                    offset,
+                    value: stored,
+                    kind,
+                } => {
+                    emit_luau_buffer_address(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                        *kind,
+                        host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
+                    );
+                    emit_value_operand(out, local_plan, *stored)?;
+                    emit_luau_buffer_store(out, *kind);
+                }
                 IrInstruction::StructNew { struct_ty, fields } => {
                     let struct_type_index = ctx.array_registry.record_index(struct_ty)?;
                     for field in fields {
@@ -6461,6 +6574,9 @@ fn emit_ref_classification_tail(
     if let Some(state_ty) = ctx.array_registry.coroutine_state_type {
         tests.push((HeapType::Concrete(state_ty), "thread"));
     }
+    if let Some(buffer_ty) = ctx.array_registry.luau_buffer_struct_type {
+        tests.push((HeapType::Concrete(buffer_ty), "buffer"));
+    }
     tests.push((
         HeapType::Abstract {
             shared: false,
@@ -6918,7 +7034,9 @@ fn emit_box(
             out.instruction(&Instruction::AnyConvertExtern);
             Ok(())
         }
-        Type::Array(_) | Type::Function { .. } | Type::Record(_) | Type::Thread => Ok(()),
+        Type::Array(_) | Type::Function { .. } | Type::Record(_) | Type::Thread | Type::Buffer => {
+            Ok(())
+        }
         // Already anyref: boxing into `unknown` is the identity.
         Type::Unknown => Ok(()),
         // Boxed nullables (`f64?` etc.) already share the anyref
@@ -7021,6 +7139,12 @@ fn emit_unbox(
             )));
             Ok(())
         }
+        Type::Buffer => {
+            out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                array_registry.luau_buffer_struct_type()?,
+            )));
+            Ok(())
+        }
         Type::Unit => {
             out.instruction(&Instruction::Drop);
             Ok(())
@@ -7101,7 +7225,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value add is not supported during wasm emission",
@@ -7171,7 +7297,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value sub is not supported during wasm emission",
@@ -7224,7 +7352,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value mul is not supported during wasm emission",
@@ -7283,7 +7413,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value div is not supported during wasm emission",
@@ -7334,6 +7466,9 @@ fn emit_binary(
                 out.instruction(&Instruction::Call(
                     ctx.host_func_index(host::IMPORT_BYTES_EQ_FUNC)?,
                 ));
+            }
+            Type::Buffer => {
+                out.instruction(&Instruction::RefEq);
             }
             // Extern references are opaque `externref` values, which wasm
             // cannot compare (externref is not an eqref); identity lives on
@@ -7415,7 +7550,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -7478,7 +7615,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -7541,7 +7680,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -7604,7 +7745,9 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) | Type::Buffer => {
+                unreachable!()
+            }
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
