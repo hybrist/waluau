@@ -442,7 +442,7 @@ function State:submit_round(): unit
     if #ui.play_picks ~= 2 then
         return
     end
-    local trick: game.Trick? = self.rules:play(ui.play_picks[0], ui.play_picks[1])
+    local trick: game.Trick? = self.rules:play(ui.play_picks[1], ui.play_picks[2])
     if trick == nil then
         return
     end

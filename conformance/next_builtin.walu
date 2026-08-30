@@ -1,7 +1,7 @@
 -- The builtin `next` in for-in iterator position: `for k, v in next, t` is
 -- the hand-written form of `pairs(t)` (PIL 7.3). Over a record it yields the
 -- field-name string and the field value in field order (alphabetical); over
--- an array it yields the 0-based index and the element. Unlike a plain array
+-- an array it yields the 1-based index and the element. Unlike a plain array
 -- loop, a single variable binds the key — `next` yields keys first.
 local scores = { alice = 3, bob = 5, carol = 7 }
 
@@ -29,20 +29,20 @@ for i, v in next, words do
     isum = isum + i
     cat = cat .. v
 end
-assert(isum == 3)
+assert(isum == 6)
 assert(cat == "abc")
 
 local keys: i32 = 0
 for i in next, words do
     keys = keys + i
 end
-assert(keys == 3)
+assert(keys == 6)
 
 -- A local named `next` shadows the builtin and iterates as an ordinary
 -- protocol function.
 function step(a: {string}, i: i32): (i32?, string)
     local n = i + 1
-    if n < #a then
+    if n <= #a then
         return n, a[n]
     end
     return nil, ""
@@ -51,7 +51,7 @@ end
 local shadowed = ""
 do
     local next = step
-    for i, v in next, words, -1 do
+    for i, v in next, words, 0 do
         shadowed = shadowed .. v
     end
 end

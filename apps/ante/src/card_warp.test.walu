@@ -335,13 +335,13 @@ describe(
         it(
             "catches the light differently as it leans",
             function(): unit
-                local flat: f64 = built(rest()).shades[0]
+                local flat: f64 = built(rest()).shades[1]
                 local toward: card_warp.Pose = rest()
                 toward.tilt = 0.9
                 local away: card_warp.Pose = rest()
                 away.tilt = -0.9
-                local lit: f64 = built(toward).shades[0]
-                local dim: f64 = built(away).shades[0]
+                local lit: f64 = built(toward).shades[1]
+                local dim: f64 = built(away).shades[1]
                 if lit < dim then
                     expect(lit):toBeLessThan(flat)
                     expect(dim):toBeGreaterThan(flat)

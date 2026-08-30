@@ -245,11 +245,11 @@ function install_ante_magic(): unit
                 end
                 local payloads: {string} = decoded.sections
                 local restored: game_screen.State? = game_screen.State.restore(
-                    payloads[0],
                     payloads[1],
                     payloads[2],
                     payloads[3],
-                    payloads[4]
+                    payloads[4],
+                    payloads[5]
                 )
                 if restored == nil then
                     return false

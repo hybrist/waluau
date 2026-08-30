@@ -73,7 +73,7 @@ function first_or(offers: {Offer}, fallback: Offer): Offer
     if #offers == 0 then
         return fallback
     end
-    return offers[0]
+    return offers[1]
 end
 
 local book: {Offer} = {{ goods = Upgrade({ kind = 3 }), price = 1 }, restored::Offer}

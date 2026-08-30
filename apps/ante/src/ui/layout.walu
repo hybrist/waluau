@@ -441,7 +441,7 @@ function Box:measure(): Intrinsic
         return value
     end
 
-    local child_value: Intrinsic = self.children[0]:measure()
+    local child_value: Intrinsic = self.children[1]:measure()
     if self.kind == "padding" then
         local horizontal: f64 = self.insets.left + self.insets.right
         local vertical: f64 = self.insets.top + self.insets.bottom
@@ -641,7 +641,7 @@ function arrange_box(self: Box, into: Result): unit
         return
     end
     if self.kind == "padding" then
-        local child: Box = self.children[0]
+        local child: Box = self.children[1]
         set_rect(
             child.bounds,
             bounds.x + self.insets.left,

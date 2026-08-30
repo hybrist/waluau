@@ -758,8 +758,8 @@ function State:record_burned_losers(trick: game.Trick): unit
         return
     end
     local loser: game.TrickSide = trick:side(game.opposite_side(trick.winner))
-    table.insert(self.session.discards, loser.cards[0])
     table.insert(self.session.discards, loser.cards[1])
+    table.insert(self.session.discards, loser.cards[2])
 end
 
 -- Freeze Ray can preserve any of the five community cards. The rules pack a
@@ -812,7 +812,7 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         push_scoop(
             layout.current(),
             anims,
-            winner.cards[0],
+            winner.cards[1],
             render.row_left(layout.current()),
             row_center,
             render.slot_aside
@@ -820,14 +820,14 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         push_scoop(
             layout.current(),
             anims,
-            winner.cards[1],
+            winner.cards[2],
             render.row_right(layout.current()),
             row_center,
             render.slot_aside
         )
-        table.insert(spent, winner.cards[0])
         table.insert(spent, winner.cards[1])
-        ash_finish = push_ash_pair(layout.current(), anims, loser.cards[0], loser.cards[1])
+        table.insert(spent, winner.cards[2])
+        ash_finish = push_ash_pair(layout.current(), anims, loser.cards[1], loser.cards[2])
     else
         for i = 0::i32, #trick.middle - 1 do
             if not trick.frozen_middle[i] then
@@ -845,8 +845,8 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         push_scoop_pair(
             layout.current(),
             anims,
-            trick.player_cards[0],
             trick.player_cards[1],
+            trick.player_cards[2],
             render.slot_player,
             trick.player_first,
             trick.player_second,
@@ -855,17 +855,17 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
         push_scoop_pair(
             layout.current(),
             anims,
-            trick.computer_cards[0],
             trick.computer_cards[1],
+            trick.computer_cards[2],
             render.slot_computer,
             trick.computer_first,
             trick.computer_second,
             old_count
         )
-        table.insert(self.session.discards, trick.player_cards[0])
         table.insert(self.session.discards, trick.player_cards[1])
-        table.insert(self.session.discards, trick.computer_cards[0])
+        table.insert(self.session.discards, trick.player_cards[2])
         table.insert(self.session.discards, trick.computer_cards[1])
+        table.insert(self.session.discards, trick.computer_cards[2])
     end
     local finish: f64 = push_hand_shifts(
         layout.current(),

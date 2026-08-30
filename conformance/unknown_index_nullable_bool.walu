@@ -12,11 +12,11 @@ end
 
 local flags: {bool?} = {true, nil, false}
 assert(#flags == 3)
-assert(get(flags, 0) == true)
-assert(get(flags, 2) == false)
+assert(get(flags, 1) == true)
+assert(get(flags, 3) == false)
 
-local missing_flag: bool? = get(flags, 1)
+local missing_flag: bool? = get(flags, 2)
 assert(missing_flag == nil)
-local present_flag: bool? = get(flags, 0)
+local present_flag: bool? = get(flags, 1)
 assert(present_flag ~= nil)
 assert(present_flag == true)

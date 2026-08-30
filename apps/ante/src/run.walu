@@ -120,7 +120,7 @@ function target_at(duel: i32, rush: bool): i32
     end
     local length: i32 = #table_values
     if duel < 1 then
-        return table_values[0]
+        return table_values[1]
     end
     if duel <= length then
         return table_values[duel - 1]

@@ -3345,8 +3345,7 @@ impl Builder<'_> {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
                 let array = self.lower_expr(base, scope, Some(base_ty))?;
-                let index =
-                    self.lower_expr(index, scope, Some(Type::Numeric(NumericType::I32)))?;
+                let index = self.lower_authored_array_index(index, scope)?;
                 let value = match op {
                     AssignOp::Set => {
                         self.lower_expr(value, scope, Some(element_ty.clone()))?
@@ -5545,9 +5544,16 @@ impl Builder<'_> {
                         self.bind_loop_var(ids[0], element_val, element_ty, &mut body_scope.env);
                         body_scope.types.insert(ids[0], element_ty.clone());
                     } else {
+                        let visible_index = self.emit(Instruction::Binary {
+                            op: BinaryOp::Add,
+                            left: index_phi,
+                            right: const_one,
+                            operand_ty: Type::Numeric(NumericType::I32),
+                            result_ty: Type::Numeric(NumericType::I32),
+                        });
                         self.bind_loop_var(
                             ids[0],
-                            index_phi,
+                            visible_index,
                             &Type::Numeric(NumericType::I32),
                             &mut body_scope.env,
                         );
@@ -5557,9 +5563,16 @@ impl Builder<'_> {
                     }
                 }
                 IndexedLoopBindings::ArrayNext => {
+                    let visible_index = self.emit(Instruction::Binary {
+                        op: BinaryOp::Add,
+                        left: index_phi,
+                        right: const_one,
+                        operand_ty: Type::Numeric(NumericType::I32),
+                        result_ty: Type::Numeric(NumericType::I32),
+                    });
                     self.bind_loop_var(
                         ids[0],
-                        index_phi,
+                        visible_index,
                         &Type::Numeric(NumericType::I32),
                         &mut body_scope.env,
                     );
@@ -6973,7 +6986,7 @@ impl Builder<'_> {
                 }
                 if base_ty == Type::Unknown {
                     let base = self.lower_expr(base, scope, Some(Type::Unknown))?;
-                    let index = self.lower_index_to_i32(index, scope)?;
+                    let index = self.lower_authored_array_index(index, scope)?;
                     let value = self.emit(Instruction::DynIndex { value: base, index });
                     return self.coerce_value(value, Type::Unknown, expected);
                 }
@@ -6996,7 +7009,7 @@ impl Builder<'_> {
                     .element_type()
                     .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?;
                 let array = self.lower_expr(base, scope, Some(base_ty))?;
-                let index = self.lower_index_to_i32(index, scope)?;
+                let index = self.lower_authored_array_index(index, scope)?;
                 let value = self.emit(Instruction::ArrayGet {
                     array,
                     index,
@@ -9804,6 +9817,25 @@ impl Builder<'_> {
         self.lower_expr(index, scope, Some(i32_ty))
     }
 
+    /// Convert a 1-based authored ordinary-array index to the 0-based physical
+    /// index used by growable Wasm GC array storage. Bytes and linear-memory
+    /// typed arrays deliberately bypass this helper and remain 0-based.
+    fn lower_authored_array_index(
+        &mut self,
+        index: &Expr,
+        scope: &Scope,
+    ) -> Result<ValueId, Diagnostic> {
+        let authored = self.lower_index_to_i32(index, scope)?;
+        let one = self.emit_i32_const(1);
+        Ok(self.emit(Instruction::Binary {
+            op: BinaryOp::Sub,
+            left: authored,
+            right: one,
+            operand_ty: Type::Numeric(NumericType::I32),
+            result_ty: Type::Numeric(NumericType::I32),
+        }))
+    }
+
     /// Lower a numeric expression, inserting an explicit-cast-style conversion
     /// when its own type differs from `target` (mirrors `lower_index_to_i32`).
     /// Typed-array element writes use this so any number converts on store,
@@ -10345,8 +10377,8 @@ impl Builder<'_> {
     }
 
     /// `table.unpack(a [, first [, last]])` with statically-knowable bounds
-    /// lowers to a fixed tuple of element loads. The bounds are 0-based like
-    /// all Waluau array indexing and default to the whole array; the
+    /// lowers to a fixed tuple of element loads. The authored bounds are
+    /// Luau-compatible and 1-based, defaulting to the whole array; the
     /// runtime-variable arity case is not supported yet.
     fn lower_table_unpack(
         &mut self,
@@ -10421,10 +10453,9 @@ impl Builder<'_> {
             return self.coerce_value(unit, Type::Unit, expected);
         }
 
-        // table.insert(t, pos, v): append v to grow by one, then shift
-        // t[pos..n-1] one slot to the right and write v at pos (0-based; pos
-        // outside 0..=#t traps via the array bounds checks).
-        let pos = self.lower_expr(&args[1], scope, Some(i32_ty.clone()))?;
+        // table.insert(t, pos, v): authored positions are 1-based. Convert to
+        // a physical offset, append v to grow by one, then shift the tail.
+        let pos = self.lower_authored_array_index(&args[1], scope)?;
         let value = self.lower_expr(&args[2], scope, Some(element_ty.clone()))?;
         let element_ty = stored_ty;
         let n = self.emit(Instruction::ArrayLen { array });
@@ -10534,7 +10565,7 @@ impl Builder<'_> {
         let zero = self.emit_i32_const(0);
         let one = self.emit_i32_const(1);
         let pos = if let Some(pos_arg) = args.get(1) {
-            self.lower_expr(pos_arg, scope, Some(i32_ty.clone()))?
+            self.lower_authored_array_index(pos_arg, scope)?
         } else {
             self.emit(Instruction::Binary {
                 op: BinaryOp::Sub,

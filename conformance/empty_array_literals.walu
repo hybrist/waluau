@@ -11,7 +11,7 @@ assert(#rec.items == 0)
 rec.items = {}
 table.insert(rec.items, 42)
 assert(#rec.items == 1)
-assert(rec.items[0] == 42)
+assert(rec.items[1] == 42)
 
 -- 4. function argument
 function count(values: {f64}): i32
@@ -30,16 +30,16 @@ assert(#make() == 0)
 local maybe_xs: {i32}? = {}
 local settled: {i32} = maybe_xs or make()
 assert(#settled == 0)
-table.insert(settled, 0, 7)
-assert(settled[0] == 7)
+table.insert(settled, 1, 7)
+assert(settled[1] == 7)
 local maybe_filled: {i32}? = {9}
 assert(#(maybe_filled or xs) == 1)
 
 -- 7. array-of-records element type, matching fixtures/snake reset()
 local state: { snake: {{ x: i32, y: i32 }} } = { snake = {} }
-table.insert(state.snake, 0, { x = 3, y = 4 })
+table.insert(state.snake, 1, { x = 3, y = 4 })
 state.snake = {}
 assert(#state.snake == 0)
-table.insert(state.snake, 0, { x = 1, y = 2 })
+table.insert(state.snake, 1, { x = 1, y = 2 })
 assert(#state.snake == 1)
-assert(state.snake[0].y == 2)
+assert(state.snake[1].y == 2)

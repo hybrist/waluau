@@ -524,7 +524,7 @@ function ParticleSystem:refresh_offset(): unit
         width = texture.width::f64
         height = texture.height::f64
         if #self.quads > 0 then
-            local first: Quad = self.quads[0]
+            local first: Quad = self.quads[1]
             width = first.width
             height = first.height
         end
@@ -757,14 +757,14 @@ end
 
 function ParticleSystem:insert_particle(particle: Particle): unit
     if self.insert_mode == INSERT_BOTTOM then
-        table.insert(self.alive, 0, particle)
+        table.insert(self.alive, 1, particle)
     elseif self.insert_mode == INSERT_RANDOM then
         local slots: i32 = #self.alive + 1
         local position: i32 = math.floor(self:random() * (slots::f64))::i32
         if position >= slots then
             position = slots - 1
         end
-        table.insert(self.alive, position, particle)
+        table.insert(self.alive, position + 1, particle)
     else
         table.insert(self.alive, particle)
     end
@@ -973,7 +973,7 @@ function ParticleSystem:update(dt: f64): unit
         local particle: Particle = self.alive[index]
         particle.life -= dt
         if particle.life <= 0.0 then
-            table.remove(self.alive, index)
+            table.remove(self.alive, index + 1)
             table.insert(self.free, particle)
         else
             advance_particle(particle, dt, self.relative_rotation)
@@ -1098,7 +1098,7 @@ function ParticleSystem:draw_sprites(
     local source_width: f64 = base_width
     local source_height: f64 = base_height
     if frames > 0 then
-        local first: Quad = self.quads[0]
+        local first: Quad = self.quads[1]
         base_width = first.width
         base_height = first.height
     end

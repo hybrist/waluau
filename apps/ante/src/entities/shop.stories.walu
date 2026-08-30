@@ -53,8 +53,8 @@ local function slots(first_sold: bool, second_sold: bool): {Slot}
 end
 
 local function apply_sold(shop: ShopState, choice: SoldChoice): unit
-    shop.slots[0].sold = choice == "first" or choice == "both"
-    shop.slots[1].sold = choice == "second" or choice == "both"
+    shop.slots[1].sold = choice == "first" or choice == "both"
+    shop.slots[2].sold = choice == "second" or choice == "both"
 end
 
 local stock_run: RunState = make_run(SpellKind.Firebolt, 30, 2)

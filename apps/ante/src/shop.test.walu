@@ -53,20 +53,20 @@ describe(
                 expect(shop:slot_available(run, 0)):toBe(true)
                 expect(shop:confirm_choice(run)):toBe(false)
                 expect(run.gold):toBe(4)
-                expect(run.spells[0].level):toBe(2)
-                expect(shop.slots[0].sold):toBe(true)
+                expect(run.spells[1].level):toBe(2)
+                expect(shop.slots[1].sold):toBe(true)
 
                 expect(shop:confirm_choice(run)):toBe(false)
                 expect(run.gold):toBe(4)
-                expect(run.spells[0].level):toBe(2)
+                expect(run.spells[1].level):toBe(2)
 
                 local poor, poor_shop = shopping_run(SpellKind.Clone, 3)
                 stock(poor_shop, SpellScroll.new(SpellKind.Clone, 2)::Item, 4)
                 expect(poor_shop:slot_available(poor, 0)):toBe(false)
                 poor_shop:confirm_choice(poor)
                 expect(poor.gold):toBe(3)
-                expect(poor.spells[0].level):toBe(1)
-                expect(poor_shop.slots[0].sold):toBe(false)
+                expect(poor.spells[1].level):toBe(1)
+                expect(poor_shop.slots[1].sold):toBe(false)
             end
         )
 
@@ -77,17 +77,17 @@ describe(
                 local learn: SpellScroll = SpellScroll.new(SpellKind.Clone, 1)
                 expect(learn:can_use(run)):toBe(true)
                 learn:use(run)
-                expect(run.spells[1].kind):toBe(SpellKind.Clone)
-                expect(run.spells[1].level):toBe(1)
+                expect(run.spells[2].kind):toBe(SpellKind.Clone)
+                expect(run.spells[2].level):toBe(1)
 
                 -- Preserve the carried spell record's cast price while changing only
                 -- its level; scrolls do not revive the old sharpening product.
-                run.spells[0].cost = spell_.DEFAULT_SPELL_COST - 1
+                run.spells[1].cost = spell_.DEFAULT_SPELL_COST - 1
                 local next_level: SpellScroll = SpellScroll.new(SpellKind.Firebolt, 2)
                 expect(next_level:can_use(run)):toBe(true)
                 next_level:use(run)
-                expect(run.spells[0].level):toBe(2)
-                expect(run.spells[0].cost):toBe(spell_.DEFAULT_SPELL_COST - 1)
+                expect(run.spells[1].level):toBe(2)
+                expect(run.spells[1].cost):toBe(spell_.DEFAULT_SPELL_COST - 1)
             end
         )
 
@@ -133,15 +133,15 @@ describe(
             function()
                 local run, shop = shopping_run(SpellKind.Firebolt, 30)
                 stock(shop, SpellScroll.new(SpellKind.Firebolt, 2)::Item, 4)
-                shop.slots[0].sold = true
+                shop.slots[1].sold = true
                 local encoded: string = shop:snapshot()
                 local restored: ShopState? = ShopState.restore(encoded)
                 expect(restored == nil):toBe(false)
                 if restored ~= nil then
                     local visit: ShopState = restored::ShopState
                     expect(visit.open):toBe(true)
-                    expect(visit.slots[0].sold):toBe(true)
-                    expect(visit.slots[0].item:describe()):toBe("Firebolt (level 2)")
+                    expect(visit.slots[1].sold):toBe(true)
+                    expect(visit.slots[1].item:describe()):toBe("Firebolt (level 2)")
                     expect(visit:snapshot()):toBe(encoded)
                 end
 

@@ -5,18 +5,18 @@ end
 
 function read_first(): number
     local xs: {number} = {100, 200, 300}
-    return xs[0]
+    return xs[1]
 end
 
 function sum_three(): i32
     local xs: {i32} = {1, 2, 3}
-    return xs[0] + xs[1] + xs[2]
+    return xs[1] + xs[2] + xs[3]
 end
 
 function sum_after_mutation(): i32
     local xs: {i32} = {1, 2, 3}
-    xs[1] = 10
-    return xs[0] + xs[1] + xs[2]
+    xs[2] = 10
+    return xs[1] + xs[2] + xs[3]
 end
 
 assert(length() == 4)

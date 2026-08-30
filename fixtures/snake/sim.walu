@@ -17,7 +17,7 @@ assert(state.score == 0)
 -- The snake starts as three segments with the head at the grid center,
 -- moving right.
 assert(#state.snake == 3)
-local head = state.snake[0]
+local head = state.snake[1]
 assert(head.x == 4 and head.y == 4)
 
 -- Food never spawns on top of the snake.
@@ -50,5 +50,5 @@ assert(#state.snake == 3)
 -- apply, so the next step still moves the head to the right.
 state:turn(-1, 0)
 state:step()
-local reset_head = state.snake[0]
+local reset_head = state.snake[1]
 assert(reset_head.x == 5 and reset_head.y == 4)

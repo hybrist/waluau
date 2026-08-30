@@ -48,9 +48,9 @@ describe(
 
                 expect(#first.vertical_streets):toBeGreaterThan(5)
                 expect(#first.horizontal_streets):toBeGreaterThan(5)
-                expect(first.vertical_streets[#first.vertical_streets - 1]):toBe(city_map.width)
+                expect(first.vertical_streets[#first.vertical_streets]):toBe(city_map.width)
                 expect(
-                    first.horizontal_streets[#first.horizontal_streets - 1]
+                    first.horizontal_streets[#first.horizontal_streets]
                 ):toBe(city_map.height)
                 expect(
                     #first.buildings

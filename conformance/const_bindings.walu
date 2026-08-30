@@ -68,8 +68,8 @@ assert(closure_reads_const() == 10.0)
 -- table reached through a const binding stay mutable.
 function value_stays_mutable(): f64
     const items = {1.0, 2.0}
-    items[1] = 10.0
-    return items[1]
+    items[2] = 10.0
+    return items[2]
 end
 
 assert(value_stays_mutable() == 10.0)

@@ -1137,13 +1137,13 @@ function trick_scoring(trick: game.Trick): {bool}
     local winner: game.TrickSide = trick:side(trick.winner)
     return game.formation_marks(
         {
-            trick.middle[0],
             trick.middle[1],
             trick.middle[2],
             trick.middle[3],
             trick.middle[4],
-            winner.cards[0],
-            winner.cards[1]
+            trick.middle[5],
+            winner.cards[1],
+            winner.cards[2]
         },
         winner.formation
     )
@@ -1168,7 +1168,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
     local fan_parts: {f64} = frame.motion.fan_parts
     local reveal_clock: f64 = frame.motion.reveal_clock
     local discards: {game.Card} = frame.piles.discards
-    local trick: game.Trick = state.history[#state.history - 1]
+    local trick: game.Trick = state.history[#state.history]
     -- The reveal shows the hands as they were played, so the rows keep the
     -- trick's layout even though a boss battle's live hands have already
     -- shrunk underneath it.
@@ -1256,7 +1256,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                 if trick.winner > 0 and loss_progress > 0.0 then
                     card_burn.draw_disintegrating(
                         surface,
-                        card.plain(trick.computer_cards[0]),
+                        card.plain(trick.computer_cards[1]),
                         slot.x,
                         slot.y,
                         loss_progress,
@@ -1266,12 +1266,12 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                 else
                     card_flip.draw(
                         surface,
-                        trick.computer_cards[0],
+                        trick.computer_cards[1],
                         slot.x,
                         slot.y,
                         reveal_clock,
                         0.2,
-                        trick.winner < 0 and scoring[5]
+                        trick.winner < 0 and scoring[6]
                     )
                 end
             end
@@ -1280,7 +1280,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                 if trick.winner > 0 and loss_progress > 0.0 then
                     card_burn.draw_disintegrating(
                         surface,
-                        card.plain(trick.computer_cards[1]),
+                        card.plain(trick.computer_cards[2]),
                         slot.x,
                         slot.y,
                         loss_progress,
@@ -1290,12 +1290,12 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                 else
                     card_flip.draw(
                         surface,
-                        trick.computer_cards[1],
+                        trick.computer_cards[2],
                         slot.x,
                         slot.y,
                         reveal_clock,
                         0.2 + card_flip.seconds * 0.7,
-                        trick.winner < 0 and scoring[6]
+                        trick.winner < 0 and scoring[7]
                     )
                 end
             end
@@ -1351,7 +1351,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                     draw_hand_disintegration(
                         surface,
                         viewport,
-                        trick.player_cards[0],
+                        trick.player_cards[1],
                         i,
                         fan_parts[i],
                         hand_count,
@@ -1363,11 +1363,11 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                     hand_fan.draw_slot(
                         surface,
                         card.look(
-                            trick.player_cards[0],
+                            trick.player_cards[1],
                             true,
                             false,
                             false,
-                            trick.winner > 0 and scoring[5],
+                            trick.winner > 0 and scoring[6],
                             false
                         ),
                         fan,
@@ -1383,7 +1383,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                     draw_hand_disintegration(
                         surface,
                         viewport,
-                        trick.player_cards[1],
+                        trick.player_cards[2],
                         i,
                         fan_parts[i],
                         hand_count,
@@ -1395,11 +1395,11 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                     hand_fan.draw_slot(
                         surface,
                         card.look(
-                            trick.player_cards[1],
+                            trick.player_cards[2],
                             true,
                             false,
                             false,
-                            trick.winner > 0 and scoring[6],
+                            trick.winner > 0 and scoring[7],
                             false
                         ),
                         fan,
@@ -1458,21 +1458,21 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
     if trick.winner < 0 then
         draw_winner_flight(
             surface,
-            trick.computer_cards[0],
+            trick.computer_cards[1],
             slot_center(viewport, SLOT_COMPUTER, trick.computer_first, hand_count),
             0.0,
             row_left(viewport),
             fly0,
-            scoring[5]
+            scoring[6]
         )
         draw_winner_flight(
             surface,
-            trick.computer_cards[1],
+            trick.computer_cards[2],
             slot_center(viewport, SLOT_COMPUTER, trick.computer_second, hand_count),
             0.0,
             row_right(viewport),
             fly1,
-            scoring[6]
+            scoring[7]
         )
     elseif trick.winner > 0 then
         local angle0: f64 = hand_fan.angle_at(
@@ -1487,7 +1487,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
         )
         draw_winner_flight(
             surface,
-            trick.player_cards[0],
+            trick.player_cards[1],
             bound_hand_center(
                 viewport,
                 trick.player_first,
@@ -1497,11 +1497,11 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
             angle0,
             row_left(viewport),
             fly0,
-            scoring[5]
+            scoring[6]
         )
         draw_winner_flight(
             surface,
-            trick.player_cards[1],
+            trick.player_cards[2],
             bound_hand_center(
                 viewport,
                 trick.player_second,
@@ -1511,7 +1511,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
             angle1,
             row_right(viewport),
             fly1,
-            scoring[6]
+            scoring[7]
         )
     end
     if foreground then
@@ -1612,8 +1612,8 @@ function draw_action_band(board: Board, surface: ui.Surface, frame: Frame): unit
         local preview: i32 = game.value_for_pair(
             game.hand_cards(state.player_hand),
             state.middle,
-            interaction.play_picks[0],
-            interaction.play_picks[1]
+            interaction.play_picks[1],
+            interaction.play_picks[2]
         )
         centered_line(
             surface,

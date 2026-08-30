@@ -19,7 +19,7 @@ end
 
 local co: thread = coroutine.create(run_updown)
 local expected_yields: {i32} = {3, 2, 1, 101, 102, 103}
-for i = 0, 5 do
+for i = 1, 6 do
     local ok: bool, value: unknown = coroutine.resume(co)
     assert(ok)
     assert(value::i32 == expected_yields[i])
@@ -51,7 +51,7 @@ end
 
 local mutual: thread = coroutine.create(run_ping)
 local mutual_yields: {i32} = {1004, 2003, 1002, 2001}
-for i = 0, 3 do
+for i = 1, 4 do
     local ok: bool, value: unknown = coroutine.resume(mutual)
     assert(ok)
     assert(value::i32 == mutual_yields[i])
@@ -80,7 +80,7 @@ end
 
 local records: thread = coroutine.create(run_records)
 local record_yields: {i32} = {3, 2, 1}
-for i = 0, 2 do
+for i = 1, 3 do
     local ok: bool, value: unknown = coroutine.resume(records)
     assert(ok)
     assert(value::i32 == record_yields[i])
@@ -93,7 +93,7 @@ assert(records_result::i32 == 14)
 -- both hold suspended nested activations: their frame stacks must not mix.
 local left: thread = coroutine.create(run_updown)
 local right: thread = coroutine.create(run_updown)
-for i = 0, 5 do
+for i = 1, 6 do
     local left_ok: bool, left_value: unknown = coroutine.resume(left)
     assert(left_ok)
     assert(left_value::i32 == expected_yields[i])

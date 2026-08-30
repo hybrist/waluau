@@ -192,7 +192,7 @@ function shuffle(deck: {Card}): unit
 end
 
 function draw(deck: {Card}): Card
-    local card: Card = deck[#deck - ONE]
+    local card: Card = deck[#deck]
     table.remove(deck)
     return card
 end
@@ -289,7 +289,7 @@ end
 
 function rank_five(cards: {Card}): i32
     assert(#cards == 5)
-    local ranks: {i32} = {cards[0].rank, cards[1].rank, cards[2].rank, cards[3].rank, cards[4].rank}
+    local ranks: {i32} = {cards[1].rank, cards[2].rank, cards[3].rank, cards[4].rank, cards[5].rank}
     -- A fixed five-item bubble sorting network avoids allocating comparator
     -- closures and keeps the evaluator straightforward.
     swap_if_lower(ranks, 0, 1)
@@ -303,50 +303,50 @@ function rank_five(cards: {Card}): i32
     swap_if_lower(ranks, 1, 2)
     swap_if_lower(ranks, 0, 1)
 
-    local flush: bool = cards[0].suit == cards[1].suit and cards[0].suit == cards[2].suit and cards[0].suit == cards[3].suit and cards[0].suit == cards[4].suit
+    local flush: bool = cards[1].suit == cards[2].suit and cards[1].suit == cards[3].suit and cards[1].suit == cards[4].suit and cards[1].suit == cards[5].suit
     local straight_high: i32 = 0
-    if ranks[0] - ranks[4] == 4 and ranks[0] > ranks[1] and ranks[1] > ranks[2] and ranks[2] > ranks[3] and ranks[3] > ranks[4] then
-        straight_high = ranks[0]
-    elseif ranks[0] == 14 and ranks[1] == 5 and ranks[2] == 4 and ranks[3] == 3 and ranks[4] == 2 then
+    if ranks[1] - ranks[5] == 4 and ranks[1] > ranks[2] and ranks[2] > ranks[3] and ranks[3] > ranks[4] and ranks[4] > ranks[5] then
+        straight_high = ranks[1]
+    elseif ranks[1] == 14 and ranks[2] == 5 and ranks[3] == 4 and ranks[4] == 3 and ranks[5] == 2 then
         straight_high = 5
     end
 
     if flush and straight_high > 0 then
         return pack(8, straight_high, 0, 0, 0, 0)
-    elseif ranks[0] == ranks[3] then
-        return pack(7, ranks[0], ranks[4], 0, 0, 0)
     elseif ranks[1] == ranks[4] then
-        return pack(7, ranks[1], ranks[0], 0, 0, 0)
-    elseif ranks[0] == ranks[2] and ranks[3] == ranks[4] then
-        return pack(6, ranks[0], ranks[3], 0, 0, 0)
-    elseif ranks[0] == ranks[1] and ranks[2] == ranks[4] then
-        return pack(6, ranks[2], ranks[0], 0, 0, 0)
+        return pack(7, ranks[1], ranks[5], 0, 0, 0)
+    elseif ranks[2] == ranks[5] then
+        return pack(7, ranks[2], ranks[1], 0, 0, 0)
+    elseif ranks[1] == ranks[3] and ranks[4] == ranks[5] then
+        return pack(6, ranks[1], ranks[4], 0, 0, 0)
+    elseif ranks[1] == ranks[2] and ranks[3] == ranks[5] then
+        return pack(6, ranks[3], ranks[1], 0, 0, 0)
     elseif flush then
-        return pack(5, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4])
+        return pack(5, ranks[1], ranks[2], ranks[3], ranks[4], ranks[5])
     elseif straight_high > 0 then
         return pack(4, straight_high, 0, 0, 0, 0)
-    elseif ranks[0] == ranks[2] then
-        return pack(3, ranks[0], ranks[3], ranks[4], 0, 0)
     elseif ranks[1] == ranks[3] then
-        return pack(3, ranks[1], ranks[0], ranks[4], 0, 0)
+        return pack(3, ranks[1], ranks[4], ranks[5], 0, 0)
     elseif ranks[2] == ranks[4] then
-        return pack(3, ranks[2], ranks[0], ranks[1], 0, 0)
-    elseif ranks[0] == ranks[1] and ranks[2] == ranks[3] then
-        return pack(2, ranks[0], ranks[2], ranks[4], 0, 0)
-    elseif ranks[0] == ranks[1] and ranks[3] == ranks[4] then
-        return pack(2, ranks[0], ranks[3], ranks[2], 0, 0)
+        return pack(3, ranks[2], ranks[1], ranks[5], 0, 0)
+    elseif ranks[3] == ranks[5] then
+        return pack(3, ranks[3], ranks[1], ranks[2], 0, 0)
     elseif ranks[1] == ranks[2] and ranks[3] == ranks[4] then
-        return pack(2, ranks[1], ranks[3], ranks[0], 0, 0)
-    elseif ranks[0] == ranks[1] then
-        return pack(1, ranks[0], ranks[2], ranks[3], ranks[4], 0)
+        return pack(2, ranks[1], ranks[3], ranks[5], 0, 0)
+    elseif ranks[1] == ranks[2] and ranks[4] == ranks[5] then
+        return pack(2, ranks[1], ranks[4], ranks[3], 0, 0)
+    elseif ranks[2] == ranks[3] and ranks[4] == ranks[5] then
+        return pack(2, ranks[2], ranks[4], ranks[1], 0, 0)
     elseif ranks[1] == ranks[2] then
-        return pack(1, ranks[1], ranks[0], ranks[3], ranks[4], 0)
+        return pack(1, ranks[1], ranks[3], ranks[4], ranks[5], 0)
     elseif ranks[2] == ranks[3] then
-        return pack(1, ranks[2], ranks[0], ranks[1], ranks[4], 0)
+        return pack(1, ranks[2], ranks[1], ranks[4], ranks[5], 0)
     elseif ranks[3] == ranks[4] then
-        return pack(1, ranks[3], ranks[0], ranks[1], ranks[2], 0)
+        return pack(1, ranks[3], ranks[1], ranks[2], ranks[5], 0)
+    elseif ranks[4] == ranks[5] then
+        return pack(1, ranks[4], ranks[1], ranks[2], ranks[3], 0)
     end
-    return pack(0, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4])
+    return pack(0, ranks[1], ranks[2], ranks[3], ranks[4], ranks[5])
 end
 
 -- Hold'em evaluation over five to seven available cards. The winning
@@ -355,7 +355,7 @@ end
 -- card.
 function best_five(cards: {Card}): PairChoice
     assert(#cards >= 5 and #cards <= 7)
-    local formation: {Card} = {cards[0], cards[1], cards[2], cards[3], cards[4]}
+    local formation: {Card} = {cards[1], cards[2], cards[3], cards[4], cards[5]}
     local best: PairChoice = {
         first = 0,
         second = 1,
@@ -390,7 +390,7 @@ function straight_high_from_counts(counts: {i32}): i32
             return high
         end
     end
-    if counts[14] > 0 and counts[5] > 0 and counts[4] > 0 and counts[3] > 0 and counts[2] > 0 then
+    if counts[15] > 0 and counts[6] > 0 and counts[5] > 0 and counts[4] > 0 and counts[3] > 0 then
         return 5
     end
     return 0
@@ -684,36 +684,36 @@ end
 -- straight flush > three of a kind > straight > flush > pair > high card.
 function rank_three(cards: {Card}): i32
     assert(#cards == 3)
-    local ranks: {i32} = {cards[0].rank, cards[1].rank, cards[2].rank}
+    local ranks: {i32} = {cards[1].rank, cards[2].rank, cards[3].rank}
     swap_if_lower(ranks, 0, 1)
     swap_if_lower(ranks, 1, 2)
     swap_if_lower(ranks, 0, 1)
-    local flush: bool = cards[0].suit == cards[1].suit and cards[0].suit == cards[2].suit
+    local flush: bool = cards[1].suit == cards[2].suit and cards[1].suit == cards[3].suit
     local straight_high: i32 = 0
-    if ranks[0] - ranks[2] == 2 and ranks[0] > ranks[1] and ranks[1] > ranks[2] then
-        straight_high = ranks[0]
-    elseif ranks[0] == 14 and ranks[1] == 3 and ranks[2] == 2 then
+    if ranks[1] - ranks[3] == 2 and ranks[1] > ranks[2] and ranks[2] > ranks[3] then
+        straight_high = ranks[1]
+    elseif ranks[1] == 14 and ranks[2] == 3 and ranks[3] == 2 then
         straight_high = 3
     end
     if flush and straight_high > 0 then
         return pack(5, straight_high, 0, 0, 0, 0)
     end
-    if ranks[0] == ranks[2] then
-        return pack(4, ranks[0], 0, 0, 0, 0)
+    if ranks[1] == ranks[3] then
+        return pack(4, ranks[1], 0, 0, 0, 0)
     end
     if straight_high > 0 then
         return pack(3, straight_high, 0, 0, 0, 0)
     end
     if flush then
-        return pack(2, ranks[0], ranks[1], ranks[2], 0, 0)
-    end
-    if ranks[0] == ranks[1] then
-        return pack(1, ranks[0], ranks[2], 0, 0, 0)
+        return pack(2, ranks[1], ranks[2], ranks[3], 0, 0)
     end
     if ranks[1] == ranks[2] then
-        return pack(1, ranks[1], ranks[0], 0, 0, 0)
+        return pack(1, ranks[1], ranks[3], 0, 0, 0)
     end
-    return pack(0, ranks[0], ranks[1], ranks[2], 0, 0)
+    if ranks[2] == ranks[3] then
+        return pack(1, ranks[2], ranks[1], 0, 0, 0)
+    end
+    return pack(0, ranks[1], ranks[2], ranks[3], 0, 0)
 end
 
 -- Equal-sized swap proposals are compared by the strongest three-card hand
@@ -721,7 +721,7 @@ end
 -- triples rather than making slot order affect the bid.
 function community_value(cards: {Card}): i32
     assert(#cards >= OPENING_COMMUNITY_SIZE and #cards <= MAX_COMMUNITY_SIZE)
-    local best: i32 = rank_three({cards[0], cards[1], cards[2]})
+    local best: i32 = rank_three({cards[1], cards[2], cards[3]})
     for first = ZERO, #cards - 3 do
         for second = first + ONE, #cards - 2 do
             for third = second + ONE, #cards - 1 do
@@ -884,11 +884,11 @@ end
 -- Spend two slots of a hand; the watched marks travel inside their slots.
 function remove_pair(hand: {HandSlot}, first: i32, second: i32): unit
     if first > second then
-        table.remove(hand, first)
-        table.remove(hand, second)
+        table.remove(hand, first + 1)
+        table.remove(hand, second + 1)
     else
-        table.remove(hand, second)
-        table.remove(hand, first)
+        table.remove(hand, second + 1)
+        table.remove(hand, first + 1)
     end
 end
 
@@ -904,7 +904,7 @@ end
 -- Replace only table cards that are free to rotate. A post-swap Freeze Ray keeps
 -- its table_card in the same slot for the next round while the other slots turn.
 function State:rotate_middle(): unit
-    local retained: Card = self.middle[0]
+    local retained: Card = self.middle[1]
     local has_retained: bool = false
     local retained_index: i32 = 0
     for index, card in self.middle do
@@ -1531,7 +1531,7 @@ function State:test_set_swap_trace(hand_indices: {i32}, middle_indices: {i32}): 
 end
 
 function State:test_next_draw(): Card
-    return self.deck[#self.deck - 1]
+    return self.deck[#self.deck]
 end
 
 function State:is_finished(): bool
@@ -1663,7 +1663,7 @@ function State:last_trick(): Trick?
     if #self.history == 0 then
         return nil
     end
-    return self.history[#self.history - 1]
+    return self.history[#self.history]
 end
 
 -- One side of a resolved trick, selected by owner: 1 is the player, -1 the

@@ -159,7 +159,7 @@ function Router:hovered(): i32
     if #self.hover_path == 0 then
         return -1
     end
-    return self.hover_path[0]
+    return self.hover_path[1]
 end
 
 function Router:focus(key: i32): bool

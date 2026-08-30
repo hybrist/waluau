@@ -43,6 +43,6 @@ end
 
 local collected = collect_returned(4, 5, 6)
 assert(#collected == 3)
-assert(collected[0] == 4)
-assert(collected[1] == 5)
-assert(collected[2] == 6)
+assert(collected[1] == 4)
+assert(collected[2] == 5)
+assert(collected[3] == 6)

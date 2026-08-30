@@ -322,7 +322,7 @@ function State:position_at(travel: f64): Point
         return { x = CITY_WIDTH * 0.5, y = CITY_HEIGHT * 0.5 }
     end
     if travel <= 0.0 then
-        return { x = self.stops[0].x, y = self.stops[0].y }
+        return { x = self.stops[1].x, y = self.stops[1].y }
     end
     if travel >= last::f64 then
         return { x = self.stops[last].x, y = self.stops[last].y }

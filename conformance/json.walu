@@ -20,7 +20,7 @@ if decoded ~= nil then
     assert(decoded.name == original.name)
     assert(decoded.note == nil)
     assert(#decoded.scores == 3)
-    assert(decoded.scores[2] == 42)
+    assert(decoded.scores[3] == 42)
 else
     error(decode_error)
 end
@@ -58,7 +58,7 @@ local typed_copy, typed_error = json.unpack<Float32Array>(json.pack(typed))
 assert(typed_error == "")
 if typed_copy ~= nil then
     assert(#typed_copy == 3)
-    assert(typed_copy[1] == -2.25)
+    assert(typed_copy[2] == -2.25)
 else
     error(typed_error)
 end

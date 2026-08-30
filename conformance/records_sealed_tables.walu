@@ -65,7 +65,7 @@ assert(alias_vec.y == 7)
 -- '#' applies directly to arrays reached through record fields, including in
 -- contexts that expect a number (waluau-lhia regression).
 function tail_value(state: { items: {i32}, score: i32 }): i32
-    return state.items[#state.items - 1] + state.score
+    return state.items[#state.items] + state.score
 end
 
 local state: { items: {i32}, score: i32 } = { items = {10, 20, 30}, score = 7 }

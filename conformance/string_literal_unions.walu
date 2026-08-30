@@ -29,7 +29,7 @@ assert(maybe ~= nil)
 
 local colors: {CardColor} = {"red", "black", "red"}
 assert(#colors == 3)
-assert(colors[1] == "black")
+assert(colors[2] == "black")
 
 assert(describe("left") == 1)
 assert(describe("right") == 2)

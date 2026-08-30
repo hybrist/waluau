@@ -36,7 +36,7 @@ type Child = { name: string, parent: Parent? }
 local child: Child = { name = "leaf", parent = nil }
 local parent: Parent = { children = {child} }
 assert(#parent.children == 1)
-assert(parent.children[0].name == "leaf")
+assert(parent.children[1].name == "leaf")
 -- The back edge exists and null-checks. Writing a non-nil value through the
 -- recursion anchor is still a lowering gap (the anchored field erases to
 -- `unknown?`), the same limit self-recursive aliases have.

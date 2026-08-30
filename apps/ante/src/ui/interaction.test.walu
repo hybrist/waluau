@@ -179,19 +179,19 @@ describe(
                 local router: interaction.Router = interaction.Router.new(root)
                 local scope: i32 = router:add_scope("row", true)
                 local first: interaction.Target = router:add(
-                    nodes[0],
-                    scope,
-                    true,
-                    interaction.handlers()
-                )
-                local second: interaction.Target = router:add(
                     nodes[1],
                     scope,
                     true,
                     interaction.handlers()
                 )
-                local third: interaction.Target = router:add(
+                local second: interaction.Target = router:add(
                     nodes[2],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                local third: interaction.Target = router:add(
+                    nodes[3],
                     scope,
                     true,
                     interaction.handlers()
@@ -217,19 +217,19 @@ describe(
                 local router: interaction.Router = interaction.Router.new(root)
                 local scope: i32 = router:add_scope("column", false)
                 local first: interaction.Target = router:add(
-                    nodes[0],
-                    scope,
-                    true,
-                    interaction.handlers()
-                )
-                local second: interaction.Target = router:add(
                     nodes[1],
                     scope,
                     true,
                     interaction.handlers()
                 )
-                local third: interaction.Target = router:add(
+                local second: interaction.Target = router:add(
                     nodes[2],
+                    scope,
+                    true,
+                    interaction.handlers()
+                )
+                local third: interaction.Target = router:add(
+                    nodes[3],
                     scope,
                     true,
                     interaction.handlers()

@@ -1,20 +1,20 @@
 -- table.create and table.unpack on growable arrays. Bounds and indices are
--- 0-based like all Waluau array indexing, so table.unpack defaults to
--- elements 0 through #a - 1. Only statically-knowable unpack arities are
+-- Luau-compatible and 1-based, so table.unpack defaults to elements 1 through
+-- #a. Only statically-knowable unpack arities are
 -- supported: literal bounds, a statically sized array argument (an array
 -- literal or a direct table.create call with a literal count), or an
 -- expected multi-value arity such as an annotated multi-binding declaration.
 -- table.create(count, value) fills every element with the value.
 local filled: {i32} = table.create(3, 7)
 assert(#filled == 3)
-assert(filled[0] == 7)
 assert(filled[1] == 7)
 assert(filled[2] == 7)
+assert(filled[3] == 7)
 
 -- The result is a normal growable array.
 table.insert(filled, 9)
 assert(#filled == 4)
-assert(filled[3] == 9)
+assert(filled[4] == 9)
 
 -- Count zero produces an empty array.
 local empty_filled: {string} = table.create(0, "x")
@@ -24,8 +24,8 @@ assert(#empty_filled == 0)
 local n: i32 = 5
 local runtime: {f64} = table.create(n, 1.5)
 assert(#runtime == 5)
-assert(runtime[0] == 1.5)
-assert(runtime[4] == 1.5)
+assert(runtime[1] == 1.5)
+assert(runtime[5] == 1.5)
 
 -- table.create(count) is an empty array: the capacity hint has no effect on
 -- growable arrays.
@@ -33,7 +33,7 @@ local hinted: {string} = table.create(8)
 assert(#hinted == 0)
 table.insert(hinted, "grown")
 assert(#hinted == 1)
-assert(hinted[0] == "grown")
+assert(hinted[1] == "grown")
 
 -- table.unpack spreads a statically sized array literal into a call.
 assert(string.format("%d-%d-%d", table.unpack({7, 8, 9})) == "7-8-9")
@@ -41,17 +41,17 @@ assert(string.format("%d-%d-%d", table.unpack({7, 8, 9})) == "7-8-9")
 -- A direct table.create argument is statically sized too.
 assert(string.format("%s%s", table.unpack(table.create(2, "hi"))) == "hihi")
 
--- Literal 0-based bounds select a subrange of an array whose length is not
+-- Literal 1-based bounds select a subrange of an array whose length is not
 -- statically known.
 local ys: {i32} = {10, 20, 30, 40, 50}
-assert(string.format("%d+%d+%d", table.unpack(ys, 1, 3)) == "20+30+40")
+assert(string.format("%d+%d+%d", table.unpack(ys, 2, 4)) == "20+30+40")
 
 -- An empty literal range unpacks to no values.
-assert(string.format("%s", "solo", table.unpack(ys, 3, 2)) == "solo")
+assert(string.format("%s", "solo", table.unpack(ys, 4, 3)) == "solo")
 
 -- An annotated multi-binding declaration supplies the expected arity when
 -- the array length is not statically known.
-local fourth: i32, fifth: i32 = table.unpack(ys, 3)
+local fourth: i32, fifth: i32 = table.unpack(ys, 4)
 assert(fourth == 40)
 assert(fifth == 50)
 

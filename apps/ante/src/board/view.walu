@@ -63,7 +63,7 @@ export opaque type State = {
 function new(state: game.View, run: run_module.View): State
     local sample: game.Card = { rank = 2, suit = 0 }
     if #state.middle > 0 then
-        sample = state.middle[0]
+        sample = state.middle[1]
     end
     local computer_views: {card.Stateful} = {}
     for _ = 0::i32, HAND_CAPACITY - 1 do
@@ -111,7 +111,7 @@ function new(state: game.View, run: run_module.View): State
         table.insert(table_nodes, node)
         table.insert(visual_children, node)
     end
-    local commit_node: ui.Node = action_view.capsules[0].root
+    local commit_node: ui.Node = action_view.capsules[1].root
     table.insert(visual_children, commit_node)
     table.insert(visual_children, player_node)
     local input: input_module.State = input_module.new(visual_children, table_nodes, commit_node)
@@ -307,8 +307,8 @@ function State:paint_player(bounds: box.Rect): unit
 end
 
 function State:paint_action(text: string, active: bool, band: box.Rect): unit
-    self.action_items[0].text = text
-    self.action_items[0].active = active
+    self.action_items[1].text = text
+    self.action_items[1].active = active
     self.action_view:present(self.action_items)
     local retained: ui.Surface? = self.surface
     assert(retained ~= nil)
