@@ -3,6 +3,25 @@ import { test } from 'node:test';
 
 import { buildWaluauImports, WALUAU_IMPORT_MODULE } from './runtime.js';
 
+test('projects buffer strings one byte per browser string code unit', () => {
+  const names = ['buffer_string_len', 'buffer_string_read', 'buffer_string_write'];
+  const runtime = buildWaluauImports(null, undefined, {
+    requiredImports: [
+      ...names.map(name => ({ module: WALUAU_IMPORT_MODULE, name, kind: 'function' })),
+      { module: WALUAU_IMPORT_MODULE, name: 'memory', kind: 'memory' },
+    ],
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE];
+  const allBytes = Array.from({ length: 256 }, (_, byte) => String.fromCharCode(byte)).join('');
+
+  assert.equal(runtime.buffer_string_len(allBytes), 256);
+  assert.equal(runtime.buffer_string_len('a\u0100'), -1);
+  runtime.buffer_string_write(allBytes, 32, allBytes.length);
+  assert.equal(runtime.buffer_string_read(32, allBytes.length), allBytes);
+  runtime.buffer_string_write('a\0\xff', 512, 3);
+  assert.deepEqual(Array.from(new Uint8Array(runtime.memory.buffer, 512, 3)), [97, 0, 255]);
+});
+
 test('builds and validates typed JSON through compiler host primitives', () => {
   const names = [
     '__json_pack_reset', '__json_pack_object', '__json_pack_object_set',

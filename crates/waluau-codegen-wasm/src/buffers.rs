@@ -97,7 +97,13 @@ impl BufferPlan {
                         | IrInstruction::LuauBufferGet { .. }
                         | IrInstruction::LuauBufferSet { .. }
                         | IrInstruction::LuauBufferReadBits { .. }
-                        | IrInstruction::LuauBufferWriteBits { .. } => {
+                        | IrInstruction::LuauBufferWriteBits { .. }
+                        | IrInstruction::LuauBufferFromString { .. }
+                        | IrInstruction::LuauBufferToString { .. }
+                        | IrInstruction::LuauBufferReadString { .. }
+                        | IrInstruction::LuauBufferWriteString { .. }
+                        | IrInstruction::LuauBufferCopy { .. }
+                        | IrInstruction::LuauBufferFill { .. } => {
                             plan.uses_memory = true;
                             plan.uses_luau_buffer = true;
                         }
@@ -332,7 +338,7 @@ pub(crate) fn emit_luau_buffer_alloc_function(
     out
 }
 
-fn emit_lua_error(out: &mut Function, message_global: u32) {
+pub(crate) fn emit_lua_error(out: &mut Function, message_global: u32) {
     out.instruction(&Instruction::GlobalGet(message_global));
     out.instruction(&Instruction::AnyConvertExtern);
     out.instruction(&Instruction::Throw(crate::ERROR_TAG_INDEX));
@@ -704,6 +710,59 @@ pub(crate) fn emit_luau_buffer_write_bits(
         out.instruction(&Instruction::I32Store8(unaligned_mem_arg(0)));
         out.instruction(&Instruction::End);
     }
+}
+
+/// Validate an arbitrary byte range without forming `offset + count`, which
+/// could wrap. Zero-length ranges at the one-past-end offset are valid.
+pub(crate) fn emit_luau_buffer_range_check(
+    out: &mut Function,
+    buffer_type: u32,
+    buffer_local: u32,
+    offset_local: u32,
+    count_local: u32,
+    oob_message_global: u32,
+) {
+    // Unsigned `count > len` rejects negative counts and avoids underflow in
+    // the following `len - count` expression.
+    out.instruction(&Instruction::LocalGet(count_local));
+    out.instruction(&Instruction::LocalGet(buffer_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: buffer_type,
+        field_index: LUAU_BUFFER_LEN_FIELD,
+    });
+    out.instruction(&Instruction::I32GtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, oob_message_global);
+    out.instruction(&Instruction::End);
+
+    // Unsigned comparison also rejects negative offsets.
+    out.instruction(&Instruction::LocalGet(offset_local));
+    out.instruction(&Instruction::LocalGet(buffer_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: buffer_type,
+        field_index: LUAU_BUFFER_LEN_FIELD,
+    });
+    out.instruction(&Instruction::LocalGet(count_local));
+    out.instruction(&Instruction::I32Sub);
+    out.instruction(&Instruction::I32GtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_lua_error(out, oob_message_global);
+    out.instruction(&Instruction::End);
+}
+
+pub(crate) fn emit_luau_buffer_data_address(
+    out: &mut Function,
+    buffer_type: u32,
+    buffer_local: u32,
+    offset_local: u32,
+) {
+    out.instruction(&Instruction::LocalGet(buffer_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: buffer_type,
+        field_index: LUAU_BUFFER_DATA_FIELD,
+    });
+    out.instruction(&Instruction::LocalGet(offset_local));
+    out.instruction(&Instruction::I32Add);
 }
 
 /// Emit the typed load for one element; expects the element address on the

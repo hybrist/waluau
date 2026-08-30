@@ -746,6 +746,12 @@ fn collect_record_types_from_instruction(
         | IrInstruction::LuauBufferLen { .. }
         | IrInstruction::LuauBufferGet { .. }
         | IrInstruction::LuauBufferSet { .. }
+        | IrInstruction::LuauBufferFromString { .. }
+        | IrInstruction::LuauBufferToString { .. }
+        | IrInstruction::LuauBufferReadString { .. }
+        | IrInstruction::LuauBufferWriteString { .. }
+        | IrInstruction::LuauBufferCopy { .. }
+        | IrInstruction::LuauBufferFill { .. }
         | IrInstruction::LuauBufferReadBits { .. }
         | IrInstruction::LuauBufferWriteBits { .. }
         | IrInstruction::MultiGet { .. } => {}

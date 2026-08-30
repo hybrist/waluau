@@ -57,10 +57,11 @@ use arrays::{
     ArrayTypeRegistry, NullableBoxKind, RuntimeGcTypes, array_storage_type, record_storage_type,
 };
 use buffers::{
-    BUFFER_HEAP_BASE, BufferBitContext, BufferPlan, LUAU_BUFFER_LEN_FIELD, MEMORY_EXPORT_NAME,
-    element_size_log2, emit_buffer_alloc_function, emit_buffer_element_address,
-    emit_buffer_len_from_stack, emit_buffer_load, emit_buffer_store, emit_luau_buffer_address,
-    emit_luau_buffer_alloc_function, emit_luau_buffer_load, emit_luau_buffer_read_bits,
+    BUFFER_HEAP_BASE, BufferBitContext, BufferPlan, LUAU_BUFFER_DATA_FIELD, LUAU_BUFFER_LEN_FIELD,
+    MEMORY_EXPORT_NAME, element_size_log2, emit_buffer_alloc_function, emit_buffer_element_address,
+    emit_buffer_len_from_stack, emit_buffer_load, emit_buffer_store, emit_lua_error,
+    emit_luau_buffer_address, emit_luau_buffer_alloc_function, emit_luau_buffer_data_address,
+    emit_luau_buffer_load, emit_luau_buffer_range_check, emit_luau_buffer_read_bits,
     emit_luau_buffer_store, emit_luau_buffer_write_bits,
 };
 use coroutines::{
@@ -576,6 +577,9 @@ fn collect_required_imports(
         (used.math_pow, host::IMPORT_MATH_POW),
         (used.js_eq_unknown, host::IMPORT_JS_EQ_UNKNOWN),
         (used.js_tostring_named, host::IMPORT_JS_TOSTRING_NAMED),
+        (used.buffer_string_len, host::IMPORT_BUFFER_STRING_LEN),
+        (used.buffer_string_read, host::IMPORT_BUFFER_STRING_READ),
+        (used.buffer_string_write, host::IMPORT_BUFFER_STRING_WRITE),
     ] {
         push_required_function_import(&mut imports, needed, host::IMPORT_MODULE, name);
     }
@@ -1084,6 +1088,8 @@ fn emit_inner(
             &[anyref_val_type(), externref_val_type()],
             &[externref_val_type()],
         ),
+        (&[ValType::I32, ValType::I32], &[externref_val_type()]),
+        (&[externref_val_type(), ValType::I32, ValType::I32], &[]),
     ];
     for (slot, (params, results)) in host_type_specs.iter().enumerate() {
         if needed_host_slots[slot] {
@@ -1691,6 +1697,27 @@ fn emit_inner(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_NAMED,
             EntityType::Function(host_slot_type_index[13].unwrap()),
+        );
+    }
+    if used_imports.buffer_string_len {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BUFFER_STRING_LEN,
+            EntityType::Function(host_slot_type_index[8].unwrap()),
+        );
+    }
+    if used_imports.buffer_string_read {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BUFFER_STRING_READ,
+            EntityType::Function(host_slot_type_index[14].unwrap()),
+        );
+    }
+    if used_imports.buffer_string_write {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BUFFER_STRING_WRITE,
+            EntityType::Function(host_slot_type_index[15].unwrap()),
         );
     }
     let mut declared_import_indices = HashMap::new();
@@ -6236,6 +6263,293 @@ impl FunctionEmission<'_> {
                         },
                         local(local_plan, *stored)?,
                     );
+                }
+                IrInstruction::LuauBufferFromString { string } => {
+                    let len_scratch = locals::buffer_scratch_local(local_plan)?;
+                    let ptr_scratch = locals::buffer_aux_scratch_local(local_plan)?;
+                    emit_value_operand(out, local_plan, *string)?;
+                    out.instruction(&Instruction::Call(
+                        ctx.host_func_index(host::IMPORT_BUFFER_STRING_LEN_FUNC)?,
+                    ));
+                    out.instruction(&Instruction::LocalTee(len_scratch));
+                    out.instruction(&Instruction::I32Const(0));
+                    out.instruction(&Instruction::I32LtS);
+                    out.instruction(&Instruction::If(BlockType::Empty));
+                    emit_lua_error(
+                        out,
+                        host::string_constant_index(
+                            ctx.string_constants,
+                            host::ERR_BUFFER_STRING_BYTE,
+                        )?,
+                    );
+                    out.instruction(&Instruction::End);
+
+                    out.instruction(&Instruction::LocalGet(len_scratch));
+                    out.instruction(&Instruction::Call(ctx.luau_buffer_alloc_func()?));
+                    out.instruction(&Instruction::LocalSet(ptr_scratch));
+
+                    emit_value_operand(out, local_plan, *string)?;
+                    out.instruction(&Instruction::LocalGet(ptr_scratch));
+                    out.instruction(&Instruction::LocalGet(len_scratch));
+                    out.instruction(&Instruction::Call(
+                        ctx.host_func_index(host::IMPORT_BUFFER_STRING_WRITE_FUNC)?,
+                    ));
+
+                    out.instruction(&Instruction::LocalGet(ptr_scratch));
+                    out.instruction(&Instruction::LocalGet(len_scratch));
+                    out.instruction(&Instruction::StructNew(
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                    ));
+                    emit_value_store(out, local_plan, *value)?;
+                }
+                IrInstruction::LuauBufferToString { buffer } => {
+                    emit_value_operand(out, local_plan, *buffer)?;
+                    out.instruction(&Instruction::StructGet {
+                        struct_type_index: ctx.array_registry.luau_buffer_struct_type()?,
+                        field_index: LUAU_BUFFER_DATA_FIELD,
+                    });
+                    emit_value_operand(out, local_plan, *buffer)?;
+                    out.instruction(&Instruction::StructGet {
+                        struct_type_index: ctx.array_registry.luau_buffer_struct_type()?,
+                        field_index: LUAU_BUFFER_LEN_FIELD,
+                    });
+                    out.instruction(&Instruction::Call(
+                        ctx.host_func_index(host::IMPORT_BUFFER_STRING_READ_FUNC)?,
+                    ));
+                    emit_value_store(out, local_plan, *value)?;
+                }
+                IrInstruction::LuauBufferReadString {
+                    buffer,
+                    offset,
+                    count,
+                } => {
+                    out.instruction(&Instruction::LocalGet(local(local_plan, *count)?));
+                    out.instruction(&Instruction::I32Const(0));
+                    out.instruction(&Instruction::I32LtS);
+                    out.instruction(&Instruction::If(BlockType::Empty));
+                    emit_lua_error(
+                        out,
+                        host::string_constant_index(
+                            ctx.string_constants,
+                            host::ERR_BUFFER_READ_SIZE,
+                        )?,
+                    );
+                    out.instruction(&Instruction::End);
+                    emit_luau_buffer_range_check(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                        local(local_plan, *count)?,
+                        host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
+                    );
+                    emit_luau_buffer_data_address(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                    );
+                    emit_value_operand(out, local_plan, *count)?;
+                    out.instruction(&Instruction::Call(
+                        ctx.host_func_index(host::IMPORT_BUFFER_STRING_READ_FUNC)?,
+                    ));
+                    emit_value_store(out, local_plan, *value)?;
+                }
+                IrInstruction::LuauBufferWriteString {
+                    buffer,
+                    offset,
+                    string,
+                    count,
+                } => {
+                    let string_len = locals::buffer_scratch_local(local_plan)?;
+                    emit_value_operand(out, local_plan, *string)?;
+                    out.instruction(&Instruction::Call(
+                        ctx.host_func_index(host::IMPORT_BUFFER_STRING_LEN_FUNC)?,
+                    ));
+                    out.instruction(&Instruction::LocalTee(string_len));
+                    out.instruction(&Instruction::I32Const(0));
+                    out.instruction(&Instruction::I32LtS);
+                    out.instruction(&Instruction::If(BlockType::Empty));
+                    emit_lua_error(
+                        out,
+                        host::string_constant_index(
+                            ctx.string_constants,
+                            host::ERR_BUFFER_STRING_BYTE,
+                        )?,
+                    );
+                    out.instruction(&Instruction::End);
+
+                    let count_local = count
+                        .map(|count| local(local_plan, count))
+                        .transpose()?
+                        .unwrap_or(string_len);
+                    if count.is_some() {
+                        out.instruction(&Instruction::LocalGet(count_local));
+                        out.instruction(&Instruction::I32Const(0));
+                        out.instruction(&Instruction::I32LtS);
+                        out.instruction(&Instruction::If(BlockType::Empty));
+                        emit_lua_error(
+                            out,
+                            host::string_constant_index(
+                                ctx.string_constants,
+                                host::ERR_BUFFER_WRITE_COUNT,
+                            )?,
+                        );
+                        out.instruction(&Instruction::End);
+                        out.instruction(&Instruction::LocalGet(count_local));
+                        out.instruction(&Instruction::LocalGet(string_len));
+                        out.instruction(&Instruction::I32GtU);
+                        out.instruction(&Instruction::If(BlockType::Empty));
+                        emit_lua_error(
+                            out,
+                            host::string_constant_index(
+                                ctx.string_constants,
+                                host::ERR_BUFFER_STRING_OVERFLOW,
+                            )?,
+                        );
+                        out.instruction(&Instruction::End);
+                    }
+                    emit_luau_buffer_range_check(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                        count_local,
+                        host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
+                    );
+                    emit_value_operand(out, local_plan, *string)?;
+                    emit_luau_buffer_data_address(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                    );
+                    out.instruction(&Instruction::LocalGet(count_local));
+                    out.instruction(&Instruction::Call(
+                        ctx.host_func_index(host::IMPORT_BUFFER_STRING_WRITE_FUNC)?,
+                    ));
+                }
+                IrInstruction::LuauBufferCopy {
+                    target,
+                    target_offset,
+                    source,
+                    source_offset,
+                    count,
+                } => {
+                    let count_local = match count {
+                        Some(count) => local(local_plan, *count)?,
+                        None => {
+                            let scratch = locals::buffer_scratch_local(local_plan)?;
+                            out.instruction(&Instruction::I32Const(0));
+                            out.instruction(&Instruction::LocalSet(scratch));
+                            emit_luau_buffer_range_check(
+                                out,
+                                ctx.array_registry.luau_buffer_struct_type()?,
+                                local(local_plan, *source)?,
+                                local(local_plan, *source_offset)?,
+                                scratch,
+                                host::string_constant_index(
+                                    ctx.string_constants,
+                                    host::ERR_BUFFER_OOB,
+                                )?,
+                            );
+                            emit_value_operand(out, local_plan, *source)?;
+                            out.instruction(&Instruction::StructGet {
+                                struct_type_index: ctx.array_registry.luau_buffer_struct_type()?,
+                                field_index: LUAU_BUFFER_LEN_FIELD,
+                            });
+                            emit_value_operand(out, local_plan, *source_offset)?;
+                            out.instruction(&Instruction::I32Sub);
+                            out.instruction(&Instruction::LocalSet(scratch));
+                            scratch
+                        }
+                    };
+                    // Luau validates the source range before the destination.
+                    emit_luau_buffer_range_check(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *source)?,
+                        local(local_plan, *source_offset)?,
+                        count_local,
+                        host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
+                    );
+                    emit_luau_buffer_range_check(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *target)?,
+                        local(local_plan, *target_offset)?,
+                        count_local,
+                        host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
+                    );
+                    emit_luau_buffer_data_address(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *target)?,
+                        local(local_plan, *target_offset)?,
+                    );
+                    emit_luau_buffer_data_address(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *source)?,
+                        local(local_plan, *source_offset)?,
+                    );
+                    out.instruction(&Instruction::LocalGet(count_local));
+                    out.instruction(&Instruction::MemoryCopy {
+                        src_mem: 0,
+                        dst_mem: 0,
+                    });
+                }
+                IrInstruction::LuauBufferFill {
+                    buffer,
+                    offset,
+                    value: fill_value,
+                    count,
+                } => {
+                    let count_local = match count {
+                        Some(count) => local(local_plan, *count)?,
+                        None => {
+                            let scratch = locals::buffer_scratch_local(local_plan)?;
+                            out.instruction(&Instruction::I32Const(0));
+                            out.instruction(&Instruction::LocalSet(scratch));
+                            emit_luau_buffer_range_check(
+                                out,
+                                ctx.array_registry.luau_buffer_struct_type()?,
+                                local(local_plan, *buffer)?,
+                                local(local_plan, *offset)?,
+                                scratch,
+                                host::string_constant_index(
+                                    ctx.string_constants,
+                                    host::ERR_BUFFER_OOB,
+                                )?,
+                            );
+                            emit_value_operand(out, local_plan, *buffer)?;
+                            out.instruction(&Instruction::StructGet {
+                                struct_type_index: ctx.array_registry.luau_buffer_struct_type()?,
+                                field_index: LUAU_BUFFER_LEN_FIELD,
+                            });
+                            emit_value_operand(out, local_plan, *offset)?;
+                            out.instruction(&Instruction::I32Sub);
+                            out.instruction(&Instruction::LocalSet(scratch));
+                            scratch
+                        }
+                    };
+                    emit_luau_buffer_range_check(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                        count_local,
+                        host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
+                    );
+                    emit_luau_buffer_data_address(
+                        out,
+                        ctx.array_registry.luau_buffer_struct_type()?,
+                        local(local_plan, *buffer)?,
+                        local(local_plan, *offset)?,
+                    );
+                    emit_value_operand(out, local_plan, *fill_value)?;
+                    out.instruction(&Instruction::LocalGet(count_local));
+                    out.instruction(&Instruction::MemoryFill(0));
                 }
                 IrInstruction::StructNew { struct_ty, fields } => {
                     let struct_type_index = ctx.array_registry.record_index(struct_ty)?;

@@ -3,10 +3,9 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- Dynamic pcall now works; this chunk remains blocked by the bulk/string
--- buffer APIs (readstring, writestring, and copy; waluau-q7qg.6.3).
--- This chunk contains only buffers.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- The scalar bounds slice remains blocked because a protected f32 result is
+-- not preserved through dynamic pcall (waluau-zvd4). The independently
+-- passing string/copy bounds slice lives in buffers.8_bulk_bounds.walu.
 --
 -- Split from conformance/luau/buffers.walu. Common helper setup is repeated
 -- as needed so each numbered chunk is independently discoverable by the
@@ -89,32 +88,6 @@ local function boundchecks()
   assert(ecall(function() buffer.writef64(b, 1017, 0) end) == "buffer access out of bounds")
   assert(ecall(function() buffer.writef64(b, -1, 0) end) == "buffer access out of bounds")
   assert(ecall(function() buffer.writef64(b, -100000, 0) end) == "buffer access out of bounds")
-
-  -- string
-  assert(call(function() return buffer.readstring(b, 1016, 8) end) == "\0\0\0\0\0\0\0\0")
-  assert(ecall(function() buffer.readstring(b, 1017, 8) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.readstring(b, -1, -8) end) == "invalid argument #3 to 'readstring' (size)")
-  assert(ecall(function() buffer.readstring(b, -100000, 8) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.readstring(b, -100000, 8) end) == "buffer access out of bounds")
-
-  call(function() buffer.writestring(b, 1016, "abcdefgh") end)
-  assert(ecall(function() buffer.writestring(b, 1017, "abcdefgh") end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.writestring(b, -1, "abcdefgh") end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.writestring(b, -100000, "abcdefgh") end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.writestring(b, 100, "abcd", -5) end) == "invalid argument #4 to 'writestring' (count)")
-  assert(ecall(function() buffer.writestring(b, 100, "abcd", 50) end) == "string length overflow")
-
-  -- copy
-  assert(ecall(function() buffer.copy(b, 30, b, 200, 1000) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.copy(b, 30, b, 200, -5) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.copy(b, 30, b, 2000, 10) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.copy(b, 30, b, -1, 10) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.copy(b, 30, b, -10, 10) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.copy(b, 30, b, -100000, 10) end) == "buffer access out of bounds")
-
-  local b2 = buffer.create(1024)
-  assert(ecall(function() buffer.copy(b, -200, b, 200, 200) end) == "buffer access out of bounds")
-  assert(ecall(function() buffer.copy(b, 825, b, 200, 200) end) == "buffer access out of bounds")
 
   assert(not native_check or is_native_if_supported())
 end

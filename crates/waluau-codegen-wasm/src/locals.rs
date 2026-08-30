@@ -51,6 +51,9 @@ pub(crate) struct LocalPlan {
     /// Scratch i32 local holding a freshly allocated typed-array pointer while
     /// `BufferNew`/`BufferConst` initialize the allocation.
     pub(crate) buffer_scratch: Option<u32>,
+    /// Second i32 scratch used while `buffer.fromstring` holds both the
+    /// validated text length and newly allocated data pointer.
+    pub(crate) buffer_aux_scratch: Option<u32>,
     /// Shared scratch locals for bounded Luau buffer bit-field loads/stores.
     pub(crate) buffer_bit_scratch: Option<BufferBitScratch>,
     /// Scratch f64 local for spilling a `js_tonumber_*` host result while its
@@ -295,11 +298,29 @@ pub(crate) fn build_local_plan(
         block.instructions.iter().any(|(_, instruction)| {
             matches!(
                 instruction,
-                IrInstruction::BufferNew { .. } | IrInstruction::BufferConst { .. }
+                IrInstruction::BufferNew { .. }
+                    | IrInstruction::BufferConst { .. }
+                    | IrInstruction::LuauBufferFromString { .. }
+                    | IrInstruction::LuauBufferWriteString { .. }
+                    | IrInstruction::LuauBufferCopy { count: None, .. }
+                    | IrInstruction::LuauBufferFill { count: None, .. }
             )
         })
     });
     let buffer_scratch = if needs_buffer_scratch {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(ValType::I32);
+        Some(slot)
+    } else {
+        None
+    };
+
+    let needs_buffer_aux_scratch = function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(instruction, IrInstruction::LuauBufferFromString { .. })
+        })
+    });
+    let buffer_aux_scratch = if needs_buffer_aux_scratch {
         let slot = function.params.len() as u32 + extra_locals.len() as u32;
         extra_locals.push(ValType::I32);
         Some(slot)
@@ -379,6 +400,7 @@ pub(crate) fn build_local_plan(
         protected_call_value_tmp,
         array_scratch,
         buffer_scratch,
+        buffer_aux_scratch,
         buffer_bit_scratch,
         tonumber_scratch,
     })
@@ -496,6 +518,12 @@ pub(crate) fn infer_value_types(
                 IrInstruction::LuauBufferSet { .. } => Type::Unit,
                 IrInstruction::LuauBufferReadBits { .. } => Type::Numeric(NumericType::U32),
                 IrInstruction::LuauBufferWriteBits { .. } => Type::Unit,
+                IrInstruction::LuauBufferFromString { .. } => Type::Buffer,
+                IrInstruction::LuauBufferToString { .. }
+                | IrInstruction::LuauBufferReadString { .. } => Type::String,
+                IrInstruction::LuauBufferWriteString { .. }
+                | IrInstruction::LuauBufferCopy { .. }
+                | IrInstruction::LuauBufferFill { .. } => Type::Unit,
                 IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
                 IrInstruction::StructGet { field_ty, .. } => field_ty.clone(),
                 IrInstruction::StructSet { .. } => Type::Unit,
@@ -947,6 +975,50 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             bit_count,
             value,
         } => vec![*buffer, *bit_offset, *bit_count, *value],
+        IrInstruction::LuauBufferFromString { string } => vec![*string],
+        IrInstruction::LuauBufferToString { buffer } => vec![*buffer],
+        IrInstruction::LuauBufferReadString {
+            buffer,
+            offset,
+            count,
+        } => vec![*buffer, *offset, *count],
+        IrInstruction::LuauBufferWriteString {
+            buffer,
+            offset,
+            string,
+            count,
+        } => {
+            let mut values = vec![*buffer, *offset, *string];
+            if let Some(count) = count {
+                values.push(*count);
+            }
+            values
+        }
+        IrInstruction::LuauBufferCopy {
+            target,
+            target_offset,
+            source,
+            source_offset,
+            count,
+        } => {
+            let mut values = vec![*target, *target_offset, *source, *source_offset];
+            if let Some(count) = count {
+                values.push(*count);
+            }
+            values
+        }
+        IrInstruction::LuauBufferFill {
+            buffer,
+            offset,
+            value,
+            count,
+        } => {
+            let mut values = vec![*buffer, *offset, *value];
+            if let Some(count) = count {
+                values.push(*count);
+            }
+            values
+        }
         IrInstruction::StructNew { fields, .. } => fields.clone(),
         IrInstruction::StructGet { base, .. } => vec![*base],
         IrInstruction::StructSet { base, value, .. } => vec![*base, *value],
@@ -1080,6 +1152,12 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::LuauBufferReadBits { .. } | IrInstruction::LuauBufferWriteBits { .. } => {
             false
         }
+        IrInstruction::LuauBufferFromString { .. }
+        | IrInstruction::LuauBufferToString { .. }
+        | IrInstruction::LuauBufferReadString { .. }
+        | IrInstruction::LuauBufferWriteString { .. }
+        | IrInstruction::LuauBufferCopy { .. }
+        | IrInstruction::LuauBufferFill { .. } => false,
         IrInstruction::LuauBufferLen { buffer } => *buffer == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),
         IrInstruction::StructGet { base, .. } => *base == value,
@@ -1150,6 +1228,12 @@ pub(crate) fn buffer_bit_scratch(local_plan: &LocalPlan) -> Result<BufferBitScra
     local_plan
         .buffer_bit_scratch
         .ok_or_else(|| Diagnostic::new("missing Luau buffer bit-operation scratch locals"))
+}
+
+pub(crate) fn buffer_aux_scratch_local(local_plan: &LocalPlan) -> Result<u32, Diagnostic> {
+    local_plan
+        .buffer_aux_scratch
+        .ok_or_else(|| Diagnostic::new("missing Luau buffer auxiliary scratch local"))
 }
 
 pub(crate) fn tonumber_scratch_local(local_plan: &LocalPlan) -> Result<u32, Diagnostic> {
