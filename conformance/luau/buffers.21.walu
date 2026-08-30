@@ -3,8 +3,9 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- This chunk contains only buffers.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- This aggregate repeats the preceding buffer checks under a final getfenv()
+-- call that forces Luau VM slow-call paths. Waluau has no mutable execution
+-- environment, and the chunk adds no unique buffer semantics.
 --
 -- Split from conformance/luau/buffers.walu. Common helper setup is repeated
 -- as needed so each numbered chunk is independently discoverable by the

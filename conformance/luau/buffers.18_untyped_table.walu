@@ -5,7 +5,8 @@
 -- conformance: pending
 -- Waluau does not refine an unannotated function parameter from its call
 -- sites: `t16` remains `unknown`, so array mutation and length are rejected.
--- This is a broad static-typing deviation, not missing buffer behavior.
+-- This is a broad static-typing deviation tracked by waluau-2dow, not missing
+-- buffer behavior or a reason to add sparse/mixed tables.
 -- Split from buffers.18.walu so its independent buffer checks can run.
 
 -- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
