@@ -54,35 +54,42 @@ const RULE_INK: string = "#6b5a2a"
 const RULE_SEAM: string = "#07070a"
 const RULE_HEIGHT: f64 = 2.0
 
+-- The page's material, given a rectangle. Split out of the shell node because
+-- the shop is the same leaf laid over the same duel while being a different
+-- shape: it has a live figure in its header and a width of its own, so it
+-- borrows the material without being forced into this page's layout.
+function paint_page(graphics: ui.Graphics, bounds: box.Rect): unit
+    plate.panel(
+        graphics,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        SHELL_FILL,
+        SHELL_EDGE,
+        3.0
+    )
+    graphics:set_color("#000000")
+    plate.veil_rectangle(
+        graphics,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height * HEAD_SHADE,
+        HEAD_DEPTH,
+        HEAD_DEPTH,
+        0.0,
+        0.0
+    )
+end
+
 function shell(): ui.Node
     return ui.Node.measured(
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
             box.set_fixed(into, 0.0, 0.0)
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
-            local graphics = surface.graphics
-            plate.panel(
-                graphics,
-                bounds.x,
-                bounds.y,
-                bounds.width,
-                bounds.height,
-                SHELL_FILL,
-                SHELL_EDGE,
-                3.0
-            )
-            graphics:set_color("#000000")
-            plate.veil_rectangle(
-                graphics,
-                bounds.x,
-                bounds.y,
-                bounds.width,
-                bounds.height * HEAD_SHADE,
-                HEAD_DEPTH,
-                HEAD_DEPTH,
-                0.0,
-                0.0
-            )
+            paint_page(surface.graphics, bounds)
         end
     )
 end
@@ -190,6 +197,8 @@ end
 return {
     node = node,
     show = show,
+    paint_page = paint_page,
+    rule = rule,
     body_line = body_line,
     heading = heading,
     keys_line = keys_line,

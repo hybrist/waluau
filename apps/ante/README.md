@@ -282,6 +282,16 @@ at its top left, **well** for a socket cut into a plate whose lit crescent
 collects along its lower wall. **halo** and **aura** put a colour into the space
 around a shape, which is how the game says ready, reached, or selected.
 
+Controls are the same idea one level up. `entities/button.walu` holds a **Look**
+— the finish a control is cut in, owned by its caller rather than built per
+frame — a **Mood**, which is what the screen thinks of the control, and a
+**Touch**, which is the separate question of what the pointer is doing to it.
+The capsule, the standing chips, the menu's rows and the shop's rows are all
+presets over it, so a control that gains a state gains it everywhere. Under the
+pointer a face lifts; under a press it sinks, drawn by moving the bevel rather
+than by darkening, because on plates this dark there is little light to take
+away.
+
 Two ramps underneath all of it: `shaded_rectangle` names a brightness at each of
 the four corners, and `veil_rectangle` names an opacity instead. The difference
 matters — a shade ramp darkens what it draws, where a veil lets what is already
@@ -332,6 +342,7 @@ scopes prevent the covered board from responding.
 | `entities/footer.walu` | The centred way back to the menu and the lower-right ability diamond. |
 | `entities/vitals.walu` | The run's hearts as pips and its pool as a struck coin, in the board's lower-left corner. |
 | `entities/ability_diamond.walu` | Four ready-ability sockets in South, West, North, East face-button order. |
+| `entities/button.walu` | The control every clickable rectangle is cut from: one finish, three moods, and what the pointer is doing to it. |
 | `entities/capsule.walu` | A clickable control, as wide as its own label. |
 | `entities/action_bar.walu` | The band that asks for a decision, and the hit test for the controls it asked with. |
 | `entities/label.walu` | A line of type that measures itself against the font that is loaded. |

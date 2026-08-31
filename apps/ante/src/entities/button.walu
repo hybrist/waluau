@@ -1,0 +1,229 @@
+-- The control every clickable rectangle in Ante is cut from.
+--
+-- There used to be four of these: the capsule the board commits with, the chip
+-- standing in the header band, the menu's rows, and the shop's. They all drew
+-- the same thing — a plate with a label, gold when it was the one you meant,
+-- quiet when it was not — and they had drifted. Three idle edge colours between
+-- four controls, two hand-copied label baselines, and a focus that breathed on
+-- the menu and only changed colour in the shop, though both are a cursor
+-- walking a list.
+--
+-- What is shared is the finish and the moods. What is not is the content: the
+-- shop's row carries a description on the left and a price on the right, so it
+-- takes `surface` and writes its own two columns. A control whose content is
+-- one centred word takes `draw` and is done.
+local box = require("../ui/layout")
+local ui = require("../ui/node")
+local ink = require("../ink")
+local plate = require("../plate")
+
+-- What the control is: available and not the cursor, the cursor, or not
+-- available at all. A control that only ever has two of these says so by
+-- never producing the third.
+export type Mood = "idle" | "focused" | "disabled"
+-- What the pointer is doing to it, which is a separate question from what the
+-- board thinks of it: a disabled control still lights under a finger, because
+-- refusing to acknowledge a press is how a control reads as broken.
+export type Touch = "none" | "hover" | "press"
+
+-- The finish a control is cut in. Callers hold these rather than building one
+-- per frame; a list whose rows differ only in ink builds one Look per row at
+-- construction and then never allocates again.
+export type Look = {
+    fill: string,
+    idle_edge: string,
+    idle_ink: string,
+    focus_edge: string,
+    focus_ink: string,
+    quiet_edge: string,
+    quiet_ink: string,
+    label_size: f64,
+    pad_x: f64,
+    height: f64,
+    weight: f64,
+    -- How far a focused control glows. Zero turns the glow off, which is what
+    -- separates a control that is merely available now from one that is the
+    -- cursor's current place in a list.
+    aura_reach: f64,
+    aura_swell: f64,
+    aura_rings: i32,
+    aura_strength: f64
+}
+
+-- Under the pointer the face lifts, and under a press it sinks. Sinking is the
+-- plate's own lighting read backwards: the shadow that lived along its bottom
+-- inside edge moves to the top, and the highlight that lived along the top
+-- moves to the bottom, because a surface pushed below its frame is lit from
+-- under its far lip.
+--
+-- The top veil has to be strong enough to bury the bevel highlight underneath
+-- it. On plates this dark, darkening alone barely reads — the face has little
+-- light to take away — so it is the moved highlight that carries the press.
+const HOVER_LIFT: string = "#ffffff"
+const HOVER_STRENGTH: f64 = 0.055
+const PRESS_SINK: string = "#000000"
+const PRESS_TOP: f64 = 0.55
+const PRESS_BOTTOM: f64 = 0.0
+const PRESS_LIP: f64 = 0.30
+const PRESS_LIP_WEIGHT: f64 = 1.0
+
+function edge_of(look: Look, mood: Mood): string
+    if mood == "focused" then
+        return look.focus_edge
+    end
+    if mood == "disabled" then
+        return look.quiet_edge
+    end
+    return look.idle_edge
+end
+
+function ink_of(look: Look, mood: Mood): string
+    if mood == "focused" then
+        return look.focus_ink
+    end
+    if mood == "disabled" then
+        return look.quiet_ink
+    end
+    return look.idle_ink
+end
+
+-- The plate and whatever the pointer is doing to it, with no content. The
+-- glow is drawn before the plate so it reaches the board around the control
+-- rather than washing over its own face.
+function surface(
+    graphics: ui.Graphics,
+    bounds: box.Rect,
+    look: Look,
+    mood: Mood,
+    touch: Touch,
+    clock: f64
+): unit
+    if mood == "focused" and look.aura_reach > 0.0 then
+        -- Both the reach and the strength ride one breath, so the pulse is the
+        -- light changing rather than a line moving. A caller with no clock
+        -- passes zero and gets that breath held.
+        local breath: f64 = 0.5 + math.sin(clock * 2.4) * 0.5
+        graphics:set_color(look.focus_edge)
+        plate.aura(
+            graphics,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            look.aura_reach + breath * look.aura_swell,
+            look.aura_rings,
+            look.aura_strength * (0.65 + breath * 0.35)
+        )
+    end
+    plate.draw(
+        graphics,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        look.fill,
+        edge_of(look, mood),
+        look.weight
+    )
+    if touch == "hover" then
+        graphics:set_color(HOVER_LIFT)
+        plate.veil_rectangle(
+            graphics,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            HOVER_STRENGTH,
+            HOVER_STRENGTH,
+            HOVER_STRENGTH,
+            HOVER_STRENGTH
+        )
+    elseif touch == "press" then
+        graphics:set_color(PRESS_SINK)
+        plate.veil_rectangle(
+            graphics,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            PRESS_TOP,
+            PRESS_TOP,
+            PRESS_BOTTOM,
+            PRESS_BOTTOM
+        )
+        graphics:set_color(edge_of(look, mood))
+        plate.veil_rectangle(
+            graphics,
+            bounds.x + look.weight,
+            bounds.y + bounds.height - look.weight - PRESS_LIP_WEIGHT,
+            bounds.width - look.weight * 2.0,
+            PRESS_LIP_WEIGHT,
+            PRESS_LIP,
+            PRESS_LIP,
+            PRESS_LIP,
+            PRESS_LIP
+        )
+    end
+end
+
+-- The one centred word most controls carry. The baseline is computed from the
+-- box rather than authored, which is the hand-copied number this replaces.
+function caption(
+    graphics: ui.Graphics,
+    bounds: box.Rect,
+    look: Look,
+    mood: Mood,
+    text: string
+): unit
+    ink.text_centered(
+        graphics,
+        text,
+        bounds.x + bounds.width * 0.5,
+        bounds.y + (bounds.height + look.label_size) * 0.5,
+        look.label_size,
+        ink_of(look, mood)
+    )
+end
+
+function draw(
+    graphics: ui.Graphics,
+    bounds: box.Rect,
+    look: Look,
+    mood: Mood,
+    touch: Touch,
+    clock: f64,
+    text: string
+): unit
+    surface(graphics, bounds, look, mood, touch, clock)
+    caption(graphics, bounds, look, mood, text)
+end
+
+-- A control sized to its own label. That is the whole reason the capsule and
+-- the chip are entities: neither needs an authored width that has to be
+-- re-tuned whenever its word changes.
+function width_of(graphics: ui.Graphics?, look: Look, text: string): f64
+    return ui.text_width(graphics, text, look.label_size) + look.pad_x * 2.0
+end
+
+function measure_into(graphics: ui.Graphics?, into: box.Intrinsic, look: Look, text: string): unit
+    local width: f64 = width_of(graphics, look, text)
+    into.min_width = width
+    into.preferred_width = width
+    into.max_width = width
+    into.min_height = look.height
+    into.preferred_height = look.height
+    into.max_height = look.height
+    -- The label rides the middle, so that is where the baseline is; a row of
+    -- controls and captions lines up on it.
+    into.baseline = (look.height + look.label_size) * 0.5
+end
+
+return {
+    surface = surface,
+    caption = caption,
+    draw = draw,
+    edge_of = edge_of,
+    ink_of = ink_of,
+    width_of = width_of,
+    measure_into = measure_into
+}

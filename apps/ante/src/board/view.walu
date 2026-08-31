@@ -214,6 +214,13 @@ end
 
 function State:present_input(frame: input_module.Frame): unit
     self.input:present(frame)
+    -- The board's own controls are the last ones that could not feel a
+    -- pointer. The router knew all along; this is the hop that carries the
+    -- answer from the input tree to the entities that paint it.
+    self.action_view.capsules[1]:present_touch(self.input:commit_touch())
+    for index, chip in self.control_view.chips do
+        chip:present(self.input:chrome_touch(index - 1))
+    end
 end
 
 function State:begin_table(): unit

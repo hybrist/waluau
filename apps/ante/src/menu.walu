@@ -14,6 +14,7 @@ local ui = require("./ui/node")
 local ui_layout = require("./ui/layout")
 local interaction = require("./ui/interaction")
 local control_chip = require("./entities/control_chip")
+local button = require("./entities/button")
 
 export type MenuAction = "none" | "start" | "start-rush"
 
@@ -21,6 +22,11 @@ type Stage = "main" | "spell"
 type Model = {
     clock: f64,
     cursor: i32,
+    -- What the pointer is doing, as row indices within the live stage. The
+    -- router already tracks both; before this they went nowhere, so a menu
+    -- row was inert under the mouse and under the finger.
+    hovered: i32,
+    pressed: i32,
     help_open: bool,
     stage: Stage,
     rush_choice: bool,
@@ -62,6 +68,30 @@ const SELECT_REACH: f64 = 6.0
 const SELECT_SWELL: f64 = 5.0
 const SELECT_RINGS: i32 = 6
 const SELECT_STRENGTH: f64 = 0.55
+
+-- A menu row is the cursor's place in a list, so its focus glows and breathes.
+-- The idle ink differs per row — the spell list writes each school in its own
+-- colour — so a Look is built for each row once at construction rather than
+-- per frame.
+function row_look(idle_ink: string): button.Look
+    return {
+        fill = "#17171c",
+        idle_edge = "#52525b",
+        idle_ink = idle_ink,
+        focus_edge = SELECT_INK,
+        focus_ink = SELECT_INK,
+        quiet_edge = "#3f3f46",
+        quiet_ink = "#52525b",
+        label_size = 15.0,
+        pad_x = 0.0,
+        height = ITEM_H,
+        weight = 2.0,
+        aura_reach = SELECT_REACH,
+        aura_swell = SELECT_SWELL,
+        aura_rings = SELECT_RINGS,
+        aura_strength = SELECT_STRENGTH
+    }
+end
 
 -- The four school orbs under the title.
 const ORB_RADIUS: f64 = 6.0
@@ -122,37 +152,24 @@ function draw_item(
     bounds: ui_layout.Rect,
     index: i32,
     label: string,
-    idle_ink: string
+    look: button.Look
 ): unit
     local model: Model = presentation.model
-    local graphics = surface.graphics
-    local edge: string = "#52525b"
-    local tone: string = idle_ink
+    local mood: button.Mood = "idle"
     if index == model.cursor then
-        edge = "#fbbf24"
-        tone = "#fbbf24"
-        -- The selection breathes as a glow standing off the plate rather than
-        -- as one hairline creeping in and out. Both the reach and the strength
-        -- ride the same breath, so the pulse is the light changing rather than
-        -- a line moving.
-        local breath: f64 = 0.5 + math.sin(model.clock * 2.4) * 0.5
-        graphics:set_color(SELECT_INK)
-        plate.aura(
-            graphics,
-            bounds.x,
-            bounds.y,
-            bounds.width,
-            bounds.height,
-            SELECT_REACH + breath * SELECT_SWELL,
-            SELECT_RINGS,
-            SELECT_STRENGTH * (0.65 + breath * 0.35)
-        )
+        mood = "focused"
     end
-    ink.panel(graphics, bounds.x, bounds.y, bounds.width, bounds.height, "#17171c", edge)
-    ink.text_centered(graphics, label, bounds.x + bounds.width * 0.5, bounds.y + 33.0, 15, tone)
+    local touch: button.Touch = "none"
+    if index == model.pressed then
+        touch = "press"
+    elseif index == model.hovered then
+        touch = "hover"
+    end
+    button.draw(surface.graphics, bounds, look, mood, touch, model.clock, label)
 end
 
 function main_row(presentation: Presentation, index: i32, label: string): ui.Node
+    local look: button.Look = row_look("#8a8a92")
     return ui.Node.sized(
         ITEM_W,
         ITEM_H,
@@ -160,7 +177,7 @@ function main_row(presentation: Presentation, index: i32, label: string): ui.Nod
             if presentation.model.stage ~= "main" or presentation.model.help_open then
                 return
             end
-            draw_item(presentation, surface, bounds, index, label, "#8a8a92")
+            draw_item(presentation, surface, bounds, index, label, look)
         end
     )
 end
@@ -169,6 +186,7 @@ function spell_row(presentation: Presentation, index: i32): ui.Node
     local kind: spells.SpellKind? = spells.SpellKind.from(index + 1)
     assert(kind ~= nil)
     local spell: spells.SpellKind = kind::spells.SpellKind
+    local look: button.Look = row_look(spell_launch.color(spell))
     return ui.Node.sized(
         ITEM_W,
         ITEM_H,
@@ -176,14 +194,7 @@ function spell_row(presentation: Presentation, index: i32): ui.Node
             if presentation.model.stage ~= "spell" or presentation.model.help_open then
                 return
             end
-            draw_item(
-                presentation,
-                surface,
-                bounds,
-                index,
-                spell_launch.name(spell),
-                spell_launch.color(spell)
-            )
+            draw_item(presentation, surface, bounds, index, spell_launch.name(spell), look)
         end
     )
 end
@@ -328,6 +339,30 @@ function row_handlers(model: Model, stage: Stage, index: i32): interaction.Handl
             activate_main(model, index)
         end
     end
+    -- Hover and press are the row's own, not the stage's: the two lists are
+    -- never live at once, so an index is enough to name which row a pointer is
+    -- on without carrying the stage alongside it.
+    callbacks.on_enter = function(): unit
+        model.hovered = index
+    end
+    callbacks.on_leave = function(): unit
+        if model.hovered == index then
+            model.hovered = -1
+        end
+        if model.pressed == index then
+            model.pressed = -1
+        end
+    end
+    callbacks.on_down = function(pointer_button: i32): unit
+        if pointer_button == 1 then
+            model.pressed = index
+        end
+    end
+    callbacks.on_up = function(pointer_button: i32): unit
+        if model.pressed == index then
+            model.pressed = -1
+        end
+    end
     return callbacks
 end
 
@@ -335,6 +370,8 @@ function State.new(): State
     local model: Model = {
         clock = 0.0,
         cursor = ITEM_NEW_RUN,
+        hovered = -1,
+        pressed = -1,
         help_open = false,
         stage = "main",
         rush_choice = false,

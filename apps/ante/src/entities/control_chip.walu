@@ -11,52 +11,66 @@
 -- finger and a run played with the keyboard teach each other.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
-local ink = require("../ink")
-local plate = require("../plate")
+local button = require("./button")
 
 const LABEL_SIZE: f64 = 9.0
 const PAD_X: f64 = 11.0
 const HEIGHT: f64 = 22.0
 
-const FILL: string = "#17171c"
-const EDGE: string = "#3f3f46"
-const CAPTION: string = "#8a8a92"
+-- A chip is only ever idle: it is always there and always the same, which is
+-- what lets it read as chrome rather than as part of the phase. The other two
+-- moods are spelled anyway so the finish stays one record like every other
+-- control's, and so a chip that one day wants to grey out has somewhere to go.
+local LOOK: button.Look = {
+    fill = "#17171c",
+    idle_edge = "#3f3f46",
+    idle_ink = "#8a8a92",
+    focus_edge = "#fbbf24",
+    focus_ink = "#fbbf24",
+    quiet_edge = "#27272a",
+    quiet_ink = "#52525b",
+    label_size = LABEL_SIZE,
+    pad_x = PAD_X,
+    height = HEIGHT,
+    weight = 1.0,
+    aura_reach = 0.0,
+    aura_swell = 0.0,
+    aura_rings = 0,
+    aura_strength = 0.0
+}
 
 function always(): bool
     return true
 end
 
+type ChipPresentation = { touch: button.Touch }
+export type Stateful = { presentation: ChipPresentation, root: ui.Node }
+
 -- `shown` gates the paint, not the layout: node visibility in this tree is a
 -- routing flag, so a chip that is only offered on one screen still has to be
 -- told when to draw itself.
-function gated(text: string, shown: () -> bool): ui.Node
-    return ui.Node.measured(
+function Stateful.new(text: string, shown: () -> bool): Stateful
+    local presentation: ChipPresentation = { touch = "none" }
+    local root: ui.Node = ui.Node.measured(
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
-            local width: f64 = ui.text_width(graphics, text, LABEL_SIZE) + PAD_X * 2.0
-            into.min_width = width
-            into.preferred_width = width
-            into.max_width = width
-            into.min_height = HEIGHT
-            into.preferred_height = HEIGHT
-            into.max_height = HEIGHT
-            into.baseline = (HEIGHT + LABEL_SIZE) * 0.5
+            button.measure_into(graphics, into, LOOK, text)
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
             if not shown() then
                 return
             end
-            local graphics = surface.graphics
-            plate.draw(graphics, bounds.x, bounds.y, bounds.width, bounds.height, FILL, EDGE, 1.0)
-            ink.text_centered(
-                graphics,
-                text,
-                bounds.x + bounds.width * 0.5,
-                bounds.y + (bounds.height + LABEL_SIZE) * 0.5,
-                LABEL_SIZE,
-                CAPTION
-            )
+            button.draw(surface.graphics, bounds, LOOK, "idle", presentation.touch, 0.0, text)
         end
     )
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(touch: button.Touch): unit
+    self.presentation.touch = touch
+end
+
+function gated(text: string, shown: () -> bool): ui.Node
+    return Stateful.new(text, shown).root
 end
 
 function node(text: string): ui.Node

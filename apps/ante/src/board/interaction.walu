@@ -59,7 +59,12 @@ type Presentation = {
     hand_count: i32,
     table_count: i32,
     touch_minimum: f64,
-    pending: Action
+    pending: Action,
+    -- What the pointer is over and what it is holding down. The router has
+    -- always tracked both; these are where they land so the board's controls
+    -- can be drawn feeling them.
+    hovered: Action,
+    pressed: Action
 }
 
 export opaque type State = {
@@ -82,6 +87,18 @@ export opaque type State = {
 
 function State:root_node(): ui.Node
     return self.root
+end
+
+-- What the pointer is doing to the commit capsule, and to one standing
+-- control. The board's visual side asks for these by name rather than being
+-- handed the raw hover and press, so the mapping from a control's position in
+-- the bar to the intent it stands for stays in this module.
+function State:commit_touch(): "none" | "hover" | "press"
+    return touch_of(self.presentation, "commit", 0)
+end
+
+function State:chrome_touch(control: i32): "none" | "hover" | "press"
+    return touch_of(self.presentation, chrome_kind(control), 0)
 end
 
 -- DOM-free layout seam for focused interaction tests without a WebGL canvas.
@@ -125,7 +142,39 @@ function handlers(
     callbacks.on_activate = function(): unit
         presentation.pending = { kind = kind, index = index }
     end
+    callbacks.on_enter = function(): unit
+        presentation.hovered = { kind = kind, index = index }
+    end
+    callbacks.on_leave = function(): unit
+        presentation.hovered = { kind = "none", index = -1 }
+        presentation.pressed = { kind = "none", index = -1 }
+    end
+    callbacks.on_down = function(pointer_button: i32): unit
+        if pointer_button == 1 then
+            presentation.pressed = { kind = kind, index = index }
+        end
+    end
+    callbacks.on_up = function(pointer_button: i32): unit
+        presentation.pressed = { kind = "none", index = -1 }
+    end
     return callbacks
+end
+
+-- What the pointer is doing to one control, as the three states a button is
+-- drawn in. A press outranks a hover: a finger that is down on a control is
+-- also over it, and the sunk face is the more specific thing to say.
+function touch_of(
+    presentation: Presentation,
+    kind: "none" | "hand" | "table-card" | "commit" | "modal" | "spell" | "menu" | "help" | "history" | "restart",
+    index: i32
+): "none" | "hover" | "press"
+    if presentation.pressed.kind == kind and presentation.pressed.index == index then
+        return "press"
+    end
+    if presentation.hovered.kind == kind and presentation.hovered.index == index then
+        return "hover"
+    end
+    return "none"
 end
 
 -- Which action a standing control stands for. The bar owns the order and the
@@ -176,7 +225,9 @@ function State.new(controls: Controls): State
         hand_count = 0,
         table_count = 0,
         touch_minimum = 0.0,
-        pending = { kind = "none", index = -1 }
+        pending = { kind = "none", index = -1 },
+        hovered = { kind = "none", index = -1 },
+        pressed = { kind = "none", index = -1 }
     }
     local hand_nodes: {ui.Node} = {}
     for index = 0::i32, HAND_CAPACITY - 1 do

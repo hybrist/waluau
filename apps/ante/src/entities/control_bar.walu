@@ -36,12 +36,22 @@ end
 
 -- `controls` are the bar's pointer leaves in the order the constants name, so
 -- the board binds them by index without knowing how the bar is laid out.
-export type Stateful = { controls: {ui.Node}, root: ui.Node }
+-- `chips` are the same four in the same order, kept so the board can hand each
+-- one back what the pointer is doing to it. The bar does not know what a
+-- control means; it only knows where each one stands.
+export type Stateful = { chips: {control_chip.Stateful}, controls: {ui.Node}, root: ui.Node }
+
+function always(): bool
+    return true
+end
 
 function Stateful.new(): Stateful
+    local chips: {control_chip.Stateful} = {}
     local controls: {ui.Node} = {}
     for index = 0::i32, CONTROL_COUNT - 1 do
-        table.insert(controls, control_chip.node(control_label(index)))
+        local chip: control_chip.Stateful = control_chip.Stateful.new(control_label(index), always)
+        table.insert(chips, chip)
+        table.insert(controls, chip.root)
     end
     local root: ui.Node = ui.Node.down(
         { gap = GAP, align = "end" },
@@ -50,7 +60,7 @@ function Stateful.new(): Stateful
             ui.Node.across({ gap = GAP }, {controls[3], controls[4]})
         }
     )
-    return { controls = controls, root = root }
+    return { chips = chips, controls = controls, root = root }
 end
 
 function node(): ui.Node
