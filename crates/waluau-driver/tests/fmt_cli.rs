@@ -113,8 +113,10 @@ fn recursive_formatting_skips_dependency_and_build_directories() {
     let dir = std::env::temp_dir().join(format!("waluau-fmt-s-{}", std::process::id()));
     let dependency_dir = dir.join("node_modules");
     let build_dir = dir.join("target");
+    let cache_dir = dir.join(".waluau").join("0cd1f05e8502");
     std::fs::create_dir_all(&dependency_dir).unwrap();
     std::fs::create_dir_all(&build_dir).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
     std::fs::write(dir.join("source.walu"), "local  source=1\n").unwrap();
     std::fs::write(
         dependency_dir.join("dependency.walu"),
@@ -122,6 +124,7 @@ fn recursive_formatting_skips_dependency_and_build_directories() {
     )
     .unwrap();
     std::fs::write(build_dir.join("generated.walu"), "local generated =\n").unwrap();
+    std::fs::write(cache_dir.join("cached.walu"), "local cached =\n").unwrap();
 
     run_with_args(args(&["fmt", dir.to_str().unwrap()]))
         .expect("ignored directories are not parsed or formatted");
@@ -137,6 +140,10 @@ fn recursive_formatting_skips_dependency_and_build_directories() {
     assert_eq!(
         std::fs::read_to_string(build_dir.join("generated.walu")).unwrap(),
         "local generated =\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cache_dir.join("cached.walu")).unwrap(),
+        "local cached =\n"
     );
 
     std::fs::remove_dir_all(&dir).ok();

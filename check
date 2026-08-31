@@ -9,6 +9,7 @@ run() {
 
 run "Checking formatting" pnpm format:check
 run "Checking Luau pending inventory" node conformance/luau/check-pending-inventory.mjs
+run "Compiling Storybook stories" node tools/check-stories.mjs
 run "Checking compilation" cargo check --workspace --all-targets
 run "Running tests" cargo test --workspace
 run "Running clippy" cargo clippy --workspace --all-targets -- -D warnings
