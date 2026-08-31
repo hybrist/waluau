@@ -292,6 +292,35 @@ describe(
         )
 
         it(
+            "turns around mid-dive instead of standing still",
+            function()
+                local city: city_map.State = city_map.State.new(57)
+                city:warp(city_map.duel_stop(1))
+                city:hide()
+                step_seconds(city, 1.2)
+                expect(city:visible()):toBe(false)
+
+                -- Taking the verdict opens the shop before the next duel, so the
+                -- camera starts back out onto that street.
+                city:follow(city_map.shop_stop(2))
+                city:show()
+                step_seconds(city, 0.05)
+                expect(city.dive):toBeLessThan(1.0)
+                expect(city.dive):toBeGreaterThan(0.0)
+
+                -- Leaving that shop before the pull-out has finished asks for a
+                -- house the walk has not reached. The camera owes an exit and a
+                -- walk and a dive, and it still gets through all three.
+                city:follow(city_map.duel_stop(2))
+                city:hide()
+                step_seconds(city, 4.0)
+                expect(city.travel):toBe(3.0)
+                expect(city.cover):toBe(0.0)
+                expect(city:visible()):toBe(false)
+            end
+        )
+
+        it(
             "settles a dissolve that has nothing to play for",
             function()
                 local city: city_map.State = city_map.State.new(99)

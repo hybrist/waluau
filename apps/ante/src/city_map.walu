@@ -681,12 +681,21 @@ function State:update(dt: f64): unit
     -- the doorstep the camera goes in after it, and coming back out the camera
     -- opens up before anyone steps into the street. Either way what is on the
     -- screen is one thing moving rather than two.
+    --
+    -- A camera part way out of one house and asked into another it has not
+    -- walked to yet owes both movements, and the walk is the one that has to
+    -- happen first: it needs the street. So the dive finishes coming out
+    -- before the turn passes to the walk. Leaving a shop during the pull-out
+    -- that opened it is exactly that — without this the two would each wait
+    -- for the other and the map would stand still forever.
     if self.dive <= 0.0 then
         self.travel = step_toward(self.travel, self.target, dt / STOP_SECONDS)
     end
-    if self.dive > self.dive_target or self.travel == self.target then
-        self.dive = step_toward(self.dive, self.dive_target, dt / DIVE_SECONDS)
+    local dive_aim: f64 = self.dive_target
+    if self.travel ~= self.target and self.dive < self.dive_target then
+        dive_aim = 0.0
     end
+    self.dive = step_toward(self.dive, dive_aim, dt / DIVE_SECONDS)
     apply_dive(self)
 
     -- The camera closes at a steady speed on the screen rather than in the
