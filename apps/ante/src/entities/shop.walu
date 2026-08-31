@@ -184,14 +184,21 @@ function sync(view: Stateful, state: ShopState, run: RunState): unit
     view.presentation.run = run
     view.gold:present(tostring(run.gold), GOLD_SIZE, GOLD_INK, label.align_right)
 
+    -- A visit is its offers plus the way out, and `index` here is a table
+    -- position rather than an offer number: the way out is row #slots + 1.
+    -- Comparing it against the offer count alone left that row with no height
+    -- and no hit area, and since visibility gates hit testing rather than
+    -- painting, it was still drawn — below the panel that had not reserved
+    -- room for it, and unreachable by mouse.
+    local last: i32 = #state.slots + 1
     for index, row in view.row_nodes do
-        local visible: bool = index <= #state.slots
+        local visible: bool = index <= last
         row:set_visible(visible)
         row:set_enabled(visible)
         local height: f64 = 0.0
         if visible then
             height = ROW_HEIGHT
-            if index < #state.slots then
+            if index < last then
                 height += ROW_GAP
             end
         end
