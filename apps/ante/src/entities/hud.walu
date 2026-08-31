@@ -1,11 +1,34 @@
--- The centred title across the top of the duel board.
+-- The heading across the top of the duel board, cut into the vault wall.
+--
+-- It used to be one line of gold text on nothing, which left the top band of
+-- the board reading as empty. It is now a cartouche: the title with a rule
+-- running out to either side of it, each rule fading away from the words and
+-- ending in a struck pip. The board's own light reaches the words too, so the
+-- heading belongs to the room rather than being printed over it.
 local game = require("../game")
 local run_module = require("../run")
+local box = require("../ui/layout")
 local ui = require("../ui/node")
-local label = require("./label")
+local ink = require("../ink")
+local plate = require("../plate")
 
 const TITLE_SIZE: f64 = 12.0
 const TITLE_INK: string = "#fbbf24"
+const HEIGHT: f64 = 24.0
+
+-- How far the rule runs out from the words, the daylight kept between the two,
+-- and how faint the rule is by the time it reaches its pip.
+const RULE_REACH: f64 = 86.0
+const RULE_GAP: f64 = 14.0
+const RULE_INK: string = "#6b5a2a"
+const RULE_FAR: f64 = 0.18
+const RULE_NEAR: f64 = 1.15
+const PIP_SIZE: f64 = 3.5
+
+-- The glow behind the words, so a boss duel's longer title still sits in its
+-- own pool of light rather than running into the wall.
+const GLOW_RINGS: i32 = 3
+const GLOW_STRENGTH: f64 = 0.045
 
 function title(run: run_module.View): string
     if run.boss then
@@ -14,24 +37,102 @@ function title(run: run_module.View): string
     return "DUEL " .. tostring(run.duel)
 end
 
-export type Stateful = { title: label.Stateful, root: ui.Node }
+-- A rule fading outward from `near_x` to `far_x`, ending in a pip. The two
+-- sides are the same call with their ends swapped, which is what keeps the
+-- taper symmetric about the words.
+function draw_rule(graphics: ui.Graphics, near_x: f64, far_x: f64, middle_y: f64): unit
+    local left: f64 = math.min(near_x, far_x)
+    local width: f64 = math.abs(far_x - near_x)
+    local near_left: bool = near_x < far_x
+    local inner: f64 = RULE_NEAR
+    local outer: f64 = RULE_FAR
+    if not near_left then
+        inner = RULE_FAR
+        outer = RULE_NEAR
+    end
+    graphics:set_color(RULE_INK)
+    plate.shaded_rectangle(graphics, left, middle_y, width, 1.0, inner, outer, outer, inner)
+    plate.shaded_triangle(
+        graphics,
+        far_x,
+        middle_y - PIP_SIZE + 0.5,
+        RULE_NEAR,
+        far_x + PIP_SIZE,
+        middle_y + 0.5,
+        RULE_NEAR,
+        far_x - PIP_SIZE,
+        middle_y + 0.5,
+        RULE_NEAR
+    )
+    plate.shaded_triangle(
+        graphics,
+        far_x,
+        middle_y + PIP_SIZE + 0.5,
+        RULE_FAR,
+        far_x + PIP_SIZE,
+        middle_y + 0.5,
+        RULE_FAR,
+        far_x - PIP_SIZE,
+        middle_y + 0.5,
+        RULE_FAR
+    )
+end
+
+function draw_at(graphics: ui.Graphics, bounds: box.Rect, text: string): unit
+    local center_x: f64 = bounds.x + bounds.width * 0.5
+    local middle_y: f64 = bounds.y + HEIGHT * 0.5
+    local half: f64 = ui.text_width(graphics, text, TITLE_SIZE) * 0.5
+    graphics:set_color(TITLE_INK)
+    plate.halo(
+        graphics,
+        center_x,
+        middle_y,
+        half * 0.6,
+        half + HEIGHT * 0.5,
+        GLOW_RINGS,
+        GLOW_STRENGTH
+    )
+    draw_rule(
+        graphics,
+        center_x - half - RULE_GAP,
+        center_x - half - RULE_GAP - RULE_REACH,
+        middle_y
+    )
+    draw_rule(
+        graphics,
+        center_x + half + RULE_GAP,
+        center_x + half + RULE_GAP + RULE_REACH,
+        middle_y
+    )
+    ink.text_centered(graphics, text, center_x, middle_y + TITLE_SIZE * 0.38, TITLE_SIZE, TITLE_INK)
+end
+
+type HudPresentation = { text: string }
+export type Stateful = { presentation: HudPresentation, root: ui.Node }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
-    local title_view: label.Stateful = label.Stateful.new(
-        title(run),
-        TITLE_SIZE,
-        TITLE_INK,
-        label.align_center,
-        true
+    local presentation: HudPresentation = { text = title(run) }
+    local cartouche: ui.Node = ui.Node.measured(
+        function(graphics: ui.Graphics?, into: box.Intrinsic): unit
+            local width: f64 = ui.text_width(
+                graphics,
+                presentation.text,
+                TITLE_SIZE
+            ) + (RULE_GAP + RULE_REACH + PIP_SIZE) * 2.0
+            box.set_fixed(into, width, HEIGHT)
+        end,
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            draw_at(surface.graphics, bounds, presentation.text)
+        end
     )
     return {
-        title = title_view,
-        root = ui.Node.across({ justify = "center", align = "center" }, {title_view.root})
+        presentation = presentation,
+        root = ui.Node.across({ justify = "center", align = "center" }, {cartouche})
     }
 end
 
 function Stateful:present(state: game.View, run: run_module.View): unit
-    self.title:present(title(run), TITLE_SIZE, TITLE_INK, label.align_center)
+    self.presentation.text = title(run)
 end
 
 function node(state: game.View, run: run_module.View): ui.Node
