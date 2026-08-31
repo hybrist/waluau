@@ -10,15 +10,11 @@
 local game = require("../game")
 local run_module = require("../run")
 local ui = require("../ui/node")
-local label = require("./label")
 local ability_diamond = require("./ability_diamond")
+local vitals = require("./vitals")
 
-const HINT_SIZE: f64 = 9.0
 const CAPTION_PAD_X: f64 = 8.0
 const CAPTION_PAD_Y: f64 = 7.0
-
-const GOLD_INK: string = "#67e8f9"
-const HEART_INK: string = "#fb7185"
 
 -- Keep the keyboard reminder off the canvas edge and carry its baseline down
 -- with the padding so it remains stable inside the taller diamond band.
@@ -27,53 +23,26 @@ function padded_caption(caption: ui.Node): ui.Node
 end
 
 export type Stateful = {
-    hearts: label.Stateful,
-    gold: label.Stateful,
+    vitals: vitals.Stateful,
     abilities: ability_diamond.Stateful,
     root: ui.Node
 }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
-    local hearts: label.Stateful = label.Stateful.new(
-        "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
-        HINT_SIZE,
-        HEART_INK,
-        label.align_left,
-        false
-    )
-    local gold: label.Stateful = label.Stateful.new(
-        "GOLD " .. tostring(state.player_points),
-        HINT_SIZE,
-        GOLD_INK,
-        label.align_left,
-        false
-    )
+    local stats: vitals.Stateful = vitals.Stateful.new(state, run)
     local abilities: ability_diamond.Stateful = ability_diamond.Stateful.new(state)
-    local stat_root: ui.Node = padded_caption(
-        ui.Node.down({ gap = 4.0, align = "start" }, {hearts.root, gold.root})
-    )
+    local stat_root: ui.Node = padded_caption(stats.root)
     local root: ui.Node = ui.Node.layer(
         {
             ui.Node.across({ justify = "start", align = "end" }, {stat_root}),
             ui.Node.across({ justify = "end", align = "end" }, {abilities.root})
         }
     )
-    return { hearts = hearts, gold = gold, abilities = abilities, root = root }
+    return { vitals = stats, abilities = abilities, root = root }
 end
 
 function Stateful:present(state: game.View, run: run_module.View): unit
-    self.hearts:present(
-        "HEARTS " .. tostring(run.hearts) .. " / " .. tostring(run.max_hearts),
-        HINT_SIZE,
-        HEART_INK,
-        label.align_left
-    )
-    self.gold:present(
-        "GOLD " .. tostring(state.player_points),
-        HINT_SIZE,
-        GOLD_INK,
-        label.align_left
-    )
+    self.vitals:present(state, run)
     self.abilities:present(state)
 end
 

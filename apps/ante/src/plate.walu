@@ -185,6 +185,26 @@ function brackets(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, e
     )
 end
 
+-- A triangle whose brightness is given at each corner, for the shapes a
+-- rectangle cannot cover. The colour comes off the batch the same way.
+function shaded_triangle(
+    graphics: Graphics,
+    x1: f64,
+    y1: f64,
+    shade1: f64,
+    x2: f64,
+    y2: f64,
+    shade2: f64,
+    x3: f64,
+    y3: f64,
+    shade3: f64
+): unit
+    graphics:ensure_capacity(3)
+    graphics:emit_shaded_vertex(x1, y1, 0.0, 0.0, 0.0, shade1)
+    graphics:emit_shaded_vertex(x2, y2, 1.0, 0.0, 0.0, shade2)
+    graphics:emit_shaded_vertex(x3, y3, 0.5, 1.0, 0.0, shade3)
+end
+
 -- Curved surfaces get their light in steps: a stack of circles from the rim
 -- inward, each one a shade further along the ramp and each one nudged toward
 -- the light. Offsetting the centres is what turns a flat ramp into a
@@ -345,6 +365,7 @@ return {
     gradient_rectangle = gradient_rectangle,
     shaded_rectangle = shaded_rectangle,
     veil_rectangle = veil_rectangle,
+    shaded_triangle = shaded_triangle,
     shaded_circle = shaded_circle,
     dome = dome,
     well = well,
