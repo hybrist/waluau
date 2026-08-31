@@ -270,12 +270,40 @@ function halo(
     local red: f64 = graphics.red
     local green: f64 = graphics.green
     local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
     for ring = rings, 1::i32, -1 do
         local along: f64 = (ring::f64) / (rings::f64)
         graphics:set_color_rgba(red, green, blue, strength * (1.0 - along) * (1.0 - along))
         graphics:fill_circle(center_x, center_y, inner + (outer - inner) * along)
     end
-    graphics:set_color_rgba(red, green, blue, 1.0)
+    graphics:set_color_rgba(red, green, blue, alpha)
+end
+
+-- A glow standing off a rectangle: nested borders in the colour already set,
+-- widening outward at falling opacity. The selected thing on a menu is a
+-- brighter version of the room around it, which a single hairline cannot say.
+function aura(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    reach: f64,
+    rings: i32,
+    strength: f64
+): unit
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
+    for ring = rings, 1::i32, -1 do
+        local along: f64 = (ring::f64) / (rings::f64)
+        local grow: f64 = reach * along
+        graphics:set_color_rgba(red, green, blue, strength * (1.0 - along) * (1.0 - along))
+        graphics:set_line_width(1.0)
+        graphics:stroke_rectangle(x - grow, y - grow, width + grow * 2.0, height + grow * 2.0)
+    end
+    graphics:set_color_rgba(red, green, blue, alpha)
 end
 
 -- The plate every piece of Ante chrome is: lit face inside an etched border.
@@ -320,5 +348,6 @@ return {
     shaded_circle = shaded_circle,
     dome = dome,
     well = well,
-    halo = halo
+    halo = halo,
+    aura = aura
 }
