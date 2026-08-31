@@ -51,6 +51,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check Luau pending inventory
+        run: node conformance/luau/check-pending-inventory.mjs
+
       - name: Install Playwright browsers
         run: pnpm --filter conformance-runner exec playwright install --with-deps chromium
 
