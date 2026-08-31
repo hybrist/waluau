@@ -49,9 +49,11 @@ use expressions::{
 };
 use signatures::{
     FnSignature, GenericScheme, OverloadVariant, active_type_param_set,
-    infer_function_expr_return_type, infer_top_level_function_return_type, inference_diagnostic,
+    infer_cycle_seed_return_type, infer_function_expr_return_type,
+    infer_top_level_function_return_type, inference_diagnostic, is_undetermined_return_type,
 };
 use statements::check_stmt;
+use statements::common_return_type;
 use statements::{checked_if_cast_scopes, narrowed_scopes, resolved_type_property_setter_name};
 
 #[derive(Clone)]
@@ -844,6 +846,196 @@ fn bindings_visible_from_file(
             (name.clone(), binding)
         })
         .collect()
+}
+
+/// Install the component's current return types as ordinary signatures so the
+/// members' bodies can be typed against each other. A member whose type is
+/// still undetermined is published as `unknown`, which
+/// [`is_undetermined_return_type`] recognizes when it flows back out of a
+/// peer's return statement.
+fn install_component_signatures(
+    component: &[usize],
+    functions: &[Function],
+    fn_signatures: &mut HashMap<String, FnSignature>,
+    current: &[Option<Type>],
+) {
+    for (position, idx) in component.iter().enumerate() {
+        let function = &functions[*idx];
+        fn_signatures.insert(
+            function.name.to_string(),
+            FnSignature::Mono {
+                params: function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                vararg: function.vararg.clone(),
+                return_type: current[position].clone().unwrap_or(Type::Unknown),
+                authored_module: matches!(
+                    function.declaration_class,
+                    FunctionDeclarationClass::Module | FunctionDeclarationClass::Export
+                ),
+            },
+        );
+    }
+}
+
+/// Per-file privacy views of the signature and binding tables, rebuilt once
+/// per fixpoint pass exactly as the surrounding driver loop does.
+struct ComponentViews {
+    signatures: HashMap<String, HashMap<String, FnSignature>>,
+    bindings: HashMap<String, HashMap<String, Binding>>,
+}
+
+impl ComponentViews {
+    fn build(
+        component: &[usize],
+        functions: &[Function],
+        fn_signatures: &HashMap<String, FnSignature>,
+        module_bindings: &HashMap<String, Binding>,
+        module_opaque: &ModuleOpaqueTypes,
+    ) -> Self {
+        let mut views = Self {
+            signatures: HashMap::new(),
+            bindings: HashMap::new(),
+        };
+        for idx in component {
+            let file_path = &functions[*idx].file_path;
+            if !views.signatures.contains_key(file_path) {
+                views.signatures.insert(
+                    file_path.clone(),
+                    signatures_visible_from_file(fn_signatures, file_path, module_opaque),
+                );
+                views.bindings.insert(
+                    file_path.clone(),
+                    bindings_visible_from_file(module_bindings, file_path, module_opaque),
+                );
+            }
+        }
+        views
+    }
+}
+
+/// Infer the return types of a set of top-level functions that can only be
+/// resolved together, because each one calls a peer whose type is not known
+/// yet. A `local function` already accepts these shapes, so this exists to
+/// stop a top-level `function` from being the odd one out.
+///
+/// Every member starts from the join of the return statements that do not
+/// depend on the component (unit when it has no return statement at all, and
+/// undetermined when every return does depend on the component). Those seeds
+/// are published as signatures and each member is then re-inferred from its
+/// whole body, widening through the same `common_return_type` join the
+/// non-recursive path uses, until a pass changes nothing. Iteration order is
+/// the component's source order, so the result does not depend on hash order.
+///
+/// On success every member's return type is committed to `functions` and
+/// `fn_signatures`. `Err(index)` names a member the fixpoint left
+/// undetermined; the component is then rejected as a whole and the caller's
+/// recursive-inference diagnostic stands.
+fn resolve_cyclic_return_types(
+    component: &[usize],
+    functions: &mut [Function],
+    fn_signatures: &mut HashMap<String, FnSignature>,
+    module_bindings: &HashMap<String, Binding>,
+    module_opaque: &ModuleOpaqueTypes,
+) -> Result<(), usize> {
+    let names: Vec<String> = component
+        .iter()
+        .map(|idx| functions[*idx].name.to_string())
+        .collect();
+    let previous: Vec<Option<FnSignature>> = names
+        .iter()
+        .map(|name| fn_signatures.get(name).cloned())
+        .collect();
+    let mut current: Vec<Option<Type>> = vec![None; component.len()];
+
+    install_component_signatures(component, functions, fn_signatures, &current);
+    let views = ComponentViews::build(
+        component,
+        functions,
+        fn_signatures,
+        module_bindings,
+        module_opaque,
+    );
+    for (position, idx) in component.iter().enumerate() {
+        let file_path = &functions[*idx].file_path;
+        let visible_function = function_visible_from_file(&functions[*idx], module_opaque);
+        current[position] = infer_cycle_seed_return_type(
+            &visible_function,
+            &views.signatures[file_path],
+            &views.bindings[file_path],
+            &names,
+        )
+        .map(|ty| restore_module_opaque_type(&ty, module_opaque));
+    }
+
+    // A pass propagates each member's type one call edge further, so a
+    // component of `n` members settles within `n` passes; the extra pass is
+    // the one that confirms nothing changed.
+    for _ in 0..component.len() + 1 {
+        install_component_signatures(component, functions, fn_signatures, &current);
+        let views = ComponentViews::build(
+            component,
+            functions,
+            fn_signatures,
+            module_bindings,
+            module_opaque,
+        );
+        let mut changed = false;
+        for (position, idx) in component.iter().enumerate() {
+            let file_path = &functions[*idx].file_path;
+            let visible_function = function_visible_from_file(&functions[*idx], module_opaque);
+            // A member that cannot be typed yet, because a peer it depends on
+            // is still undetermined, keeps whatever it already has; the pass
+            // that determines the peer revisits it.
+            let inferred = match infer_top_level_function_return_type(
+                &visible_function,
+                &views.signatures[file_path],
+                &[],
+                &views.bindings[file_path],
+            ) {
+                Ok(Some(ty)) if !is_undetermined_return_type(&ty) => {
+                    Some(restore_module_opaque_type(&ty, module_opaque))
+                }
+                _ => None,
+            };
+            let widened = match (current[position].clone(), inferred) {
+                (Some(previous), Some(inferred)) if previous != inferred => {
+                    common_return_type(previous, inferred).ok()
+                }
+                (Some(settled), _) => Some(settled),
+                (None, inferred) => inferred,
+            };
+            if widened != current[position] {
+                current[position] = widened;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    if let Some(position) = current.iter().position(Option::is_none) {
+        for (name, signature) in names.iter().zip(previous) {
+            match signature {
+                Some(signature) => {
+                    fn_signatures.insert(name.clone(), signature);
+                }
+                None => {
+                    fn_signatures.remove(name);
+                }
+            }
+        }
+        return Err(component[position]);
+    }
+
+    install_component_signatures(component, functions, fn_signatures, &current);
+    for (position, idx) in component.iter().enumerate() {
+        functions[*idx].return_type = current[position].clone();
+    }
+    Ok(())
 }
 
 fn is_builtin_callee(expr: &Expr) -> bool {
@@ -4825,14 +5017,31 @@ fn type_check_and_infer_collect_raw(
             }
         }
         if !progressed {
-            let name = &typed.functions[next_unresolved[0]].name;
-            errors.push(inference_diagnostic(
-                "inference/unsupported",
-                DiagnosticCategory::Unsupported,
-                format!("cannot infer return type for recursive or cyclic function '{name}'"),
-                "add an explicit return type annotation to break the cycle",
-            ));
-            return Err(errors);
+            // Every function still unresolved is waiting on a peer it calls,
+            // so the remaining set is one or more call cycles. Resolve them
+            // together by a seeded fixpoint; a cycle that cannot justify any
+            // of its own return types still reports the diagnostic below.
+            match resolve_cyclic_return_types(
+                &next_unresolved,
+                &mut typed.functions,
+                &mut fn_signatures,
+                &module_bindings,
+                &module_opaque,
+            ) {
+                Ok(()) => next_unresolved.clear(),
+                Err(blocked) => {
+                    let name = &typed.functions[blocked].name;
+                    errors.push(inference_diagnostic(
+                        "inference/unsupported",
+                        DiagnosticCategory::Unsupported,
+                        format!(
+                            "cannot infer return type for recursive or cyclic function '{name}'"
+                        ),
+                        "add an explicit return type annotation to break the cycle",
+                    ));
+                    return Err(errors);
+                }
+            }
         }
         unresolved = next_unresolved;
     }

@@ -28,9 +28,9 @@ for n in $(seq 1 25); do
 done
 ```
 
-After `waluau-9f8d.2` generalized builtin intrinsic references to first-class
-values, the directory has **1,091 chunks**: **433 enabled** and **658 pending**.
-These numbers are an exact filesystem snapshot, not a target. Run
+After `waluau-9f8d.1` resolved recursive top-level return types by a seeded
+fixpoint, the directory has **1,091 chunks**: **435 enabled** and **656
+pending**. These numbers are an exact filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
 exclusion.
@@ -38,9 +38,10 @@ exclusion.
 PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
 splits can likewise change both the total and the enabled/pending counts. The
 meaningful measure remains independently passing upstream coverage. The most
-recent change is `waluau-9f8d.2`, which enabled `pm.85`, `pm.97`, `pm.98`, and
-`pm.100`-`pm.102` and moved the snapshot from 1,091/427/664 to 1,091/433/658. It
-follows `waluau-8fxn`, which enabled `pcall.2`.
+recent change is `waluau-9f8d.1`, which enabled `calls.17` and `calls.18` and
+moved the snapshot from 1,091/433/658 to 1,091/435/656. It follows
+`waluau-9f8d.2`, which enabled `pm.85`, `pm.97`, `pm.98`, and `pm.100`-`pm.102`,
+and `waluau-8fxn`, which enabled `pcall.2`.
 
 ## Intentional execution-model inventory
 
@@ -378,7 +379,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **658 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **656 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -393,7 +394,7 @@ assertion range becomes independently useful.
 | `basic*` | 14 | Sparse tables, strict booleans, [AOT source loading](#ahead-of-time-compilation-and-loadstring), [static names](#static-lexical-names-and-module-environments); dynamic calls/inference `waluau-9f8d` |
 | `bitwise*` | 5 | Array `pairs` under the table model; string-number coercion `waluau-dbyy`, protected invalid arguments `waluau-rndq`, `waluau-esz6`, uninitialized-local inference `waluau-3em1` |
 | `buffers*` | 2 | Unknown array refinement `waluau-2dow`; `getfenv`/VM slow-call aggregate is an embedding deviation |
-| `calls*` | 43 | AOT source loading and sparse tables; multi-value/runtime-vararg work `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8`; dynamic calls/inference `waluau-9f8d` |
+| `calls*` | 41 | AOT source loading and sparse tables; multi-value/runtime-vararg work `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8`; dynamic calls/inference `waluau-9f8d` |
 | `classes*` | 49 | Luau class declarations `waluau-wll8` |
 | `clear*` | 1 | Sparse/mixed/hash tables |
 | `closure*` | 19 | Typed coroutines, AOT source loading, sparse tables, static names; dynamic calls/inference `waluau-9f8d` |
@@ -474,10 +475,14 @@ buffers have 22 enabled chunks; deterministic typed math and exact
 signature in `waluau-9f8d.2`, which enabled `pm.85`, `pm.97`, `pm.98`, and
 `pm.100`-`pm.102`; dense-array `ipairs` landed in `waluau-uxuf`; fixed
 multi-results through nested vararg calls enabled `pcall.1` and `pcall.4` in
-`waluau-sdc0`. Shortest-round-trip numeric `tostring` landed in `waluau-9wf5`
-and enabled the last seven `strconv` chunks, so that family no longer appears
-above. Luau's modulo-2^32 `bit32` argument rule for wide, negative, and
-`unknown`-typed operands enabled `bitwise.{2,3,6,17,20,21,23}` in
+`waluau-sdc0`. Seeded fixpoint inference for recursive and mutually recursive
+top-level functions landed in `waluau-9f8d.1` and enabled `calls.{17,18}`; the
+other chunks that reported that diagnostic were re-probed and remain pending for
+independent reasons (typed coroutines, untyped polymorphic parameters, and
+dynamic multi-value helpers). Shortest-round-trip numeric `tostring` landed in
+`waluau-9wf5` and enabled the last seven `strconv` chunks, so that family no
+longer appears above. Luau's modulo-2^32 `bit32` argument rule for wide,
+negative, and `unknown`-typed operands enabled `bitwise.{2,3,6,17,20,21,23}` in
 `waluau-rndq`. Multi-value protected-call success payloads landed in
 `waluau-8fxn`: `pcall(f)` is `true` followed by one boxed payload per
 statically known result of `f`, which enabled `pcall.2`. Earlier children also

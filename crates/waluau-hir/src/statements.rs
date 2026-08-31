@@ -2670,7 +2670,7 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
     }
 }
 
-fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
+pub(super) fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
     match expr {
         Expr::Name(..)
         | Expr::Number(..)

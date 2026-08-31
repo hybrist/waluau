@@ -2532,7 +2532,7 @@ fn rejects_incompatible_inferred_return_branches() {
 }
 
 #[test]
-fn rejects_recursive_return_inference() {
+fn infers_recursive_return_type_from_base_case() {
     let source = r#"
         function fact(n: i32)
             if n == 0 then
@@ -2542,10 +2542,173 @@ fn rejects_recursive_return_inference() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("inference should succeed");
+    assert_eq!(
+        typed.functions[0].return_type,
+        Some(Type::Numeric(NumericType::F64))
+    );
+}
+
+#[test]
+fn infers_unit_return_type_for_self_recursive_function() {
+    let source = r#"
+        function deep(n: i32)
+            if n > 0 then
+                deep(n - 1)
+            end
+        end
+        deep(10)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("inference should succeed");
+    let deep = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "deep")
+        .expect("deep is a top-level function");
+    assert_eq!(deep.return_type, Some(Type::Unit));
+}
+
+#[test]
+fn infers_recursive_return_type_through_tail_call() {
+    let source = r#"
+        function deep(n: i32)
+            if n > 0 then
+                return deep(n - 1)
+            else
+                return 101
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("inference should succeed");
+    assert_eq!(
+        typed.functions[0].return_type,
+        Some(Type::Numeric(NumericType::F64))
+    );
+}
+
+#[test]
+fn infers_mutually_recursive_return_types() {
+    let source = r#"
+        function is_even(n: i32)
+            if n == 0 then
+                return true
+            end
+            return is_odd(n - 1)
+        end
+
+        function is_odd(n: i32)
+            if n == 0 then
+                return false
+            end
+            return is_even(n - 1)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("inference should succeed");
+    for name in ["is_even", "is_odd"] {
+        let function = typed
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == name)
+            .expect("both functions are top level");
+        assert_eq!(function.return_type, Some(Type::Bool), "{name}");
+    }
+}
+
+#[test]
+fn infers_mutually_recursive_return_types_with_one_base_case() {
+    let source = r#"
+        function ping(n: i32)
+            return pong(n - 1)
+        end
+
+        function pong(n: i32)
+            if n <= 0 then
+                return 0
+            end
+            return ping(n)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("inference should succeed");
+    for name in ["ping", "pong"] {
+        let function = typed
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == name)
+            .expect("both functions are top level");
+        assert_eq!(
+            function.return_type,
+            Some(Type::Numeric(NumericType::F64)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn recursive_return_inference_is_deterministic() {
+    let source = r#"
+        function is_even(n: i32)
+            if n == 0 then
+                return true
+            end
+            return is_odd(n - 1)
+        end
+
+        function is_odd(n: i32)
+            if n == 0 then
+                return false
+            end
+            return is_even(n - 1)
+        end
+
+        function deep(n: i32)
+            if n > 0 then
+                deep(n - 1)
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+
+    let inferred_once = super::type_check_and_infer(&program).expect("first inference succeeds");
+    let inferred_twice = super::type_check_and_infer(&program).expect("second inference succeeds");
+
+    assert_eq!(inferred_once, inferred_twice);
+}
+
+#[test]
+fn rejects_recursive_return_inference_without_a_base_case() {
+    let source = r#"
+        function ping(n: i32)
+            return pong(n - 1)
+        end
+
+        function pong(n: i32)
+            return ping(n - 1)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
     let error = super::type_check_and_infer(&program).expect_err("inference should fail");
     assert_eq!(
         error.to_string(),
-        "cannot infer return type for recursive or cyclic function 'fact'"
+        "cannot infer return type for recursive or cyclic function 'ping'"
+    );
+}
+
+#[test]
+fn rejects_self_recursive_return_inference_without_a_base_case() {
+    let source = r#"
+        function loop_forever(n: i32)
+            return loop_forever(n - 1)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("inference should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot infer return type for recursive or cyclic function 'loop_forever'"
     );
 }
 
@@ -4503,11 +4666,12 @@ fn empty_braces_record_can_be_unused() {
 #[test]
 fn tags_recursive_return_inference_failure_as_unsupported() {
     let source = r#"
-        function fact(n: i32)
-            if n == 0 then
-                return 1
-            end
-            return n * fact(n - 1)
+        function ping(n: i32)
+            return pong(n - 1)
+        end
+
+        function pong(n: i32)
+            return ping(n - 1)
         end
     "#;
     let program = parse(source).expect("parse should succeed");
