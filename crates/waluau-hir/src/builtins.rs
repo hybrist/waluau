@@ -774,7 +774,7 @@ pub(super) fn infer_pcall_builtin_call(
     }
     let Type::Function {
         params,
-        return_type: _,
+        return_type,
         has_self: false,
     } = callee_ty
     else {
@@ -810,7 +810,7 @@ pub(super) fn infer_pcall_builtin_call(
         }
     }
     Some(coerce_type(
-        Type::Multi(vec![Type::Bool, Type::Unknown]),
+        Type::protected_call_result(&return_type),
         expected,
     ))
 }

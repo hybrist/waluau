@@ -5210,7 +5210,10 @@ impl FunctionEmission<'_> {
                         .get(value)
                         .ok_or_else(|| Diagnostic::new("pcall result has no multi-value slots"))?;
                     let ok_slot = slots[0];
-                    let value_slot = slots[1];
+                    let payload_slots = slots[1..].to_vec();
+                    let value_slot = *payload_slots
+                        .first()
+                        .ok_or_else(|| Diagnostic::new("pcall result has no payload slot"))?;
                     let value_tmp = local_plan.protected_call_value_tmp.ok_or_else(|| {
                         Diagnostic::new("missing protected-call value scratch local")
                     })?;
@@ -5219,9 +5222,9 @@ impl FunctionEmission<'_> {
                     //   block $foreign
                     //     try_table (result anyref)
                     //         (catch $lua_error $done) (catch_all $foreign)
-                    //       <call>; <box>; ok := 1
+                    //       <call>; <box each result into its slot>; ok := 1
                     //     end
-                    //     br $done            ;; success payload
+                    //     br $done            ;; first success payload
                     //   end $foreign          ;; non-Waluau exception (e.g. a JS
                     //                         ;; error thrown by a host import)
                     //   <fallback message>
@@ -5232,6 +5235,16 @@ impl FunctionEmission<'_> {
                     // tag instead of trapping so `pcall` observes them here.
                     out.instruction(&Instruction::I32Const(0));
                     out.instruction(&Instruction::LocalSet(ok_slot));
+                    // A failed protected call produces `(false, message)`; the
+                    // payload slots past the first stay nil, so pre-clear them
+                    // before the call that may not reach them.
+                    for slot in payload_slots.iter().skip(1) {
+                        out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                            shared: false,
+                            ty: AbstractHeapType::Any,
+                        }));
+                        out.instruction(&Instruction::LocalSet(*slot));
+                    }
                     out.instruction(&Instruction::Block(BlockType::Result(anyref_val_type())));
                     out.instruction(&Instruction::Block(BlockType::Empty));
                     out.instruction(&Instruction::TryTable(
@@ -5256,38 +5269,24 @@ impl FunctionEmission<'_> {
                             return_type,
                         },
                     )?;
-                    if return_type.is_boxed_nullable() {
-                        // Canonicalize the nullable box into the `unknown` payload
-                        // slot (null / i31 / $boxed_f64 / $boxed_bool) so later
-                        // dynamic consumers see a well-formed unknown value.
-                        let box_idx = ctx.array_registry.nullable_box_index(return_type)?;
-                        let inner = return_type
-                            .nullable_inner()
-                            .expect("boxed nullable has inner");
-                        out.instruction(&Instruction::LocalSet(value_tmp));
-                        out.instruction(&Instruction::LocalGet(value_tmp));
-                        out.instruction(&Instruction::RefIsNull);
-                        out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
-                        out.instruction(&Instruction::RefNull(HeapType::Abstract {
-                            shared: false,
-                            ty: AbstractHeapType::Any,
-                        }));
-                        out.instruction(&Instruction::Else);
-                        out.instruction(&Instruction::LocalGet(value_tmp));
-                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(box_idx)));
-                        out.instruction(&Instruction::StructGet {
-                            struct_type_index: box_idx,
-                            field_index: 0,
-                        });
-                        emit_box(out, &inner, ctx.array_registry)?;
-                        out.instruction(&Instruction::End);
-                    } else {
-                        emit_box(out, return_type, ctx.array_registry)?;
+                    match return_type {
+                        Type::Multi(result_types) => {
+                            // The call left one raw value per result on the
+                            // stack in order, so box and store them from the
+                            // last one down.
+                            for (index, result_ty) in result_types.iter().enumerate().rev() {
+                                emit_protected_payload_box(out, result_ty, ctx, value_tmp)?;
+                                out.instruction(&Instruction::LocalSet(payload_slots[index]));
+                            }
+                        }
+                        single => {
+                            emit_protected_payload_box(out, single, ctx, value_tmp)?;
+                            out.instruction(&Instruction::LocalSet(value_slot));
+                        }
                     }
-                    out.instruction(&Instruction::LocalSet(value_tmp));
                     out.instruction(&Instruction::I32Const(1));
                     out.instruction(&Instruction::LocalSet(ok_slot));
-                    out.instruction(&Instruction::LocalGet(value_tmp));
+                    out.instruction(&Instruction::LocalGet(value_slot));
                     out.instruction(&Instruction::End);
                     out.instruction(&Instruction::Br(1));
                     out.instruction(&Instruction::End);
@@ -7946,6 +7945,45 @@ fn emit_unknown_eq(
     emit_js_fallback(out);
     out.instruction(&Instruction::End);
     out.instruction(&Instruction::End);
+    out.instruction(&Instruction::End);
+    Ok(())
+}
+
+/// Box one protected-call result (already on the stack) into an `unknown`
+/// payload slot.
+///
+/// This is [`emit_box`] plus the nullable canonicalization a `pcall` payload
+/// needs: a boxed nullable (`f64?`, `bool?`, ...) is unwrapped so the payload
+/// is the canonical `unknown` representation (null / i31 / `$boxed_f64` /
+/// `$boxed_bool`) rather than a nullable box a dynamic consumer would not
+/// recognize. `value_tmp` is scratch space and is not live across the call.
+fn emit_protected_payload_box(
+    out: &mut Function,
+    from: &Type,
+    ctx: &EmissionContext<'_>,
+    value_tmp: u32,
+) -> Result<(), Diagnostic> {
+    if !from.is_boxed_nullable() {
+        return emit_box(out, from, ctx.array_registry);
+    }
+    let box_idx = ctx.array_registry.nullable_box_index(from)?;
+    let inner = from.nullable_inner().expect("boxed nullable has inner");
+    out.instruction(&Instruction::LocalSet(value_tmp));
+    out.instruction(&Instruction::LocalGet(value_tmp));
+    out.instruction(&Instruction::RefIsNull);
+    out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+    out.instruction(&Instruction::RefNull(HeapType::Abstract {
+        shared: false,
+        ty: AbstractHeapType::Any,
+    }));
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::LocalGet(value_tmp));
+    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(box_idx)));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: box_idx,
+        field_index: 0,
+    });
+    emit_box(out, &inner, ctx.array_registry)?;
     out.instruction(&Instruction::End);
     Ok(())
 }

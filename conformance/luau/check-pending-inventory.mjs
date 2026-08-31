@@ -42,7 +42,7 @@ const expectedPendingByFamily = {
   native_types: 1,
   native_userdata: 1,
   ndebug_upvalues: 1,
-  pcall: 66,
+  pcall: 65,
   pm: 52,
   safeenv: 1,
   sort: 1,
@@ -95,14 +95,14 @@ const trackedByFamily = {
   iter_fenv: 'deviation:embedding-hooks',
   literals: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-9f8d',
   locals: 'deviation:aot-loadstring,sparse-mixed-hash-tables',
-  math: 'deviation:aot-loadstring; bead:waluau-2dow,waluau-8fxn,waluau-jnyd,waluau-n6u8',
+  math: 'deviation:aot-loadstring; bead:waluau-2dow,waluau-jnyd,waluau-n6u8',
   move: 'deviation:sparse-mixed-hash-tables',
   native: 'deviation:native-jit-register-layout',
   native_integer_spills: 'deviation:native-jit-register-layout',
   native_types: 'deviation:native-jit-register-layout',
   native_userdata: 'deviation:native-jit-register-layout,reference-test-userdata',
   ndebug_upvalues: 'deviation:embedding-hooks',
-  pcall: 'deviation:typed-coroutine; bead:waluau-8fxn,waluau-wb7a,waluau-esz6,waluau-9f8d',
+  pcall: 'deviation:typed-coroutine; bead:waluau-d480,waluau-wb7a,waluau-esz6,waluau-9f8d',
   pm: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-dbyy,waluau-esz6,waluau-wb7a',
   safeenv: 'deviation:embedding-hooks',
   sort: 'deviation:aot-loadstring,sparse-mixed-hash-tables',
@@ -139,9 +139,9 @@ const documentedDeviations = new Set([
 const openBeads = new Set([
   'waluau-2dow',
   'waluau-3em1',
-  'waluau-8fxn',
   'waluau-9f8d',
   'waluau-9ttd',
+  'waluau-d480',
   'waluau-dbyy',
   'waluau-esz6',
   'waluau-fg46',
@@ -234,8 +234,8 @@ for (const file of pending) {
 }
 
 assert.equal(files.length, 1091, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(pending.length, 665, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(files.length - pending.length, 426, 'enabled Luau chunk count changed');
+assert.equal(pending.length, 664, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(files.length - pending.length, 427, 'enabled Luau chunk count changed');
 assert.deepEqual(actualPendingByFamily, expectedPendingByFamily, 'pending family counts changed');
 assert.deepEqual(
   documentedFamilies.sort(),

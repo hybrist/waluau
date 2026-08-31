@@ -85,6 +85,138 @@ fn lowers_unknown_pcall_with_f32_closure_result() {
 }
 
 #[test]
+fn lowers_multi_result_pcall_to_one_payload_per_callee_result() {
+    let program = parse(
+        r#"
+            function three(a: f64, b: f64): (f64, f64, f64)
+                return a, b, 42
+            end
+
+            function entry(): f64
+                local ok, x, y, z = pcall(three, 1, 2)
+                assert(ok)
+                return x::f64 + y::f64 + z::f64
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+    let f64_ty = Type::Numeric(NumericType::F64);
+    let protected = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .find_map(|(_, instruction)| match instruction {
+            Instruction::ProtectedCall { return_type, .. } => Some(return_type.clone()),
+            _ => None,
+        })
+        .expect("a typed pcall lowers to ProtectedCall");
+    assert_eq!(
+        protected,
+        Type::Multi(vec![f64_ty.clone(), f64_ty.clone(), f64_ty])
+    );
+    assert_eq!(
+        Type::protected_call_result(&protected),
+        Type::Multi(vec![
+            Type::Bool,
+            Type::Unknown,
+            Type::Unknown,
+            Type::Unknown
+        ])
+    );
+    // Each payload is read out of the same tuple; nothing introduces a second
+    // call-site adjustment mechanism.
+    let payload_reads = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .filter(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::MultiGet {
+                    ty: Type::Unknown,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(payload_reads, 3, "expected one read per success payload");
+}
+
+#[test]
+fn truncates_a_wide_pcall_tuple_to_the_values_its_context_wants() {
+    let program = parse(
+        r#"
+            function three(): (f64, f64, f64)
+                return 1, 2, 3
+            end
+
+            function protect(): (bool, unknown)
+                return pcall(three)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+    let protect = module
+        .functions
+        .iter()
+        .find(|function| function.name == "protect")
+        .expect("the protecting function is lowered");
+    let packed = protect
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .find_map(|(_, instruction)| match instruction {
+            Instruction::PackMulti { types, .. } => Some(types.clone()),
+            _ => None,
+        })
+        .expect("the truncated tuple is repacked");
+    assert_eq!(packed, vec![Type::Bool, Type::Unknown]);
+}
+
+#[test]
+fn keeps_the_two_value_shape_for_a_single_result_pcall() {
+    let program = parse(
+        r#"
+            function one(): f64
+                return 1
+            end
+
+            function entry(): f64
+                local ok, value = pcall(one)
+                assert(ok)
+                return value::f64
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+    let protected = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .find_map(|(_, instruction)| match instruction {
+            Instruction::ProtectedCall { return_type, .. } => Some(return_type.clone()),
+            _ => None,
+        })
+        .expect("a typed pcall lowers to ProtectedCall");
+    assert_eq!(
+        Type::protected_call_result(&protected),
+        Type::Multi(vec![Type::Bool, Type::Unknown])
+    );
+}
+
+#[test]
 fn lowers_untyped_numeric_operators_to_checked_dynamic_numbers() {
     let program = parse(
         r#"
