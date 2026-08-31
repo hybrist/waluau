@@ -1474,6 +1474,21 @@ fn parses_single_quoted_string_literal() {
 }
 
 #[test]
+fn parses_escaped_space_string_literal() {
+    let source = r#"
+        function main(): string
+            return "gap:\ \ end"
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Return(waluau_ast::Expr::String(value, _)) if value == "gap:  end"
+    ));
+}
+
+#[test]
 fn parses_method_call_with_table_sugar() {
     let source = r#"
         function main(obj: { value: i32 }): i32

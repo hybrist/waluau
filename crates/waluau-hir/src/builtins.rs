@@ -40,6 +40,13 @@ pub(super) const BIT32_BYTESWAP: &str = "bit32.byteswap";
 pub(super) const BIT32_COUNTLZ: &str = "bit32.countlz";
 pub(super) const BIT32_COUNTRZ: &str = "bit32.countrz";
 pub(super) const TABLE_CONCAT: &str = "table.concat";
+/// `table.concat` joins string elements, and — like Luau — numeric elements,
+/// which it stringifies with the same formatting `tostring` uses. Returns the
+/// accepted element type so callers can lower the array with it.
+pub(super) fn table_concat_element_type(list_ty: &Type) -> Option<Type> {
+    let element = list_ty.element_type()?;
+    (element == Type::String || element.is_numeric()).then_some(element)
+}
 pub(super) const TABLE_INSERT: &str = "table.insert";
 pub(super) const TABLE_REMOVE: &str = "table.remove";
 pub(super) const TABLE_SORT: &str = "table.sort";
@@ -1637,9 +1644,9 @@ pub(super) fn infer_table_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
-    if list_ty.element_type() != Some(Type::String) {
+    if table_concat_element_type(&list_ty).is_none() {
         return Some(Err(Diagnostic::new(format!(
-            "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
+            "{TABLE_CONCAT} expects an array of strings or numbers, got {list_ty}"
         ))));
     }
     if let Some(separator) = args.get(1) {

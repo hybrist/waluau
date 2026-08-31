@@ -2,9 +2,6 @@
 -- tests/conformance/stringinterp.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk retains checks from the upstream source that still fail in
--- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/stringinterp.walu in original source order.
 -- Upstream source lines 28-30.
 -- Required upstream helper setup from line 12-19 is repeated for standalone execution.

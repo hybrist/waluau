@@ -93,6 +93,15 @@ fn preserves_string_interpolation_verbatim() {
 }
 
 #[test]
+fn preserves_escaped_spaces_verbatim() {
+    // `\ ` escapes a space. The formatter reprints string lexemes from the
+    // source, so the escape must survive rather than collapse to a bare space.
+    let src = "local s = \"two\\ \\ spaces\"\nlocal t = `Backslash \\ here`\n";
+    assert_eq!(fmt(src), src);
+    assert_eq!(fmt(&fmt(src)), src);
+}
+
+#[test]
 fn preserves_binary_literals_and_luau_separators() {
     let src = "local bits=0B_0101__1010_\nlocal exponent=1e+___2\n";
     assert_eq!(

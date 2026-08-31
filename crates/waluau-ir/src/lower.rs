@@ -11564,12 +11564,12 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if list_ty != array_ty {
+        let Some(element_ty) = table_concat_element_type(&list_ty) else {
             return Some(Err(Diagnostic::new(format!(
-                "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
+                "{TABLE_CONCAT} expects an array of strings or numbers, got {list_ty}"
             ))));
-        }
-        let array_value = match self.lower_expr(&args[0], scope, Some(array_ty)) {
+        };
+        let array_value = match self.lower_expr(&args[0], scope, Some(list_ty.clone())) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
@@ -11655,11 +11655,13 @@ impl Builder<'_> {
         );
 
         self.current_block = loop_body;
-        let element = self.emit(Instruction::ArrayGet {
+        let raw_element = self.emit(Instruction::ArrayGet {
             array: array_value,
             index: index_phi,
-            element_ty: Type::String,
+            element_ty: element_ty.clone(),
         });
+        // Numeric elements join as their `tostring` text, matching Luau.
+        let element = self.tostring_value(raw_element, element_ty);
         let with_prefix = self.emit(Instruction::Binary {
             op: BinaryOp::Concat,
             left: acc_phi,
@@ -12786,9 +12788,9 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if list_ty != Type::Array(Arc::new(Type::String)) {
+        if table_concat_element_type(&list_ty).is_none() {
             return Some(Err(Diagnostic::new(format!(
-                "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
+                "{TABLE_CONCAT} expects an array of strings or numbers, got {list_ty}"
             ))));
         }
         if let Some(separator) = args.get(1) {
@@ -15464,6 +15466,14 @@ fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
             "change one operand type or cast explicitly",
         )),
     }
+}
+
+/// `table.concat` joins string elements, and — like Luau — numeric elements,
+/// which it stringifies with the same formatting `tostring` uses. Returns the
+/// accepted element type so the join loop can read and convert with it.
+fn table_concat_element_type(list_ty: &Type) -> Option<Type> {
+    let element = list_ty.element_type()?;
+    (element == Type::String || element.is_numeric()).then_some(element)
 }
 
 /// Types `tostring` accepts: primitives stringify by value, `nil` folds to
