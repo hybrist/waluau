@@ -105,6 +105,45 @@ fn type_checks_numeric_operators_on_untyped_parameters() {
 }
 
 #[test]
+fn type_checks_wide_and_dynamic_bit32_operands() {
+    // Luau converts any numeric `bit32` argument to the low 32 bits of its
+    // integer value, so wider numbers and values that only become numbers at
+    // runtime are accepted operands rather than argument-type errors.
+    let source = r#"
+        local function boxed(value: unknown): unknown
+            local ok: bool, result: unknown = pcall(function(inner: unknown): unknown
+                return inner
+            end, value)
+            assert(ok)
+            return result
+        end
+
+        local a: u32 = bit32.band(2^33 + 1)
+        local b: u32 = bit32.bor(-2^40 - 2, 0)
+        local c: u32 = bit32.byteswap(boxed(-1))
+        local d: u32 = bit32.arshift(boxed(-1), 32)
+        local e: u32 = bit32.lrotate(0x89abcdef, 5 % 32)
+        local f: u32 = bit32.extract(42, boxed(1))
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("wide and dynamic bit32 operands should type check");
+}
+
+#[test]
+fn rejects_non_numeric_bit32_operands() {
+    // The conversion covers numbers only; Waluau does not adopt Luau's
+    // string-to-number argument coercion (see conformance/luau/DEVIATIONS.md).
+    for source in [
+        r#"local x: u32 = bit32.band("1", 3)"#,
+        r#"local x: u32 = bit32.byteswap("0xa1b2c3d4")"#,
+        "local x: u32 = bit32.bnot(true)",
+    ] {
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect_err("a non-numeric bit32 operand should fail");
+    }
+}
+
+#[test]
 fn rejects_invalid_bit32_intrinsic_arities() {
     for source in [
         "local x: u32 = bit32.lshift(1)",

@@ -9165,6 +9165,15 @@ fn emit_bitwise_intrinsic(
             emit_arg(out, 0)?;
             out.instruction(&Instruction::I32Ctz);
         }
+        BitwiseIntrinsic::TruncateToInt32 => {
+            debug_assert_eq!(args.len(), 1);
+            // Luau accepts any number here and keeps the low 32 bits of its
+            // integer value. The saturating truncation only matters beyond
+            // +/-2^63, where Luau's own C conversion is undefined anyway.
+            emit_arg(out, 0)?;
+            out.instruction(&Instruction::I64TruncSatF64S);
+            out.instruction(&Instruction::I32WrapI64);
+        }
     }
     Ok(())
 }

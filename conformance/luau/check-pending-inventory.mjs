@@ -9,7 +9,7 @@ const expectedPendingByFamily = {
   assert: 1,
   attrib: 2,
   basic: 14,
-  bitwise: 12,
+  bitwise: 5,
   buffers: 2,
   calls: 43,
   classes: 49,
@@ -69,7 +69,7 @@ const trackedByFamily = {
   assert: 'deviation:strict-bool; bead:waluau-9f8d',
   attrib: 'deviation:sparse-mixed-hash-tables',
   basic: 'deviation:sparse-mixed-hash-tables,strict-bool,aot-loadstring,static-names; bead:waluau-9f8d',
-  bitwise: 'bead:waluau-rndq,waluau-dbyy',
+  bitwise: 'deviation:sparse-mixed-hash-tables; bead:waluau-rndq,waluau-dbyy,waluau-esz6,waluau-3em1',
   buffers: 'deviation:embedding-hooks; bead:waluau-2dow',
   calls: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-jnyd,waluau-zxju,waluau-n6u8,waluau-9f8d',
   classes: 'bead:waluau-wll8',
@@ -137,6 +137,7 @@ const documentedDeviations = new Set([
 ]);
 const openBeads = new Set([
   'waluau-2dow',
+  'waluau-3em1',
   'waluau-8fxn',
   'waluau-9f8d',
   'waluau-9ttd',
@@ -233,8 +234,8 @@ for (const file of pending) {
 }
 
 assert.equal(files.length, 1090, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(pending.length, 674, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(files.length - pending.length, 416, 'enabled Luau chunk count changed');
+assert.equal(pending.length, 667, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(files.length - pending.length, 423, 'enabled Luau chunk count changed');
 assert.deepEqual(actualPendingByFamily, expectedPendingByFamily, 'pending family counts changed');
 assert.deepEqual(
   documentedFamilies.sort(),

@@ -498,6 +498,11 @@ pub enum BitwiseIntrinsic {
     ByteSwap,
     CountLeadingZeros,
     CountTrailingZeros,
+    /// Luau's `bit32` argument rule for a number that is not already a 32-bit
+    /// value: truncate toward zero and keep the low 32 bits, so `-1` becomes
+    /// `0xffffffff` and `2^33 + 1` becomes `1`. Takes one `f64` operand and
+    /// produces the `u32`/`i32` bit pattern the surrounding intrinsic wants.
+    TruncateToInt32,
 }
 
 #[derive(Clone, Debug, PartialEq)]

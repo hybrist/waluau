@@ -2562,6 +2562,38 @@ fn bit32_shift_field_and_byteswap_intrinsics_emit_checked_wasm() {
 }
 
 #[test]
+fn bit32_operand_conversion_emits_non_trapping_truncation() {
+    let source = r#"
+        function entry(wide: f64, boxed: unknown): u32
+            return bit32.bxor(bit32.band(wide), bit32.bnot(boxed))
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("IR should succeed");
+    waluau_ir::verify(&ir).expect("IR should verify");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    // Out-of-range operands wrap instead of trapping, which is what makes
+    // `bit32.band(2^33 + 1)` produce 1 rather than a runtime fault.
+    assert_eq!(
+        wat.matches("i64.trunc_sat_f64_s").count(),
+        2,
+        "both operands should convert with saturating truncation:\n{wat}"
+    );
+    assert!(
+        wat.contains("i32.wrap_i64"),
+        "the conversion should keep the low 32 bits:\n{wat}"
+    );
+    assert!(
+        !wat.contains("i32.trunc_f64_u"),
+        "no bit32 operand should keep the trapping truncation:\n{wat}"
+    );
+}
+
+#[test]
 fn emits_valid_wasm_for_pcall_discriminated_union() {
     let source = include_str!("../../../conformance/pcall_discriminated_union.walu");
     let program = waluau_parser::parse(source).expect("parse should succeed");

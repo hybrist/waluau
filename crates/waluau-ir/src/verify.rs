@@ -180,8 +180,14 @@ fn verify_function(
                     }
                 }
                 Instruction::BitwiseIntrinsic {
-                    args, result_ty, ..
+                    intrinsic,
+                    args,
+                    result_ty,
                 } => {
+                    // The modulo-2^32 argument conversion is the one bitwise
+                    // intrinsic that consumes a wide number and produces the
+                    // 32-bit operand every other intrinsic already requires.
+                    let truncate = *intrinsic == BitwiseIntrinsic::TruncateToInt32;
                     for arg in args {
                         let arg_ty = require_dominating_definition(
                             &definitions,
@@ -190,17 +196,27 @@ fn verify_function(
                             block.id,
                             *arg,
                         )?;
-                        if !matches!(
-                            arg_ty,
-                            Type::Numeric(NumericType::U32) | Type::Numeric(NumericType::I32)
-                        ) {
+                        let valid = if truncate {
+                            arg_ty == Type::Numeric(NumericType::F64)
+                        } else {
+                            matches!(
+                                arg_ty,
+                                Type::Numeric(NumericType::U32) | Type::Numeric(NumericType::I32)
+                            )
+                        };
+                        if !valid {
                             return Err(Diagnostic::new(format!(
-                                "bitwise intrinsic argument in block {:?} has type {}, expected u32/i32",
-                                block.id, arg_ty
+                                "bitwise intrinsic argument in block {:?} has type {}, expected {}",
+                                block.id,
+                                arg_ty,
+                                if truncate { "f64" } else { "u32/i32" }
                             )));
                         }
                     }
-                    if !matches!(result_ty, Type::Numeric(NumericType::U32) | Type::Bool) {
+                    let result_valid = matches!(result_ty, Type::Numeric(NumericType::U32))
+                        || (truncate && matches!(result_ty, Type::Numeric(NumericType::I32)))
+                        || (!truncate && matches!(result_ty, Type::Bool));
+                    if !result_valid {
                         return Err(Diagnostic::new(format!(
                             "bitwise intrinsic in block {:?} must have u32/bool result type",
                             block.id
