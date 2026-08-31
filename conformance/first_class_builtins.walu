@@ -34,3 +34,61 @@ table.sort(bits, bit_order)
 
 local found, _find_error = pcall(string.find, "a", "(.")
 assert(not found)
+
+-- Compiler intrinsics take the same route: a value reference synthesizes a
+-- private adapter whose body is the ordinary intrinsic lowering, while direct
+-- calls keep lowering as intrinsics.
+local upper: (string) -> string = string.upper
+local length: (string) -> i32 = string.len
+local slice: (string, i32, i32) -> string = string.sub
+local repeat_text: (string, i32) -> string = string.rep
+local flip: (string) -> string = string.reverse
+assert(upper("ab") == "AB")
+assert(length("abc") == 3)
+assert(slice("abcdef", 2, 3) == "bc")
+assert(repeat_text("ab", 2) == "abab")
+assert(flip("abc") == "cba")
+
+-- An intrinsic with exactly one signature needs no annotation.
+local shrink = string.lower
+assert(shrink("AB") == "ab")
+
+local insert: ({string}, string) -> unit = table.insert
+local join: ({string}, string) -> string = table.concat
+local size: ({string}) -> i32 = table.getn
+local drop: ({string}) -> string = table.remove
+local words: {string} = {}
+insert(words, "a")
+insert(words, "b")
+assert(size(words) == 2)
+assert(join(words, ",") == "a,b")
+assert(drop(words) == "b")
+
+-- As a callback: `string.upper` is the replacement of a `string.gsub`.
+assert(
+    string.gsub("um (dois) tres (quatro)", "(%(%w+%))", string.upper) == "um (DOIS) tres (QUATRO)"
+)
+
+-- Captured in a closure.
+local function shout(text: string): string
+    return upper(text)
+end
+assert(shout("hi") == "HI")
+
+local function apply_text(fn: (string) -> string, value: string): string
+    return fn(value)
+end
+assert(apply_text(string.reverse, "abc") == "cba")
+
+-- Protected calls select the signature from their argument list.
+local repeated_ok, repeated = pcall(string.rep, "a", 3)
+assert(repeated_ok)
+
+local inserted_ok, _inserted = pcall(table.insert, words, "c")
+assert(inserted_ok and size(words) == 2)
+
+local asserted_ok, _asserted = pcall(assert, false)
+assert(not asserted_ok)
+
+local raised_ok, _raised = pcall(error, "boom")
+assert(not raised_ok)

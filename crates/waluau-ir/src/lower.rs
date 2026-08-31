@@ -1782,6 +1782,14 @@ fn to_runtime_type(ty: &Type) -> Type {
     ty.runtime_representation()
 }
 
+fn function_type(params: Vec<Type>, return_type: Type) -> Type {
+    Type::Function {
+        params,
+        return_type: Arc::new(return_type),
+        has_self: false,
+    }
+}
+
 /// Module-wide lookup tables shared by every function lowering. Built once per
 /// module and passed by shared reference, so the parallel lowering workers can
 /// borrow one context across `std::thread::scope`.
@@ -2811,62 +2819,21 @@ fn direct_field_call_name(
 }
 
 impl Builder<'_> {
+    /// Signature of an intrinsic protected by `pcall`, derived from the
+    /// protected arguments. Each argument doubles as evidence: it selects the
+    /// arity and, for the element-generic `table.*` members, the element type.
     fn intrinsic_value_signature_for_call(
         &self,
         name: &str,
         args: &[Expr],
         types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<(Vec<Type>, Type), Diagnostic>> {
-        let u32_ty = Type::Numeric(NumericType::U32);
-        let i32_ty = Type::Numeric(NumericType::I32);
-        let (params, return_type) = match name {
-            TYPE | TYPEOF | TO_STRING if args.len() == 1 => {
-                (vec![Type::Unknown], Type::String)
-            }
-            PRINT if args.len() == 1 => (vec![Type::String], Type::Unit),
-            TO_NUMBER if args.len() == 1 => (
-                vec![Type::Unknown],
-                Type::Nullable(Arc::new(Type::Numeric(NumericType::F64))),
-            ),
-            TO_NUMBER if args.len() == 2 => (
-                vec![Type::Unknown, i32_ty.clone()],
-                Type::Nullable(Arc::new(Type::Numeric(NumericType::F64))),
-            ),
-            STRING_FIND if args.len() == 2 => {
-                (vec![Type::String, Type::String], Type::Unknown)
-            }
-            BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ
-                if args.len() == 1 =>
-            {
-                (vec![u32_ty.clone()], u32_ty.clone())
-            }
-            BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT
-                if args.len() == 2 =>
-            {
-                (vec![u32_ty.clone(), i32_ty], u32_ty.clone())
-            }
-            BIT32_EXTRACT if (2..=3).contains(&args.len()) => {
-                let mut params = vec![u32_ty.clone(), Type::Numeric(NumericType::I32)];
-                if args.len() == 3 {
-                    params.push(Type::Numeric(NumericType::I32));
-                }
-                (params, u32_ty.clone())
-            }
-            BIT32_REPLACE if (3..=4).contains(&args.len()) => {
-                let mut params = vec![u32_ty.clone(), u32_ty.clone(), i32_ty.clone()];
-                if args.len() == 4 {
-                    params.push(i32_ty);
-                }
-                (params, u32_ty.clone())
-            }
-            BIT32_BAND | BIT32_BOR | BIT32_BXOR if !args.is_empty() => {
-                (vec![u32_ty.clone(); args.len()], u32_ty.clone())
-            }
-            BIT32_BTEST if !args.is_empty() => {
-                (vec![u32_ty; args.len()], Type::Bool)
-            }
-            _ => return None,
-        };
+        let arg_types = args
+            .iter()
+            .map(|arg| self.infer_expr_type(arg, types, None).ok().map(first_of_multi))
+            .collect::<Vec<_>>();
+        let (params, return_type) =
+            waluau_hir::intrinsic_values::intrinsic_value_signature_for_arguments(name, &arg_types)?;
         for (arg, param) in args.iter().zip(params.iter()) {
             if let Err(error) = self
                 .infer_expr_type(arg, types, Some(param.clone()))
@@ -2878,6 +2845,8 @@ impl Builder<'_> {
         Some(Ok((params, return_type)))
     }
 
+    /// Signature of an intrinsic referenced as a value where an explicit
+    /// function type is available.
     fn intrinsic_value_signature_from_expected(
         &self,
         name: &str,
@@ -2891,48 +2860,11 @@ impl Builder<'_> {
         else {
             return None;
         };
-        let u32_ty = Type::Numeric(NumericType::U32);
-        let i32_ty = Type::Numeric(NumericType::I32);
-        let valid = match name {
-            TYPE | TYPEOF | TO_STRING => {
-                params == &[Type::Unknown] && return_type.as_ref() == &Type::String
-            }
-            PRINT => params == &[Type::String] && return_type.as_ref() == &Type::Unit,
-            TO_NUMBER => {
-                matches!(params.as_slice(), [Type::Unknown] | [Type::Unknown, Type::Numeric(NumericType::I32)])
-                    && matches!(return_type.as_ref(), Type::Nullable(inner) if inner.as_ref() == &Type::Numeric(NumericType::F64))
-            }
-            STRING_FIND => {
-                params == &[Type::String, Type::String]
-                    && return_type.as_ref() == &Type::Unknown
-            }
-            BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ => {
-                params == std::slice::from_ref(&u32_ty) && return_type.as_ref() == &u32_ty
-            }
-            BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT => {
-                params == &[u32_ty.clone(), i32_ty]
-                    && return_type.as_ref() == &u32_ty
-            }
-            BIT32_EXTRACT => {
-                matches!(params.as_slice(), [Type::Numeric(NumericType::U32), Type::Numeric(NumericType::I32)] | [Type::Numeric(NumericType::U32), Type::Numeric(NumericType::I32), Type::Numeric(NumericType::I32)])
-                    && return_type.as_ref() == &u32_ty
-            }
-            BIT32_REPLACE => {
-                matches!(params.as_slice(), [Type::Numeric(NumericType::U32), Type::Numeric(NumericType::U32), Type::Numeric(NumericType::I32)] | [Type::Numeric(NumericType::U32), Type::Numeric(NumericType::U32), Type::Numeric(NumericType::I32), Type::Numeric(NumericType::I32)])
-                    && return_type.as_ref() == &u32_ty
-            }
-            BIT32_BAND | BIT32_BOR | BIT32_BXOR => {
-                !params.is_empty()
-                    && params.iter().all(|param| param == &u32_ty)
-                    && return_type.as_ref() == &u32_ty
-            }
-            BIT32_BTEST => {
-                !params.is_empty()
-                    && params.iter().all(|param| param == &u32_ty)
-                    && return_type.as_ref() == &Type::Bool
-            }
-            _ => return None,
-        };
+        let valid = waluau_hir::intrinsic_values::intrinsic_value_signature_matches(
+            name,
+            params,
+            return_type,
+        )?;
         Some(if valid {
             Ok((params.clone(), return_type.as_ref().clone()))
         } else {
@@ -3028,12 +2960,28 @@ impl Builder<'_> {
             discriminants: HashMap::new(),
             symbol_storage_types: param_types.clone(),
         };
-        let scope = Scope {
+        let mut scope = Scope {
             env,
             types: param_types,
         };
-        let result = nested.lower_expr(&call, &scope, Some(return_type.clone()))?;
-        nested.set_terminator(nested.current_block, Terminator::Return(result));
+        let result = if name == ASSERT {
+            // `assert` is the one intrinsic with no expression form: its
+            // direct lowering is the statement that traps on a false
+            // condition, so the adapter body is that statement plus a unit
+            // result.
+            let Expr::Call { args, span, .. } = &call else {
+                unreachable!("adapter body is a call expression")
+            };
+            nested.lower_assert_call(args, *span, &mut scope)?;
+            nested.emit(Instruction::Unit)
+        } else {
+            nested.lower_expr(&call, &scope, Some(return_type.clone()))?
+        };
+        // A diverging body (`error`) already terminated the entry block and
+        // left lowering in the dead block, which has no entry to terminate.
+        if nested.current_block != DEAD_BLOCK {
+            nested.set_terminator(nested.current_block, Terminator::Return(result));
+        }
         self.lifted_functions.push(nested.function);
         self.lifted_functions.extend(nested.lifted_functions);
         let closure = self.emit(Instruction::Closure {
@@ -6563,6 +6511,12 @@ impl Builder<'_> {
                         has_self: false,
                     };
                     self.coerce_value(value, actual, expected)?
+                } else if let Some((params, return_type)) =
+                    waluau_hir::intrinsic_values::unique_intrinsic_value_signature(name)
+                {
+                    // A bare intrinsic with a single value signature
+                    // (`print`, `tostring`) needs no annotation.
+                    self.lower_intrinsic_value(name, params, return_type, expected)?
                 } else {
                     return Err(Diagnostic::new(format!(
                         "unknown local '{name}' during IR lowering"
@@ -7700,6 +7654,19 @@ impl Builder<'_> {
                             "overloaded host function '{qualified}' needs an explicit function type when used as a value"
                         )));
                     }
+                    // No host import claimed the name, so an intrinsic with a
+                    // single value signature can supply it without an
+                    // annotation.
+                    if let Some((params, return_type)) =
+                        waluau_hir::intrinsic_values::unique_intrinsic_value_signature(&qualified)
+                    {
+                        return self.lower_intrinsic_value(
+                            &qualified,
+                            params,
+                            return_type,
+                            expected,
+                        );
+                    }
                 }
                 // A declared namespace constant (`math.pi`) folds to its
                 // literal; the namespace is not a value that can be lowered.
@@ -8344,6 +8311,15 @@ impl Builder<'_> {
                         return_type: Arc::new(ret.clone()),
                         has_self: false,
                     })
+                } else if let Some(signature) =
+                    self.intrinsic_value_signature_from_expected(name, expected.as_ref())
+                {
+                    let (params, return_type) = signature?;
+                    Ok(function_type(params, return_type))
+                } else if let Some((params, return_type)) =
+                    waluau_hir::intrinsic_values::unique_intrinsic_value_signature(name)
+                {
+                    Ok(function_type(params, return_type))
                 } else {
                     Err(Diagnostic::new(format!(
                         "unknown local '{name}' during IR lowering"
@@ -8756,6 +8732,11 @@ impl Builder<'_> {
                         return Err(Diagnostic::new(format!(
                             "overloaded host function '{qualified}' needs an explicit function type when used as a value"
                         )));
+                    }
+                    if let Some((params, return_type)) =
+                        waluau_hir::intrinsic_values::unique_intrinsic_value_signature(&qualified)
+                    {
+                        return coerce_type(function_type(params, return_type), expected);
                     }
                 }
                 if let Some((constant_ty, _)) = self.declared_constant(base, name) {

@@ -5381,6 +5381,103 @@ fn rejects_builtin_value_with_incompatible_explicit_signature() {
 }
 
 #[test]
+fn types_string_and_table_intrinsics_as_values() {
+    let source = r#"
+        function good(): unit
+            local upper: (string) -> string = string.upper
+            local length: (string) -> i32 = string.len
+            local slice: (string, i32, i32) -> string = string.sub
+            local repeat_text: (string, i32) -> string = string.rep
+            local insert: ({string}, string) -> unit = table.insert
+            local join: ({string}, string) -> string = table.concat
+            local drop: ({string}) -> string = table.remove
+            local count: ({string}) -> i32 = table.getn
+            local check: (bool) -> unit = assert
+            local fail: (string) -> unit = error
+            local words: {string} = {}
+            insert(words, upper(slice(repeat_text("ab", 2), 1, 2)))
+            check(count(words) == 1 and length(join(words, ",")) > 0)
+            local last = drop(words)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("intrinsic values should type-check");
+}
+
+#[test]
+fn types_protected_and_callback_intrinsic_references() {
+    let source = r#"
+        function good(): unit
+            local ok, text = pcall(string.rep, "a", 3)
+            local words: {string} = {}
+            local added, _unit = pcall(table.insert, words, "a")
+            local failed, _message = pcall(assert, false)
+            local shouted = string.gsub("um (dois)", "(%(%w+%))", string.upper)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("protected and callback intrinsic references should type-check");
+}
+
+#[test]
+fn infers_unambiguous_intrinsic_values_without_an_annotation() {
+    let source = r#"
+        function good(): unit
+            local upper = string.upper
+            local text = upper("ok")
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("an intrinsic with one signature needs no annotation");
+}
+
+#[test]
+fn rejects_ambiguous_intrinsic_value_without_an_explicit_type() {
+    let source = r#"
+        function bad(): unit
+            local slice = string.sub
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "builtin 'string.sub' needs an explicit function type when used as a value"
+    );
+}
+
+#[test]
+fn names_the_reason_a_builtin_cannot_be_a_value() {
+    for (source, expected) in [
+        (
+            "function bad(): unit\n local pick = select\nend",
+            "builtin 'select' cannot be used as a value because its result arity \
+             depends on its first argument",
+        ),
+        (
+            "function bad(): unit\n local spread = table.unpack\nend",
+            "builtin 'table.unpack' cannot be used as a value because its arity \
+             depends on the table's length",
+        ),
+        (
+            "function bad(): unit\n local render = string.format\nend",
+            "builtin 'string.format' cannot be used as a value because its arity \
+             and parameter types depend on the format string",
+        ),
+    ] {
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), expected);
+    }
+}
+
+#[test]
 fn deduplicates_identical_declared_import_redeclarations() {
     let source = r#"
         declare function ping(x: i32): i32

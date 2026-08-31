@@ -94,62 +94,8 @@ pub(super) fn intrinsic_function_value_type(
     else {
         return None;
     };
-    let u32_ty = Type::Numeric(NumericType::U32);
-    let i32_ty = Type::Numeric(NumericType::I32);
-    let valid = match name {
-        TYPE | TYPEOF | TO_STRING => {
-            params == &[Type::Unknown] && return_type.as_ref() == &Type::String
-        }
-        PRINT => params == &[Type::String] && return_type.as_ref() == &Type::Unit,
-        STRING_FIND => {
-            params == &[Type::String, Type::String] && return_type.as_ref() == &Type::Unknown
-        }
-        BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ => {
-            params == std::slice::from_ref(&u32_ty) && return_type.as_ref() == &u32_ty
-        }
-        BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT => {
-            params == &[u32_ty.clone(), i32_ty] && return_type.as_ref() == &u32_ty
-        }
-        BIT32_EXTRACT => {
-            matches!(
-                params.as_slice(),
-                [
-                    Type::Numeric(NumericType::U32),
-                    Type::Numeric(NumericType::I32)
-                ] | [
-                    Type::Numeric(NumericType::U32),
-                    Type::Numeric(NumericType::I32),
-                    Type::Numeric(NumericType::I32)
-                ]
-            ) && return_type.as_ref() == &u32_ty
-        }
-        BIT32_REPLACE => {
-            matches!(
-                params.as_slice(),
-                [
-                    Type::Numeric(NumericType::U32),
-                    Type::Numeric(NumericType::U32),
-                    Type::Numeric(NumericType::I32)
-                ] | [
-                    Type::Numeric(NumericType::U32),
-                    Type::Numeric(NumericType::U32),
-                    Type::Numeric(NumericType::I32),
-                    Type::Numeric(NumericType::I32)
-                ]
-            ) && return_type.as_ref() == &u32_ty
-        }
-        BIT32_BAND | BIT32_BOR | BIT32_BXOR => {
-            !params.is_empty()
-                && params.iter().all(|param| param == &u32_ty)
-                && return_type.as_ref() == &u32_ty
-        }
-        BIT32_BTEST => {
-            !params.is_empty()
-                && params.iter().all(|param| param == &u32_ty)
-                && return_type.as_ref() == &Type::Bool
-        }
-        _ => return None,
-    };
+    let valid =
+        super::intrinsic_values::intrinsic_value_signature_matches(name, params, return_type)?;
     Some(if valid {
         Ok(expected_ty.clone())
     } else {
@@ -157,6 +103,15 @@ pub(super) fn intrinsic_function_value_type(
             "function type {expected_ty} does not match builtin '{name}'"
         )))
     })
+}
+
+/// A compiler intrinsic whose signature cannot be written as a Waluau function
+/// type is still a known name; saying so beats `unknown name 'select'`.
+pub(super) fn non_representable_intrinsic_value(name: &str) -> Option<Diagnostic> {
+    let reason = super::intrinsic_values::non_representable_intrinsic_reason(name)?;
+    Some(Diagnostic::new(format!(
+        "builtin '{name}' cannot be used as a value because {reason}"
+    )))
 }
 
 fn buffer_scalar_kind(member: &str) -> Option<waluau_ast::TypedArrayKind> {
@@ -668,38 +623,22 @@ pub(super) fn infer_pcall_builtin_call(
     // direct call. Use its protected arguments to select a namespaced or
     // plain declared-import overload before asking for the callee as a value.
     let intrinsic_signature = super::expressions::builtin_name(&args[0]).and_then(|callee_name| {
-        let u32_ty = Type::Numeric(NumericType::U32);
-        let i32_ty = Type::Numeric(NumericType::I32);
-        let (params, return_type) = match callee_name.as_str() {
-            STRING_FIND if args.len() == 3 => (vec![Type::String, Type::String], Type::Unknown),
-            BIT32_BNOT | BIT32_BYTESWAP | BIT32_COUNTLZ | BIT32_COUNTRZ if args.len() == 2 => {
-                (vec![u32_ty.clone()], u32_ty.clone())
-            }
-            BIT32_LROTATE | BIT32_RROTATE | BIT32_LSHIFT | BIT32_RSHIFT | BIT32_ARSHIFT
-                if args.len() == 3 =>
-            {
-                (vec![u32_ty.clone(), i32_ty], u32_ty.clone())
-            }
-            BIT32_EXTRACT if (3..=4).contains(&args.len()) => {
-                let mut params = vec![u32_ty.clone(), Type::Numeric(NumericType::I32)];
-                if args.len() == 4 {
-                    params.push(Type::Numeric(NumericType::I32));
-                }
-                (params, u32_ty.clone())
-            }
-            BIT32_REPLACE if (4..=5).contains(&args.len()) => {
-                let mut params = vec![u32_ty.clone(), u32_ty.clone(), i32_ty.clone()];
-                if args.len() == 5 {
-                    params.push(i32_ty);
-                }
-                (params, u32_ty.clone())
-            }
-            BIT32_BAND | BIT32_BOR | BIT32_BXOR if args.len() > 1 => {
-                (vec![u32_ty.clone(); args.len() - 1], u32_ty.clone())
-            }
-            BIT32_BTEST if args.len() > 1 => (vec![u32_ty; args.len() - 1], Type::Bool),
-            _ => return None,
-        };
+        // Each protected argument is inferred without an expectation so the
+        // element-generic `table.*` members can read their element type back
+        // out of the array argument.
+        let arg_types = args[1..]
+            .iter()
+            .map(|arg| {
+                super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)
+                    .ok()
+                    .map(super::expressions::first_of_multi)
+            })
+            .collect::<Vec<_>>();
+        let (params, return_type) =
+            super::intrinsic_values::intrinsic_value_signature_for_arguments(
+                &callee_name,
+                &arg_types,
+            )?;
         for (arg, param) in args[1..].iter().zip(params.iter()) {
             if super::expressions::infer_expr(
                 arg,
@@ -1680,6 +1619,44 @@ pub(super) fn infer_table_builtin_call(
     Some(coerce_type(Type::String, expected))
 }
 
+/// The replacer signature `string.gsub` accepts for a given pattern. Mirrors
+/// `Builder::gsub_replacement_function_type` in waluau-ir: an unannotated
+/// closure or a builtin value reference only types against an expectation, and
+/// the pattern's captures decide what that expectation is.
+fn gsub_replacement_function_type(
+    pattern_arg: &Expr,
+    repl_arg: &Expr,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Option<Type> {
+    let captures = waluau_ast::expr_pattern_captures(pattern_arg);
+    let params: Vec<Type> = if captures.is_empty() {
+        vec![Type::String]
+    } else {
+        captures.iter().map(|kind| kind.value_type()).collect()
+    };
+    for return_ty in [Type::String, Type::Unit] {
+        let candidate = Type::Function {
+            params: params.clone(),
+            return_type: Arc::new(return_ty),
+            has_self: false,
+        };
+        if super::expressions::infer_expr(
+            repl_arg,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(candidate.clone()),
+        )
+        .is_ok()
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 pub(super) fn infer_string_builtin_call(
     name: &str,
     args: &[Expr],
@@ -1835,7 +1812,9 @@ pub(super) fn infer_string_builtin_call(
             }
             // The replacement is either a template string or a function of
             // the pattern's captures; its exact shape is validated during IR
-            // lowering.
+            // lowering. Builtins referenced as values (`string.upper`) need
+            // the replacer signature as their expectation, so retry with the
+            // shapes the pattern's captures allow before reporting.
             let repl_ty = match super::expressions::infer_expr(
                 &args[2],
                 vars,
@@ -1844,7 +1823,16 @@ pub(super) fn infer_string_builtin_call(
                 None,
             ) {
                 Ok(ty) => ty,
-                Err(error) => return Some(Err(error)),
+                Err(error) => match gsub_replacement_function_type(
+                    &args[1],
+                    &args[2],
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    Some(ty) => ty,
+                    None => return Some(Err(error)),
+                },
             };
             if !matches!(repl_ty, Type::String | Type::Function { .. }) {
                 return Some(Err(Diagnostic::new(format!(

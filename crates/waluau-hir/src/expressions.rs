@@ -13,6 +13,7 @@ use super::builtins::{
     infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
     infer_string_builtin_call, infer_table_builtin_call, infer_tonumber_builtin_call,
     infer_tostring_builtin_call, infer_type_builtin_call, intrinsic_function_value_type,
+    non_representable_intrinsic_value,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -570,6 +571,18 @@ fn attach_expr_span(error: Diagnostic, expr: &Expr) -> Diagnostic {
     }
 }
 
+/// An intrinsic with exactly one value signature needs no annotation to be
+/// referenced as a value; ambiguous ones keep requiring an explicit function
+/// type or a protected call that picks the arity.
+fn unique_intrinsic_function_type(name: &str) -> Option<Type> {
+    let (params, return_type) = super::intrinsic_values::unique_intrinsic_value_signature(name)?;
+    Some(Type::Function {
+        params,
+        return_type: Arc::new(return_type),
+        has_self: false,
+    })
+}
+
 pub(super) fn infer_expr(
     expr: &Expr,
     vars: &HashMap<String, Binding>,
@@ -647,6 +660,19 @@ fn infer_expr_inner(
                 && let Some(result) = intrinsic_function_value_type(name, expected.as_ref())
             {
                 return result;
+            }
+            if vars.get(name).is_none() && fn_signatures.get(name).is_none() {
+                if let Some(diagnostic) = non_representable_intrinsic_value(name) {
+                    return Err(diagnostic);
+                }
+                if let Some(ty) = unique_intrinsic_function_type(name) {
+                    return coerce_type(ty, expected);
+                }
+                if super::intrinsic_values::is_value_representable_intrinsic(name) {
+                    return Err(Diagnostic::new(format!(
+                        "builtin '{name}' needs an explicit function type when used as a value"
+                    )));
+                }
             }
             if matches!(fn_signatures.get(name), Some(FnSignature::Generic(_))) {
                 return Err(generic_diagnostic(
@@ -1595,6 +1621,19 @@ fn infer_expr_inner(
                 if let Some(result) = intrinsic_function_value_type(&method_name, expected.as_ref())
                 {
                     return result;
+                }
+                if vars.get(base_name).is_none() && !fn_signatures.contains_key(&method_name) {
+                    if let Some(diagnostic) = non_representable_intrinsic_value(&method_name) {
+                        return Err(diagnostic);
+                    }
+                    if let Some(ty) = unique_intrinsic_function_type(&method_name) {
+                        return coerce_type(ty, expected);
+                    }
+                    if super::intrinsic_values::is_value_representable_intrinsic(&method_name) {
+                        return Err(Diagnostic::new(format!(
+                            "builtin '{method_name}' needs an explicit function type when used as a value"
+                        )));
+                    }
                 }
                 if let Some(signature) = fn_signatures.get(&method_name) {
                     return match signature {
