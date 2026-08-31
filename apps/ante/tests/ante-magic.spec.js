@@ -101,6 +101,13 @@ test('starts a boss rush from its menu option', async ({ page }) => {
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
+  // The page element exists before the menu does, and a key pressed at a
+  // screen that is not up yet is a key nobody hears. Every other test that
+  // drives the menu waits for its title first; this one was the exception.
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+
   // BOSS RUSH sits directly under NEW RUN; Enter on it opens the spell list,
   // and a second Enter deals the first vault as the seven-card variant,
   // whose board still shows the sealed draw pile.

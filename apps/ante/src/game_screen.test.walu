@@ -115,6 +115,40 @@ describe(
         )
 
         it(
+            "closes a shop left during the pull-out that opened it",
+            function(): unit
+                math.randomseed(151)
+                local screen: game_screen.State = game_screen.State.new()
+                local city: city_map.State = city_map.State.new(151)
+                game_fixture.clear(screen.rules)
+                screen.ui.modal = "final"
+
+                -- A verdict is read from inside the duel's house, so put the
+                -- camera there first. The case above instead sets the map down
+                -- with place_city after the gestures, which is a snapshot being
+                -- restored rather than a run being played: it hands the camera
+                -- its destination for free and so cannot see a dissolve that
+                -- fails to run. Here the map has to move, and the two gestures
+                -- are one frame apart, which is what an impatient player does.
+                screen:place_city(city)
+                expect(city:visible()):toBe(false)
+
+                screen:keypressed(city, "Enter")
+                screen:steer_city(city)
+                city:update(1.0 / 60.0)
+                screen:keypressed(city, "Escape")
+
+                for _ = 1, 300 do
+                    screen:steer_city(city)
+                    screen:update(city, 1.0 / 60.0)
+                    city:update(1.0 / 60.0)
+                end
+                expect(screen.shop.open):toBe(false)
+                expect(city:visible()):toBe(false)
+            end
+        )
+
+        it(
             "starts closed and restores an open item visit",
             function()
                 math.randomseed(149)

@@ -15,6 +15,23 @@ export function frameSignature(canvas) {
   });
 }
 
+// Two consecutive identical frames: the board has finished whatever it was
+// animating and the next press will mean what it says rather than being spent
+// skipping ahead. Only the board settles this way — the city map behind the
+// menu and the shop pans for as long as it is up, and a reveal left standing
+// burns its lost cards forever.
+export async function settleBoard(canvas) {
+  let previous = -1;
+  await expect
+    .poll(async () => {
+      const current = await frameSignature(canvas);
+      const stable = current === previous;
+      previous = current;
+      return stable;
+    }, { timeout: GAME_READY_TIMEOUT })
+    .toBe(true);
+}
+
 // Read a rectangle expressed in Ante's live logical coordinates. Anchors let
 // assertions follow semantic regions as added width or height moves them.
 //
