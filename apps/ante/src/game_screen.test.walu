@@ -87,6 +87,34 @@ describe(
     "Ante Magic shop screen wiring",
     function()
         it(
+            "carries a cleared run through the shop into the next duel",
+            function(): unit
+                math.randomseed(151)
+                local screen: game_screen.State = game_screen.State.new()
+                local city: city_map.State = city_map.State.new(151)
+                game_fixture.clear(screen.rules)
+                screen.ui.modal = "final"
+
+                screen:keypressed(city, "Enter")
+                expect(screen.run.duel):toBe(2)
+                expect(screen.shop.open):toBe(true)
+                expect(screen:on_map()):toBe(true)
+
+                screen:keypressed(city, "Escape")
+                expect(screen:on_map()):toBe(false)
+                expect(screen.rules:is_finished()):toBe(false)
+                expect(screen.rules:gold()):toBe(screen.run.gold)
+                expect(screen.presentation:is_animating()):toBe(true)
+
+                -- The offers remain painted over the map's dissolve, then close
+                -- once the newly dealt duel has taken over the screen.
+                screen:place_city(city)
+                screen:update(city, 0.0)
+                expect(screen.shop.open):toBe(false)
+            end
+        )
+
+        it(
             "starts closed and restores an open item visit",
             function()
                 math.randomseed(149)
