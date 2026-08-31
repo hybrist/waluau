@@ -50,14 +50,22 @@ export type Look = {
     aura_strength: f64
 }
 
--- Under the pointer the face lifts, and under a press it sinks: pressed is
--- drawn as the light no longer reaching the top of the plate, which is the
--- same lighting the rest of the game is built on read backwards.
+-- Under the pointer the face lifts, and under a press it sinks. Sinking is the
+-- plate's own lighting read backwards: the shadow that lived along its bottom
+-- inside edge moves to the top, and the highlight that lived along the top
+-- moves to the bottom, because a surface pushed below its frame is lit from
+-- under its far lip.
+--
+-- The top veil has to be strong enough to bury the bevel highlight underneath
+-- it. On plates this dark, darkening alone barely reads — the face has little
+-- light to take away — so it is the moved highlight that carries the press.
 const HOVER_LIFT: string = "#ffffff"
 const HOVER_STRENGTH: f64 = 0.055
 const PRESS_SINK: string = "#000000"
-const PRESS_TOP: f64 = 0.26
-const PRESS_BOTTOM: f64 = 0.06
+const PRESS_TOP: f64 = 0.55
+const PRESS_BOTTOM: f64 = 0.0
+const PRESS_LIP: f64 = 0.30
+const PRESS_LIP_WEIGHT: f64 = 1.0
 
 function edge_of(look: Look, mood: Mood): string
     if mood == "focused" then
@@ -142,6 +150,18 @@ function surface(
             PRESS_TOP,
             PRESS_BOTTOM,
             PRESS_BOTTOM
+        )
+        graphics:set_color(edge_of(look, mood))
+        plate.veil_rectangle(
+            graphics,
+            bounds.x + look.weight,
+            bounds.y + bounds.height - look.weight - PRESS_LIP_WEIGHT,
+            bounds.width - look.weight * 2.0,
+            PRESS_LIP_WEIGHT,
+            PRESS_LIP,
+            PRESS_LIP,
+            PRESS_LIP,
+            PRESS_LIP
         )
     end
 end

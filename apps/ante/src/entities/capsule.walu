@@ -47,21 +47,27 @@ function width_of(graphics: ui.Graphics?, text: string): f64
     return button.width_of(graphics, LOOK, text)
 end
 
-function draw_at(surface: ui.Surface, text: string, active: bool, bounds: box.Rect): unit
-    button.draw(surface.graphics, bounds, LOOK, mood_of(active), "none", 0.0, text)
+function draw_at(
+    surface: ui.Surface,
+    text: string,
+    active: bool,
+    touch: button.Touch,
+    bounds: box.Rect
+): unit
+    button.draw(surface.graphics, bounds, LOOK, mood_of(active), touch, 0.0, text)
 end
 
-type CapsulePresentation = { text: string, active: bool }
+type CapsulePresentation = { text: string, active: bool, touch: button.Touch }
 export type Stateful = { presentation: CapsulePresentation, root: ui.Node }
 
 function Stateful.new(text: string, active: bool): Stateful
-    local presentation: CapsulePresentation = { text = text, active = active }
+    local presentation: CapsulePresentation = { text = text, active = active, touch = "none" }
     local root: ui.Node = ui.Node.measured(
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
             button.measure_into(graphics, into, LOOK, presentation.text)
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
-            draw_at(surface, presentation.text, presentation.active, bounds)
+            draw_at(surface, presentation.text, presentation.active, presentation.touch, bounds)
         end
     )
     return { presentation = presentation, root = root }
@@ -70,6 +76,13 @@ end
 function Stateful:present(text: string, active: bool): unit
     self.presentation.text = text
     self.presentation.active = active
+end
+
+-- Kept apart from `present` because the two have different owners: the screen
+-- says what the capsule is asking for, the router says what the pointer is
+-- doing to it, and neither should have to carry the other's argument.
+function Stateful:present_touch(touch: button.Touch): unit
+    self.presentation.touch = touch
 end
 
 function node(text: string, active: bool): ui.Node

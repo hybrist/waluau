@@ -43,11 +43,15 @@ function always(): bool
     return true
 end
 
+type ChipPresentation = { touch: button.Touch }
+export type Stateful = { presentation: ChipPresentation, root: ui.Node }
+
 -- `shown` gates the paint, not the layout: node visibility in this tree is a
 -- routing flag, so a chip that is only offered on one screen still has to be
 -- told when to draw itself.
-function gated(text: string, shown: () -> bool): ui.Node
-    return ui.Node.measured(
+function Stateful.new(text: string, shown: () -> bool): Stateful
+    local presentation: ChipPresentation = { touch = "none" }
+    local root: ui.Node = ui.Node.measured(
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
             button.measure_into(graphics, into, LOOK, text)
         end,
@@ -55,9 +59,18 @@ function gated(text: string, shown: () -> bool): ui.Node
             if not shown() then
                 return
             end
-            button.draw(surface.graphics, bounds, LOOK, "idle", "none", 0.0, text)
+            button.draw(surface.graphics, bounds, LOOK, "idle", presentation.touch, 0.0, text)
         end
     )
+    return { presentation = presentation, root = root }
+end
+
+function Stateful:present(touch: button.Touch): unit
+    self.presentation.touch = touch
+end
+
+function gated(text: string, shown: () -> bool): ui.Node
+    return Stateful.new(text, shown).root
 end
 
 function node(text: string): ui.Node
