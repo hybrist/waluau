@@ -8,11 +8,14 @@
 // That is exactly how waluau-lcu9 happened: a change to a shared type left the
 // stories behind, and every deploy failed for two weeks.
 //
-// This is the cheap half of the gate. It type-checks each story on its own,
+// This is the early half of the gate. It type-checks each story on its own,
 // which is what catches that class of failure, and takes about as long as one
-// cargo check. The Ante workflow runs the real `build-storybook` as well,
-// because a story can also be broken by configuration this pass never loads:
-// the story glob, the framework options, the shader source list.
+// cargo check. The other half already exists and is not repeated in CI: the
+// Vercel deployment check runs the real `build-storybook` on every pull
+// request, so a story broken by configuration this pass never loads — the
+// story glob, the framework options, the shader source list — still cannot
+// reach main. What that check cannot do is fail before a push, or say which
+// story and which line rather than printing a deploy log.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -42,13 +42,6 @@ jobs:
       - name: Run Vitest unit tests
         run: pnpm --filter ante test:unit
 
-      # The command Vercel deploys with. `./check` type-checks the stories on
-      # their own, which catches a story left behind by a change to a shared
-      # type; this catches the rest — the story glob, the framework options,
-      # the shader source list — which that pass never loads.
-      - name: Build Storybook
-        run: pnpm --filter ante build-storybook
-
   ante-browser:
     runs-on: ubuntu-latest
 
