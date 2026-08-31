@@ -29,7 +29,7 @@ done
 ```
 
 At the final reconciliation in `waluau-q7qg.16`, the directory has **1,090
-chunks**: **416 enabled** and **674 pending**. These numbers are an exact
+chunks**: **423 enabled** and **667 pending**. These numbers are an exact
 filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
@@ -306,12 +306,14 @@ after provenance splitting:
 | `tables.luau` | `tables.1` (the remaining coarse table-layout source) |
 | `vararg.luau` | `vararg` (whole source; mixed `{ n = count, ... }` packs and nil holes) |
 
-That audited mapping is **11 current chunks**. One additional complete chunk,
-`iter.13`, was independently browser-probed during the compiler audit and
-requires an interior nil hole, so it remains pending for the same scope
-decision. These chunks commonly contain other blockers; split out passing
-contiguous ranges, but do not implement sparse/mixed/hash behavior under this
-conformance epic.
+That audited mapping is **11 current chunks**. Two additional complete chunks
+were independently browser-probed and remain pending for the same scope
+decision: `iter.13` requires an interior nil hole, and `bitwise.9` wraps every
+one of its assertions in `pairs(c)` over an authored array, which Waluau
+iterates directly. `bitwise.9` is a single loop, so it has no upstream
+assertion boundary to split on. These chunks commonly contain other blockers;
+split out passing contiguous ranges, but do not implement sparse/mixed/hash
+behavior under this conformance epic.
 
 ### Dense-array `ipairs`
 
@@ -348,7 +350,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **674 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **667 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -361,7 +363,7 @@ assertion range becomes independently useful.
 | `assert*` | 1 | [Strict booleans](#strict-boolean-control-flow); dynamic/special builtin calls `waluau-9f8d` |
 | `attrib*` | 2 | [Sparse/mixed/hash tables](#sparse-mixed-and-hash-tables) |
 | `basic*` | 14 | Sparse tables, strict booleans, [AOT source loading](#ahead-of-time-compilation-and-loadstring), [static names](#static-lexical-names-and-module-environments); dynamic calls/inference `waluau-9f8d` |
-| `bitwise*` | 12 | Dynamic numeric/error boundaries `waluau-rndq`; string-number coercion `waluau-dbyy` |
+| `bitwise*` | 5 | Array `pairs` under the table model; string-number coercion `waluau-dbyy`, protected invalid arguments `waluau-rndq`, `waluau-esz6`, uninitialized-local inference `waluau-3em1` |
 | `buffers*` | 2 | Unknown array refinement `waluau-2dow`; `getfenv`/VM slow-call aggregate is an embedding deviation |
 | `calls*` | 43 | AOT source loading and sparse tables; multi-value/runtime-vararg work `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8`; dynamic calls/inference `waluau-9f8d` |
 | `classes*` | 49 | Luau class declarations `waluau-wll8` |
@@ -420,22 +422,34 @@ converge:
 | Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |
 | Dynamic calls and recursive inference | `waluau-9f8d` | Ordinary `assert`, `basic`, `calls`, `closure`, `constructs`, `errors`, `literals`, `pcall`, and `strings` chunks after intentional blockers are split away |
-| String/number coercion and pattern replacements | `waluau-dbyy` | Remaining `pm.*` cases after protected-call and parser gaps |
-| Dynamic bit32 boundaries | `waluau-rndq` | Exact `bitwise.{2,3,6,9,14,15,17,18,20,21,22,23}` set |
+| String/number coercion and pattern replacements | `waluau-dbyy` | Remaining `pm.*` cases after protected-call and parser gaps, plus `bitwise.{14,15}` |
+| Protected invalid `bit32` arguments | `waluau-rndq`, `waluau-esz6` | `bitwise.22` |
+| Uninitialized-local inference | `waluau-3em1` | `bitwise.18` |
 | Luau class declarations | `waluau-wll8` | `classes.{1-49}` |
 | Browser date/time library | `waluau-qabb` | `datetime` |
 | Explicit generic instantiation/type packs | `waluau-9ttd` | `explicit_type_instantiations` |
 | Vector value/library | `waluau-uneu` | `vector`, `vector_library.{1-11}`; native vector checks remain VM/JIT exclusions |
 | Remaining string interpolation | `waluau-h37g` | `stringinterp.{2,4,6,8}`, with static-name behavior remaining a documented decision |
 
+`bitwise.{14,15}` were re-probed under `waluau-rndq` and deliberately left to
+`waluau-dbyy`. Luau's `bit32` accepts `"1"` because its VM converts strings to
+numbers for every numeric argument, and Waluau rejects that conversion
+everywhere: `"1" + 1` does not compile either. Adding it at `bit32` argument
+positions alone would give one library a coercion rule the language does not
+have, and `waluau-dbyy` already tracks the uniform string/number rule that
+would cover `bit32`, arithmetic, and pattern captures together. `tonumber` is
+the explicit conversion until then.
+
 Completed work is reflected rather than left in the open-gap table: mutable
 buffers have 22 enabled chunks; deterministic typed math and exact
 `math.noise` ranges are enabled; builtin functions as values landed in
-`waluau-390t`; dense-array `ipairs` landed in `waluau-uxuf`; and fixed
+`waluau-390t`; dense-array `ipairs` landed in `waluau-uxuf`; fixed
 multi-results through nested vararg calls enabled `pcall.1` and `pcall.4` in
 `waluau-sdc0`. Shortest-round-trip numeric `tostring` landed in `waluau-9wf5`
 and enabled the last seven `strconv` chunks, so that family no longer appears
-above. Earlier children also enabled scientific notation, surplus
+above. Luau's modulo-2^32 `bit32` argument rule for wide, negative, and
+`unknown`-typed operands enabled `bitwise.{2,3,6,17,20,21,23}` in
+`waluau-rndq`. Earlier children also enabled scientific notation, surplus
 fixed-call arguments, bit32 intrinsics, large `%f` formatting, missing
 multi-binding nil padding, chained if expressions, and many passing split
 ranges. When another fix lands, recompile the affected pending chunks, split

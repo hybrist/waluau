@@ -37,3 +37,31 @@ local replace_ok: bool, replace_error: unknown = pcall(
 )
 assert(not replace_ok)
 assert(replace_error::string == "bit field range is out of bounds")
+
+-- Luau's modulo-2^32 argument rule: a number outside the 32-bit range, a
+-- negative number, and a value that is only known to be a number at runtime
+-- all contribute the low 32 bits of their truncated integer value.
+assert(bit32.band(-1) == 0xffffffff)
+assert(bit32.band(2 ^ 33 + 1) == 1)
+assert(bit32.band(-2 ^ 40 - 2) == 0xfffffffe)
+assert(bit32.bor(0x42_1234_5678, 0) == 0x1234_5678)
+
+local function boxed(value: unknown): unknown
+    local ok: bool, result: unknown = pcall(
+        function(inner: unknown): unknown
+            return inner
+        end,
+        value
+    )
+    assert(ok)
+    return result
+end
+
+assert(bit32.band(boxed(-1)) == 0xffffffff)
+assert(bit32.byteswap(boxed(-1)) == 0xffffffff)
+assert(bit32.arshift(boxed(-1), 32) == 0xffffffff)
+assert(bit32.replace(boxed(0), -1, 4) == 2 ^ 4)
+
+for shift = -50, 50 do
+    assert(bit32.lrotate(0x89abcdef, shift) == bit32.lrotate(0x89abcdef, shift % 32))
+end

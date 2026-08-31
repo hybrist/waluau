@@ -912,26 +912,47 @@ pub(super) fn infer_bit32_builtin_call(
         } else {
             u32_ty.clone()
         };
-        match super::expressions::infer_expr(
+        let typed = super::expressions::infer_expr(
             arg,
             vars,
             fn_signatures,
             active_type_params,
             Some(expected_arg.clone()),
-        ) {
-            Ok(ty) if ty == expected_arg => {}
-            Ok(ty) => {
-                return Some(Err(Diagnostic::new(format!(
-                    "{name} expects {} argument #{}, got {ty}",
-                    expected_arg,
+        );
+        if matches!(&typed, Ok(ty) if ty == &expected_arg) {
+            continue;
+        }
+        // A number that is not already a 32-bit value still reaches the
+        // intrinsic: Luau converts any numeric `bit32` argument to the low 32
+        // bits of its integer value, and `unknown` only resolves at runtime.
+        if !super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)
+            .map(super::expressions::first_of_multi)
+            .as_ref()
+            .is_ok_and(bit32_dynamic_operand)
+        {
+            return Some(Err(match typed {
+                Err(error) => error,
+                Ok(actual) => Diagnostic::new(format!(
+                    "{name} expects {expected_arg} argument #{}, got {actual}",
                     index + 1
-                ))));
-            }
-            Err(error) => return Some(Err(error)),
+                )),
+            }));
         }
     }
 
     Some(coerce_type(result_ty, expected))
+}
+
+/// Whether a `bit32` argument that missed the direct `u32`/`i32` path is still
+/// a number Luau would accept and truncate to 32 bits.
+fn bit32_dynamic_operand(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Unknown
+            | Type::Numeric(
+                NumericType::F64 | NumericType::F32 | NumericType::I64 | NumericType::U64
+            )
+    )
 }
 
 pub(super) fn infer_tostring_builtin_call(

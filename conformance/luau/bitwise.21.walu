@@ -2,9 +2,7 @@
 -- tests/conformance/bitwise.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- The wide implicit global is inferred as f64; Waluau does not dynamically
--- truncate arbitrary numeric values to u32 at a typed bit32 boundary.
+-- This chunk contains bitwise.luau checks that pass in Waluau.
 --
 -- Split from conformance/luau/bitwise.13.walu.
 

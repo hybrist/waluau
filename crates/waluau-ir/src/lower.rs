@@ -2151,6 +2151,69 @@ fn first_of_multi(ty: Type) -> Type {
     }
 }
 
+/// Whether a `bit32` argument that missed the direct `u32`/`i32` path is still
+/// a number Luau would accept. Wider numeric types and `unknown` carry values
+/// outside the 32-bit range, so they route through the modulo-2^32 conversion
+/// rather than failing the call.
+fn bit32_dynamic_operand(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Unknown
+            | Type::Numeric(
+                NumericType::F64 | NumericType::F32 | NumericType::I64 | NumericType::U64
+            )
+    )
+}
+
+/// Whether an operand is an integer literal, optionally negated, that already
+/// lowers to the exact 32-bit constant the intrinsic wants. A literal outside
+/// that range (or written in float form) takes the conversion path instead,
+/// where Luau's modulo-2^32 rule applies.
+fn bit32_direct_literal(expr: &Expr, expected: &Type) -> bool {
+    fn literal_value(expr: &Expr, negated: bool) -> Option<i128> {
+        match expr {
+            Expr::Number(number, _) => number
+                .int_value()
+                .map(|value| if negated { -value } else { value }),
+            Expr::Unary {
+                op: waluau_ast::UnaryOp::Neg,
+                expr,
+                ..
+            } => literal_value(expr, !negated),
+            _ => None,
+        }
+    }
+    let Some(value) = literal_value(expr, false) else {
+        return false;
+    };
+    // A negative literal is written as the two's-complement pattern in either
+    // position, so both share the same lower bound.
+    let upper = if expected == &Type::Numeric(NumericType::U32) {
+        u32::MAX as i128
+    } else {
+        i32::MAX as i128
+    };
+    (i32::MIN as i128..=upper).contains(&value)
+}
+
+/// The diagnostic for a `bit32` argument that is neither a 32-bit value nor a
+/// number Luau would convert, preferring the inner inference error over the
+/// generic shape mismatch.
+fn bit32_operand_mismatch(
+    name: &str,
+    index: usize,
+    expected: &Type,
+    typed: Result<Type, Diagnostic>,
+) -> Diagnostic {
+    match typed {
+        Err(error) => error,
+        Ok(actual) => Diagnostic::new(format!(
+            "{name} expects {expected} argument #{}, got {actual}",
+            index + 1
+        )),
+    }
+}
+
 /// One result slot of a `pm_find`/`pm_match` call.
 #[derive(Clone, Copy)]
 enum PmSlot {
@@ -10093,7 +10156,7 @@ impl Builder<'_> {
                 || intrinsic == BitwiseIntrinsic::Extract && index >= 1
                 || intrinsic == BitwiseIntrinsic::Replace && index >= 2;
             let expected_arg = if signed_position { i32_ty.clone() } else { u32_ty.clone() };
-            match self.lower_expr(arg, scope, Some(expected_arg)) {
+            match self.lower_bit32_operand(name, index, arg, expected_arg, scope) {
                 Ok(value) => lowered.push(value),
                 Err(error) => return Some(Err(error)),
             }
@@ -10113,6 +10176,45 @@ impl Builder<'_> {
             result_ty: result_ty.clone(),
         });
         Some(self.coerce_value(value, result_ty, expected))
+    }
+
+    /// Lowers one `bit32` argument. An operand that already has the exact
+    /// `u32`/`i32` shape keeps the direct intrinsic path; any other number —
+    /// including one that only becomes a number at runtime through `unknown` —
+    /// converts through `f64` and Luau's modulo-2^32 argument rule.
+    fn lower_bit32_operand(
+        &mut self,
+        name: &str,
+        index: usize,
+        arg: &Expr,
+        expected: Type,
+        scope: &Scope,
+    ) -> Result<ValueId, Diagnostic> {
+        let typed = self.infer_expr_type(arg, &scope.types, Some(expected.clone()));
+        let natural = self
+            .infer_expr_type(arg, &scope.types, None)
+            .ok()
+            .map(first_of_multi);
+        // A dynamic operand can satisfy the typed path — `unknown` unboxes to
+        // `u32`, and an f64 expression accepts a 32-bit expectation — but both
+        // then reject the out-of-range and negative numbers Luau truncates, so
+        // only genuine 32-bit values and literals stay on the direct path.
+        let dynamic = natural.as_ref().is_some_and(bit32_dynamic_operand)
+            && !bit32_direct_literal(arg, &expected);
+        if !dynamic && matches!(&typed, Ok(ty) if ty == &expected) {
+            return self.lower_expr(arg, scope, Some(expected));
+        }
+        let Some(dynamic_ty) = natural.filter(bit32_dynamic_operand) else {
+            return Err(bit32_operand_mismatch(name, index, &expected, typed));
+        };
+        let value = self.lower_expr(arg, scope, Some(dynamic_ty.clone()))?;
+        let number =
+            self.coerce_value(value, dynamic_ty, Some(Type::Numeric(NumericType::F64)))?;
+        Ok(self.emit(Instruction::BitwiseIntrinsic {
+            intrinsic: BitwiseIntrinsic::TruncateToInt32,
+            args: vec![number],
+            result_ty: expected,
+        }))
     }
 
     fn lower_tostring_builtin_call(
@@ -12447,16 +12549,22 @@ impl Builder<'_> {
                 || name == BIT32_EXTRACT && index >= 1
                 || name == BIT32_REPLACE && index >= 2;
             let expected_arg = if signed_position { i32_ty.clone() } else { u32_ty.clone() };
-            match self.infer_expr_type(arg, types, Some(expected_arg.clone())) {
-                Ok(ty) if ty == expected_arg => {}
-                Ok(ty) => {
-                    return Some(Err(Diagnostic::new(format!(
-                        "{name} expects {} argument #{}, got {ty}",
-                        expected_arg,
-                        index + 1
-                    ))));
-                }
-                Err(error) => return Some(Err(error)),
+            let typed = self.infer_expr_type(arg, types, Some(expected_arg.clone()));
+            if matches!(&typed, Ok(ty) if ty == &expected_arg) {
+                continue;
+            }
+            if !self
+                .infer_expr_type(arg, types, None)
+                .map(first_of_multi)
+                .as_ref()
+                .is_ok_and(bit32_dynamic_operand)
+            {
+                return Some(Err(bit32_operand_mismatch(
+                    name,
+                    index,
+                    &expected_arg,
+                    typed,
+                )));
             }
         }
         Some(Ok(result_ty))

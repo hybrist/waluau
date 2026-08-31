@@ -207,6 +207,111 @@ fn lowers_complete_bit32_intrinsics_and_default_field_widths() {
     );
 }
 
+/// Every `BitwiseIntrinsic` a function lowers to, in instruction order.
+fn bitwise_intrinsics(source: &str) -> Vec<super::BitwiseIntrinsic> {
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("IR build should succeed");
+    verify(&module).expect("IR should verify");
+    module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function")
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::BitwiseIntrinsic { intrinsic, .. } => Some(*intrinsic),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn routes_wide_and_dynamic_bit32_operands_through_the_truncating_conversion() {
+    // `2^33 + 1` and the boxed `unknown` both hold values the direct 32-bit
+    // path cannot represent, so each converts with Luau's modulo-2^32 rule.
+    assert_eq!(
+        bitwise_intrinsics(
+            r#"
+            function entry(boxed: unknown): u32
+                return bit32.bxor(bit32.band(2^33 + 1), bit32.bnot(boxed))
+            end
+        "#
+        ),
+        vec![
+            super::BitwiseIntrinsic::TruncateToInt32,
+            super::BitwiseIntrinsic::And,
+            super::BitwiseIntrinsic::TruncateToInt32,
+            super::BitwiseIntrinsic::Not,
+            super::BitwiseIntrinsic::Xor,
+        ]
+    );
+}
+
+#[test]
+fn keeps_typed_and_literal_bit32_operands_on_the_direct_path() {
+    // A declared 32-bit value and a (possibly negated) literal already have the
+    // exact operand shape, so neither pays for the conversion.
+    assert_eq!(
+        bitwise_intrinsics(
+            r#"
+            function entry(value: u32, displacement: i32): u32
+                return bit32.bor(bit32.lshift(value, displacement), bit32.band(-1, 0xff))
+            end
+        "#
+        ),
+        vec![
+            super::BitwiseIntrinsic::LShift,
+            super::BitwiseIntrinsic::And,
+            super::BitwiseIntrinsic::Or,
+        ]
+    );
+}
+
+#[test]
+fn converts_a_dynamic_bit32_rotate_count() {
+    // The displacement is a signed operand, but a numeric-for variable is an
+    // f64, so `i % 32` converts the same way a value operand does.
+    assert_eq!(
+        bitwise_intrinsics(
+            r#"
+            function entry(value: u32): u32
+                local total: u32 = 0
+                for i = -50, 50 do
+                    total = bit32.bxor(total, bit32.lrotate(value, i % 32))
+                end
+                return total
+            end
+        "#
+        ),
+        vec![
+            super::BitwiseIntrinsic::TruncateToInt32,
+            super::BitwiseIntrinsic::LRotate,
+            super::BitwiseIntrinsic::Xor,
+        ]
+    );
+}
+
+#[test]
+fn rejects_a_non_numeric_bit32_operand() {
+    let program = parse(
+        r#"
+        function entry(text: string): u32
+            return bit32.band(text)
+        end
+    "#,
+    )
+    .expect("parse should succeed");
+    let error = build(&program).expect_err("a string is not a bit32 operand");
+    assert!(
+        error
+            .to_string()
+            .contains("bit32.band expects u32 argument #1, got string"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
 #[test]
 fn lowers_mutable_buffer_scalar_operations_as_distinct_ir() {
     let source = r#"

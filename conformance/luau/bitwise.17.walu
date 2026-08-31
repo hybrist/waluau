@@ -2,9 +2,7 @@
 -- tests/conformance/bitwise.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- Waluau does not infer a negative numeric value passed through this
--- unannotated pcall/noinline helper as the u32 bit pattern expected by bit32.
+-- This chunk contains bitwise.luau checks that pass in Waluau.
 --
 -- Split from conformance/luau/bitwise.8.walu. Helper setup is repeated so the
 -- chunk remains independently discoverable by the conformance runner.
