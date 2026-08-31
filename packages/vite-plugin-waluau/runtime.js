@@ -2168,6 +2168,135 @@ function createTfjsHost(getWasmExports = () => null) {
   };
 }
 
+// os.* builtins (builtins/os.walu). Wall-clock time comes from the browser's
+// Date; os.clock reads the monotonic page timer instead.
+const OS_WEEKDAY_NAMES = [
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+];
+const OS_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+const osPad = (value, width) => String(value).padStart(width, '0');
+
+// Broken-down civil fields for an epoch-seconds instant, read either in UTC or
+// in the browser's local timezone. Only `utc: true` is reproducible across
+// machines; the local branch is what makes non-`!` os.date output environment
+// dependent.
+function osCivilFields(seconds, utc) {
+  const date = new Date(seconds * 1000);
+  const fields = utc
+    ? {
+      year: date.getUTCFullYear(),
+      month: date.getUTCMonth() + 1,
+      day: date.getUTCDate(),
+      hour: date.getUTCHours(),
+      min: date.getUTCMinutes(),
+      sec: date.getUTCSeconds(),
+      wday: date.getUTCDay(),
+      offsetMinutes: 0,
+      zone: 'UTC',
+    }
+    : {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hour: date.getHours(),
+      min: date.getMinutes(),
+      sec: date.getSeconds(),
+      wday: date.getDay(),
+      offsetMinutes: -date.getTimezoneOffset(),
+      zone: /\(([^)]+)\)/.exec(date.toTimeString())?.[1] ?? '',
+    };
+  // Day of year from the already-resolved civil date, so the local branch is
+  // not re-derived from a UTC instant across a timezone boundary.
+  fields.yday = Math.round(
+    (Date.UTC(fields.year, fields.month - 1, fields.day) - Date.UTC(fields.year, 0, 1)) / 86400000
+  ) + 1;
+  return fields;
+}
+
+function osZoneOffsetText(offsetMinutes) {
+  const sign = offsetMinutes < 0 ? '-' : '+';
+  const total = Math.abs(offsetMinutes);
+  return `${sign}${osPad(Math.floor(total / 60), 2)}${osPad(total % 60, 2)}`;
+}
+
+// strftime conversions, restricted to Luau's specifier set. `%c`, `%x`, and
+// `%X` use the C locale's formats; the browser's locale-aware formatters would
+// make even the `!` (UTC) forms depend on the machine.
+function osDateConversion(specifier, fields) {
+  switch (specifier) {
+    case '%': return '%';
+    case 'a': return OS_WEEKDAY_NAMES[fields.wday].slice(0, 3);
+    case 'A': return OS_WEEKDAY_NAMES[fields.wday];
+    case 'b': return OS_MONTH_NAMES[fields.month - 1].slice(0, 3);
+    case 'B': return OS_MONTH_NAMES[fields.month - 1];
+    case 'c': return `${osDateConversion('a', fields)} ${osDateConversion('b', fields)}`
+      + ` ${String(fields.day).padStart(2, ' ')} ${osDateConversion('X', fields)} ${fields.year}`;
+    case 'd': return osPad(fields.day, 2);
+    case 'H': return osPad(fields.hour, 2);
+    case 'I': return osPad(fields.hour % 12 === 0 ? 12 : fields.hour % 12, 2);
+    case 'j': return osPad(fields.yday, 3);
+    case 'm': return osPad(fields.month, 2);
+    case 'M': return osPad(fields.min, 2);
+    case 'p': return fields.hour < 12 ? 'AM' : 'PM';
+    case 'S': return osPad(fields.sec, 2);
+    // Week of year counted from the first Sunday (%U) or Monday (%W); days
+    // before it are week 00, as in C.
+    case 'U': return osPad(Math.floor((fields.yday + 6 - fields.wday) / 7), 2);
+    case 'w': return String(fields.wday);
+    case 'W': return osPad(Math.floor((fields.yday + 6 - ((fields.wday + 6) % 7)) / 7), 2);
+    case 'x': return `${osPad(fields.month, 2)}/${osPad(fields.day, 2)}/${osPad(fields.year % 100, 2)}`;
+    case 'X': return `${osPad(fields.hour, 2)}:${osPad(fields.min, 2)}:${osPad(fields.sec, 2)}`;
+    case 'y': return osPad(((fields.year % 100) + 100) % 100, 2);
+    case 'Y': return String(fields.year);
+    case 'z': return osZoneOffsetText(fields.offsetMinutes);
+    case 'Z': return fields.zone;
+    default: return null;
+  }
+}
+
+function osDate(format, time) {
+  let text = String(format);
+  const seconds = time === undefined || time === null
+    ? Math.floor(Date.now() / 1000)
+    : Math.trunc(Number(time));
+  // Negative (pre-epoch) instants format normally, as the browser's Date
+  // represents them. A non-finite instant has no calendar date at all.
+  if (!Number.isFinite(seconds)) {
+    throw new Error(`os.date cannot format the non-finite time ${time}`);
+  }
+  const utc = text.startsWith('!');
+  if (utc) text = text.slice(1);
+  if (text === '*t') {
+    throw new Error(
+      'os.date does not support the "*t" calendar-table format; '
+      + 'format the fields you need, such as os.date("!%Y-%m-%d", time)'
+    );
+  }
+  const fields = osCivilFields(seconds, utc);
+  let result = '';
+  let index = 0;
+  while (index < text.length) {
+    const percent = text.indexOf('%', index);
+    if (percent < 0) {
+      result += text.slice(index);
+      break;
+    }
+    result += text.slice(index, percent);
+    const specifier = text.slice(percent + 1, percent + 2);
+    const converted = specifier === '' ? null : osDateConversion(specifier, fields);
+    if (converted === null) {
+      throw new Error(`invalid conversion specifier '%${specifier}'`);
+    }
+    result += converted;
+    index = percent + 2;
+  }
+  return result;
+}
+
 export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   // Compiler metadata is authoritative for new artifacts. Reflection, binary
   // import decoding, and the byte-constant custom section remain as a
@@ -2711,6 +2840,13 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     'math.randomseed': (seed) => {
       prngState = Math.trunc(Number(seed)) >>> 0;
     },
+    // os.* builtins (builtins/os.walu). Both os.date overloads share this
+    // implementation; the one-argument import simply leaves `time` undefined,
+    // which selects the current instant.
+    'os.time': () => Math.floor(Date.now() / 1000),
+    'os.difftime': (later, earlier) => later - earlier,
+    'os.clock': () => performance.now() / 1000,
+    'os.date': osDate,
     bytes_literal: (index) => {
       const literal = bytesConstants[index];
       if (!literal) {

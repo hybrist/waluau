@@ -1,0 +1,62 @@
+-- Browser date and time builtins (builtins/os.walu).
+--
+-- os.time and os.difftime read wall-clock seconds since the Unix epoch;
+-- os.clock reads the monotonic page timer; os.date formats an instant with
+-- Luau's strftime specifier set.
+--
+-- Every exact expectation below uses the `!` (UTC) forms, so it holds on any
+-- machine. The browser's local timezone is exercised separately, and only
+-- through properties that hold in every zone.
+-- Formatted UTC fields for 2000-06-10T00:00:00Z, a Saturday.
+local millennium: f64 = 960595200
+
+assert(os.date("!%Y-%m-%d %H:%M:%S", millennium) == "2000-06-10 00:00:00")
+assert(os.date("!%Y %m %d %H %M %S %w %j", millennium) == "2000 06 10 00 00 00 6 162")
+assert(os.date("!%A %a %B %b", millennium) == "Saturday Sat June Jun")
+assert(os.date("!%c", millennium) == "Sat Jun 10 00:00:00 2000")
+assert(os.date("!%x %X", millennium) == "06/10/00 00:00:00")
+assert(os.date("!%y %p %I", millennium) == "00 AM 12")
+assert(os.date("!%U %W", millennium) == "23 23")
+assert(os.date("!%z %Z", millennium) == "+0000 UTC")
+
+-- The epoch itself: a Thursday, and day 001 of week 00.
+assert(os.date("!%Y %m %d %H %M %S %w %j %U %W", 0) == "1970 01 01 00 00 00 4 001 00 00")
+
+-- Afternoon fields: 12-hour clock, PM, and a Sunday (%w == 0).
+assert(os.date("!%I %p %H %w", 960681600 + 46800) == "01 PM 13 0")
+
+-- Text outside a conversion is copied through, `%%` is a literal percent, and
+-- a format with no conversions is returned unchanged.
+assert(os.date("!") == "")
+assert(os.date("!no conversions here") == "no conversions here")
+assert(os.date("!100%% sure on %Y", millennium) == "100% sure on 2000")
+
+-- Pre-epoch instants format normally: the browser's Date represents them, so
+-- os.date does not answer nil below the epoch the way Lua and Luau do.
+assert(os.date("!%Y-%m-%dT%H:%M:%S", -1) == "1969-12-31T23:59:59")
+assert(os.date("!%Y %j %w", -86400 * 365) == "1969 001 3")
+
+-- A fractional instant truncates toward the epoch rather than rounding.
+assert(os.date("!%S", 59.9) == "59")
+
+-- Local-time output depends on the machine's timezone, so only zone-invariant
+-- properties are asserted. Every real zone offset is a whole number of
+-- minutes, which leaves the seconds field and the date's length unchanged.
+assert(os.date("%S", millennium) == os.date("!%S", millennium))
+assert(#os.date("%Y-%m-%d %H:%M:%S", millennium) == 19)
+assert(string.find(os.date("%z", millennium), "^[+-]%d%d%d%d$") == 1)
+
+-- os.time is the current instant in whole seconds; it never runs backwards
+-- within a single program, and os.difftime is `later - earlier`.
+local started: f64 = os.time()
+assert(started == math.floor(started))
+assert(os.difftime(os.time(), started) >= 0)
+assert(os.difftime(120, 19) == 101)
+assert(os.difftime(19, 120) == -101)
+assert(os.date("!%Y", started) >= "2024")
+
+-- os.clock counts from page start on the monotonic timer, so readings are
+-- non-negative and non-decreasing but say nothing about the wall clock.
+local clock_start: f64 = os.clock()
+assert(clock_start >= 0)
+assert(os.clock() >= clock_start)

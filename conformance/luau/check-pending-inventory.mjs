@@ -19,7 +19,7 @@ const expectedPendingByFamily = {
   coroutine: 22,
   coverage: 1,
   cyield: 13,
-  datetime: 1,
+  datetime: 7,
   debug: 1,
   debugger: 1,
   errors: 80,
@@ -79,7 +79,7 @@ const trackedByFamily = {
   coroutine: 'deviation:typed-coroutine',
   coverage: 'deviation:embedding-hooks',
   cyield: 'deviation:native-c-yield,typed-coroutine',
-  datetime: 'bead:waluau-qabb',
+  datetime: 'deviation:browser-clocks-and-calendars; bead:waluau-9f8d',
   debug: 'deviation:embedding-hooks',
   debugger: 'deviation:embedding-hooks',
   errors: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-wb7a,waluau-fg46,waluau-9f8d',
@@ -123,6 +123,7 @@ const trackedByFamily = {
 const documentedDeviations = new Set([
   'aot-loadstring',
   'binary-packing',
+  'browser-clocks-and-calendars',
   'embedding-hooks',
   'luau-integer-vm-extension',
   'metatable-events',
@@ -148,7 +149,6 @@ const openBeads = new Set([
   'waluau-jnyd',
   'waluau-n6u8',
   'waluau-nlyf',
-  'waluau-qabb',
   'waluau-rndq',
   'waluau-uneu',
   'waluau-vogb',
@@ -233,9 +233,9 @@ for (const file of pending) {
   actualPendingByFamily[family] += 1;
 }
 
-assert.equal(files.length, 1091, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(pending.length, 656, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(files.length - pending.length, 435, 'enabled Luau chunk count changed');
+assert.equal(files.length, 1098, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(pending.length, 662, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(files.length - pending.length, 436, 'enabled Luau chunk count changed');
 assert.deepEqual(actualPendingByFamily, expectedPendingByFamily, 'pending family counts changed');
 assert.deepEqual(
   documentedFamilies.sort(),
