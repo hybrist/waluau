@@ -643,6 +643,26 @@ impl Type {
         Type::record(fields)
     }
 
+    /// The static shape of a protected call's result, given the protected
+    /// callee's return type: `(ok, ...payloads)`.
+    ///
+    /// Luau's `pcall(f, ...)` returns `true` followed by every result of `f`,
+    /// so a callee whose return type is `Multi` contributes one boxed
+    /// `unknown` payload per result. Every other return type — including
+    /// `unit` — contributes exactly one payload, which is `nil` on the error
+    /// path. The failure path fills the remaining payloads with `nil`, the
+    /// same fixed-shape padding `string.find` uses for a failed match.
+    pub fn protected_call_result(return_type: &Type) -> Self {
+        let payloads = match return_type {
+            Type::Multi(types) => types.len().max(1),
+            _ => 1,
+        };
+        let mut parts = Vec::with_capacity(payloads + 1);
+        parts.push(Type::Bool);
+        parts.extend(std::iter::repeat_n(Type::Unknown, payloads));
+        Type::Multi(parts)
+    }
+
     /// This type as the runtime represents it: every tagged union and variant,
     /// however deeply nested, replaced by the canonical `{ tag, value }` record
     /// it is stored as. Source-level types and the annotations on IR

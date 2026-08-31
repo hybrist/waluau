@@ -263,6 +263,21 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             }
             coerce_type(parts.remove(0), Some(expected))
         }
+        // The same adjustment at tuple width: a multi-value expression wider
+        // than its context drops the trailing values. `local ok, message =
+        // pcall(f)` asks for two of the values a protected call to a
+        // multi-result `f` produces.
+        Some(Type::Multi(expected_parts)) if multi_truncates_to(&actual, &expected_parts) => {
+            let Type::Multi(actual_parts) = actual else {
+                unreachable!()
+            };
+            actual_parts
+                .into_iter()
+                .zip(expected_parts)
+                .map(|(actual_ty, expected_ty)| coerce_type(actual_ty, Some(expected_ty)))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Type::Multi)
+        }
         // Symmetrically, a single value fills a one-slot multi-value
         // expectation. Argument inference expands the trailing slots of a call
         // into Multi for builtins like string.byte, so a single-value result
@@ -740,6 +755,22 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             super::module_type_display(&expected)
         ))),
     }
+}
+
+/// Whether a multi-value result adjusts to a narrower multi-value context by
+/// dropping its trailing values. Packs (`Variadic`) forward a runtime-sized
+/// pack and keep their own expansion rules, so they never truncate here.
+pub(super) fn multi_truncates_to(actual: &Type, expected_parts: &[Type]) -> bool {
+    let Type::Multi(actual_parts) = actual else {
+        return false;
+    };
+    actual_parts.len() > expected_parts.len()
+        && !actual_parts
+            .iter()
+            .any(|ty| matches!(ty, Type::Variadic(_)))
+        && !expected_parts
+            .iter()
+            .any(|ty| matches!(ty, Type::Variadic(_)))
 }
 
 fn same_opaque_array_identity(actual: &Type, expected: &Type) -> bool {

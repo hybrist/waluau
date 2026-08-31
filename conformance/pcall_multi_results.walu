@@ -1,0 +1,58 @@
+-- A successful protected call produces `true` followed by every result of the
+-- protected function, so the tuple widens with the callee's return arity. The
+-- centralized multi-value rule still applies: the tuple expands only in the
+-- final position of an expression list and collapses to `ok` anywhere else.
+function checkresults(e, ...)
+    local t = table.pack(...)
+    assert(t.n == #e)
+    for i = 1, t.n do
+        assert(t[i] == e[i])
+    end
+end
+
+function pair(): (i32, i32)
+    return 1, 2
+end
+
+function three(a: i32, b: i32): (i32, i32, i32)
+    return a, b, 42
+end
+
+function single(): i32
+    return 42
+end
+
+function fails(x: i32): (i32, i32, i32)
+    if x == 0 then
+        error("boom")
+    end
+    return x, x, x
+end
+
+checkresults({true, 42}, pcall(single))
+checkresults({true, 1, 2}, pcall(pair))
+checkresults({true, 1, 2, 42}, pcall(three, 1, 2))
+
+-- Not the final expression: adjusted to its first value, `ok`.
+checkresults({true, "tail"}, pcall(three, 1, 2), "tail")
+
+-- Individual bindings read the payloads positionally.
+local ok, x, y, z = pcall(three, 3, 4)
+assert(ok)
+assert(x == 3)
+assert(y == 4)
+assert(z == 42)
+
+-- A binding list narrower than the tuple truncates, as it does for any
+-- multi-value expression.
+local short_ok, short_first = pcall(three, 5, 6)
+assert(short_ok)
+assert(short_first == 5)
+
+-- The error path is unchanged: `false` and the message. The payload slots a
+-- successful call would have filled stay nil, so the tuple keeps one static
+-- shape (see conformance/luau/DEVIATIONS.md).
+local failed, message = pcall(fails, 0)
+assert(failed == false)
+assert(type(message) == "string")
+checkresults({true, 5, 5, 5}, pcall(fails, 5))

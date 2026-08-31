@@ -2408,6 +2408,55 @@ fn pcall_emits_try_table_and_exception_tag() {
 }
 
 #[test]
+fn multi_result_pcall_boxes_every_success_payload_and_nils_the_rest_on_failure() {
+    let source = r#"
+        function three(a: f64, b: f64): (f64, f64, f64)
+            return a, b, 42.0
+        end
+
+        function run(): f64
+            local ok: bool, x: unknown, y: unknown, z: unknown = pcall(three, 1.0, 2.0)
+            assert(ok)
+            return x::f64 + y::f64 + z::f64
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("a multi-result protected call should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    let run = wat
+        .split("(func $run")
+        .nth(1)
+        .expect("the emitted module should contain $run");
+    assert!(
+        run.contains("try_table"),
+        "pcall should still lower to try_table:\n{run}"
+    );
+    // The failure path yields only `(false, message)`, so the payload slots
+    // past the first are cleared before the protected call runs.
+    let pre_call = run
+        .split("try_table")
+        .next()
+        .expect("split always yields a first part");
+    assert_eq!(
+        pre_call.matches("ref.null any").count(),
+        2,
+        "the second and third payload slots should be pre-cleared:\n{pre_call}"
+    );
+    // Three f64 results are boxed into the canonical `unknown` number box.
+    assert!(
+        run.matches("struct.new 2").count() >= 3,
+        "each success payload should be boxed:\n{run}"
+    );
+}
+
+#[test]
 fn dynamic_numeric_ops_emit_checked_i31_and_f64_dispatch() {
     let source = r#"
         function subtract_one(value): number

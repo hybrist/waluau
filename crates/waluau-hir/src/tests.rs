@@ -4673,6 +4673,101 @@ fn type_checks_dynamic_pcall_f32_result_as_unknown_number() {
 }
 
 #[test]
+fn types_pcall_success_payloads_as_one_unknown_per_callee_result() {
+    // `pcall(f)` is `true` followed by every result of `f`, so a callee with
+    // three results binds three payloads.
+    let program = parse(
+        r#"
+            function three(a: f64, b: f64): (f64, f64, f64)
+                return a, b, 42
+            end
+
+            function entry(): f64
+                local ok, x, y, z = pcall(three, 1, 2)
+                assert(ok)
+                return x::f64 + y::f64 + z::f64
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&program).expect("a multi-result pcall should bind every payload");
+}
+
+#[test]
+fn pcall_result_arity_follows_the_protected_callee() {
+    // The widened tuple is observable in a signature: a two-result callee
+    // makes `pcall` a three-value expression, not the two-value MVP shape.
+    let program = parse(
+        r#"
+            function two(): (f64, f64)
+                return 1, 2
+            end
+
+            function protect(): (bool, unknown, unknown)
+                return pcall(two)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&program).expect("pcall of a two-result callee returns three values");
+
+    // A narrower context truncates, as it does for any multi-value expression.
+    let narrower = parse(
+        r#"
+            function two(): (f64, f64)
+                return 1, 2
+            end
+
+            function protect(): (bool, unknown)
+                return pcall(two)
+            end
+
+            function entry(): bool
+                local ok, message = pcall(two)
+                return ok
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&narrower).expect("a narrower context drops the trailing payloads");
+
+    // A wider context is still an error: truncation never invents values.
+    let wider = parse(
+        r#"
+            function two(): (f64, f64)
+                return 1, 2
+            end
+
+            function protect(): (bool, unknown, unknown, unknown)
+                return pcall(two)
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&wider).expect_err("pcall of a two-result callee yields only three values");
+}
+
+#[test]
+fn collapses_a_multi_result_pcall_to_its_first_value_in_a_scalar_context() {
+    // The centralized truncate-except-last rule applies to the widened pcall
+    // tuple exactly as it does to any other multi-value expression.
+    let program = parse(
+        r#"
+            function three(): (f64, f64, f64)
+                return 1, 2, 3
+            end
+
+            function entry(): bool
+                local ok: bool = pcall(three)
+                return ok
+            end
+        "#,
+    )
+    .expect("parse should succeed");
+    super::type_check(&program).expect("a scalar expectation should collapse the pcall tuple");
+}
+
+#[test]
 fn preserves_recursive_local_function_scope_during_multi_binding_annotation() {
     let source = r#"
         function entry(): f64

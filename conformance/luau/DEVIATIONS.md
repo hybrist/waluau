@@ -28,8 +28,8 @@ for n in $(seq 1 25); do
 done
 ```
 
-After `waluau-h37g` completed the interpolated-string work, the directory has
-**1,091 chunks**: **426 enabled** and **665 pending**. These numbers are an exact
+After `waluau-8fxn` generalized protected-call success payloads, the directory
+has **1,091 chunks**: **427 enabled** and **664 pending**. These numbers are an exact
 filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
@@ -38,9 +38,9 @@ exclusion.
 PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
 splits can likewise change both the total and the enabled/pending counts. The
 meaningful measure remains independently passing upstream coverage. The most
-recent change is `waluau-h37g`, which enabled `stringinterp.2` and
-`stringinterp.6` and added one patched companion, moving the snapshot from
-1,090/423/667 to 1,091/426/665.
+recent change is `waluau-8fxn`, which enabled `pcall.2` and moved the snapshot
+from 1,091/426/665 to 1,091/427/664. It follows `waluau-h37g`, which enabled
+`stringinterp.2` and `stringinterp.6` and added one patched companion.
 
 ## Intentional execution-model inventory
 
@@ -378,7 +378,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **665 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **664 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -416,14 +416,14 @@ assertion range becomes independently useful.
 | `iter_fenv*` | 1 | Embedding/environment hooks |
 | `literals*` | 4 | AOT source loading and sparse tables; dynamic builtin calls `waluau-9f8d` |
 | `locals*` | 1 | AOT source loading and sparse/mixed/hash tables |
-| `math*` | 7 | AOT source loading; unknown refinement `waluau-2dow`, protected/multi-results `waluau-8fxn`, `waluau-jnyd`, `waluau-n6u8` |
+| `math*` | 7 | AOT source loading; unknown refinement `waluau-2dow`, multi-results `waluau-jnyd`, `waluau-n6u8` |
 | `move*` | 1 | Sparse/mixed/hash tables |
 | `native*` | 51 | Native/JIT and VM register layout |
 | `native_integer_spills*` | 3 | Native/JIT and VM register layout |
 | `native_types*` | 1 | Native/JIT type-observation harness |
 | `native_userdata*` | 1 | Native/JIT plus reference test userdata |
 | `ndebug_upvalues*` | 1 | Embedding/instrumentation hooks |
-| `pcall*` | 66 | Typed coroutines; multi-success `waluau-8fxn`, `xpcall` `waluau-wb7a`, protected builtins `waluau-esz6`, dynamic calls/inference `waluau-9f8d` |
+| `pcall*` | 65 | Typed coroutines; runtime-sized multi-success `waluau-d480`, `xpcall` `waluau-wb7a`, protected builtins `waluau-esz6`, dynamic calls/inference `waluau-9f8d` |
 | `pm*` | 52 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
 | `safeenv*` | 1 | Embedding/environment hooks |
 | `sort*` | 1 | AOT source loading and sparse/mixed/hash tables |
@@ -447,7 +447,7 @@ converge:
 | Open gap | Bead | Current mapped impact |
 | --- | --- | --- |
 | Unknown-typed array refinement | `waluau-2dow` | `buffers.18_untyped_table` and dynamic helper portions of `math*`; this does not authorize sparse/mixed tables |
-| Protected calls and multi-results | `waluau-8fxn`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations |
+| Protected calls and multi-results | `waluau-d480`, `waluau-u60k`, `waluau-0a42`, `waluau-wb7a`, `waluau-esz6` | `pcall.*`, `errors.*`, and pattern chunks not blocked solely by coroutine deviations. Statically sized success payloads already landed (see below); what remains is a runtime-sized result count (`waluau-d480`), the nil padding a failed multi-result call leaves behind (`waluau-u60k`), and single-payload `unknown`-typed callees (`waluau-0a42`) |
 | Multi-value call spreading and runtime unpack | `waluau-jnyd`, `waluau-zxju`, `waluau-n6u8` | Vararg/unpack call sites that do not require sparse packs |
 | Dynamic calls and recursive inference | `waluau-9f8d` | Ordinary `assert`, `basic`, `calls`, `closure`, `constructs`, `errors`, `literals`, `pcall`, and `strings` chunks after intentional blockers are split away |
 | String/number coercion and pattern replacements | `waluau-dbyy` | Remaining `pm.*` cases after protected-call and parser gaps, plus `bitwise.{14,15}` |
@@ -476,13 +476,15 @@ multi-results through nested vararg calls enabled `pcall.1` and `pcall.4` in
 and enabled the last seven `strconv` chunks, so that family no longer appears
 above. Luau's modulo-2^32 `bit32` argument rule for wide, negative, and
 `unknown`-typed operands enabled `bitwise.{2,3,6,17,20,21,23}` in
-`waluau-rndq`. Earlier children also enabled scientific notation, surplus
-fixed-call arguments, bit32 intrinsics, large `%f` formatting, missing
-multi-binding nil padding, chained if expressions, and many passing split
-ranges. `waluau-h37g` closed the interpolation work: `table.concat` now joins
-numeric arrays through the same `tostring` formatting Luau uses, `\ ` lexes as
-an escaped space, and the two remaining `stringinterp` chunks are documented
-language decisions rather than gaps.
-When another fix lands, recompile the affected pending chunks, split
+`waluau-rndq`. Multi-value protected-call success payloads landed in
+`waluau-8fxn`: `pcall(f)` is `true` followed by one boxed payload per
+statically known result of `f`, which enabled `pcall.2`. Earlier children also
+enabled scientific notation, surplus fixed-call arguments, bit32 intrinsics,
+large `%f` formatting, missing multi-binding nil padding, chained if
+expressions, and many passing split ranges. `waluau-h37g` closed the
+interpolation work: `table.concat` now joins numeric arrays through the same
+`tostring` formatting Luau uses, `\ ` lexes as an escaped space, and the two
+remaining `stringinterp` chunks are documented language decisions rather than
+gaps. When another fix lands, recompile the affected pending chunks, split
 independent sections where necessary, and update this inventory rather than
 preserving an obsolete failure reason.

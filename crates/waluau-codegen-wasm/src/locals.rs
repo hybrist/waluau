@@ -468,8 +468,10 @@ pub(crate) fn infer_value_types(
                     .clone(),
                 IrInstruction::HostCall { return_type, .. } => return_type.clone(),
                 IrInstruction::CallValue { return_type, .. } => return_type.clone(),
-                IrInstruction::ProtectedCall { .. }
-                | IrInstruction::ProtectedCallUnknown { .. } => {
+                IrInstruction::ProtectedCall { return_type, .. } => {
+                    Type::protected_call_result(return_type)
+                }
+                IrInstruction::ProtectedCallUnknown { .. } => {
                     Type::Multi(vec![Type::Bool, Type::Unknown])
                 }
                 IrInstruction::CoroutineCreate { .. } => Type::Thread,

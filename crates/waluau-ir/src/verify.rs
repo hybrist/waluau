@@ -1824,7 +1824,10 @@ fn infer_instruction_type(
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
         Instruction::HostCall { return_type, .. } => Ok(return_type.clone()),
         Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
-        Instruction::ProtectedCall { .. } | Instruction::ProtectedCallUnknown { .. } => {
+        Instruction::ProtectedCall { return_type, .. } => {
+            Ok(Type::protected_call_result(return_type))
+        }
+        Instruction::ProtectedCallUnknown { .. } => {
             Ok(Type::Multi(vec![Type::Bool, Type::Unknown]))
         }
         Instruction::CoroutineCreate { .. } => Ok(Type::Thread),

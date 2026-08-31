@@ -9127,6 +9127,29 @@ impl Builder<'_> {
                 });
                 self.coerce_value(first, first_ty, Some(expected))
             }
+            // Multi-value adjustment at tuple width: read the values the
+            // context asked for and repack, dropping the rest.
+            Some(Type::Multi(expected_parts))
+                if multi_truncates_to(&actual, &expected_parts) =>
+            {
+                let Type::Multi(actual_parts) = actual else {
+                    unreachable!()
+                };
+                let mut values = Vec::with_capacity(expected_parts.len());
+                let mut types = Vec::with_capacity(expected_parts.len());
+                for (index, (actual_ty, expected_ty)) in
+                    actual_parts.into_iter().zip(expected_parts).enumerate()
+                {
+                    let part = self.emit(Instruction::MultiGet {
+                        value,
+                        index,
+                        ty: actual_ty.clone(),
+                    });
+                    types.push(coerce_type(actual_ty.clone(), Some(expected_ty.clone()))?);
+                    values.push(self.coerce_value(part, actual_ty, Some(expected_ty))?);
+                }
+                Ok(self.emit(Instruction::PackMulti { values, types }))
+            }
             // Nullable truthiness: non-nil is true.
             Some(Type::Bool) if matches!(actual, Type::Nullable(_)) => {
                 let inner = actual.nullable_inner().expect("checked nullable");
@@ -9700,17 +9723,15 @@ impl Builder<'_> {
             Ok(args) => args,
             Err(error) => return Some(Err(error)),
         };
+        let return_type = Arc::unwrap_or_clone(return_type);
+        let result_ty = Type::protected_call_result(&return_type);
         let value = self.emit(Instruction::ProtectedCall {
             callee,
             args: lowered_args,
             params,
-            return_type: Arc::unwrap_or_clone(return_type),
+            return_type,
         });
-        Some(self.coerce_value(
-            value,
-            Type::Multi(vec![Type::Bool, Type::Unknown]),
-            expected,
-        ))
+        Some(self.coerce_value(value, result_ty, expected))
     }
 
     /// Box all arguments to a dynamic `pcall` into one runtime-sized pack.
@@ -10004,7 +10025,11 @@ impl Builder<'_> {
                 expected,
             ));
         }
-        let Type::Function { params, .. } = callee_ty.clone()
+        let Type::Function {
+            params,
+            return_type,
+            ..
+        } = callee_ty.clone()
         else {
             return Some(Err(Diagnostic::new(format!(
                 "{PCALL} expects a function, got {callee_ty}"
@@ -10026,7 +10051,7 @@ impl Builder<'_> {
             }
         }
         Some(coerce_type(
-            Type::Multi(vec![Type::Bool, Type::Unknown]),
+            Type::protected_call_result(&return_type),
             expected,
         ))
     }
@@ -15569,6 +15594,23 @@ fn call_arity_matches(params: &[Type], actual: usize) -> bool {
     actual >= required_param_count(params)
 }
 
+/// Whether a multi-value result adjusts to a narrower multi-value context by
+/// dropping its trailing values. Packs (`Variadic`) forward a runtime-sized
+/// pack and keep their own expansion rules, so they never truncate here.
+/// Mirrors `multi_truncates_to` in waluau-hir.
+fn multi_truncates_to(actual: &Type, expected_parts: &[Type]) -> bool {
+    let Type::Multi(actual_parts) = actual else {
+        return false;
+    };
+    actual_parts.len() > expected_parts.len()
+        && !actual_parts
+            .iter()
+            .any(|ty| matches!(ty, Type::Variadic(_)))
+        && !expected_parts
+            .iter()
+            .any(|ty| matches!(ty, Type::Variadic(_)))
+}
+
 fn type_record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
@@ -15611,6 +15653,19 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
                 ));
             }
             coerce_type(parts.remove(0), Some(expected))
+        }
+        // The same adjustment at tuple width: a multi-value expression wider
+        // than its context drops the trailing values.
+        Some(Type::Multi(expected_parts)) if multi_truncates_to(&actual, &expected_parts) => {
+            let Type::Multi(actual_parts) = actual else {
+                unreachable!()
+            };
+            actual_parts
+                .into_iter()
+                .zip(expected_parts)
+                .map(|(actual_ty, expected_ty)| coerce_type(actual_ty, Some(expected_ty)))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Type::Multi)
         }
         // Nullable values are truthy exactly when non-nil, so they coerce to
         // bool in condition positions.
