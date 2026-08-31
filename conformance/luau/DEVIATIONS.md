@@ -28,9 +28,9 @@ for n in $(seq 1 25); do
 done
 ```
 
-After `waluau-8fxn` generalized protected-call success payloads, the directory
-has **1,091 chunks**: **427 enabled** and **664 pending**. These numbers are an exact
-filesystem snapshot, not a target. Run
+After `waluau-9f8d.2` generalized builtin intrinsic references to first-class
+values, the directory has **1,091 chunks**: **433 enabled** and **658 pending**.
+These numbers are an exact filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
 exclusion.
@@ -38,9 +38,9 @@ exclusion.
 PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
 splits can likewise change both the total and the enabled/pending counts. The
 meaningful measure remains independently passing upstream coverage. The most
-recent change is `waluau-8fxn`, which enabled `pcall.2` and moved the snapshot
-from 1,091/426/665 to 1,091/427/664. It follows `waluau-h37g`, which enabled
-`stringinterp.2` and `stringinterp.6` and added one patched companion.
+recent change is `waluau-9f8d.2`, which enabled `pm.85`, `pm.97`, `pm.98`, and
+`pm.100`-`pm.102` and moved the snapshot from 1,091/427/664 to 1,091/433/658. It
+follows `waluau-8fxn`, which enabled `pcall.2`.
 
 ## Intentional execution-model inventory
 
@@ -378,7 +378,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **664 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **658 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -424,7 +424,7 @@ assertion range becomes independently useful.
 | `native_userdata*` | 1 | Native/JIT plus reference test userdata |
 | `ndebug_upvalues*` | 1 | Embedding/instrumentation hooks |
 | `pcall*` | 65 | Typed coroutines; runtime-sized multi-success `waluau-d480`, `xpcall` `waluau-wb7a`, protected builtins `waluau-esz6`, dynamic calls/inference `waluau-9f8d` |
-| `pm*` | 52 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
+| `pm*` | 46 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
 | `safeenv*` | 1 | Embedding/environment hooks |
 | `sort*` | 1 | AOT source loading and sparse/mixed/hash tables |
 | `stringinterp*` | 2 | [Static lexical names](#static-lexical-names-and-module-environments) (`stringinterp.4`) and [reserved primitive type keywords](#reserved-primitive-type-keywords) (`stringinterp.8`) |
@@ -470,7 +470,9 @@ the explicit conversion until then.
 Completed work is reflected rather than left in the open-gap table: mutable
 buffers have 22 enabled chunks; deterministic typed math and exact
 `math.noise` ranges are enabled; builtin functions as values landed in
-`waluau-390t`; dense-array `ipairs` landed in `waluau-uxuf`; fixed
+`waluau-390t`, extended to compiler intrinsics with a representable fixed-arity
+signature in `waluau-9f8d.2`, which enabled `pm.85`, `pm.97`, `pm.98`, and
+`pm.100`-`pm.102`; dense-array `ipairs` landed in `waluau-uxuf`; fixed
 multi-results through nested vararg calls enabled `pcall.1` and `pcall.4` in
 `waluau-sdc0`. Shortest-round-trip numeric `tostring` landed in `waluau-9wf5`
 and enabled the last seven `strconv` chunks, so that family no longer appears

@@ -38,6 +38,7 @@ impl CompilerTimer {
 mod builtins;
 mod conformance;
 mod expressions;
+pub mod intrinsic_values;
 mod numeric;
 mod signatures;
 mod statements;

@@ -4796,3 +4796,88 @@ fn lowers_compiler_builtin_values_through_typed_adapters() {
         })
     }));
 }
+
+#[test]
+fn lowers_string_and_table_intrinsic_values_through_typed_adapters() {
+    let source = r#"
+        declare function string_upper(value: string): string
+
+        function entry(): string
+            local upper: (string) -> string = string.upper
+            local insert: ({string}, string) -> unit = table.insert
+            local words: {string} = {}
+            insert(words, upper("ok"))
+            return words[1]
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let adapters = module
+        .functions
+        .iter()
+        .filter(|function| function.name.contains("$builtin_value$"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        adapters.len(),
+        2,
+        "each intrinsic value site gets one zero-capture adapter"
+    );
+    assert!(
+        adapters.iter().all(|function| function.capture_count == 0),
+        "intrinsic adapters capture nothing"
+    );
+}
+
+#[test]
+fn direct_intrinsic_calls_do_not_synthesize_an_adapter() {
+    let source = r#"
+        declare function string_upper(value: string): string
+        declare function string_sub(value: string, first: i32, last: i32): string
+
+        function entry(): string
+            local words: {string} = {}
+            table.insert(words, string.upper("ok"))
+            return string.sub(words[1], 1, 1)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    assert!(
+        !module
+            .functions
+            .iter()
+            .any(|function| function.name.contains("$builtin_value$")),
+        "a direct call keeps its intrinsic lowering"
+    );
+}
+
+#[test]
+fn lowers_protected_intrinsic_calls_through_the_general_value_path() {
+    let source = r#"
+        declare function string_rep(value: string, count: i32, separator: string): string
+
+        function entry(): bool
+            local ok, _text = pcall(string.rep, "a", 3)
+            local caught, _err = pcall(error, "boom")
+            local failed, _value = pcall(assert, false)
+            return ok and not caught and not failed
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let adapters = module
+        .functions
+        .iter()
+        .filter(|function| function.name.contains("$builtin_value$"))
+        .count();
+    assert_eq!(adapters, 3, "every protected intrinsic gets an adapter");
+}

@@ -43,7 +43,7 @@ const expectedPendingByFamily = {
   native_userdata: 1,
   ndebug_upvalues: 1,
   pcall: 65,
-  pm: 52,
+  pm: 46,
   safeenv: 1,
   sort: 1,
   stringinterp: 2,
@@ -234,8 +234,8 @@ for (const file of pending) {
 }
 
 assert.equal(files.length, 1091, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(pending.length, 664, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(files.length - pending.length, 427, 'enabled Luau chunk count changed');
+assert.equal(pending.length, 658, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(files.length - pending.length, 433, 'enabled Luau chunk count changed');
 assert.deepEqual(actualPendingByFamily, expectedPendingByFamily, 'pending family counts changed');
 assert.deepEqual(
   documentedFamilies.sort(),
