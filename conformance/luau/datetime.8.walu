@@ -1,0 +1,22 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/datetime.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- These os.time calls pass a calendar table, which browser os.time does not
+-- accept: a declared host import carries primitives, not records. Waluau's
+-- surplus-fixed-argument rule keeps the calls compiling, so they read the
+-- current instant and the assertions fail at runtime. See DEVIATIONS.md,
+-- "Browser clocks and calendar values". os.difftime itself is supported and
+-- covered by conformance/os_date_time.walu.
+--
+-- Split from conformance/luau/datetime.walu in original source order.
+-- Upstream source lines 100-106, the tail of the file.
+
+local t1 = os.time{year=2000, month=10, day=1, hour=23, min=12}
+local t2 = os.time{year=2000, month=10, day=1, hour=23, min=10, sec=19}
+assert(os.difftime(t1,t2) == 60*2-19)
+
+assert(os.time({ year = 1970, day = 1, month = 1, hour = 0}) == 0)
+
+return 'OK'

@@ -148,7 +148,7 @@ fn is_internal_name(name: &str) -> bool {
 }
 
 /// Definitions from the builtin declaration files that ship inside the
-/// compiler (`builtins/core.walu`, `builtins/math.walu`).
+/// compiler (`builtins/core.walu`, `builtins/math.walu`, `builtins/os.walu`).
 fn prelude_definitions() -> &'static [DefinitionSite] {
     static PRELUDE: OnceLock<Vec<DefinitionSite>> = OnceLock::new();
     PRELUDE.get_or_init(|| {
@@ -162,6 +162,7 @@ fn prelude_definitions() -> &'static [DefinitionSite] {
                 "builtin:math.walu",
                 include_str!("../../../builtins/math.walu"),
             ),
+            ("builtin:os.walu", include_str!("../../../builtins/os.walu")),
         ] {
             definitions.extend(waluau_parser::parse_with_recovery(source, name).definitions);
         }
