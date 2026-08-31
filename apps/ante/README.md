@@ -404,6 +404,15 @@ The deployed game carries its storybook with it, at `/storybook`:
 Vercel build runs it after the game's own `vite build` so one deployment serves
 both.
 
+Stories are the one kind of Waluau source nothing else reaches — `project.js`
+globs them out of the production module set, and neither test suite imports
+them — so they are gated twice. `./check` compiles each story on its own
+through [`tools/check-stories.mjs`](../../tools/check-stories.mjs), which is
+what catches a story left behind by a change to a shared type, and the Ante
+workflow runs the real `build-storybook`, which catches what that pass never
+loads: the story glob, the framework options, the shader source list. Before
+both existed, a broken story was first seen by a failing deploy.
+
 Every Ante story supplies a retained `ui.Node` to
 [`src/ui/story.walu`](src/ui/story.walu). The story module loads the
 same presentation surface as the game and makes the Storybook canvas a centred

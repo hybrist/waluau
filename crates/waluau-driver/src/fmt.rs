@@ -124,10 +124,15 @@ fn collect_walu_files(
 ) -> Result<(), Diagnostic> {
     let meta =
         std::fs::metadata(path).map_err(|e| Diagnostic::new(format!("{}: {e}", path.display())))?;
+    // `.waluau` is this compiler's own per-project cache of expanded package
+    // sources. Descending into it means offering to reformat generated code
+    // that will be overwritten on the next build, and — because `--check`
+    // fails on anything unformatted — it makes the formatting gate fail for
+    // anyone who has built a project before running it.
     if meta.is_dir()
         && matches!(
             path.file_name().and_then(|name| name.to_str()),
-            Some(".git" | "node_modules" | "target")
+            Some(".git" | ".waluau" | "node_modules" | "target")
         )
     {
         return Ok(());
