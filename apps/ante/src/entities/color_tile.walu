@@ -6,6 +6,7 @@ local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
 local card = require("./card")
+local plate = require("../plate")
 
 const WIDTH: f64 = 136.0
 const HEIGHT: f64 = 76.0
@@ -33,9 +34,19 @@ function Stateful.new(suit: i32): Stateful
             graphics:set_color("#17171c")
             graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
             ink.stop_effect(graphics)
-            graphics:set_color(ink.color_ink(suit))
-            graphics:set_line_width(1.5)
-            graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            -- The frame is the swatch's edge seen from outside, so it follows
+            -- the same light the rest of the legend's chrome does: brighter
+            -- along the top rail than the bottom one. The colour's own field
+            -- is already running under it and stays untouched.
+            plate.border(
+                graphics,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                ink.color_ink(suit),
+                1.5
+            )
             card.draw_sigil(surface, suit, center - 11.0, bounds.y + SIGIL_DROP)
             ink.text_centered(
                 graphics,
