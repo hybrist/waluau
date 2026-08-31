@@ -15,6 +15,7 @@ local spell_launch = require("../spell_launch")
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
+local plate = require("../plate")
 
 const SLOT_COUNT: i32 = 4
 const WIDTH: f64 = 124.0
@@ -33,13 +34,34 @@ const NAME_SIZE: f64 = 7.0
 const COST_SIZE: f64 = 6.0
 
 const SLOT_FILL: string = "#17171c"
-const EMPTY_EDGE: string = "#3f3f46"
+const EMPTY_EDGE: string = "#34343c"
 const EMPTY_INK: string = "#52525b"
 const SPENT_EDGE: string = "#52525b"
 const SPENT_INK: string = "#8a8a92"
 const KEY_FILL: string = "#09090b"
 const KEY_INK: string = "#e4e4e7"
 const CONNECTOR_INK: string = "#27272a"
+
+-- The rail joining the four sockets is a channel milled into the plate, not a
+-- line: a wide dark groove with a hairline of light along its upper lip.
+const CHANNEL_INK: string = "#1c1c23"
+const CHANNEL_WIDTH: f64 = 5.0
+const CHANNEL_LIGHT: string = "#43434f"
+const CHANNEL_LIGHT_WIDTH: f64 = 1.0
+const CHANNEL_LIFT: f64 = 1.2
+
+-- The socket itself: a bezel ring domed toward the light, a floor cut into
+-- the plate, and — when the ability is ready and paid for — a halo the colour
+-- of the school it belongs to.
+const BEZEL_RIM: f64 = 1.18
+const BEZEL_CROWN: f64 = 0.30
+const FLOOR_RIM: f64 = 1.25
+const FLOOR_DEEP: f64 = 0.55
+const HALO_RINGS: i32 = 5
+const HALO_REACH: f64 = 9.0
+const HALO_STRENGTH: f64 = 0.26
+const KEY_RIM: f64 = 1.25
+const KEY_CROWN: f64 = 0.34
 
 -- Loadout order follows the comfortable face-button order: primary at South,
 -- then West, North, and East. Keeping this mapping here makes the visual
@@ -102,8 +124,6 @@ end
 
 function draw_connector(surface: ui.Surface, bounds: box.Rect): unit
     local graphics = surface.graphics
-    graphics:set_color(CONNECTOR_INK)
-    graphics:set_line_width(2.0)
     local north_x: f64 = bounds.x + slot_x(2)
     local north_y: f64 = bounds.y + slot_y(2)
     local west_x: f64 = bounds.x + slot_x(1)
@@ -112,10 +132,21 @@ function draw_connector(surface: ui.Surface, bounds: box.Rect): unit
     local south_y: f64 = bounds.y + slot_y(0)
     local east_x: f64 = bounds.x + slot_x(3)
     local east_y: f64 = bounds.y + slot_y(3)
+    graphics:set_color(CHANNEL_INK)
+    graphics:set_line_width(CHANNEL_WIDTH)
     graphics:line(north_x, north_y, west_x, west_y)
     graphics:line(west_x, west_y, south_x, south_y)
     graphics:line(south_x, south_y, east_x, east_y)
     graphics:line(east_x, east_y, north_x, north_y)
+    -- The lip: the same four rails struck a hair above the groove, which is
+    -- where a channel cut into a lit plate catches the light.
+    graphics:set_color(CHANNEL_LIGHT)
+    graphics:set_line_width(CHANNEL_LIGHT_WIDTH)
+    graphics:line(north_x, north_y - CHANNEL_LIFT, west_x, west_y - CHANNEL_LIFT)
+    graphics:line(west_x, west_y - CHANNEL_LIFT, south_x, south_y - CHANNEL_LIFT)
+    graphics:line(south_x, south_y - CHANNEL_LIFT, east_x, east_y - CHANNEL_LIFT)
+    graphics:line(east_x, east_y - CHANNEL_LIFT, north_x, north_y - CHANNEL_LIFT)
+    graphics:set_color(CONNECTOR_INK)
 end
 
 function draw_slot(surface: ui.Surface, state: game.View, bounds: box.Rect, slot: i32): unit
@@ -125,22 +156,37 @@ function draw_slot(surface: ui.Surface, state: game.View, bounds: box.Rect, slot
     local occupied: bool = slot < #state.spells
     local edge: string = EMPTY_EDGE
     local caption: string = EMPTY_INK
+    -- Whether this socket is lit: it holds a spell the run can currently pay
+    -- for. Tracked alongside the colour rather than read back off it, so a
+    -- school whose colour matched the spent grey would still glow.
+    local lit: bool = false
     if occupied then
         local spell: game.Spell = state.spells[slot + 1]
         edge = spell_launch.color(spell.kind)
         caption = edge
+        lit = true
         if state.player_points < spell.cost then
             edge = SPENT_EDGE
             caption = SPENT_INK
+            lit = false
         end
     end
 
-    -- A filled outer circle plus an inset circle gives a reliable ring with
-    -- the same WebGL2 primitives the rest of the HUD uses.
+    -- A ready ability is lit from inside its own socket, so the school's
+    -- colour reaches the plate around it before the bezel is drawn. An empty
+    -- or unaffordable socket is dark metal and gets no halo at all.
+    if lit then
+        graphics:set_color(edge)
+        plate.halo(graphics, x, y, SLOT_RADIUS, SLOT_RADIUS + HALO_REACH, HALO_RINGS, HALO_STRENGTH)
+    end
+
+    -- The bezel is a raised ring and the floor a cut one: a dome in the edge
+    -- colour with a well sunk into it. Two curved surfaces lit from the same
+    -- side give the socket a depth the old flat ring could only outline.
     graphics:set_color(edge)
-    graphics:fill_circle(x, y, SLOT_RADIUS)
+    plate.dome(graphics, x, y, SLOT_RADIUS, BEZEL_RIM, BEZEL_CROWN)
     graphics:set_color(SLOT_FILL)
-    graphics:fill_circle(x, y, SLOT_RADIUS - SLOT_INSET)
+    plate.well(graphics, x, y, SLOT_RADIUS - SLOT_INSET, FLOOR_RIM, FLOOR_DEEP)
 
     if occupied then
         local spell: game.Spell = state.spells[slot + 1]
@@ -169,9 +215,9 @@ function draw_slot(surface: ui.Surface, state: game.View, bounds: box.Rect, slot
     local key_x: f64 = x - KEY_OFFSET
     local key_y: f64 = y - KEY_OFFSET
     graphics:set_color(edge)
-    graphics:fill_circle(key_x, key_y, KEY_RADIUS)
+    plate.dome(graphics, key_x, key_y, KEY_RADIUS, KEY_RIM, KEY_CROWN)
     graphics:set_color(KEY_FILL)
-    graphics:fill_circle(key_x, key_y, KEY_RADIUS - 1.5)
+    plate.well(graphics, key_x, key_y, KEY_RADIUS - 1.5, KEY_RIM, KEY_CROWN)
     ink.text_centered(
         graphics,
         tostring(slot + 1),

@@ -5,6 +5,7 @@
 -- together behind that seam.
 local render = require("./render")
 local ink = require("./ink")
+local plate = require("./plate")
 local spell_launch = require("./spell_launch")
 local spells = require("./spells/spell")
 local city_map = require("./city_map")
@@ -53,6 +54,22 @@ const BACK_INSET: f64 = 16.0
 const ITEM_W: f64 = 380.0
 const ITEM_H: f64 = 52.0
 const ITEM_PITCH: f64 = 60.0
+
+-- The selection glow: how far it stands off the plate at rest, how much
+-- further the breath carries it, and how many rings it is drawn in.
+const SELECT_INK: string = "#fbbf24"
+const SELECT_REACH: f64 = 6.0
+const SELECT_SWELL: f64 = 5.0
+const SELECT_RINGS: i32 = 6
+const SELECT_STRENGTH: f64 = 0.55
+
+-- The four school orbs under the title.
+const ORB_RADIUS: f64 = 6.0
+const ORB_GLOW: f64 = 9.0
+const ORB_RINGS: i32 = 5
+const ORB_STRENGTH: f64 = 0.40
+const ORB_RIM: f64 = 0.75
+const ORB_CROWN: f64 = 1.45
 
 function title_y(viewport: viewport_layout.State): f64
     return viewport.height * 0.3533333333
@@ -114,14 +131,21 @@ function draw_item(
     if index == model.cursor then
         edge = "#fbbf24"
         tone = "#fbbf24"
-        local grow: f64 = 4.0 + math.sin(model.clock * 2.4) * 2.5
-        graphics:set_color("#fbbf24")
-        graphics:set_line_width(1.0)
-        graphics:stroke_rectangle(
-            bounds.x - grow,
-            bounds.y - grow,
-            bounds.width + grow * 2.0,
-            bounds.height + grow * 2.0
+        -- The selection breathes as a glow standing off the plate rather than
+        -- as one hairline creeping in and out. Both the reach and the strength
+        -- ride the same breath, so the pulse is the light changing rather than
+        -- a line moving.
+        local breath: f64 = 0.5 + math.sin(model.clock * 2.4) * 0.5
+        graphics:set_color(SELECT_INK)
+        plate.aura(
+            graphics,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            SELECT_REACH + breath * SELECT_SWELL,
+            SELECT_RINGS,
+            SELECT_STRENGTH * (0.65 + breath * 0.35)
         )
     end
     ink.panel(graphics, bounds.x, bounds.y, bounds.width, bounds.height, "#17171c", edge)
@@ -221,9 +245,23 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
         12,
         "#d4d4d8"
     )
+    -- The four schools under the title are lit orbs, not dots: each one glows
+    -- into the field around it and is domed toward the same light the rest of
+    -- the menu's chrome is lit by.
     for i = 0::i32, 3::i32 do
+        local orb_x: f64 = viewport.center_x - 54.0 + (i::f64) * 36.0
+        local orb_y: f64 = heading_y + 70.0
         graphics:set_color(ink.color_ink(i))
-        graphics:fill_circle(viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
+        plate.halo(
+            graphics,
+            orb_x,
+            orb_y,
+            ORB_RADIUS,
+            ORB_RADIUS + ORB_GLOW,
+            ORB_RINGS,
+            ORB_STRENGTH
+        )
+        plate.dome(graphics, orb_x, orb_y, ORB_RADIUS, ORB_RIM, ORB_CROWN)
     end
 
     local detail_y: f64 = item_start_y(viewport) + (ITEM_COUNT::f64) * ITEM_PITCH + 16.0

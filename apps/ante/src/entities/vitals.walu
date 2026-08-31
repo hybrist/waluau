@@ -1,0 +1,169 @@
+-- What the run has left to spend, in the board's bottom-left corner: the
+-- hearts it can still lose and the gold it is carrying.
+--
+-- Both used to be a line of text — "HEARTS 3 / 3" and "GOLD 10" — which is the
+-- one place in the duel where a resource was spelled rather than shown. A
+-- heart that has been spent is now a hollow the shape of the one beside it,
+-- and the pool is a struck coin, so the corner reads at a glance and at the
+-- same distance the rest of the board does.
+local game = require("../game")
+local run_module = require("../run")
+local box = require("../ui/layout")
+local ui = require("../ui/node")
+local ink = require("../ink")
+local plate = require("../plate")
+
+const PIP_WIDTH: f64 = 15.0
+const PIP_PITCH: f64 = 19.0
+const ROW_HEIGHT: f64 = 20.0
+
+const HEART_INK: string = "#fb7185"
+const HEART_GLOW: f64 = 7.0
+const HEART_RINGS: i32 = 4
+const HEART_STRENGTH: f64 = 0.32
+const SPENT_INK: string = "#3a2a30"
+const SPENT_HOLLOW: string = "#131317"
+
+const COIN_RADIUS: f64 = 8.0
+const COIN_INK: string = "#67e8f9"
+const COIN_FACE: string = "#0d3d47"
+const COIN_RIM: f64 = 0.62
+const COIN_CROWN: f64 = 1.45
+const COUNT_SIZE: f64 = 11.0
+const COUNT_GAP: f64 = 8.0
+
+-- A heart at a width, drawn as its two lobes and the point below them. The
+-- lobes are domes so the light lands on their upper left; the point is one
+-- triangle shaded from the same side, which keeps the two halves reading as
+-- one solid body rather than as three shapes that happen to touch.
+function draw_heart(
+    graphics: ui.Graphics,
+    center_x: f64,
+    center_y: f64,
+    width: f64,
+    color: string,
+    rim: f64,
+    crown: f64
+): unit
+    local lobe: f64 = width * 0.27
+    local lobe_y: f64 = center_y - width * 0.12
+    graphics:set_color(color)
+    plate.shaded_triangle(
+        graphics,
+        center_x - width * 0.5,
+        center_y - width * 0.07,
+        crown,
+        center_x + width * 0.5,
+        center_y - width * 0.07,
+        rim,
+        center_x,
+        center_y + width * 0.45,
+        rim
+    )
+    plate.dome(graphics, center_x - width * 0.23, lobe_y, lobe, rim, crown)
+    plate.dome(graphics, center_x + width * 0.23, lobe_y, lobe, rim, crown)
+end
+
+function draw_pip(graphics: ui.Graphics, center_x: f64, center_y: f64, held: bool): unit
+    if held then
+        graphics:set_color(HEART_INK)
+        plate.halo(
+            graphics,
+            center_x,
+            center_y,
+            PIP_WIDTH * 0.42,
+            PIP_WIDTH * 0.42 + HEART_GLOW,
+            HEART_RINGS,
+            HEART_STRENGTH
+        )
+        draw_heart(graphics, center_x, center_y, PIP_WIDTH, HEART_INK, 0.66, 1.30)
+        return
+    end
+    -- A spent heart keeps its own outline and loses its body, so the row still
+    -- says how many the run started with.
+    draw_heart(graphics, center_x, center_y, PIP_WIDTH, SPENT_INK, 1.0, 1.0)
+    draw_heart(graphics, center_x, center_y - 0.5, PIP_WIDTH - 3.0, SPENT_HOLLOW, 1.0, 1.0)
+end
+
+function draw_hearts(graphics: ui.Graphics, bounds: box.Rect, held: i32, most: i32): unit
+    local center_y: f64 = bounds.y + ROW_HEIGHT * 0.5
+    for pip = 0::i32, most - 1 do
+        draw_pip(
+            graphics,
+            bounds.x + PIP_WIDTH * 0.5 + (pip::f64) * PIP_PITCH,
+            center_y,
+            pip < held
+        )
+    end
+end
+
+-- The pool as a struck coin: a domed blank with its face sunk into it and the
+-- count beside it, which is the same two-surface reading the ability sockets
+-- use one corner away.
+function draw_purse(graphics: ui.Graphics, bounds: box.Rect, gold: i32): unit
+    local center_x: f64 = bounds.x + COIN_RADIUS
+    local center_y: f64 = bounds.y + ROW_HEIGHT * 0.5
+    graphics:set_color(COIN_INK)
+    plate.dome(graphics, center_x, center_y, COIN_RADIUS, COIN_RIM, COIN_CROWN)
+    graphics:set_color(COIN_FACE)
+    plate.well(graphics, center_x, center_y, COIN_RADIUS - 2.2, 1.35, 0.62)
+    ink.text_centered(
+        graphics,
+        "$",
+        center_x,
+        center_y + COUNT_SIZE * 0.34,
+        COUNT_SIZE - 2.0,
+        COIN_INK
+    )
+    ink.text(
+        graphics,
+        tostring(gold),
+        center_x + COIN_RADIUS + COUNT_GAP,
+        center_y + COUNT_SIZE * 0.38,
+        COUNT_SIZE,
+        COIN_INK
+    )
+end
+
+type VitalsPresentation = { hearts: i32, max_hearts: i32, gold: i32 }
+export type Stateful = { presentation: VitalsPresentation, root: ui.Node }
+
+function Stateful.new(state: game.View, run: run_module.View): Stateful
+    local presentation: VitalsPresentation = {
+        hearts = run.hearts,
+        max_hearts = run.max_hearts,
+        gold = state.player_points
+    }
+    -- The heart row is as wide as the hearts the run may hold, not as wide as
+    -- the ones it still has, so losing one does not shift the corner.
+    local hearts_row: ui.Node = ui.Node.sized(
+        PIP_PITCH * (presentation.max_hearts::f64),
+        ROW_HEIGHT,
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            draw_hearts(surface.graphics, bounds, presentation.hearts, presentation.max_hearts)
+        end
+    )
+    local purse_row: ui.Node = ui.Node.sized(
+        COIN_RADIUS * 2.0 + COUNT_GAP + 44.0,
+        ROW_HEIGHT,
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            draw_purse(surface.graphics, bounds, presentation.gold)
+        end
+    )
+    return {
+        presentation = presentation,
+        root = ui.Node.down({ gap = 2.0, align = "start" }, {hearts_row, purse_row})
+    }
+end
+
+function Stateful:present(state: game.View, run: run_module.View): unit
+    self.presentation.hearts = run.hearts
+    self.presentation.max_hearts = run.max_hearts
+    self.presentation.gold = state.player_points
+end
+
+function node(state: game.View, run: run_module.View): ui.Node
+    return Stateful.new(state, run).root
+end
+
+return { node = node, draw_heart = draw_heart, pip_width = PIP_WIDTH, row_height = ROW_HEIGHT }

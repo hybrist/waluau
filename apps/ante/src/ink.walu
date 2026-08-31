@@ -4,6 +4,7 @@
 -- has, which is what an entity's paint uses once layout has told it where it
 -- is standing.
 local engine = require("waluau:engine")
+local plate = require("./plate")
 
 type Graphics = engine.Graphics
 
@@ -63,11 +64,7 @@ function panel(
     fill: string,
     edge: string
 ): unit
-    graphics:set_color(fill)
-    graphics:fill_rectangle(x, y, width, height)
-    graphics:set_color(edge)
-    graphics:set_line_width(2.0)
-    graphics:stroke_rectangle(x, y, width, height)
+    plate.draw(graphics, x, y, width, height, fill, edge, 2.0)
 end
 
 -- Back to the default program. Every effect binding is a borrow, and this is

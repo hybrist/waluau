@@ -234,6 +234,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `ui/story.walu` | The retained-story boundary: load the presentation surface and place one stable node at the centre of a flex stage. |
 | `entities/` | One file per thing on the board — see the entity table below. |
 | `ink.walu` | The drawing vocabulary entities share: type, panels, school colours, and the one fade a screen is taken down by. |
+| `plate.walu` | The material the vault is built from: lit faces, etched borders, domes, wells, halos, and the ramps they are made of. |
 | `easing.walu` | The four curves the board moves on. |
 | `card_burn.walu` | How a card comes apart: the captured sheet, the advancing front, and the ash that peels off it. |
 | `render.walu` | The board, composed: which entities are on it this frame, which band each gets, and the cards in flight between them. |
@@ -261,6 +262,31 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
+
+## Materials
+
+Ante is lit from one direction. Everything drawn by the game — a chip, a modal
+page, an ability socket, a rooftop on the city map — is a surface under that
+light rather than an outline of one, and the vocabulary for saying so lives in
+[`src/plate.walu`](src/plate.walu).
+
+A **plate** is the shape the chrome is cut from: a face carrying a vertical
+gradient, a hairline highlight along its top inside edge and a shadow along its
+bottom, and a border drawn as four rails so the lit side is brighter than the
+shaded one. A page-sized plate also carries corner brackets. `ink.panel` is a
+plate, so every panel in the game is one without asking.
+
+Curved surfaces are stacks of circles whose centres drift against the light,
+which is what makes them directional: **dome** for a cap that catches the light
+at its top left, **well** for a socket cut into a plate whose lit crescent
+collects along its lower wall. **halo** and **aura** put a colour into the space
+around a shape, which is how the game says ready, reached, or selected.
+
+Two ramps underneath all of it: `shaded_rectangle` names a brightness at each of
+the four corners, and `veil_rectangle` names an opacity instead. The difference
+matters — a shade ramp darkens what it draws, where a veil lets what is already
+underneath show through, so a vignette or a shadow that thins out has to be the
+second one.
 
 ## Retained UI
 
@@ -302,8 +328,9 @@ scopes prevent the covered board from responding.
 | `entities/powered_card.walu` | A ward under a spell: Firebolt's burn, Freeze Ray's shell, Raise Card's grave, Growth's division. |
 | `entities/deck.walu` | The sealed draw pile and its count. |
 | `entities/pile.walu` | One of the three right-edge piles, face up on its last card. |
-| `entities/hud.walu` | The duel title centred across the header band. |
+| `entities/hud.walu` | The duel title as a cartouche cut into the header band. |
 | `entities/footer.walu` | The centred way back to the menu and the lower-right ability diamond. |
+| `entities/vitals.walu` | The run's hearts as pips and its pool as a struck coin, in the board's lower-left corner. |
 | `entities/ability_diamond.walu` | Four ready-ability sockets in South, West, North, East face-button order. |
 | `entities/capsule.walu` | A clickable control, as wide as its own label. |
 | `entities/action_bar.walu` | The band that asks for a decision, and the hit test for the controls it asked with. |

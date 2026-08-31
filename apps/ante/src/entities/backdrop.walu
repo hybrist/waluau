@@ -1,27 +1,167 @@
--- The duel behind everything: a flat dark field crossed by a fan of faint
--- diagonals that meet along its own edges. It takes whatever rectangle the
--- board is, and the diagonals are struck at a fixed spacing, so a wider canvas
--- gets more of them rather than a stretched few.
+-- The vault the duel is fought in: a dark stone field lit by one high lamp,
+-- crossed by the faint shafts that lamp throws across it, and closing to black
+-- at the walls.
+--
+-- It used to be a flat fill with a fan of hairlines struck over it, which left
+-- every object on the board floating on an even sheet of near-black with
+-- nothing behind it. The three passes here are what give the board a room:
+-- the field carries the lamp's falloff, the shafts read as light rather than
+-- as ruled lines because they fade along their own length, and the vignette
+-- closes the corners so the eye settles on the table.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
+local plate = require("../plate")
 
 const CLEAR: string = "#09090b"
-const FIELD: string = "#111114"
-const RULE: string = "#1e1e24"
+const FIELD: string = "#15151b"
+const RULE: string = "#24242c"
 const RULE_PITCH: f64 = 48.0
+
+-- The lamp: how bright the field is directly under it against how dark it
+-- falls away, and how far down the board its centre hangs. Above centre,
+-- because the vault's far wall is up there and the table is nearer.
+const LAMP_CORE: f64 = 1.0
+const LAMP_EDGE: f64 = 0.30
+const LAMP_DROP: f64 = 0.42
+-- The field is drawn as a coarse grid because the falloff is two-dimensional
+-- and a quad interpolates its corners linearly. Ten by six cells is finer than
+-- the ramp it is sampling, so the seams do not show.
+const LAMP_COLUMNS: i32 = 10
+const LAMP_ROWS: i32 = 6
+
+-- The vignette closes the last of the way to black at the very edge, past
+-- where the lamp's own falloff has already taken the field down.
+const VIGNETTE_DEPTH: f64 = 0.55
+const VIGNETTE_BAND: f64 = 0.22
+
+-- Brightness of the lamp at a point given in 0..1 across the board, falling
+-- with the square of the distance from where it hangs. Squared rather than
+-- linear so the bright part stays broad and the corners go quickly.
+function lamp_at(across: f64, down: f64): f64
+    local dx: f64 = (across - 0.5) * 2.0
+    local dy: f64 = (down - LAMP_DROP) * 2.0
+    local reach: f64 = math.min(1.0, (dx * dx + dy * dy * 0.72))
+    return LAMP_CORE + (LAMP_EDGE - LAMP_CORE) * reach
+end
+
+function draw_field(graphics: ui.Graphics, bounds: box.Rect): unit
+    graphics:set_color(FIELD)
+    local cell_width: f64 = bounds.width / (LAMP_COLUMNS::f64)
+    local cell_height: f64 = bounds.height / (LAMP_ROWS::f64)
+    for row = 0::i32, LAMP_ROWS - 1 do
+        local top: f64 = (row::f64) / (LAMP_ROWS::f64)
+        local bottom: f64 = ((row + 1)::f64) / (LAMP_ROWS::f64)
+        for column = 0::i32, LAMP_COLUMNS - 1 do
+            local left: f64 = (column::f64) / (LAMP_COLUMNS::f64)
+            local right: f64 = ((column + 1)::f64) / (LAMP_COLUMNS::f64)
+            plate.shaded_rectangle(
+                graphics,
+                bounds.x + left * bounds.width,
+                bounds.y + top * bounds.height,
+                cell_width,
+                cell_height,
+                lamp_at(left, top),
+                lamp_at(right, top),
+                lamp_at(right, bottom),
+                lamp_at(left, bottom)
+            )
+        end
+    end
+end
+
+-- The shafts, struck at a fixed spacing so a wider canvas gets more of them
+-- rather than a stretched few. Each one is drawn as a run of segments whose
+-- brightness follows the same lamp, which is what makes it read as light
+-- falling across the floor instead of as a ruled diagonal.
+const SHAFT_STEPS: i32 = 6
+
+function draw_shafts(graphics: ui.Graphics, bounds: box.Rect): unit
+    graphics:set_color(RULE)
+    graphics:set_line_width(1.0)
+    local columns: i32 = math.ceil(bounds.width / RULE_PITCH)::i32
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    for column = 0::i32, columns do
+        local offset: f64 = (column::f64) * RULE_PITCH
+        local from_x: f64 = bounds.x + offset
+        local to_x: f64 = bounds.x + bounds.width - offset
+        for step = 0::i32, SHAFT_STEPS - 1 do
+            local start: f64 = (step::f64) / (SHAFT_STEPS::f64)
+            local finish: f64 = ((step + 1)::f64) / (SHAFT_STEPS::f64)
+            local middle: f64 = (start + finish) * 0.5
+            local at_x: f64 = from_x + (to_x - from_x) * middle
+            local lit: f64 = lamp_at((at_x - bounds.x) / bounds.width, middle)
+            graphics:set_color_rgba(red * lit, green * lit, blue * lit, 1.0)
+            graphics:line(
+                from_x + (to_x - from_x) * start,
+                bounds.y + bounds.height * start,
+                from_x + (to_x - from_x) * finish,
+                bounds.y + bounds.height * finish
+            )
+        end
+    end
+end
+
+-- Black closing in from all four walls, thinning to nothing a fifth of the
+-- way in. A veil rather than a darker fill: the shafts and the field's own
+-- falloff both stay visible through it.
+function draw_vignette(graphics: ui.Graphics, bounds: box.Rect): unit
+    graphics:set_color(CLEAR)
+    local band_x: f64 = bounds.width * VIGNETTE_BAND
+    local band_y: f64 = bounds.height * VIGNETTE_BAND
+    plate.veil_rectangle(
+        graphics,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        band_y,
+        VIGNETTE_DEPTH,
+        VIGNETTE_DEPTH,
+        0.0,
+        0.0
+    )
+    plate.veil_rectangle(
+        graphics,
+        bounds.x,
+        bounds.y + bounds.height - band_y,
+        bounds.width,
+        band_y,
+        0.0,
+        0.0,
+        VIGNETTE_DEPTH,
+        VIGNETTE_DEPTH
+    )
+    plate.veil_rectangle(
+        graphics,
+        bounds.x,
+        bounds.y,
+        band_x,
+        bounds.height,
+        VIGNETTE_DEPTH,
+        0.0,
+        0.0,
+        VIGNETTE_DEPTH
+    )
+    plate.veil_rectangle(
+        graphics,
+        bounds.x + bounds.width - band_x,
+        bounds.y,
+        band_x,
+        bounds.height,
+        0.0,
+        VIGNETTE_DEPTH,
+        VIGNETTE_DEPTH,
+        0.0
+    )
+end
 
 function draw_at(surface: ui.Surface, bounds: box.Rect): unit
     local graphics = surface.graphics
     graphics:clear(CLEAR)
-    graphics:set_color(FIELD)
-    graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
-    graphics:set_color(RULE)
-    graphics:set_line_width(1.0)
-    local columns: i32 = math.ceil(bounds.width / RULE_PITCH)::i32
-    for column = 0::i32, columns do
-        local x: f64 = (column::f64) * RULE_PITCH
-        graphics:line(bounds.x + x, bounds.y, bounds.x + bounds.width - x, bounds.y + bounds.height)
-    end
+    draw_field(graphics, bounds)
+    draw_shafts(graphics, bounds)
+    draw_vignette(graphics, bounds)
 end
 
 function node(): ui.Node
@@ -33,4 +173,4 @@ function node(): ui.Node
     )
 end
 
-return { node = node, draw_at = draw_at }
+return { node = node, draw_at = draw_at, lamp_at = lamp_at }

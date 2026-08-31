@@ -1,0 +1,374 @@
+-- The material every panel in the vault is cut from: a blackened iron plate,
+-- lit from above, with its edges bevelled and its border etched.
+--
+-- Ante's chrome used to be line art — one flat fill and one hairline
+-- rectangle, repeated at six sites. Flat fill plus hairline reads as a
+-- wireframe of a UI rather than as an object standing in the same room as the
+-- cards, which are textured and shaded. A plate is that same box given a light
+-- source: the face carries a vertical gradient, the top inner edge catches a
+-- highlight, the bottom inner edge falls into shadow, and the border is
+-- brighter along the lit side than the shaded one.
+--
+-- The gradient is emitted rather than approximated with stacked strips.
+-- `emit_shaded_vertex` multiplies a per-vertex brightness into the colour the
+-- batch already carries, so one quad of six vertices is a true linear ramp and
+-- costs exactly what a `fill_rectangle` costs.
+local engine = require("waluau:engine")
+
+type Graphics = engine.Graphics
+
+-- How much lighter the top of a face is than its bottom. Small on purpose:
+-- these are dark surfaces, and a ramp wide enough to see as a gradient reads
+-- as a button from a different game.
+const FACE_TOP: f64 = 1.34
+const FACE_BOTTOM: f64 = 0.72
+-- The bevel: a hairline of the face's own colour, brightened along the lit
+-- edge and dropped along the shaded one, so the plate has a thickness.
+const BEVEL_LIGHT: f64 = 2.1
+const BEVEL_DARK: f64 = 0.34
+const BEVEL_WEIGHT: f64 = 1.0
+-- The border is the plate's edge seen from outside, so it follows the same
+-- light: the top rail is the caller's colour at full strength and the bottom
+-- rail is that colour sunk into shadow.
+const EDGE_TOP: f64 = 1.15
+const EDGE_BOTTOM: f64 = 0.55
+const EDGE_SIDE: f64 = 0.82
+-- Corner brackets: the short arms that a cut plate shows where two etched
+-- rails meet. Length is capped against the plate so a small chip keeps its
+-- corners distinct instead of drawing four rails twice.
+const BRACKET_ARM: f64 = 9.0
+const BRACKET_INSET: f64 = 4.0
+const BRACKET_WEIGHT: f64 = 1.0
+
+-- A rectangle whose brightness is given at each of its four corners and
+-- interpolated across the face. Everything with a ramp in it is built from
+-- this: a vertical gradient names the same shade twice per edge, a vignette
+-- names four different ones.
+function shaded_rectangle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    top_left: f64,
+    top_right: f64,
+    bottom_right: f64,
+    bottom_left: f64
+): unit
+    if width <= 0.0 or height <= 0.0 then
+        return
+    end
+    graphics:ensure_capacity(6)
+    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top_left)
+    graphics:emit_shaded_vertex(x + width, y, 1.0, 0.0, 0.0, top_right)
+    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom_right)
+    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top_left)
+    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom_right)
+    graphics:emit_shaded_vertex(x, y + height, 0.0, 1.0, 0.0, bottom_left)
+end
+
+-- A rectangle whose brightness ramps from `top` at its top edge to `bottom` at
+-- its bottom, in the colour currently set on the batch.
+function gradient_rectangle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    top: f64,
+    bottom: f64
+): unit
+    shaded_rectangle(graphics, x, y, width, height, top, top, bottom, bottom)
+end
+
+-- The same rectangle in opacity rather than brightness: the colour is
+-- constant and each corner names how much of it lands. A shade ramp cannot
+-- express this — it darkens what is drawn, where a veil lets what is already
+-- underneath through — so a shadow that thins out is one of these.
+--
+-- The batch alpha is read once per vertex, which is what lets it be moved
+-- between them; it is put back afterwards so the caller's colour survives.
+function veil_rectangle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    top_left: f64,
+    top_right: f64,
+    bottom_right: f64,
+    bottom_left: f64
+): unit
+    if width <= 0.0 or height <= 0.0 then
+        return
+    end
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
+    graphics:ensure_capacity(6)
+    graphics:set_color_rgba(red, green, blue, top_left)
+    graphics:emit_vertex(x, y)
+    graphics:set_color_rgba(red, green, blue, top_right)
+    graphics:emit_vertex(x + width, y)
+    graphics:set_color_rgba(red, green, blue, bottom_right)
+    graphics:emit_vertex(x + width, y + height)
+    graphics:set_color_rgba(red, green, blue, top_left)
+    graphics:emit_vertex(x, y)
+    graphics:set_color_rgba(red, green, blue, bottom_right)
+    graphics:emit_vertex(x + width, y + height)
+    graphics:set_color_rgba(red, green, blue, bottom_left)
+    graphics:emit_vertex(x, y + height)
+    graphics:set_color_rgba(red, green, blue, alpha)
+end
+
+-- One rail of the border at a fraction of the edge colour's brightness.
+function rail(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, shade: f64): unit
+    gradient_rectangle(graphics, x, y, width, height, shade, shade)
+end
+
+-- The lit face: gradient body, a highlight along the top inside edge, a
+-- shadow along the bottom one. `fill` is the plate's own colour.
+function face(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string): unit
+    graphics:set_color(fill)
+    gradient_rectangle(graphics, x, y, width, height, FACE_TOP, FACE_BOTTOM)
+    if height <= BEVEL_WEIGHT * 2.0 then
+        return
+    end
+    rail(graphics, x, y, width, BEVEL_WEIGHT, BEVEL_LIGHT)
+    rail(graphics, x, y + height - BEVEL_WEIGHT, width, BEVEL_WEIGHT, BEVEL_DARK)
+end
+
+-- The etched border, drawn as four rails so the light can differ per side.
+function border(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    edge: string,
+    weight: f64
+): unit
+    graphics:set_color(edge)
+    rail(graphics, x, y, width, weight, EDGE_TOP)
+    rail(graphics, x, y + height - weight, width, weight, EDGE_BOTTOM)
+    rail(graphics, x, y + weight, weight, height - weight * 2.0, EDGE_SIDE)
+    rail(graphics, x + width - weight, y + weight, weight, height - weight * 2.0, EDGE_SIDE)
+end
+
+-- Short arms inside each corner, in the edge colour. What separates a plate
+-- that was cut and fitted from a rectangle that was merely outlined.
+function brackets(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, edge: string): unit
+    local arm: f64 = math.min(BRACKET_ARM, math.min(width, height) * 0.25)
+    if arm < 3.0 then
+        return
+    end
+    local left: f64 = x + BRACKET_INSET
+    local right: f64 = x + width - BRACKET_INSET - arm
+    local top: f64 = y + BRACKET_INSET
+    local bottom: f64 = y + height - BRACKET_INSET - BRACKET_WEIGHT
+    graphics:set_color(edge)
+    rail(graphics, left, top, arm, BRACKET_WEIGHT, EDGE_TOP)
+    rail(graphics, left, top, BRACKET_WEIGHT, arm, EDGE_TOP)
+    rail(graphics, right, top, arm, BRACKET_WEIGHT, EDGE_TOP)
+    rail(graphics, x + width - BRACKET_INSET - BRACKET_WEIGHT, top, BRACKET_WEIGHT, arm, EDGE_TOP)
+    rail(graphics, left, bottom, arm, BRACKET_WEIGHT, EDGE_BOTTOM)
+    rail(graphics, left, y + height - BRACKET_INSET - arm, BRACKET_WEIGHT, arm, EDGE_BOTTOM)
+    rail(graphics, right, bottom, arm, BRACKET_WEIGHT, EDGE_BOTTOM)
+    rail(
+        graphics,
+        x + width - BRACKET_INSET - BRACKET_WEIGHT,
+        y + height - BRACKET_INSET - arm,
+        BRACKET_WEIGHT,
+        arm,
+        EDGE_BOTTOM
+    )
+end
+
+-- A triangle whose brightness is given at each corner, for the shapes a
+-- rectangle cannot cover. The colour comes off the batch the same way.
+function shaded_triangle(
+    graphics: Graphics,
+    x1: f64,
+    y1: f64,
+    shade1: f64,
+    x2: f64,
+    y2: f64,
+    shade2: f64,
+    x3: f64,
+    y3: f64,
+    shade3: f64
+): unit
+    graphics:ensure_capacity(3)
+    graphics:emit_shaded_vertex(x1, y1, 0.0, 0.0, 0.0, shade1)
+    graphics:emit_shaded_vertex(x2, y2, 1.0, 0.0, 0.0, shade2)
+    graphics:emit_shaded_vertex(x3, y3, 0.5, 1.0, 0.0, shade3)
+end
+
+-- Curved surfaces get their light in steps: a stack of circles from the rim
+-- inward, each one a shade further along the ramp and each one nudged toward
+-- the light. Offsetting the centres is what turns a flat ramp into a
+-- direction — the far side of the stack keeps showing, so the lit crescent
+-- lands on one edge instead of ringing the whole shape.
+const CURVE_STEPS: i32 = 7
+
+-- One circle of the batch colour at a fraction of its brightness. fill_circle
+-- reads the colour off the batch rather than taking a shade, so the shade is
+-- applied to the channels and then put back.
+function shaded_circle(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    shade: f64
+): unit
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
+    graphics:set_color_rgba(red * shade, green * shade, blue * shade, alpha)
+    graphics:fill_circle(center_x, center_y, radius)
+    graphics:set_color_rgba(red, green, blue, alpha)
+end
+
+-- A raised cap: brightest at the top-left where the light lands, falling away
+-- to the bottom-right.
+function dome(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    rim: f64,
+    crown: f64
+): unit
+    for step = 0::i32, CURVE_STEPS - 1 do
+        local along: f64 = (step::f64) / ((CURVE_STEPS - 1)::f64)
+        shaded_circle(
+            graphics,
+            center_x - radius * 0.20 * along,
+            center_y - radius * 0.24 * along,
+            radius * (1.0 - along * 0.72),
+            rim + (crown - rim) * along
+        )
+    end
+end
+
+-- A socket cut into the plate: the rim is the lit edge and the floor the dark
+-- one, and the stack drifts upward so the lit crescent settles along the
+-- bottom wall, where light falling into a pit collects.
+function well(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    rim: f64,
+    floor: f64
+): unit
+    for step = 0::i32, CURVE_STEPS - 1 do
+        local along: f64 = (step::f64) / ((CURVE_STEPS - 1)::f64)
+        shaded_circle(
+            graphics,
+            center_x,
+            center_y - radius * 0.14 * along,
+            radius * (1.0 - along * 0.80),
+            rim + (floor - rim) * along
+        )
+    end
+end
+
+-- A soft halo in the colour already set: rings at falling opacity, so a thing
+-- that is ready glows rather than merely being outlined.
+function halo(
+    graphics: Graphics,
+    center_x: f64,
+    center_y: f64,
+    inner: f64,
+    outer: f64,
+    rings: i32,
+    strength: f64
+): unit
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
+    for ring = rings, 1::i32, -1 do
+        local along: f64 = (ring::f64) / (rings::f64)
+        graphics:set_color_rgba(red, green, blue, strength * (1.0 - along) * (1.0 - along))
+        graphics:fill_circle(center_x, center_y, inner + (outer - inner) * along)
+    end
+    graphics:set_color_rgba(red, green, blue, alpha)
+end
+
+-- A glow standing off a rectangle: nested borders in the colour already set,
+-- widening outward at falling opacity. The selected thing on a menu is a
+-- brighter version of the room around it, which a single hairline cannot say.
+function aura(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    reach: f64,
+    rings: i32,
+    strength: f64
+): unit
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
+    for ring = rings, 1::i32, -1 do
+        local along: f64 = (ring::f64) / (rings::f64)
+        local grow: f64 = reach * along
+        graphics:set_color_rgba(red, green, blue, strength * (1.0 - along) * (1.0 - along))
+        graphics:set_line_width(1.0)
+        graphics:stroke_rectangle(x - grow, y - grow, width + grow * 2.0, height + grow * 2.0)
+    end
+    graphics:set_color_rgba(red, green, blue, alpha)
+end
+
+-- The plate every piece of Ante chrome is: lit face inside an etched border.
+function draw(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    fill: string,
+    edge: string,
+    weight: f64
+): unit
+    face(graphics, x, y, width, height, fill)
+    border(graphics, x, y, width, height, edge, weight)
+end
+
+-- A plate large enough to be a page, so it also carries corner brackets.
+function panel(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    fill: string,
+    edge: string,
+    weight: f64
+): unit
+    draw(graphics, x, y, width, height, fill, edge, weight)
+    brackets(graphics, x, y, width, height, edge)
+end
+
+return {
+    draw = draw,
+    panel = panel,
+    face = face,
+    border = border,
+    brackets = brackets,
+    gradient_rectangle = gradient_rectangle,
+    shaded_rectangle = shaded_rectangle,
+    veil_rectangle = veil_rectangle,
+    shaded_triangle = shaded_triangle,
+    shaded_circle = shaded_circle,
+    dome = dome,
+    well = well,
+    halo = halo,
+    aura = aura
+}
