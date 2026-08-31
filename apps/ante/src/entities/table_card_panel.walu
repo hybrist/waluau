@@ -8,17 +8,70 @@
 -- objects on a surface instead of tiles in a box.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
-local ink = require("../ink")
+local plate = require("../plate")
 
 const PAD_X: f64 = 34.0
 const RISE: f64 = 34.0
 const FIELD_HEIGHT: f64 = 148.0
 
-const FILL: string = "#101013"
-const EDGE: string = "#3f3f46"
+-- The slab is lighter than the floor it stands on, which is the whole reason
+-- it reads at all: the old fill was within a shade of the backdrop, so the
+-- field was really just its own outline.
+const FILL: string = "#1b1b23"
+const EDGE: string = "#4a4a55"
+-- The warding: a second rail struck inside the first, in the gold the board
+-- writes its own prompts in, with the dark seam between them that a groove
+-- cut between two raised rails shows.
+const RUNE_INSET: f64 = 5.0
+const RUNE_EDGE: string = "#6b5a2a"
+const SEAM: string = "#0d0d11"
+const SEAM_WEIGHT: f64 = 1.0
+-- Where the two sides meet: the slab is darkest along its own middle, so the
+-- five community cards stand against the deepest part of it.
+const TROUGH: f64 = 0.62
+const SLAB_TOP: f64 = 1.30
+const SLAB_BOTTOM: f64 = 0.86
 
 function field_of(bounds: box.Rect): box.Rect
     return box.rect(bounds.x - PAD_X, bounds.y - RISE, bounds.width + PAD_X * 2.0, FIELD_HEIGHT)
+end
+
+-- Warded slate: a slab lit from above whose middle sinks into shadow, ringed
+-- by two etched rails with a groove between them.
+function draw_slab(graphics: ui.Graphics, field: box.Rect): unit
+    local half: f64 = field.height * 0.5
+    graphics:set_color(FILL)
+    plate.gradient_rectangle(graphics, field.x, field.y, field.width, half, SLAB_TOP, TROUGH)
+    plate.gradient_rectangle(
+        graphics,
+        field.x,
+        field.y + half,
+        field.width,
+        field.height - half,
+        TROUGH,
+        SLAB_BOTTOM
+    )
+    plate.border(graphics, field.x, field.y, field.width, field.height, EDGE, 2.0)
+    graphics:set_color(SEAM)
+    plate.border(
+        graphics,
+        field.x + RUNE_INSET - SEAM_WEIGHT,
+        field.y + RUNE_INSET - SEAM_WEIGHT,
+        field.width - (RUNE_INSET - SEAM_WEIGHT) * 2.0,
+        field.height - (RUNE_INSET - SEAM_WEIGHT) * 2.0,
+        SEAM,
+        SEAM_WEIGHT
+    )
+    plate.border(
+        graphics,
+        field.x + RUNE_INSET,
+        field.y + RUNE_INSET,
+        field.width - RUNE_INSET * 2.0,
+        field.height - RUNE_INSET * 2.0,
+        RUNE_EDGE,
+        1.0
+    )
+    plate.brackets(graphics, field.x, field.y, field.width, field.height, EDGE)
 end
 
 function node(): ui.Node
@@ -28,7 +81,7 @@ function node(): ui.Node
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
             local field: box.Rect = field_of(bounds)
-            ink.panel(surface.graphics, field.x, field.y, field.width, field.height, FILL, EDGE)
+            draw_slab(surface.graphics, field)
         end
     )
 end

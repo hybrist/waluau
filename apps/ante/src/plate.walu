@@ -40,6 +40,33 @@ const BRACKET_ARM: f64 = 9.0
 const BRACKET_INSET: f64 = 4.0
 const BRACKET_WEIGHT: f64 = 1.0
 
+-- A rectangle whose brightness is given at each of its four corners and
+-- interpolated across the face. Everything with a ramp in it is built from
+-- this: a vertical gradient names the same shade twice per edge, a vignette
+-- names four different ones.
+function shaded_rectangle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    top_left: f64,
+    top_right: f64,
+    bottom_right: f64,
+    bottom_left: f64
+): unit
+    if width <= 0.0 or height <= 0.0 then
+        return
+    end
+    graphics:ensure_capacity(6)
+    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top_left)
+    graphics:emit_shaded_vertex(x + width, y, 1.0, 0.0, 0.0, top_right)
+    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom_right)
+    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top_left)
+    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom_right)
+    graphics:emit_shaded_vertex(x, y + height, 0.0, 1.0, 0.0, bottom_left)
+end
+
 -- A rectangle whose brightness ramps from `top` at its top edge to `bottom` at
 -- its bottom, in the colour currently set on the batch.
 function gradient_rectangle(
@@ -51,16 +78,48 @@ function gradient_rectangle(
     top: f64,
     bottom: f64
 ): unit
+    shaded_rectangle(graphics, x, y, width, height, top, top, bottom, bottom)
+end
+
+-- The same rectangle in opacity rather than brightness: the colour is
+-- constant and each corner names how much of it lands. A shade ramp cannot
+-- express this — it darkens what is drawn, where a veil lets what is already
+-- underneath through — so a shadow that thins out is one of these.
+--
+-- The batch alpha is read once per vertex, which is what lets it be moved
+-- between them; it is put back afterwards so the caller's colour survives.
+function veil_rectangle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    top_left: f64,
+    top_right: f64,
+    bottom_right: f64,
+    bottom_left: f64
+): unit
     if width <= 0.0 or height <= 0.0 then
         return
     end
+    local red: f64 = graphics.red
+    local green: f64 = graphics.green
+    local blue: f64 = graphics.blue
+    local alpha: f64 = graphics.alpha
     graphics:ensure_capacity(6)
-    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top)
-    graphics:emit_shaded_vertex(x + width, y, 1.0, 0.0, 0.0, top)
-    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom)
-    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, top)
-    graphics:emit_shaded_vertex(x + width, y + height, 1.0, 1.0, 0.0, bottom)
-    graphics:emit_shaded_vertex(x, y + height, 0.0, 1.0, 0.0, bottom)
+    graphics:set_color_rgba(red, green, blue, top_left)
+    graphics:emit_vertex(x, y)
+    graphics:set_color_rgba(red, green, blue, top_right)
+    graphics:emit_vertex(x + width, y)
+    graphics:set_color_rgba(red, green, blue, bottom_right)
+    graphics:emit_vertex(x + width, y + height)
+    graphics:set_color_rgba(red, green, blue, top_left)
+    graphics:emit_vertex(x, y)
+    graphics:set_color_rgba(red, green, blue, bottom_right)
+    graphics:emit_vertex(x + width, y + height)
+    graphics:set_color_rgba(red, green, blue, bottom_left)
+    graphics:emit_vertex(x, y + height)
+    graphics:set_color_rgba(red, green, blue, alpha)
 end
 
 -- One rail of the border at a fraction of the edge colour's brightness.
@@ -256,6 +315,8 @@ return {
     border = border,
     brackets = brackets,
     gradient_rectangle = gradient_rectangle,
+    shaded_rectangle = shaded_rectangle,
+    veil_rectangle = veil_rectangle,
     shaded_circle = shaded_circle,
     dome = dome,
     well = well,
