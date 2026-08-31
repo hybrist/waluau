@@ -28,6 +28,8 @@ export type State = {
     walk_column: i32,
     walk_row: i32,
     walk_horizontal: bool,
+    walk_up: bool,
+    walk_omissions: i32,
     column_low: i32,
     column_high: i32,
     row_low: i32,
@@ -111,7 +113,10 @@ const CAMERA_RATE: f64 = 3.2
 -- duels of dashed road ahead is enough to read as a plan without the map
 -- promising a run that has an end.
 const LOOKAHEAD: i32 = 7
-const MAX_STEP_BLOCKS: i32 = 3
+-- The historical long-route check follows duel forty (stop 79) with the usual
+-- seven stops of road ahead. When a generated route band contains that many
+-- intersections, randomness leaves enough of them unused to preserve it.
+const MIN_ROUTE_INTERSECTIONS: i32 = 86
 
 function random(state: State): f64
     local next: f64 = state.rng * RANDOM_MULTIPLIER
@@ -199,37 +204,6 @@ function last_street_before(streets: {f64}, margin: f64): i32
     return found
 end
 
--- One leg of the walk along a single axis. Running out of band turns the leg
--- around rather than shortening it, so the route keeps its stride instead of
--- crowding against an edge.
-function walk_axis(position: i32, low: i32, high: i32, span: i32, forward: bool): i32
-    if high <= low then
-        return low
-    end
-    local direction: i32 = -1
-    if forward then
-        direction = 1
-    end
-    local next: i32 = position + direction * span
-    if next > high or next < low then
-        next = position - direction * span
-    end
-    if next > high then
-        next = high
-    end
-    if next < low then
-        next = low
-    end
-    if next == position then
-        if position < high then
-            next = position + 1
-        else
-            next = position - 1
-        end
-    end
-    return next
-end
-
 -- Vendors and duels alternate from the start of the route, so every odd stop
 -- is a house and every even one the vendor standing before it.
 function append_stop(state: State): unit
@@ -244,33 +218,68 @@ function append_stop(state: State): unit
     )
 end
 
--- Turn a corner and walk one to three blocks. Alternating the axis every leg is
--- what makes the route a path through streets rather than a line drawn over
--- them.
-function walk_next(state: State): unit
-    local span: i32 = 1 + random_index(state, MAX_STEP_BLOCKS)
-    local forward: bool = random(state) < 0.5
+-- Sweep the city's intersections from left to right. A vertical sweep walks
+-- one adjacent intersection at a time until it reaches the edge of the route
+-- band, then one rightward step opens a fresh column for the opposite sweep.
+-- Consequently the walk only goes right, up, or down; an up leg and a down leg
+-- can never be consecutive; and every intersection it crosses is a stop it has
+-- not visited.
+function walk_next(state: State): bool
     if state.walk_horizontal then
-        state.walk_column = walk_axis(
-            state.walk_column,
-            state.column_low,
-            state.column_high,
-            span,
-            forward
-        )
+        if state.walk_column >= state.column_high then
+            return false
+        end
+        state.walk_column += 1
+        state.walk_horizontal = false
     else
-        state.walk_row = walk_axis(state.walk_row, state.row_low, state.row_high, span, forward)
+        -- A turn can come a little before the edge, which keeps the route
+        -- seed-dependent rather than making every city the same full-column
+        -- sweep. Turning here leaves this many intersections unused in both
+        -- the column being left and the fresh column entered. Spend only the
+        -- surplus above the long-route capacity promised by the map.
+        local remaining: i32 = state.walk_row - state.row_low
+        if not state.walk_up then
+            remaining = state.row_high - state.walk_row
+        end
+        local omission_cost: i32 = remaining * 2
+        local can_turn_early: bool = state.walk_column < state.column_high and remaining > 0 and omission_cost <= state.walk_omissions
+        if can_turn_early and random(state) < 0.5 then
+            state.walk_column += 1
+            state.walk_up = not state.walk_up
+            state.walk_omissions -= omission_cost
+            append_stop(state)
+            return true
+        end
+
+        if state.walk_up then
+            state.walk_row -= 1
+            if state.walk_row <= state.row_low then
+                state.walk_row = state.row_low
+                state.walk_horizontal = true
+                state.walk_up = false
+            end
+        else
+            state.walk_row += 1
+            if state.walk_row >= state.row_high then
+                state.walk_row = state.row_high
+                state.walk_horizontal = true
+                state.walk_up = true
+            end
+        end
     end
-    state.walk_horizontal = not state.walk_horizontal
     append_stop(state)
+    return true
 end
 
 -- Walk far enough that the route holds that many stops. The map extends itself
 -- as the run asks for more of it, because a run has no last duel to generate
--- up to.
+-- up to. A finite map eventually runs out of new intersections; at that point
+-- the route ends instead of doubling back over one it already used.
 function State:ensure_stops(count: i32): unit
     while #self.stops < count do
-        walk_next(self)
+        if not walk_next(self) then
+            return
+        end
     end
 end
 
@@ -280,12 +289,24 @@ function begin_route(state: State): unit
     state.column_high = last_street_before(state.vertical_streets, CITY_WIDTH - ROUTE_MARGIN_RIGHT)
     state.row_low = first_street_past(state.horizontal_streets, ROUTE_MARGIN_TOP)
     state.row_high = last_street_before(state.horizontal_streets, CITY_HEIGHT - ROUTE_MARGIN_BOTTOM)
-    state.walk_column = state.column_low + random_index(
-        state,
-        state.column_high - state.column_low + 1
-    )
-    state.walk_row = state.row_low + random_index(state, state.row_high - state.row_low + 1)
-    state.walk_horizontal = random(state) < 0.5
+    state.walk_column = state.column_low
+    state.walk_up = random(state) < 0.5
+    local intersections: i32 = (state.column_high - state.column_low + 1) * (state.row_high - state.row_low + 1)
+    state.walk_omissions = intersections - MIN_ROUTE_INTERSECTIONS
+    if state.walk_omissions < 0 then
+        state.walk_omissions = 0
+    end
+    local start_inset: i32 = 0
+    if state.walk_omissions > 0 then
+        start_inset = random_index(state, 2)
+        state.walk_omissions -= start_inset
+    end
+    if state.walk_up then
+        state.walk_row = state.row_high - start_inset
+    else
+        state.walk_row = state.row_low + start_inset
+    end
+    state.walk_horizontal = false
     append_stop(state)
     state.travel = 0.0
     state.target = 0.0
@@ -560,6 +581,8 @@ function State.new(seed: i32): State
         walk_column = 1,
         walk_row = 1,
         walk_horizontal = true,
+        walk_up = true,
+        walk_omissions = 0,
         column_low = 1,
         column_high = 1,
         row_low = 1,

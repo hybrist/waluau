@@ -110,6 +110,63 @@ describe(
         )
 
         it(
+            "walks right, up, and down without reversing or revisiting an intersection",
+            function()
+                local saw_up: bool = false
+                local saw_down: bool = false
+                local saw_early_turn: bool = false
+
+                for seed = 1::i32, 32::i32 do
+                    local city: city_map.State = city_map.State.new(seed)
+                    city:ensure_stops(24)
+                    expect(city:stop_count()):toBeGreaterThanOrEqual(24)
+
+                    local previous_vertical: i32 = 0
+                    for index = 1::i32, city:stop_count() - 1 do
+                        local from: city_map.Stop = city.stops[index]
+                        local into: city_map.Stop = city.stops[index + 1]
+                        local direction: i32 = 0
+
+                        if into.x ~= from.x then
+                            expect(into.x):toBeGreaterThan(from.x)
+                            expect(into.y):toBe(from.y)
+                            local top: f64 = city.horizontal_streets[city.row_low]
+                            local bottom: f64 = city.horizontal_streets[city.row_high]
+                            if from.y ~= top and from.y ~= bottom then
+                                saw_early_turn = true
+                            end
+                            previous_vertical = 0
+                        else
+                            expect(into.y == from.y):toBe(false)
+                            if into.y < from.y then
+                                direction = -1
+                                saw_up = true
+                            else
+                                direction = 1
+                                saw_down = true
+                            end
+                            if previous_vertical ~= 0 then
+                                expect(direction):toBe(previous_vertical)
+                            end
+                            previous_vertical = direction
+                        end
+
+                        -- Adjacent stops are adjacent intersections, so checking every
+                        -- generated stop also checks every intersection the route crosses.
+                        for previous = 1::i32, index do
+                            local visited: city_map.Stop = city.stops[previous]
+                            expect(into.x == visited.x and into.y == visited.y):toBe(false)
+                        end
+                    end
+                end
+
+                expect(saw_up):toBe(true)
+                expect(saw_down):toBe(true)
+                expect(saw_early_turn):toBe(true)
+            end
+        )
+
+        it(
             "numbers the route so duels and the fences before them agree",
             function()
                 expect(city_map.shop_stop(1)):toBe(0)
