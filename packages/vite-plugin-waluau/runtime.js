@@ -22,15 +22,54 @@ const domEventListeners = new WeakMap();
 // callbacks. Cancelled on rerun so a superseded instance's frame loop stops.
 const pendingAnimationFrames = new WeakMap();
 
-// Luau formats numbers with `%.14g`: `nan`/`inf`/`-inf` for specials, `-0`
-// preserved, and at most 14 significant digits. JS `String()` disagrees on all
-// of those (`NaN`, `Infinity`, `0`, full precision), so `tostring` host
-// imports route numbers through this instead.
+// Luau's `luai_num2str` (VM/src/lnumprint.cpp) converts a double with
+// Schubfach, so the digits are the shortest decimal that round-trips, and then
+// picks a layout from `dot`, the position of the decimal point relative to the
+// first digit: fixed point while `-5 <= dot <= 21`, scientific otherwise.
+//
+// JS `String()` chooses the same shortest digits and the same fixed-point
+// window, but disagrees on the pieces around them: specials print as
+// `NaN`/`Infinity`/`-Infinity` instead of `nan`/`inf`/`-inf`, negative zero
+// loses its sign, and the scientific exponent is not padded (`1e-7` where Luau
+// prints `1e-07`). `tostring` host imports route numbers through this instead.
 export function luauToString(value) {
   if (typeof value !== 'number') return String(value);
   if (Number.isNaN(value)) return 'nan';
   if (value === Infinity) return 'inf';
   if (value === -Infinity) return '-inf';
+  // Luau emits the sign bit before the magnitude, so `-0` keeps its sign.
+  const sign = value < 0 || Object.is(value, -0) ? '-' : '';
+  if (value === 0) return `${sign}0`;
+
+  // `toExponential()` without an argument is specified to use the fewest digits
+  // that uniquely identify the double, which is the same significand Schubfach
+  // produces.
+  const [mantissa, exponentText] = Math.abs(value).toExponential().split('e');
+  const digits = mantissa.replace('.', '');
+  const exponent = Number(exponentText);
+  const dot = exponent + 1;
+
+  if (dot >= -5 && dot <= 21) {
+    // Leading zeros, digits spanning the point, or trailing integer zeros.
+    if (dot <= 0) return `${sign}0.${'0'.repeat(-dot)}${digits}`;
+    if (dot >= digits.length) return `${sign}${digits}${'0'.repeat(dot - digits.length)}`;
+    return `${sign}${digits.slice(0, dot)}.${digits.slice(dot)}`;
+  }
+
+  // Scientific: one leading digit, and an exponent that always carries a sign
+  // and at least two digits.
+  const fraction = digits.length > 1 ? `.${digits.slice(1)}` : '';
+  const exponentDigits = String(Math.abs(exponent)).padStart(2, '0');
+  return `${sign}${digits[0]}${fraction}e${exponent < 0 ? '-' : '+'}${exponentDigits}`;
+}
+
+// `string.format("%g")` is plain C `%g` in Luau (VM/src/lstrlib.cpp hands the
+// spec to `snprintf`), so it is a fixed-precision conversion rather than
+// `tostring`'s shortest round-trip. This keeps the pre-existing 14-digit
+// approximation for a bare `%g` instead of silently widening it to 17 digits;
+// see waluau-zbiu for making it C's default precision of 6.
+function luauFormatG(value) {
+  if (!Number.isFinite(value)) return luauToString(value);
   if (Object.is(value, -0)) return '-0';
   return String(Number(value.toPrecision(14)));
 }
@@ -305,7 +344,7 @@ function formatNumber(value, specifier, precision) {
       return formatExponent(number, specifier, precision);
     case 'g':
     case 'G':
-      return precision == null ? luauToString(number) : String(Number(number.toPrecision(precision)));
+      return precision == null ? luauFormatG(number) : String(Number(number.toPrecision(precision)));
     default:
       return luauToString(number);
   }

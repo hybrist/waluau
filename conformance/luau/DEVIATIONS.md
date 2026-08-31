@@ -29,7 +29,7 @@ done
 ```
 
 At the final reconciliation in `waluau-q7qg.16`, the directory has **1,090
-chunks**: **409 enabled** and **681 pending**. These numbers are an exact
+chunks**: **416 enabled** and **674 pending**. These numbers are an exact
 filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
@@ -348,7 +348,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **681 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **674 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -397,7 +397,6 @@ assertion range becomes independently useful.
 | `pm*` | 52 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
 | `safeenv*` | 1 | Embedding/environment hooks |
 | `sort*` | 1 | AOT source loading and sparse/mixed/hash tables |
-| `strconv*` | 7 | Exact numeric `tostring` formatting `waluau-9wf5` |
 | `stringinterp*` | 4 | Static names plus remaining interpolation semantics `waluau-h37g` |
 | `strings*` | 25 | AOT source loading, sparse tables, metatable events; coercion `waluau-dbyy`, catchable formatting `waluau-nlyf`, byte ranges `waluau-vogb`, error formatting `waluau-fg46`, dynamic calls `waluau-9f8d` |
 | `tables*` | 4 | AOT source loading and sparse/mixed/hash tables; runtime unpack `waluau-zxju` |
@@ -427,7 +426,6 @@ converge:
 | Browser date/time library | `waluau-qabb` | `datetime` |
 | Explicit generic instantiation/type packs | `waluau-9ttd` | `explicit_type_instantiations` |
 | Vector value/library | `waluau-uneu` | `vector`, `vector_library.{1-11}`; native vector checks remain VM/JIT exclusions |
-| Exact numeric `tostring` | `waluau-9wf5` | Runtime-failing `strconv.{4,6,9,11,13,15,17}` |
 | Remaining string interpolation | `waluau-h37g` | `stringinterp.{2,4,6,8}`, with static-name behavior remaining a documented decision |
 
 Completed work is reflected rather than left in the open-gap table: mutable
@@ -435,7 +433,9 @@ buffers have 22 enabled chunks; deterministic typed math and exact
 `math.noise` ranges are enabled; builtin functions as values landed in
 `waluau-390t`; dense-array `ipairs` landed in `waluau-uxuf`; and fixed
 multi-results through nested vararg calls enabled `pcall.1` and `pcall.4` in
-`waluau-sdc0`. Earlier children also enabled scientific notation, surplus
+`waluau-sdc0`. Shortest-round-trip numeric `tostring` landed in `waluau-9wf5`
+and enabled the last seven `strconv` chunks, so that family no longer appears
+above. Earlier children also enabled scientific notation, surplus
 fixed-call arguments, bit32 intrinsics, large `%f` formatting, missing
 multi-binding nil padding, chained if expressions, and many passing split
 ranges. When another fix lands, recompile the affected pending chunks, split
