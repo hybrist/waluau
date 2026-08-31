@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use waluau_ast::{Expr, Function, FunctionExpr, Rebindability, Type};
+use waluau_ast::{Expr, Function, FunctionExpr, Rebindability, Stmt, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::expressions::{infer_expr, infer_expr_list};
 use super::numeric::coerce_type;
-use super::statements::{collect_return_types, common_return_type, function_calls};
+use super::statements::{
+    collect_return_types, common_return_type, expr_calls_name, function_calls,
+};
 use super::{Binding, binding_for};
 
 #[derive(Clone, Debug)]
@@ -736,6 +738,114 @@ pub(super) fn infer_top_level_function_return_type(
         merged = Type::Nullable(Arc::new(merged));
     }
     Ok(Some(merged))
+}
+
+/// Whether an inferred return type is still standing in for a member of a
+/// recursive component whose type is not known yet. The fixpoint installs
+/// `Type::Unknown` as that placeholder, so a return that reads back as a bare
+/// `unknown` (possibly nullable, possibly one slot of a multi-value return)
+/// carries no information yet. A widened pack such as `unknown...` is a real
+/// inferred type and is deliberately not treated as undetermined.
+pub(super) fn is_undetermined_return_type(ty: &Type) -> bool {
+    match ty {
+        Type::Unknown => true,
+        Type::Nullable(inner) => is_undetermined_return_type(inner),
+        Type::Multi(parts) => parts.iter().any(is_undetermined_return_type),
+        _ => false,
+    }
+}
+
+/// Drop the return statements whose value depends on a member of the
+/// recursive component, so the remaining ones can be typed before the
+/// component is. `removed` reports whether any were dropped, which separates
+/// "no return statement at all" (the function returns unit) from "every
+/// return depends on the component" (nothing to seed from).
+fn strip_cycle_dependent_returns(body: &mut Vec<Stmt>, component: &[String], removed: &mut bool) {
+    body.retain(|stmt| {
+        let values: &[Expr] = match stmt {
+            Stmt::Return(value) => std::slice::from_ref(value),
+            Stmt::ReturnMulti(values) => values.as_slice(),
+            _ => &[],
+        };
+        let depends = values
+            .iter()
+            .any(|value| component.iter().any(|name| expr_calls_name(value, name)));
+        *removed |= depends;
+        !depends
+    });
+    for stmt in body {
+        match stmt {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            }
+            | Stmt::IfCast {
+                then_body,
+                else_body,
+                ..
+            } => {
+                strip_cycle_dependent_returns(then_body, component, removed);
+                strip_cycle_dependent_returns(else_body, component, removed);
+            }
+            Stmt::While { body, .. }
+            | Stmt::Repeat { body, .. }
+            | Stmt::NumericFor { body, .. }
+            | Stmt::ForIn { body, .. } => {
+                strip_cycle_dependent_returns(body, component, removed);
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    strip_cycle_dependent_returns(&mut arm.body, component, removed);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Starting point for one member of a stalled recursive component: the join
+/// of the return statements that do not depend on the component. `None` means
+/// undetermined — either every return depends on the component, or what is
+/// left cannot be typed until the component is — and the iteration, not the
+/// seed, decides those.
+pub(super) fn infer_cycle_seed_return_type(
+    function: &Function,
+    fn_signatures: &HashMap<String, FnSignature>,
+    module_bindings: &HashMap<String, Binding>,
+    component: &[String],
+) -> Option<Type> {
+    let mut vars = module_bindings.clone();
+    for param in &function.params {
+        vars.insert(
+            param.name.clone(),
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
+        );
+    }
+    super::bind_vararg(&mut vars, function.vararg.as_ref());
+
+    let mut body = function.body.clone();
+    let mut removed = false;
+    strip_cycle_dependent_returns(&mut body, component, &mut removed);
+
+    let mut returns = Vec::new();
+    collect_return_types(&body, &vars, fn_signatures, &HashSet::new(), &mut returns).ok()?;
+    if returns.is_empty() {
+        // Only a function with no return statement at all is known to return
+        // unit. One whose every return depends on the component stays
+        // undetermined, so a component that can only justify itself keeps
+        // reporting the recursive-inference diagnostic.
+        return (!removed).then_some(Type::Unit);
+    }
+    let mut merged = returns[0].clone();
+    for ty in returns.into_iter().skip(1) {
+        merged = common_return_type(merged, ty).ok()?;
+    }
+    // The fall-off-the-end nullable rule is deliberately not applied here: a
+    // stripped body can look like it falls off the end when the real one does
+    // not. The iteration re-derives the type from the whole body and applies
+    // the rule there, and only widens this seed.
+    (!is_undetermined_return_type(&merged)).then_some(merged)
 }
 
 pub(super) fn infer_function_expr_return_type(

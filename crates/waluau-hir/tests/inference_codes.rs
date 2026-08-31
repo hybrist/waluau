@@ -37,12 +37,15 @@ fn inference_empty_braces_defaults_to_record_for_locals() {
 
 #[test]
 fn inference_recursive_return_unsupported_code() {
+    // Every return in this cycle depends on the cycle, so there is nothing to
+    // seed the fixpoint from and the diagnostic stands.
     let source = r#"
-        function fact(n: i32)
-            if n == 0 then
-                return 1
-            end
-            return n * fact(n - 1)
+        function ping(n: i32)
+            return pong(n - 1)
+        end
+
+        function pong(n: i32)
+            return ping(n - 1)
         end
     "#;
     let program = parse(source).expect("parse should succeed");
