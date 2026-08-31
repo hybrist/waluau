@@ -6,6 +6,8 @@ local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
 local label = require("./label")
+local button = require("./button")
+local modal = require("./modal")
 local run_module = require("../run")
 local shop_ = require("../shop")
 
@@ -17,9 +19,6 @@ const PANEL_WIDTH: f64 = 540.0
 const PAD_X: f64 = 32.0
 const PAD_TOP: f64 = 24.0
 const PAD_BOTTOM: f64 = 24.0
-
-const PANEL_FILL: string = "#09090b"
-const PANEL_EDGE: string = "#a1a1aa"
 
 const TITLE_SIZE: f64 = 24.0
 const TITLE_INK: string = "#fbbf24"
@@ -40,19 +39,38 @@ const ROW_BASELINE: f64 = 33.0
 -- fixed visit size; presentation asserts if that contract changes.
 const ROW_CAPACITY: i32 = 3
 
-const ROW_FILL: string = "#17171c"
-const ROW_EDGE: string = "#3f3f46"
-const FOCUS_EDGE: string = "#fbbf24"
 const DISABLED_INK: string = "#52525b"
 const DEFAULT_INK: string = "#d4d4d8"
 const PRICE_INK: string = "#fbbf24"
 
-type Presentation = { state: ShopState, run: RunState }
+-- A shop row is a cursor's place in a list, exactly as a menu row is, so it is
+-- cut in the same finish and glows the same way. It used to say focus with an
+-- edge colour alone, which made the same interaction read two different ways
+-- in two screens. The row writes its own two columns of type, so it takes the
+-- button's surface rather than its caption.
+local ROW_LOOK: button.Look = {
+    fill = "#17171c",
+    idle_edge = "#3f3f46",
+    idle_ink = DEFAULT_INK,
+    focus_edge = "#fbbf24",
+    focus_ink = "#fbbf24",
+    quiet_edge = "#27272a",
+    quiet_ink = DISABLED_INK,
+    label_size = ROW_TEXT_SIZE,
+    pad_x = ROW_PAD_X,
+    height = ROW_HEIGHT,
+    weight = 2.0,
+    aura_reach = 5.0,
+    aura_swell = 0.0,
+    aura_rings = 5,
+    aura_strength = 0.42
+}
+
+type Presentation = { state: ShopState, run: RunState, pressed: i32 }
 export type Stateful = {
     presentation: Presentation,
     gold: label.Stateful,
     row_nodes: {ui.Node},
-    pressed_row: i32,
     root: ui.Node
 }
 
@@ -79,19 +97,17 @@ function draw_row(
     end
 
     local row_bounds: box.Rect = visual_row_bounds(bounds)
-    local edge: string = ROW_EDGE
+    local mood: button.Mood = "idle"
     if index == state.cursor then
-        edge = FOCUS_EDGE
+        mood = "focused"
     end
-    ink.panel(
-        surface.graphics,
-        row_bounds.x,
-        row_bounds.y,
-        row_bounds.width,
-        row_bounds.height,
-        ROW_FILL,
-        edge
-    )
+    -- Hover is the cursor here: the shop moves its cursor to whatever the
+    -- pointer is over, so the only pointer fact left to draw is the press.
+    local touch: button.Touch = "none"
+    if index == presentation.pressed then
+        touch = "press"
+    end
+    button.surface(surface.graphics, row_bounds, ROW_LOOK, mood, touch, 0.0)
 
     if index == #state.slots then
         ink.text(
@@ -132,21 +148,17 @@ function draw_row(
     )
 end
 
+-- The shop is a titled page laid over the duel, which is what a modal is, so
+-- it is cut from the same slate rather than from a fill of its own. It had
+-- kept the near-black the modal shell used to be, which left the two reading
+-- as different objects while doing the same job.
 function shell(): ui.Node
     return ui.Node.measured(
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
             box.set_fixed(into, PANEL_WIDTH, 0.0)
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
-            ink.panel(
-                surface.graphics,
-                bounds.x,
-                bounds.y,
-                bounds.width,
-                bounds.height,
-                PANEL_FILL,
-                PANEL_EDGE
-            )
+            modal.paint_page(surface.graphics, bounds)
         end
     )
 end
@@ -188,7 +200,7 @@ function sync(view: Stateful, state: ShopState, run: RunState): unit
 end
 
 function Stateful.new(state: ShopState, run: RunState): Stateful
-    local presentation: Presentation = { state = state, run = run }
+    local presentation: Presentation = { state = state, run = run, pressed = -1 }
     local gold: label.Stateful = label.Stateful.new(
         tostring(run.gold),
         GOLD_SIZE,
@@ -216,7 +228,7 @@ function Stateful.new(state: ShopState, run: RunState): Stateful
     end
     local row_list: ui.Node = ui.Node.flow(rows, box.column(0.0, "start", "stretch"))
     local body: ui.Node = ui.Node.flow(
-        {header, ui.Node.gap(0.0, HEADER_GAP), row_list},
+        {header, modal.rule(), ui.Node.gap(0.0, HEADER_GAP), row_list},
         body_style()
     )
     local root: ui.Node = ui.Node.layer({shell(), body}):min_width(PANEL_WIDTH)
@@ -224,7 +236,6 @@ function Stateful.new(state: ShopState, run: RunState): Stateful
         presentation = presentation,
         gold = gold,
         row_nodes = rows,
-        pressed_row = -1,
         root = root
     }
     sync(view, state, run)
@@ -254,21 +265,21 @@ function Stateful:mousemoved(x: f64, y: f64): unit
 end
 
 function Stateful:mousepressed(x: f64, y: f64, button: i32): unit
-    self.pressed_row = -1
+    self.presentation.pressed = -1
     if button ~= 1 then
         return
     end
     local row: i32 = self:hit(x, y)
     if row >= 0 then
         self.presentation.state.cursor = row
-        self.pressed_row = row
+        self.presentation.pressed = row
     end
 end
 
 -- Returns true when a complete click chose the way out.
 function Stateful:mousereleased(x: f64, y: f64, button: i32): bool
-    local pressed: i32 = self.pressed_row
-    self.pressed_row = -1
+    local pressed: i32 = self.presentation.pressed
+    self.presentation.pressed = -1
     if button ~= 1 or pressed < 0 or self:hit(x, y) ~= pressed then
         return false
     end
@@ -277,7 +288,7 @@ function Stateful:mousereleased(x: f64, y: f64, button: i32): bool
 end
 
 function Stateful:pointer_leave(): unit
-    self.pressed_row = -1
+    self.presentation.pressed = -1
 end
 
 function node(state: ShopState, run: RunState): ui.Node
