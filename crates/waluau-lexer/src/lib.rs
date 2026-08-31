@@ -805,6 +805,12 @@ fn push_string_escape(chars: &[char], idx: usize, value: &mut String) -> Result<
         Some('v') => value.push('\u{b}'),
         // An escaped literal newline continues the string on the next line.
         Some('\n') => value.push('\n'),
+        // An escaped space is the space itself. Lua's escape fallback keeps
+        // any escaped non-digit character, and `\ ` is the one whitespace
+        // escape that carries meaning: it pins a space that would otherwise be
+        // ambiguous next to a `\z` run or a line continuation. Other unknown
+        // escapes stay errors so typos like `\q` are still caught.
+        Some(' ') => value.push(' '),
         // `\z` skips all following whitespace, including newlines.
         Some('z') => {
             end += 1;
@@ -1481,6 +1487,31 @@ mod tests {
         assert_eq!(
             kinds(r#"b"ABC\x00\t\"""#),
             vec![TokenKind::Bytes(vec![65, 66, 67, 0, 9, 34])]
+        );
+    }
+
+    #[test]
+    fn tokenizes_escaped_space_as_a_plain_space() {
+        assert_eq!(
+            kinds(r#""two\ \ spaces" 'one\ space'"#),
+            vec![
+                TokenKind::Str("two  spaces".into()),
+                TokenKind::Str("one space".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_escaped_space_in_interpolated_string() {
+        // `\ ` contributes only the space, so the literal part keeps the
+        // second space that follows the escape.
+        assert_eq!(
+            kinds("`Backslash \\ that escapes the space`"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::Str("Backslash  that escapes the space".into()),
+                TokenKind::RParen,
+            ]
         );
     }
 

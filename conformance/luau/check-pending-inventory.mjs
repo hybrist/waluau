@@ -46,7 +46,7 @@ const expectedPendingByFamily = {
   pm: 52,
   safeenv: 1,
   sort: 1,
-  stringinterp: 4,
+  stringinterp: 2,
   strings: 25,
   tables: 4,
   tmerror: 1,
@@ -106,7 +106,7 @@ const trackedByFamily = {
   pm: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-dbyy,waluau-esz6,waluau-wb7a',
   safeenv: 'deviation:embedding-hooks',
   sort: 'deviation:aot-loadstring,sparse-mixed-hash-tables',
-  stringinterp: 'deviation:static-names; bead:waluau-h37g',
+  stringinterp: 'deviation:static-names,reserved-type-keywords',
   strings: 'deviation:aot-loadstring,sparse-mixed-hash-tables,metatable-events; bead:waluau-dbyy,waluau-nlyf,waluau-vogb,waluau-fg46,waluau-9f8d',
   tables: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-zxju',
   tmerror: 'deviation:metatable-events',
@@ -129,6 +129,7 @@ const documentedDeviations = new Set([
   'native-c-yield',
   'native-jit-register-layout',
   'reference-test-userdata',
+  'reserved-type-keywords',
   'sparse-mixed-hash-tables',
   'static-names',
   'strict-bool',
@@ -144,7 +145,6 @@ const openBeads = new Set([
   'waluau-dbyy',
   'waluau-esz6',
   'waluau-fg46',
-  'waluau-h37g',
   'waluau-jnyd',
   'waluau-n6u8',
   'waluau-nlyf',
@@ -233,9 +233,9 @@ for (const file of pending) {
   actualPendingByFamily[family] += 1;
 }
 
-assert.equal(files.length, 1090, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(pending.length, 667, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(files.length - pending.length, 423, 'enabled Luau chunk count changed');
+assert.equal(files.length, 1091, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(pending.length, 665, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(files.length - pending.length, 426, 'enabled Luau chunk count changed');
 assert.deepEqual(actualPendingByFamily, expectedPendingByFamily, 'pending family counts changed');
 assert.deepEqual(
   documentedFamilies.sort(),

@@ -28,8 +28,8 @@ for n in $(seq 1 25); do
 done
 ```
 
-At the final reconciliation in `waluau-q7qg.16`, the directory has **1,090
-chunks**: **423 enabled** and **667 pending**. These numbers are an exact
+After `waluau-h37g` completed the interpolated-string work, the directory has
+**1,091 chunks**: **426 enabled** and **665 pending**. These numbers are an exact
 filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
@@ -37,7 +37,10 @@ exclusion.
 
 PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
 splits can likewise change both the total and the enabled/pending counts. The
-meaningful measure remains independently passing upstream coverage.
+meaningful measure remains independently passing upstream coverage. The most
+recent change is `waluau-h37g`, which enabled `stringinterp.2` and
+`stringinterp.6` and added one patched companion, moving the snapshot from
+1,090/423/667 to 1,091/426/665.
 
 ## Intentional execution-model inventory
 
@@ -224,6 +227,31 @@ contain a fixable parser, inference, or library gap are mapped to both reasons
 in the family inventory below; this deviation is not a blanket explanation for
 unknown-name diagnostics on missing standard-library namespaces.
 
+`stringinterp.4` is the exact case: it interpolates `localName`, a name the
+upstream test never declares, and expects the text `nil`. Waluau reports
+`unknown name 'localName'` at compile time. The decision is deliberate and not
+scheduled work — resolving the name dynamically would require a mutable global
+environment, which the static module contract rules out — so the chunk stays
+pending permanently rather than under a bead.
+
+### Reserved primitive type keywords
+
+Waluau's primitive type names — `string`, `number`, `bool`, `unknown`, `nil`,
+`thread`, `bytes`, `unit`/`void`, and the sized numerics `i32`/`i64`/`u32`/
+`u64`/`f32`/`f64` — are lexer keywords, not ordinary identifiers. A local, a
+parameter, a function name, or a record field name therefore cannot be spelled
+`string`. In expression position `string` denotes the builtin `string.*`
+namespace, which the compiler resolves statically by name (the same static
+resolution described above), so a binding could not shadow it even if the
+keyword were relaxed.
+
+Impact: `stringinterp.8` is pending because upstream deliberately names a
+function parameter `string` to test that a local shadows the `string` library.
+The interpolation semantics that range exercises — one untyped parameter
+interpolated after being called with both a string and a number argument —
+already work, and `stringinterp.8.patched.walu` keeps that coverage enabled
+with the parameter renamed. Only the shadowing itself is out of contract.
+
 ### Ahead-of-time compilation and `loadstring`
 
 Waluau compiles the module graph before browser instantiation. It does not ship
@@ -350,7 +378,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **667 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **665 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -399,7 +427,7 @@ assertion range becomes independently useful.
 | `pm*` | 52 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
 | `safeenv*` | 1 | Embedding/environment hooks |
 | `sort*` | 1 | AOT source loading and sparse/mixed/hash tables |
-| `stringinterp*` | 4 | Static names plus remaining interpolation semantics `waluau-h37g` |
+| `stringinterp*` | 2 | [Static lexical names](#static-lexical-names-and-module-environments) (`stringinterp.4`) and [reserved primitive type keywords](#reserved-primitive-type-keywords) (`stringinterp.8`) |
 | `strings*` | 25 | AOT source loading, sparse tables, metatable events; coercion `waluau-dbyy`, catchable formatting `waluau-nlyf`, byte ranges `waluau-vogb`, error formatting `waluau-fg46`, dynamic calls `waluau-9f8d` |
 | `tables*` | 4 | AOT source loading and sparse/mixed/hash tables; runtime unpack `waluau-zxju` |
 | `tmerror*` | 1 | Metatable event model |
@@ -429,7 +457,6 @@ converge:
 | Browser date/time library | `waluau-qabb` | `datetime` |
 | Explicit generic instantiation/type packs | `waluau-9ttd` | `explicit_type_instantiations` |
 | Vector value/library | `waluau-uneu` | `vector`, `vector_library.{1-11}`; native vector checks remain VM/JIT exclusions |
-| Remaining string interpolation | `waluau-h37g` | `stringinterp.{2,4,6,8}`, with static-name behavior remaining a documented decision |
 
 `bitwise.{14,15}` were re-probed under `waluau-rndq` and deliberately left to
 `waluau-dbyy`. Luau's `bit32` accepts `"1"` because its VM converts strings to
@@ -452,6 +479,10 @@ above. Luau's modulo-2^32 `bit32` argument rule for wide, negative, and
 `waluau-rndq`. Earlier children also enabled scientific notation, surplus
 fixed-call arguments, bit32 intrinsics, large `%f` formatting, missing
 multi-binding nil padding, chained if expressions, and many passing split
-ranges. When another fix lands, recompile the affected pending chunks, split
+ranges. `waluau-h37g` closed the interpolation work: `table.concat` now joins
+numeric arrays through the same `tostring` formatting Luau uses, `\ ` lexes as
+an escaped space, and the two remaining `stringinterp` chunks are documented
+language decisions rather than gaps.
+When another fix lands, recompile the affected pending chunks, split
 independent sections where necessary, and update this inventory rather than
 preserving an obsolete failure reason.

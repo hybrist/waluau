@@ -4340,17 +4340,28 @@ fn type_checks_table_concat_with_separator_and_bounds() {
 }
 
 #[test]
-fn rejects_table_concat_for_non_string_array() {
+fn type_checks_table_concat_over_numeric_arrays() {
     let source = r#"
-        function entry(nums: {i32}): string
-            return table.concat(nums, ", ")
+        function entry(nums: {i32}, reals: {f64}): string
+            return table.concat(nums, ", ") .. table.concat(reals)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_table_concat_for_non_string_or_number_array() {
+    let source = r#"
+        function entry(flags: {bool}): string
+            return table.concat(flags, ", ")
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "table.concat expects an array of strings, got {i32}"
+        "table.concat expects an array of strings or numbers, got {bool}"
     );
 }
 
