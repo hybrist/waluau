@@ -1,0 +1,52 @@
+-- Browser date and time builtins, declared as host imports.
+--
+-- Waluau runs in the browser, so `os.*` is a thin typed surface over the
+-- DOM's `Date` and `performance` clocks rather than a C `time.h` port. The
+-- functions here are the date/time subset; process, filesystem, locale, and
+-- environment entry points of Lua's `os` library have no browser meaning and
+-- are deliberately absent.
+--
+-- Two clocks, two contracts:
+--
+--   * `os.time` and `os.date` read wall-clock time as whole seconds since the
+--     Unix epoch. Wall-clock time can jump when the machine's clock is set.
+--   * `os.clock` reads the monotonic page timer (`performance.now`) as
+--     fractional seconds since page start. It never jumps backwards, so it is
+--     the one to subtract when measuring elapsed time.
+-- Whole seconds since 1970-01-01T00:00:00Z, truncated toward the epoch.
+-- Always UTC: the returned instant does not depend on the machine timezone.
+declare function os.time(): f64
+
+-- Seconds between two `os.time` instants, `later - earlier`, matching Lua's
+-- argument order. Waluau timestamps are already plain seconds, so this is
+-- ordinary subtraction rather than a platform time_t conversion.
+declare function os.difftime(later: f64, earlier: f64): f64
+
+-- Fractional seconds on the monotonic page timer. The origin is the page load,
+-- not the epoch, so only differences between two readings are meaningful.
+declare function os.clock(): f64
+
+-- strftime-style formatting of a wall-clock instant.
+--
+--   os.date(format)        formats the current time
+--   os.date(format, time)  formats `time` seconds after the epoch
+--
+-- A leading `!` selects UTC; without it the browser's local timezone applies,
+-- which makes the result depend on the machine running the program. Prefer the
+-- `!` forms wherever output has to be reproducible.
+--
+-- Supported conversions are Luau's set: `%aAbBcdHIjmMpSUwWxXyYzZ` and `%%`.
+-- Any other specifier, including the `E`/`O` locale modifiers, raises
+-- "invalid conversion specifier". Text outside a conversion is copied through.
+--
+-- Pre-epoch instants format normally, because the browser's `Date` represents
+-- them: `os.date("!%Y", -1)` is "1969". Lua and Luau instead answer nil below
+-- the epoch, so this is a deliberate difference and the reason the result is a
+-- plain `string` that concatenates and reformats without a nil check.
+--
+-- Lua's `"*t"` and `"!*t"` calendar-table formats are not supported. A
+-- declared host import carries primitives, and a Waluau function has one
+-- return type, so `os.date` always returns a formatted string. Requesting a
+-- calendar table raises rather than silently formatting the literal text.
+declare function os.date(format: string): string
+declare function os.date(format: string, time: f64): string

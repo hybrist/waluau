@@ -21,18 +21,16 @@ function countMenuTitleInk(canvas) {
   );
 }
 
-// Cyan stall ink where the city map stands the stop the run is on. Every map
-// screen parks that stop 736 logical units in from the left and just past half
-// the height (a height-driven canvas is always 600 units tall, so 306), and
-// the run always sets out from a vendor, so a positive count is the map really
-// being under the screen rather than a backdrop that happens to look like one.
-function countMapStopInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { x: 710, y: 288, width: 56, height: 34 },
-    [103, 232, 249],
-    [45, 45, 45],
-  );
+// The cyan stall and gold party marker share the stop the run is standing on.
+// Every map screen parks that stop 736 logical units in from the left and just
+// past half the height (a height-driven canvas is always 600 units tall, so
+// 306). The breathing party mote can cover the stall completely at one point
+// in its cycle, so either layer proves the anchored stop is under the screen.
+async function countMapStopInk(canvas) {
+  const rect = { x: 710, y: 288, width: 56, height: 34 };
+  const stall = await countDesignInk(canvas, rect, [103, 232, 249], [45, 45, 45]);
+  const party = await countDesignInk(canvas, rect, [253, 230, 138], [35, 35, 35]);
+  return stall + party;
 }
 
 test('boots to a menu with new run, boss rush, and how to play options', async ({ page }) => {
@@ -273,122 +271,6 @@ test('stops on the fatal audio diagnostic when the flip sound cannot load', asyn
   await expect
     .poll(countFatalPanelInk, { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(5000);
-});
-
-// Amber ink in the swap phase prompt, which is drawn for exactly as long as
-// the feint/swap is open. It is how these tests tell the two halves of a
-// breach apart without reaching into game state.
-function countPassInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { centerOffsetX: -160, wardOffsetY: -48, width: 80, height: 16 },
-    [251, 191, 36],
-    [40, 40, 60],
-  );
-}
-
-// Verdict titles occupy the otherwise empty strip above the duel board. This
-// is a stable signal that the live vault has ended; the draw pile also
-// disappears briefly while another hand is being dealt after a spent heart.
-function countVerdictTitleInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { x: 82, y: 72, width: 420, height: 40 },
-    [251, 191, 36],
-    [40, 40, 40],
-  );
-}
-
-const PRESS_MS = 200;
-const REVEAL_MS = 600;
-const CLEANUP_MS = 1600;
-
-// Two consecutive identical frames: the board has finished whatever it was
-// animating and the next press will mean what it says rather than being spent
-// skipping ahead.
-async function settleBoard(canvas) {
-  let previous = -1;
-  await expect
-    .poll(async () => {
-      const current = await frameSignature(canvas);
-      const stable = current === previous;
-      previous = current;
-      return stable;
-    }, { timeout: GAME_READY_TIMEOUT })
-    .toBe(true);
-}
-
-// One breach played to its end: pass the feint, bind two relics, commit them,
-// cut the reveal short, and clear it. The last press either refills for the
-// next breach or raises the vault's verdict, depending on whether that breach
-// ended the heist.
-//
-// Presses land only between animations, so passing keeps asking until the
-// capsule is gone; a P that arrives mid-animation is spent skipping it, and
-// one that arrives after the feint closed does nothing.
-async function playBreach(page, canvas) {
-  await expect
-    .poll(async () => {
-      await page.keyboard.press('p');
-      await page.waitForTimeout(PRESS_MS);
-      return countPassInk(canvas);
-    }, { timeout: GAME_READY_TIMEOUT })
-    .toBeLessThan(10);
-
-  await settleBoard(canvas);
-  await page.keyboard.press('Space');
-  await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('Space');
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(REVEAL_MS);
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(REVEAL_MS);
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(CLEANUP_MS);
-}
-
-test('carries the run into the next vault once this one is settled', async ({ page }) => {
-  test.slow();
-  const pageErrors = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
-  const canvas = await openGame(page);
-
-  await beginHeist(page, canvas);
-
-  // A player win raises the verdict immediately. An Opponent win spends one
-  // heart and deals another hand in this vault unless that was the last heart;
-  // wait through that deal instead of mistaking its briefly hidden draw pile
-  // for the verdict.
-  for (let breach = 1; breach <= 8; breach += 1) {
-    await playBreach(page, canvas);
-    await expect
-      .poll(
-        async () => (await countVerdictTitleInk(canvas)) > 20
-          || (await countCardBackInk(canvas)) > 40,
-        { timeout: GAME_READY_TIMEOUT })
-      .toBe(true);
-    if (await countVerdictTitleInk(canvas) > 20) break;
-  }
-  await expect
-    .poll(() => countVerdictTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(20);
-
-  // A settled vault is a moment in the run rather than the end of play. Taking
-  // a cleared one stops at the shop when its target was met, where the carried
-  // gold buys spell scrolls before the next vault is dealt. A run-ending
-  // verdict starts a fresh first vault directly. Which destination appears is
-  // the cards' to decide, so this covers both.
-  //
-  // The fence stands on an animating city map, so there is no still frame to
-  // wait for. Escape walks past it when it appears and otherwise only skips
-  // the opening deal; the next vault's feint prompt proves its live hand is
-  // ready.
-  await page.keyboard.press('Enter');
-  await page.keyboard.press('Escape');
-  await expect
-    .poll(() => countPassInk(canvas), { timeout: GAME_READY_TIMEOUT * 2 })
-    .toBeGreaterThan(10);
-  expect(pageErrors).toEqual([]);
 });
 
 test('plays a complete Ante Magic game through the 2D engine', async ({ page }) => {

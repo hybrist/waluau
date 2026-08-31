@@ -355,7 +355,7 @@ impl<'a> Loader<'a> {
     > {
         // Load builtin declaration files and extract their declared imports
         // and constants.
-        let builtin_files = ["core.walu", "math.walu"];
+        let builtin_files = ["core.walu", "math.walu", "os.walu"];
         let mut all_imports = Vec::new();
         let mut all_constants = Vec::new();
 
@@ -363,6 +363,7 @@ impl<'a> Loader<'a> {
             let builtin_source = match *filename {
                 "core.walu" => include_str!("../../../builtins/core.walu"),
                 "math.walu" => include_str!("../../../builtins/math.walu"),
+                "os.walu" => include_str!("../../../builtins/os.walu"),
                 _ => continue,
             };
 

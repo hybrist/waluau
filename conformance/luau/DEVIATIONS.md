@@ -28,9 +28,9 @@ for n in $(seq 1 25); do
 done
 ```
 
-After `waluau-9f8d.1` resolved recursive top-level return types by a seeded
-fixpoint, the directory has **1,091 chunks**: **435 enabled** and **656
-pending**. These numbers are an exact filesystem snapshot, not a target. Run
+After the browser `os.*` split in `waluau-qabb`, the directory has **1,098
+chunks**: **436 enabled** and **662 pending**. These numbers are an exact
+filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
 exclusion.
@@ -38,10 +38,11 @@ exclusion.
 PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
 splits can likewise change both the total and the enabled/pending counts. The
 meaningful measure remains independently passing upstream coverage. The most
-recent change is `waluau-9f8d.1`, which enabled `calls.17` and `calls.18` and
-moved the snapshot from 1,091/433/658 to 1,091/435/656. It follows
-`waluau-9f8d.2`, which enabled `pm.85`, `pm.97`, `pm.98`, and `pm.100`-`pm.102`,
-and `waluau-8fxn`, which enabled `pcall.2`.
+recent change is `waluau-qabb`, which enabled `datetime.1` and split the rest
+of that source into seven focused pending chunks, moving the snapshot from
+1,091/435/656 to 1,098/436/662. It follows `waluau-9f8d.1`, which enabled
+`calls.17` and `calls.18`, and `waluau-9f8d.2`, which enabled `pm.85`, `pm.97`,
+`pm.98`, and `pm.100`-`pm.102`.
 
 ## Intentional execution-model inventory
 
@@ -290,6 +291,64 @@ Embedded NUL and all 256 byte values therefore round-trip, while wider Unicode
 input is rejected catchably. Use immutable `bytes` when browser text projection
 is not part of the operation.
 
+### Browser clocks and calendar values
+
+Waluau's `os` library is the date/time subset only, declared in
+[`builtins/os.walu`](../../builtins/os.walu) and implemented over the browser's
+`Date` and `performance` clocks:
+
+- `os.time(): f64` — whole seconds since the Unix epoch, always UTC.
+- `os.difftime(later: f64, earlier: f64): f64` — `later - earlier`.
+- `os.clock(): f64` — fractional seconds on the monotonic page timer, so only
+  differences between readings are meaningful.
+- `os.date(format: string [, time: f64]): string` — strftime formatting with
+  Luau's specifier set `%aAbBcdHIjmMpSUwWxXyYzZ` and `%%`. Any other specifier,
+  including the `E` and `O` locale modifiers, raises.
+
+A leading `!` selects UTC and is the reproducible form; without it the
+browser's local timezone applies, which makes the output depend on the machine
+running the program. `conformance/os_date_time.walu` therefore asserts exact
+values only for `!` formats, and checks local output only through properties
+that hold in every zone (the seconds field and a `±HHMM` zone offset).
+
+Four differences from Luau follow from the browser host boundary:
+
+- **No calendar-table values.** A declared host import carries primitives, not
+  records, and a Waluau function has one return type. So `os.time` takes no
+  arguments and `os.date` always returns a formatted string; `os.date("*t")`
+  raises instead of silently formatting the literal text.
+- **Pre-epoch instants format normally**, because the browser's `Date`
+  represents them: `os.date("!%Y", -1)` is "1969". Luau answers nil below the
+  epoch, so Waluau's result type is a plain `string` that concatenates and
+  reformats without a nil check.
+- **No daylight-saving model.** Nothing reports an `isdst` flag; a program that
+  needs a stable calendar uses the `!` formats.
+- **No process, filesystem, locale, or environment entry points.** `os.exit`,
+  `os.setlocale`, `os.getenv`, and `os.remove` have no browser meaning and are
+  absent rather than stubbed.
+
+Impact: `datetime.{2-8}` (7 chunks) remains pending. `datetime.1` is enabled
+and covers the os.date string formats and the no-argument `os.time`. Each
+pending chunk sits at its own upstream assertion boundary and reports its own
+first blocker:
+
+| Chunk | Upstream lines | First blocker |
+| --- | --- | --- |
+| `datetime.2` | 15 | `os.date("*t")` calendar-table result |
+| `datetime.3` | 19 | os.date formats pre-epoch instants, so its result is never nil |
+| `datetime.4` | 21-47 | `os.time(table)` calendar-table argument |
+| `datetime.5` | 49-63 | calendar-table result, plus the untyped helper parameter `waluau-9f8d` |
+| `datetime.6` | 5-8, 65-70 | `os.date` is an overload set, so using it as a value needs an explicit function type, exactly as `math.log` does; the `checkerr` vararg forwarding is `waluau-9f8d` |
+| `datetime.7` | 72-98 | calendar-table result, its mutable fields, and `isdst` |
+| `datetime.8` | 100-106 | `os.time(table)` calendar-table argument |
+
+`datetime.4` and `datetime.8` share exactly that one blocker, but lines 49-98
+sit between them and belong to chunks with different ones, so the
+contiguous-interval split convention keeps the two apart rather than merging
+them across three unrelated failures. Two other pending chunks mention this
+surface without being blocked by it: `gc.19` calls `os.exit` inside a `__gc`
+metamethod, and `sort` times itself with `os.clock`.
+
 ### Mutable buffers
 
 Waluau now implements Luau's fixed-size mutable `buffer` value over browser
@@ -379,7 +438,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **656 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **662 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -402,7 +461,7 @@ assertion range becomes independently useful.
 | `coroutine*` | 22 | [Typed coroutine API](#typed-coroutine-api) |
 | `coverage*` | 1 | Embedding/instrumentation hooks |
 | `cyield*` | 13 | [Native C-yield continuations](#native-c-yield-continuations) and typed coroutines |
-| `datetime*` | 1 | Browser `os.date`/`os.time` compatibility `waluau-qabb` |
+| `datetime*` | 7 | [Browser clocks and calendar values](#browser-clocks-and-calendar-values); dynamic calls/inference `waluau-9f8d` |
 | `debug*`, `debugger*` | 2 | Embedding/instrumentation hooks |
 | `errors*` | 80 | AOT source loading and sparse tables; `xpcall` `waluau-wb7a`, error formatting `waluau-fg46`, dynamic calls/inference `waluau-9f8d` |
 | `events*` | 25 | [Metatable event model](#metatable-event-model) |
@@ -455,7 +514,6 @@ converge:
 | Protected invalid `bit32` arguments | `waluau-rndq`, `waluau-esz6` | `bitwise.22` |
 | Uninitialized-local inference | `waluau-3em1` | `bitwise.18` |
 | Luau class declarations | `waluau-wll8` | `classes.{1-49}` |
-| Browser date/time library | `waluau-qabb` | `datetime` |
 | Explicit generic instantiation/type packs | `waluau-9ttd` | `explicit_type_instantiations` |
 | Vector value/library | `waluau-uneu` | `vector`, `vector_library.{1-11}`; native vector checks remain VM/JIT exclusions |
 
@@ -492,6 +550,9 @@ expressions, and many passing split ranges. `waluau-h37g` closed the
 interpolation work: `table.concat` now joins numeric arrays through the same
 `tostring` formatting Luau uses, `\ ` lexes as an escaped space, and the two
 remaining `stringinterp` chunks are documented language decisions rather than
-gaps. When another fix lands, recompile the affected pending chunks, split
+gaps. The browser `os` date/time surface landed in `waluau-qabb`, enabling
+`datetime.1` and turning the rest of that source into the documented
+clock/calendar deviation above. When another fix lands, recompile the affected
+pending chunks, split
 independent sections where necessary, and update this inventory rather than
 preserving an obsolete failure reason.
