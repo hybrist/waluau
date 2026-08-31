@@ -1,0 +1,14 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+page.on('pageerror', e => console.log('PAGEERR', e.message));
+await page.goto('http://localhost:5199/');
+await page.waitForSelector('h1');
+await page.waitForTimeout(6000);
+await page.screenshot({ path: '/tmp/b-menu.png', clip: { x: 370, y: 390, width: 545, height: 250 } });
+await page.keyboard.press('Enter');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(4000);
+await page.screenshot({ path: '/tmp/b-chrome.png', clip: { x: 1010, y: 20, width: 250, height: 90 } });
+await page.screenshot({ path: '/tmp/b-confirm.png', clip: { x: 540, y: 545, width: 210, height: 50 } });
+await browser.close();

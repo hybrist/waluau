@@ -8,54 +8,47 @@
 -- widths that have to be re-tuned whenever either word changes.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
-local ink = require("../ink")
-local plate = require("../plate")
+local button = require("./button")
 
 const HEIGHT: f64 = 26.0
 const PAD_X: f64 = 32.0
 const LABEL_SIZE: f64 = 11.0
 
-const FILL: string = "#17171c"
-const ACTIVE_EDGE: string = "#fbbf24"
-const QUIET_EDGE: string = "#52525b"
-const QUIET_INK: string = "#8a8a92"
+-- A capsule has no idle: what the board is asking for is lit and what it is
+-- not is quiet, so `active` names the two moods directly and the idle finish
+-- is never reached. The glow is off — a capsule says "this would be accepted
+-- now", which is a state of the board rather than a cursor's place in a list.
+local LOOK: button.Look = {
+    fill = "#17171c",
+    idle_edge = "#52525b",
+    idle_ink = "#8a8a92",
+    focus_edge = "#fbbf24",
+    focus_ink = "#fbbf24",
+    quiet_edge = "#52525b",
+    quiet_ink = "#8a8a92",
+    label_size = LABEL_SIZE,
+    pad_x = PAD_X,
+    height = HEIGHT,
+    weight = 1.5,
+    aura_reach = 0.0,
+    aura_swell = 0.0,
+    aura_rings = 0,
+    aura_strength = 0.0
+}
 
-function width_of(graphics: ui.Graphics?, text: string): f64
-    return ui.text_width(graphics, text, LABEL_SIZE) + PAD_X * 2.0
+function mood_of(active: bool): button.Mood
+    if active then
+        return "focused"
+    end
+    return "disabled"
 end
 
-function intrinsic(graphics: ui.Graphics?, text: string): box.Intrinsic
-    local width: f64 = width_of(graphics, text)
-    return {
-        min_width = width,
-        preferred_width = width,
-        max_width = width,
-        min_height = HEIGHT,
-        preferred_height = HEIGHT,
-        max_height = HEIGHT,
-        -- The label rides the middle of the capsule, so that is where its
-        -- baseline is; a row of capsules and captions lines up on it.
-        baseline = (HEIGHT + LABEL_SIZE) * 0.5
-    }
+function width_of(graphics: ui.Graphics?, text: string): f64
+    return button.width_of(graphics, LOOK, text)
 end
 
 function draw_at(surface: ui.Surface, text: string, active: bool, bounds: box.Rect): unit
-    local graphics = surface.graphics
-    local edge: string = QUIET_EDGE
-    local caption: string = QUIET_INK
-    if active then
-        edge = ACTIVE_EDGE
-        caption = ACTIVE_EDGE
-    end
-    plate.draw(graphics, bounds.x, bounds.y, bounds.width, bounds.height, FILL, edge, 1.5)
-    ink.text_centered(
-        graphics,
-        text,
-        bounds.x + bounds.width * 0.5,
-        bounds.y + (bounds.height + LABEL_SIZE) * 0.5,
-        LABEL_SIZE,
-        caption
-    )
+    button.draw(surface.graphics, bounds, LOOK, mood_of(active), "none", 0.0, text)
 end
 
 type CapsulePresentation = { text: string, active: bool }
@@ -65,14 +58,7 @@ function Stateful.new(text: string, active: bool): Stateful
     local presentation: CapsulePresentation = { text = text, active = active }
     local root: ui.Node = ui.Node.measured(
         function(graphics: ui.Graphics?, into: box.Intrinsic): unit
-            local width: f64 = width_of(graphics, presentation.text)
-            into.min_width = width
-            into.preferred_width = width
-            into.max_width = width
-            into.min_height = HEIGHT
-            into.preferred_height = HEIGHT
-            into.max_height = HEIGHT
-            into.baseline = (HEIGHT + LABEL_SIZE) * 0.5
+            button.measure_into(graphics, into, LOOK, presentation.text)
         end,
         function(surface: ui.Surface, bounds: box.Rect): unit
             draw_at(surface, presentation.text, presentation.active, bounds)
@@ -90,4 +76,4 @@ function node(text: string, active: bool): ui.Node
     return Stateful.new(text, active).root
 end
 
-return { node = node, draw_at = draw_at, intrinsic = intrinsic, height = HEIGHT }
+return { node = node, draw_at = draw_at, height = HEIGHT }
