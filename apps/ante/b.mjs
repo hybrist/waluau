@@ -5,10 +5,12 @@ page.on('pageerror', e => console.log('PAGEERR', e.message));
 await page.goto('http://localhost:5199/');
 await page.waitForSelector('h1');
 await page.waitForTimeout(6000);
-await page.screenshot({ path: '/tmp/b-menu.png', clip: { x: 370, y: 390, width: 545, height: 250 } });
-await page.keyboard.press('Enter');
-await page.keyboard.press('Enter');
-await page.waitForTimeout(4000);
-await page.screenshot({ path: '/tmp/b-chrome.png', clip: { x: 1010, y: 20, width: 250, height: 90 } });
-await page.screenshot({ path: '/tmp/b-confirm.png', clip: { x: 540, y: 545, width: 210, height: 50 } });
+// hover the second row (BOSS RUSH), which is not the cursor
+await page.mouse.move(640, 522);
+await page.waitForTimeout(400);
+await page.screenshot({ path: '/tmp/b-hover.png', clip: { x: 370, y: 395, width: 545, height: 250 } });
+await page.mouse.down();
+await page.waitForTimeout(300);
+await page.screenshot({ path: '/tmp/b-press.png', clip: { x: 370, y: 395, width: 545, height: 250 } });
+await page.mouse.up();
 await browser.close();
