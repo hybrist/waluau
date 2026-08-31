@@ -13,6 +13,7 @@
 -- becomes the room the duel's own backdrop fades in behind.
 local engine = require("waluau:engine")
 local ink = require("./ink")
+local plate = require("./plate")
 local city_map = require("./city_map")
 
 type Graphics = engine.Graphics
@@ -33,6 +34,31 @@ const ROUTE_AHEAD: string = "#5b5f70"
 const DASH_LENGTH: f64 = 13.0
 const DASH_GAP: f64 = 11.0
 
+-- A stop the route has already reached is lit rather than merely brighter:
+-- the tone it is drawn in also spills into the street around it, which is what
+-- separates a landmark from a symbol on a key.
+const LANTERN_RINGS: i32 = 5
+const LANTERN_STRENGTH: f64 = 0.30
+
+function draw_lantern(
+    graphics: Graphics,
+    stop: city_map.Stop,
+    tone: string,
+    reach: f64,
+    alpha: f64
+): unit
+    graphics:set_color(tone)
+    plate.halo(
+        graphics,
+        stop.x,
+        stop.y,
+        reach * 0.35,
+        reach,
+        LANTERN_RINGS,
+        LANTERN_STRENGTH * alpha
+    )
+end
+
 const VAULT_INK: string = "#fbbf24"
 const VAULT_DIM: string = "#6b6f7d"
 const VENDOR_INK: string = "#67e8f9"
@@ -51,14 +77,85 @@ function roof_tone(tone: i32): string
     return "#1b1720"
 end
 
+-- How far the shadow a building throws reaches past it, and how black it is
+-- where it starts. Drawn as two veils fading outward rather than as an offset
+-- copy of the roof: from above, a block's shadow has an edge that dies out,
+-- and a hard rectangle behind every roof made the city read as a diagram.
+const SHADOW_REACH: f64 = 7.0
+const SHADOW_DEPTH: f64 = 0.62
+-- The parapet catches the moon on the sides facing it and shades the others,
+-- which is the whole difference between a roof and an outlined rectangle.
+const PARAPET: string = "#2c2f3b"
+-- Roofs are darker at their own edges, where the parapet keeps the light off.
+const ROOF_MIDDLE: f64 = 1.10
+const ROOF_EDGE: f64 = 0.80
+
+function draw_roof_shadow(graphics: Graphics, building: city_map.Building, alpha: f64): unit
+    graphics:set_color(ink.fade("#04050a", alpha))
+    local depth: f64 = SHADOW_DEPTH * alpha
+    plate.veil_rectangle(
+        graphics,
+        building.x + building.width,
+        building.y + 5.0,
+        SHADOW_REACH,
+        building.height,
+        depth,
+        0.0,
+        0.0,
+        depth
+    )
+    plate.veil_rectangle(
+        graphics,
+        building.x + 4.0,
+        building.y + building.height,
+        building.width + SHADOW_REACH,
+        SHADOW_REACH,
+        depth,
+        0.0,
+        0.0,
+        0.0
+    )
+end
+
 function draw_rooftop(graphics: Graphics, building: city_map.Building, alpha: f64): unit
-    graphics:set_color(ink.fade("#07080d", alpha))
-    graphics:fill_rectangle(building.x + 3.0, building.y + 4.0, building.width, building.height)
+    draw_roof_shadow(graphics, building, alpha)
+
+    -- The roof face falls off toward its own edges. Two bands rather than one
+    -- quad, because the falloff has to come back up in the middle and a quad
+    -- only interpolates between its corners.
     graphics:set_color(ink.fade(roof_tone(building.tone), alpha))
-    graphics:fill_rectangle(building.x, building.y, building.width, building.height)
-    graphics:set_color(ink.fade("#292b36", alpha))
-    graphics:set_line_width(1.0)
-    graphics:stroke_rectangle(building.x, building.y, building.width, building.height)
+    local half: f64 = building.height * 0.5
+    plate.shaded_rectangle(
+        graphics,
+        building.x,
+        building.y,
+        building.width,
+        half,
+        ROOF_EDGE,
+        ROOF_EDGE,
+        ROOF_MIDDLE,
+        ROOF_MIDDLE
+    )
+    plate.shaded_rectangle(
+        graphics,
+        building.x,
+        building.y + half,
+        building.width,
+        building.height - half,
+        ROOF_MIDDLE,
+        ROOF_MIDDLE,
+        ROOF_EDGE,
+        ROOF_EDGE
+    )
+    plate.border(
+        graphics,
+        building.x,
+        building.y,
+        building.width,
+        building.height,
+        ink.fade(PARAPET, alpha),
+        1.0
+    )
 
     local unit_x: f64 = building.x + building.width * 0.5 - 7.0
     local unit_y: f64 = building.y + building.height * 0.5 - 5.0
@@ -68,10 +165,16 @@ function draw_rooftop(graphics: Graphics, building: city_map.Building, alpha: f6
     if building.detail == 2 then
         unit_y = building.y + 9.0
     end
-    graphics:set_color(ink.fade("#0d0f16", alpha))
-    graphics:fill_rectangle(unit_x, unit_y, 14.0, 10.0)
-    graphics:set_color(ink.fade("#30323d", alpha))
-    graphics:stroke_rectangle(unit_x, unit_y, 14.0, 10.0)
+    plate.draw(
+        graphics,
+        unit_x,
+        unit_y,
+        14.0,
+        10.0,
+        ink.fade("#0d0f16", alpha),
+        ink.fade("#30323d", alpha),
+        1.0
+    )
 end
 
 -- Centre lines, drawn only where they can be seen. `across` bounds pick the
@@ -286,6 +389,7 @@ function draw_duel_stop(
     local tone: string = VAULT_DIM
     if reached then
         tone = VAULT_INK
+        draw_lantern(graphics, stop, VAULT_INK, 40.0, alpha)
     end
     graphics:set_color(ink.fade("#0b0c12", alpha))
     graphics:fill_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
@@ -307,13 +411,22 @@ function draw_duel_stop(
     graphics:set_color(ink.fade(tone, label_alpha))
     graphics:fill_circle(stop.x, stop.y + 1.0, 4.0)
     local writing: string = "DUEL " .. label
-    local plate: f64 = 52.0
+    local banner: f64 = 52.0
     if final then
         writing = writing .. "   LAST"
-        plate = 86.0
+        banner = 86.0
     end
     graphics:set_color(ink.fade("#0b0c12", label_alpha * 0.9))
-    graphics:fill_rectangle(stop.x - plate * 0.5, stop.y + 19.0, plate, 17.0)
+    plate.draw(
+        graphics,
+        stop.x - banner * 0.5,
+        stop.y + 19.0,
+        banner,
+        17.0,
+        ink.fade("#0b0c12", label_alpha * 0.9),
+        ink.fade(tone, label_alpha * 0.35),
+        1.0
+    )
     ink.text_centered(graphics, writing, stop.x, stop.y + 32.0, 10, ink.fade(tone, label_alpha))
 end
 
@@ -323,6 +436,7 @@ function draw_vendor_stop(graphics: Graphics, stop: city_map.Stop, reached: bool
     local tone: string = VENDOR_DIM
     if reached then
         tone = VENDOR_INK
+        draw_lantern(graphics, stop, VENDOR_INK, 28.0, alpha)
     end
     graphics:set_color(ink.fade("#0b0c12", alpha))
     graphics:fill_rectangle(stop.x - 11.0, stop.y - 4.0, 22.0, 14.0)
