@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildWaluauImports, WALUAU_IMPORT_MODULE } from './runtime.js';
+import { buildWaluauImports, luauToString, WALUAU_IMPORT_MODULE } from './runtime.js';
 
 test('projects buffer strings one byte per browser string code unit', () => {
   const names = ['buffer_string_len', 'buffer_string_read', 'buffer_string_write'];
@@ -89,6 +89,70 @@ test('fixed-point formatting preserves ordinary values, specials, and errors', (
   assert.equal(format('%f', -Infinity), '-Infinity');
   assert.throws(() => format('%.123f', 1), /invalid string\.format precision/);
   assert.throws(() => format('%?', 1), /unsupported string\.format specifier/);
+});
+
+test('stringifies numbers with the shortest round-tripping decimal', () => {
+  // Golden values from the upstream strconv conformance chunks, which pin
+  // Luau's `luai_num2str` output. Each needs a different digit count, so a
+  // fixed-precision conversion cannot satisfy them all.
+  assert.equal(luauToString(Math.PI), '3.141592653589793');
+  assert.equal(luauToString(2.0049288280105384), '2.0049288280105384');
+  assert.equal(luauToString(-0.00610404721867928), '-0.00610404721867928');
+  assert.equal(luauToString(1.3202313930270133e-192), '1.3202313930270133e-192');
+  assert.equal(luauToString(1.1295093211933533e65), '1.1295093211933533e+65');
+  // Shorter than its literal because the literal is not the shortest decimal
+  // that selects this double.
+  assert.equal(luauToString(2.0563000527063302), '2.05630005270633');
+  assert.equal(luauToString(4.8970527433648997e-260), '4.8970527433649e-260');
+  assert.equal(luauToString(-1.9490628022799998e289), '-1.94906280228e+289');
+});
+
+test('stringifies integers exactly across the f64 integral range', () => {
+  assert.equal(luauToString(0), '0');
+  assert.equal(luauToString(-0), '-0');
+  assert.equal(luauToString(5), '5');
+  // 2^53 - 1 and a neighbour: truncating to 14 significant digits would round
+  // these to trailing zeros.
+  assert.equal(luauToString(9007199254740991), '9007199254740991');
+  assert.equal(luauToString(1125968630513728), '1125968630513728');
+  assert.equal(luauToString(9007199254740992), '9007199254740992');
+  // Above 2^53 the shortest decimal is padded out with zeros rather than
+  // pretending to more precision than the double carries.
+  assert.equal(luauToString(3.6984408976312836e19), '36984408976312840000');
+  assert.equal(luauToString(1e21), '1e+21');
+  assert.equal(luauToString(-1e24), '-1e+24');
+});
+
+test('switches to scientific notation on Luau boundaries with a padded exponent', () => {
+  // Fixed point holds while the decimal point sits in [-5, 21].
+  assert.equal(luauToString(3.0517578125e-5), '0.000030517578125');
+  assert.equal(luauToString(1e-6), '0.000001');
+  assert.equal(luauToString(1e20), '100000000000000000000');
+  assert.equal(luauToString(1e-7), '1e-07');
+  assert.equal(luauToString(1.5e-7), '1.5e-07');
+  assert.equal(luauToString(5e-324), '5e-324');
+  assert.equal(luauToString(1.7976931348623157e308), '1.7976931348623157e+308');
+});
+
+test('stringifies numeric specials with Luau spellings', () => {
+  assert.equal(luauToString(NaN), 'nan');
+  assert.equal(luauToString(Infinity), 'inf');
+  assert.equal(luauToString(-Infinity), '-inf');
+});
+
+test('keeps string.format %g on a fixed precision rather than tostring', () => {
+  const format = buildWaluauImports(null, undefined, {
+    requiredImports: [
+      { module: WALUAU_IMPORT_MODULE, name: 'string_format1', kind: 'function' },
+    ],
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE].string_format1;
+
+  assert.equal(format('%g', 12.5), '12.5');
+  // Unlike `tostring`, a bare `%g` does not widen to the shortest round-trip;
+  // see waluau-zbiu for narrowing it further to C's default precision of 6.
+  assert.equal(format('%g', Math.PI), '3.1415926535898');
+  assert.equal(format('%.3g', Math.PI), '3.14');
 });
 
 test('implements Luau scalar math edge semantics', () => {
