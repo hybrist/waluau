@@ -1,0 +1,13 @@
+-- A fail test: this file must NOT compile. The companion to
+-- logical_operand_blame.walu, for the case that misled three successive
+-- comments on `waluau-esz6`: the left operand reaches `bool` (an `unknown`
+-- unboxes into one at runtime), so the operator stays boolean and the right
+-- operand is the one that does not fit. The report still names the left
+-- operand, because that is what made this the boolean form.
+-- conformance: error='and' is boolean here because its left operand is unknown
+-- conformance: error=its right operand must be bool too, got string
+local function decorate(value: unknown): unknown
+    return value and "yes"
+end
+
+assert(decorate(true) == "yes")

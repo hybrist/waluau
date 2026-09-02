@@ -1,4 +1,7 @@
 use std::sync::Arc;
+
+use waluau_hir::logical::{LogicalOperand, non_bool_operand};
+
 struct CompilerTimer {
     #[cfg(not(target_family = "wasm"))]
     started: std::time::Instant,
@@ -8503,7 +8506,15 @@ impl Builder<'_> {
                     if actual == Type::Bool {
                         Ok(Type::Bool)
                     } else {
-                        Err(Diagnostic::new("unary 'not' requires a bool operand"))
+                        // Shares its wording with the HIR check so the two
+                        // passes cannot describe the same operand differently.
+                        Err(non_bool_operand(
+                            "not",
+                            LogicalOperand::Only,
+                            &actual,
+                            None,
+                            expr.span(),
+                        ))
                     }
                 }
                 UnaryOp::Len => {

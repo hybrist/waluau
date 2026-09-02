@@ -39,6 +39,7 @@ mod builtins;
 mod conformance;
 mod expressions;
 pub mod intrinsic_values;
+pub mod logical;
 mod numeric;
 mod signatures;
 mod statements;

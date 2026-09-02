@@ -15,6 +15,7 @@ use super::builtins::{
     infer_tostring_builtin_call, infer_type_builtin_call, intrinsic_function_value_type,
     non_representable_intrinsic_value,
 };
+use super::logical::{LogicalOperand, explain_non_bool_operand, non_bool_operand};
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
     require_bool_pair, require_numeric_cast, resolve_number_literal,
@@ -795,15 +796,36 @@ fn infer_expr_inner(
                 }
             }
             UnaryOp::Not => {
+                let probe = || {
+                    infer_expr(expr, vars, fn_signatures, active_type_params, None)
+                        .map(first_of_multi)
+                        .ok()
+                };
                 let actual = infer_expr(
                     expr,
                     vars,
                     fn_signatures,
                     active_type_params,
                     Some(Type::Bool),
-                )?;
+                )
+                .map_err(|error| {
+                    explain_non_bool_operand(
+                        error,
+                        "not",
+                        LogicalOperand::Only,
+                        probe(),
+                        None,
+                        expr.span(),
+                    )
+                })?;
                 if actual != Type::Bool {
-                    return Err(Diagnostic::new("unary 'not' requires a bool operand"));
+                    return Err(non_bool_operand(
+                        "not",
+                        LogicalOperand::Only,
+                        &actual,
+                        None,
+                        expr.span(),
+                    ));
                 }
                 coerce_type(Type::Bool, expected)
             }
@@ -1936,20 +1958,57 @@ fn infer_expr_inner(
                         return coerce_type(fallback_ty, expected);
                     }
                 }
+                // The boolean form. For `or` the left operand is also what
+                // ruled out the nil-coalescing form above, so name it when it
+                // does not fit -- and when the *right* operand does not fit,
+                // still name the left, because that is what made this boolean.
+                let operator = if matches!(op, BinaryOp::Or) {
+                    "or"
+                } else {
+                    "and"
+                };
+                let left_probe = || {
+                    infer_expr(left, vars, fn_signatures, active_type_params, None)
+                        .map(first_of_multi)
+                        .ok()
+                };
                 let left_ty = infer_expr(
                     left,
                     vars,
                     fn_signatures,
                     active_type_params,
                     Some(Type::Bool),
-                )?;
+                )
+                .map_err(|error| {
+                    explain_non_bool_operand(
+                        error,
+                        operator,
+                        LogicalOperand::Left,
+                        left_probe(),
+                        None,
+                        left.span(),
+                    )
+                })?;
                 let right_ty = infer_expr(
                     right,
                     vars,
                     fn_signatures,
                     active_type_params,
                     Some(Type::Bool),
-                )?;
+                )
+                .map_err(|error| {
+                    let named_left = left_probe();
+                    explain_non_bool_operand(
+                        error,
+                        operator,
+                        LogicalOperand::Right,
+                        infer_expr(right, vars, fn_signatures, active_type_params, None)
+                            .map(first_of_multi)
+                            .ok(),
+                        named_left.as_ref(),
+                        right.span(),
+                    )
+                })?;
                 require_bool_pair(left_ty, right_ty)?;
                 Ok(Type::Bool)
             }
