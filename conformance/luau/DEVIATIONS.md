@@ -493,7 +493,7 @@ assertion range becomes independently useful.
 | `native_userdata*` | 1 | Native/JIT plus reference test userdata |
 | `ndebug_upvalues*` | 1 | Embedding/instrumentation hooks |
 | `pcall*` | 65 | Typed coroutines; runtime-sized multi-success `waluau-d480`, `xpcall` `waluau-wb7a`, protected builtins `waluau-esz6`, dynamic calls/inference `waluau-9f8d` |
-| `pm*` | 43 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
+| `pm*` | 43 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a`, omitted trailing argument for an unannotated parameter `waluau-lz2e` |
 | `safeenv*` | 1 | Embedding/environment hooks |
 | `sort*` | 1 | AOT source loading and sparse/mixed/hash tables |
 | `stringinterp*` | 2 | [Static lexical names](#static-lexical-names-and-module-environments) (`stringinterp.4`) and [reserved primitive type keywords](#reserved-primitive-type-keywords) (`stringinterp.8`) |
