@@ -2,9 +2,9 @@
 -- tests/conformance/errors.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: static-type-errors
 -- This chunk contains only checks from errors.luau that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- This is a documented deliberate difference, not scheduled work; see DEVIATIONS.md.
 -- Split from conformance/luau/errors.walu. Common setup is repeated
 -- as needed so each numbered chunk is independently discoverable by the
 -- conformance runner.

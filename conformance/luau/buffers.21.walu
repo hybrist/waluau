@@ -2,7 +2,7 @@
 -- tests/conformance/buffers.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: static-names
 -- This aggregate repeats the preceding buffer checks under a final getfenv()
 -- call that forces Luau VM slow-call paths. Waluau has no mutable execution
 -- environment, and the chunk adds no unique buffer semantics.

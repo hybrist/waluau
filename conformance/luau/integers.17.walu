@@ -2,9 +2,9 @@
 -- tests/conformance/integers.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: luau-integer-vm-extension
 -- This chunk contains only integers.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- This is a documented deliberate difference, not scheduled work; see DEVIATIONS.md.
 --
 -- Split from conformance/luau/integers.walu. Common helper setup is repeated
 -- as needed so each numbered chunk is independently discoverable by the

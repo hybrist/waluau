@@ -2,7 +2,7 @@
 -- tests/conformance/datetime.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: browser-clocks-and-calendars
 -- The browser's Date represents pre-epoch instants, so Waluau's os.date
 -- formats a negative time instead of answering nil, and its result type is a
 -- plain `string`. See DEVIATIONS.md, "Browser clocks and calendar values".
