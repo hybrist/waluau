@@ -15,6 +15,7 @@ use super::builtins::{
     infer_tostring_builtin_call, infer_type_builtin_call, intrinsic_function_value_type,
     non_representable_intrinsic_value,
 };
+use super::logical::{LogicalOperand, explain_non_bool_operand, non_bool_operand};
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
     require_bool_pair, require_numeric_cast, resolve_number_literal,
@@ -795,15 +796,36 @@ fn infer_expr_inner(
                 }
             }
             UnaryOp::Not => {
+                let probe = || {
+                    infer_expr(expr, vars, fn_signatures, active_type_params, None)
+                        .map(first_of_multi)
+                        .ok()
+                };
                 let actual = infer_expr(
                     expr,
                     vars,
                     fn_signatures,
                     active_type_params,
                     Some(Type::Bool),
-                )?;
+                )
+                .map_err(|error| {
+                    explain_non_bool_operand(
+                        error,
+                        "not",
+                        LogicalOperand::Only,
+                        probe(),
+                        None,
+                        expr.span(),
+                    )
+                })?;
                 if actual != Type::Bool {
-                    return Err(Diagnostic::new("unary 'not' requires a bool operand"));
+                    return Err(non_bool_operand(
+                        "not",
+                        LogicalOperand::Only,
+                        &actual,
+                        None,
+                        expr.span(),
+                    ));
                 }
                 coerce_type(Type::Bool, expected)
             }
@@ -1900,16 +1922,17 @@ fn infer_expr_inner(
             }
             BinaryOp::And | BinaryOp::Or => {
                 if matches!(op, BinaryOp::Or) {
-                    // `a or b` where `a: T?` supplies a default rather than
-                    // testing truthiness. Probe the left operand without an
-                    // expectation so a nullable does not collapse to bool.
+                    // `a or b` where `a` admits nil supplies a default rather
+                    // than testing truthiness. Probe the left operand without
+                    // an expectation so a nil-admitting type does not collapse
+                    // to bool. `unknown` takes this rule too: it is the top
+                    // type, so nil is one of its values.
                     let probe = infer_expr(left, vars, fn_signatures, active_type_params, None)
                         .map(first_of_multi)
                         .ok();
-                    if let Some(nullable_ty @ Type::Nullable(_)) = probe {
-                        let inner = nullable_ty
-                            .nullable_inner()
-                            .expect("matched Type::Nullable");
+                    if let Some(nullable_ty) = probe
+                        && let Some(inner) = nullable_ty.nil_test_inner()
+                    {
                         reject_ambiguous_nullable_or(&inner)?;
                         let fallback_ty = nullable_or_fallback_type(
                             right,
@@ -1935,20 +1958,57 @@ fn infer_expr_inner(
                         return coerce_type(fallback_ty, expected);
                     }
                 }
+                // The boolean form. For `or` the left operand is also what
+                // ruled out the nil-coalescing form above, so name it when it
+                // does not fit -- and when the *right* operand does not fit,
+                // still name the left, because that is what made this boolean.
+                let operator = if matches!(op, BinaryOp::Or) {
+                    "or"
+                } else {
+                    "and"
+                };
+                let left_probe = || {
+                    infer_expr(left, vars, fn_signatures, active_type_params, None)
+                        .map(first_of_multi)
+                        .ok()
+                };
                 let left_ty = infer_expr(
                     left,
                     vars,
                     fn_signatures,
                     active_type_params,
                     Some(Type::Bool),
-                )?;
+                )
+                .map_err(|error| {
+                    explain_non_bool_operand(
+                        error,
+                        operator,
+                        LogicalOperand::Left,
+                        left_probe(),
+                        None,
+                        left.span(),
+                    )
+                })?;
                 let right_ty = infer_expr(
                     right,
                     vars,
                     fn_signatures,
                     active_type_params,
                     Some(Type::Bool),
-                )?;
+                )
+                .map_err(|error| {
+                    let named_left = left_probe();
+                    explain_non_bool_operand(
+                        error,
+                        operator,
+                        LogicalOperand::Right,
+                        infer_expr(right, vars, fn_signatures, active_type_params, None)
+                            .map(first_of_multi)
+                            .ok(),
+                        named_left.as_ref(),
+                        right.span(),
+                    )
+                })?;
                 require_bool_pair(left_ty, right_ty)?;
                 Ok(Type::Bool)
             }
@@ -1966,7 +2026,9 @@ fn infer_expr_inner(
                         active_type_params,
                         None,
                     )?);
-                    if matches!(value_ty, Type::Nil | Type::Nullable(_)) {
+                    // `unknown` admits nil the same way `T?` does, so it is a
+                    // valid nil-test operand.
+                    if matches!(value_ty, Type::Nil) || value_ty.admits_nil() {
                         return Ok(Type::Bool);
                     }
                     // An empty multi-value result (e.g. `string.byte` with a

@@ -1,4 +1,11 @@
-import { luaPatternMatch, luaGsub, luaGsubGenerator, luaGmatch, makeStringReplacer } from './lua-pattern.js';
+import {
+  LuaPatternError,
+  luaPatternMatch,
+  luaGsub,
+  luaGsubGenerator,
+  luaGmatch,
+  makeStringReplacer,
+} from './lua-pattern.js';
 
 let tf = globalThis.tf ?? null;
 
@@ -439,11 +446,37 @@ function stringChar(...args) {
 // pm_match_*/pm_capture_* accessors immediately after the call that produced
 // them. gsub-with-function-replacement and gmatch iterate via integer handles
 // so nested iterations do not clobber each other.
-function createLuaPatternHost() {
+function createLuaPatternHost(getWasmExports) {
   let lastMatch = null; // { start, end (1-based inclusive), whole, captures }
   let lastGsubCount = 0;
   const handles = new Map();
   let nextHandle = 1;
+
+  // Lua reports a malformed pattern from the matcher itself, as an ordinary
+  // raised error that `pcall` catches and whose message the program reads.
+  // A plain JS throw crosses the wasm boundary as an opaque foreign exception,
+  // so `pcall` would report "uncaught host exception" instead. Rethrow with
+  // the module's exported Lua error tag, which the protected-call boundary
+  // catches and unwraps into the real message.
+  const raiseLuaPatternError = (error) => {
+    const tag = getWasmExports?.()?.__waluau_error_tag;
+    if (error instanceof LuaPatternError && tag && typeof WebAssembly.Exception === 'function') {
+      throw new WebAssembly.Exception(tag, [error.message]);
+    }
+    throw error;
+  };
+
+  // Wraps the pm_* entry points that actually run the matcher. The accessors
+  // (pm_match_*, pm_capture_*) only read back state and are left unwrapped.
+  const raising =
+    (fn) =>
+    (...args) => {
+      try {
+        return fn(...args);
+      } catch (error) {
+        return raiseLuaPatternError(error);
+      }
+    };
 
   // Lua's posrelat + str_find_aux init clamping (1-based; negative counts
   // from the end; anything past len+1 can never match).
@@ -463,7 +496,7 @@ function createLuaPatternHost() {
     };
   };
 
-  return {
+  const host = {
     pm_find: (haystack, pattern, init, plain) => {
       const str = String(haystack);
       const pat = String(pattern);
@@ -589,6 +622,19 @@ function createLuaPatternHost() {
       return 1;
     },
   };
+
+  for (const name of [
+    'pm_find',
+    'pm_match',
+    'pm_gsub',
+    'pm_gsub_begin',
+    'pm_gsub_next',
+    'pm_gmatch',
+    'pm_gmatch_next',
+  ]) {
+    host[name] = raising(host[name]);
+  }
+  return host;
 }
 
 function rememberDomEventListener(target, type, callback, listener) {
@@ -2665,7 +2711,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
         console.log(value);
       }
     },
-    ...createLuaPatternHost(),
+    ...createLuaPatternHost(options.getWasmExports),
     string_len: (value) => String(value).length,
     string_sub: (value, first, last) => {
       // Lua string.sub semantics: 1-based inclusive indices, negatives count

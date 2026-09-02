@@ -208,3 +208,46 @@ test('implements Luau scalar math edge semantics', () => {
   assert.ok(Number.isNaN(math['math.noise'](NaN)));
   assert.ok(Number.isNaN(math['math.noise'](Infinity)));
 });
+
+test('raises malformed Lua patterns with the module error tag so pcall sees the message', () => {
+  // Lua reports a malformed pattern as an ordinary raised error whose message
+  // the program reads back. A plain JS throw would cross the wasm boundary as
+  // an opaque foreign exception ("uncaught host exception") instead.
+  const errorTag = new WebAssembly.Tag({ parameters: ['anyref'] });
+  const runtime = buildWaluauImports(null, undefined, {
+    requiredImports: ['pm_find', 'pm_match', 'pm_gsub'].map(name => ({
+      module: WALUAU_IMPORT_MODULE,
+      name,
+      kind: 'function',
+    })),
+    bytesConstants: [],
+    getWasmExports: () => ({ __waluau_error_tag: errorTag }),
+  })[WALUAU_IMPORT_MODULE];
+
+  let raised;
+  try {
+    runtime.pm_find('a', '(.', 1, 0);
+  } catch (error) {
+    raised = error;
+  }
+  assert.ok(raised instanceof WebAssembly.Exception, 'the host raises a wasm exception');
+  assert.equal(raised.getArg(errorTag, 0), 'unfinished capture');
+
+  assert.throws(
+    () => runtime.pm_gsub('a', '%', 'b', -1),
+    (error) => error.getArg(errorTag, 0) === "malformed pattern (ends with '%')",
+  );
+
+  // Well-formed patterns are unaffected.
+  assert.equal(runtime.pm_find('hello', 'l+', 1, 0), 1);
+  assert.equal(runtime.pm_match('hello', 'l+', 1), 1);
+});
+
+test('falls back to the raw error when no module error tag is available', () => {
+  const runtime = buildWaluauImports(null, undefined, {
+    requiredImports: [{ module: WALUAU_IMPORT_MODULE, name: 'pm_find', kind: 'function' }],
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE];
+
+  assert.throws(() => runtime.pm_find('a', '(.', 1, 0), /unfinished capture/);
+});

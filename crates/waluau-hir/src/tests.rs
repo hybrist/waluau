@@ -1105,6 +1105,26 @@ fn nullable_primitive_does_not_implicitly_coerce_to_primitive() {
 #[test]
 fn nullable_modifier_rejects_unsupported_inner_types() {
     let source = r#"
+        function entry(value: buffer?): i32
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "nullable modifier '?' is not supported on buffer"
+    );
+}
+
+/// `unknown?` stays rejected, but as a redundancy: `unknown` is the top type
+/// and already includes nil. The old wording ("not supported") read as though
+/// `unknown` excluded nil, which contradicted `x == nil` being well-typed on
+/// it.
+#[test]
+fn nullable_modifier_rejects_unknown_as_redundant() {
+    let source = r#"
         function entry(value: unknown?): i32
             return 0
         end
@@ -1114,8 +1134,236 @@ fn nullable_modifier_rejects_unsupported_inner_types() {
     let error = super::type_check_and_infer(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "nullable modifier '?' is not supported on unknown"
+        "'unknown?' is redundant: unknown already includes nil. Write 'unknown'"
     );
+}
+
+#[test]
+fn nil_comparison_accepts_unknown_operands() {
+    let source = r#"
+        function entry(value: unknown): bool
+            if value == nil then
+                return true
+            end
+            return value ~= nil
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("unknown is a valid nil-test operand");
+}
+
+#[test]
+fn nil_comparison_accepts_nil_on_either_side_of_unknown() {
+    let source = r#"
+        function entry(value: unknown): bool
+            return nil == value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("unknown is a valid nil-test operand");
+}
+
+/// `unknown or T` is the same nil-coalescing rule as `T? or T`, not Lua's
+/// truthiness `or`. The result stays `unknown`, because ruling out nil leaves
+/// no narrower type to name.
+#[test]
+fn or_supplies_a_default_for_an_unknown_left_operand() {
+    let source = r#"
+        function entry(value: unknown): unknown
+            return value or "malformed"
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("unknown takes the nil-coalescing 'or'");
+}
+
+#[test]
+fn or_on_unknown_reassigns_through_the_same_binding() {
+    let source = r#"
+        function entry(value: unknown): unknown
+            value = value or "malformed"
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("the defaulted value stays unknown");
+}
+
+/// The nil-coalescing result is `unknown`, which reaches a narrower
+/// expectation the same way the bare left operand does -- through `unknown`'s
+/// existing checked unboxing, not through a new implicit conversion.
+#[test]
+fn or_on_unknown_unboxes_into_a_narrower_expectation() {
+    let coalesced = r#"
+        function entry(value: unknown): string
+            return value or "malformed"
+        end
+    "#;
+    let bare = r#"
+        function entry(value: unknown): string
+            return value
+        end
+    "#;
+
+    for source in [coalesced, bare] {
+        let program = parse(source).expect("parse should succeed");
+        super::type_check_and_infer(&program).expect("unknown unboxes into string");
+    }
+}
+
+/// Nothing here reintroduces truthiness: an `unknown` still cannot stand in
+/// for a bool condition.
+#[test]
+fn unknown_is_still_rejected_as_a_bool_condition() {
+    let source = r#"
+        function entry(value: unknown): i32
+            if value then
+                return 1
+            end
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "if condition must be bool");
+}
+
+#[test]
+fn unknown_is_still_rejected_as_a_callee() {
+    let source = r#"
+        function entry(value: unknown): i32
+            value()
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "attempt to call non-function value of type unknown"
+    );
+}
+
+/// A logical operator's diagnostic has to land on the operand that can be
+/// edited to fix it. `or` is boolean here only because `label` is neither bool
+/// nor nil-admitting, so the report anchors on `label` and says so; no edit to
+/// the right operand could ever have helped.
+#[test]
+fn or_blames_the_left_operand_that_forced_the_boolean_form() {
+    let source = r#"
+        function entry(label: string): string
+            return label or "y"
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "'or' requires a bool left operand, got string; only a nullable or \
+         unknown left operand supplies a default instead"
+    );
+    let span = error.span().expect("the diagnostic is anchored");
+    assert_eq!(&source[span.start as usize..span.end as usize], "label");
+}
+
+#[test]
+fn and_blames_the_left_operand_when_it_is_not_bool() {
+    let source = r#"
+        function entry(label: string): bool
+            return label and true
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "'and' requires a bool left operand, got string"
+    );
+    let span = error.span().expect("the diagnostic is anchored");
+    assert_eq!(&source[span.start as usize..span.end as usize], "label");
+}
+
+/// When the left operand does reach `bool` -- an `unknown` unboxes into one --
+/// the right operand is genuinely at fault, but the report still names the
+/// left, because that is what selected the boolean form. This is the shape
+/// that misled three successive comments on `waluau-esz6`.
+#[test]
+fn a_failing_right_operand_still_names_the_left_operand_type() {
+    let source = r#"
+        function entry(value: unknown): unknown
+            return value and "yes"
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "'and' is boolean here because its left operand is unknown, so its \
+         right operand must be bool too, got string"
+    );
+    let span = error.span().expect("the diagnostic is anchored");
+    assert_eq!(&source[span.start as usize..span.end as usize], "\"yes\"");
+}
+
+#[test]
+fn not_blames_its_operand_and_names_the_type() {
+    let source = r#"
+        function entry(label: string): bool
+            return not label
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "'not' requires a bool operand, got string"
+    );
+    let span = error.span().expect("the diagnostic is anchored");
+    assert_eq!(&source[span.start as usize..span.end as usize], "label");
+}
+
+/// An operand that does not type check on its own terms keeps its own
+/// diagnostic: the bool expectation is not what is wrong with it.
+#[test]
+fn a_broken_operand_keeps_its_own_diagnostic() {
+    let source = r#"
+        function entry(flag: bool): bool
+            return flag and missing_name
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert!(
+        error.to_string().contains("missing_name"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+/// Admitting nil as a *value* is not the same as making a parameter optional:
+/// `tostring()` with no argument is still an arity error.
+#[test]
+fn unknown_parameters_are_still_required_at_call_sites() {
+    let source = r#"
+        function take(value: unknown): i32
+            return 0
+        end
+
+        take()
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect_err("an unknown parameter is not optional");
 }
 
 #[test]

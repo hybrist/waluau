@@ -1,0 +1,15 @@
+-- A fail test: this file must NOT compile. It pins where a logical operator
+-- reports a non-bool operand, and that the report names that operand's type.
+--
+-- The blame site matters here. `or` has two forms, and the *left* operand
+-- picks between them: a left operand that admits nil gets the nil-coalescing
+-- default (nullable_or_default.walu, unknown_nil_coalescing.walu), everything
+-- else gets the boolean form. So a boolean-form failure has to say which
+-- operand does not fit and, when the right one is at fault, that the left is
+-- what made the operator boolean -- otherwise the reader is sent to edit an
+-- expression that could never have changed the outcome.
+-- conformance: error='or' requires a bool left operand, got string
+-- conformance: error=only a nullable or unknown left operand supplies a default instead
+local label: string = "x"
+local chosen: string = label or "y"
+assert(chosen == "x")

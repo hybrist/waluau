@@ -586,6 +586,31 @@ impl Type {
         matches!(self, Self::Nullable(_))
     }
 
+    /// The type an operand keeps once a nil test has ruled `nil` out, for the
+    /// types that admit nil at all. `T?` refines to `T`. `unknown` is the top
+    /// type, so it already includes nil the way `T?` does, but it has no
+    /// narrower non-nil form to name and refines to itself. `None` means the
+    /// type cannot hold nil, so `== nil` and the nil-coalescing `or` do not
+    /// apply to it.
+    ///
+    /// This is deliberately distinct from [`Type::accepts_nil`], which decides
+    /// whether a trailing argument may be omitted at a call site: `unknown`
+    /// admits the nil *value* without making a parameter optional.
+    pub fn nil_test_inner(&self) -> Option<Type> {
+        match self {
+            Self::Nullable(inner) => Some(inner.as_ref().clone()),
+            Self::Unknown => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+
+    /// Whether `nil` is one of the values this type admits, so `x == nil`,
+    /// `x ~= nil`, and the nil-coalescing `or` are well-typed on it. See
+    /// [`Type::nil_test_inner`] for why this is not `accepts_nil`.
+    pub fn admits_nil(&self) -> bool {
+        self.nil_test_inner().is_some()
+    }
+
     /// Nullable types whose inner value type has no null representation in
     /// wasm (numerics, bools, and typed-array pointers). These lower to typed nullable box refs
     /// (`ref null $nullable_box_K`): null stands for nil and a one-field GC

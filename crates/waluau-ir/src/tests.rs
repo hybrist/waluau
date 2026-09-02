@@ -4881,3 +4881,88 @@ fn lowers_protected_intrinsic_calls_through_the_general_value_path() {
         .count();
     assert_eq!(adapters, 3, "every protected intrinsic gets an adapter");
 }
+
+/// `unknown` admits nil, so a nil test on it lowers to the same `IsNull`
+/// primitive a `T?` does -- against the `unknown` value itself, because
+/// `unknown` is its own non-nil refinement.
+#[test]
+fn lowers_nil_comparison_on_an_unknown_operand() {
+    let source = r#"
+        function entry(value: unknown): bool
+            return value == nil
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    assert!(
+        module.functions.iter().any(|function| {
+            function.blocks.values().any(|block| {
+                block.instructions.iter().any(|(_, instruction)| {
+                    matches!(instruction, Instruction::IsNull { ty, .. } if *ty == Type::Unknown)
+                })
+            })
+        }),
+        "the nil test lowers to IsNull against the unknown value"
+    );
+}
+
+#[test]
+fn lowers_negated_nil_comparison_on_an_unknown_operand() {
+    let source = r#"
+        function entry(value: unknown): bool
+            return value ~= nil
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+}
+
+/// `unknown or T` takes the nil-coalescing branch, which tests for nil and
+/// picks the fallback only then. Lua's truthiness `or` would instead lower the
+/// left operand as a bool condition and phi in a boolean short-circuit value,
+/// so the shape of the lowering is what distinguishes the two.
+#[test]
+fn lowers_or_on_an_unknown_left_operand_as_nil_coalescing() {
+    let source = r#"
+        function entry(value: unknown): unknown
+            return value or "malformed"
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name.contains("entry"))
+        .expect("entry function is lowered");
+    let instructions: Vec<_> = entry
+        .blocks
+        .values()
+        .flat_map(|block| {
+            block
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction)
+        })
+        .collect();
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::IsNull { .. })),
+        "the default is selected by a nil test, not by truthiness"
+    );
+    assert!(
+        !instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::Bool(_))),
+        "no boolean short-circuit value is materialized"
+    );
+}

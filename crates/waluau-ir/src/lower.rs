@@ -1,4 +1,7 @@
 use std::sync::Arc;
+
+use waluau_hir::logical::{LogicalOperand, non_bool_operand};
+
 struct CompilerTimer {
     #[cfg(not(target_family = "wasm"))]
     started: std::time::Instant,
@@ -7057,7 +7060,7 @@ impl Builder<'_> {
                                 self.emit(Instruction::Bool(matches!(op, BinaryOp::Eq)));
                             return self.coerce_value(result, Type::Bool, expected);
                         }
-                        let inner_ty = nullable_ty.nullable_inner().ok_or_else(|| {
+                        let inner_ty = nullable_ty.nil_test_inner().ok_or_else(|| {
                             Diagnostic::new("nil comparison requires a nullable operand")
                         })?;
                         let lowered =
@@ -8503,7 +8506,15 @@ impl Builder<'_> {
                     if actual == Type::Bool {
                         Ok(Type::Bool)
                     } else {
-                        Err(Diagnostic::new("unary 'not' requires a bool operand"))
+                        // Shares its wording with the HIR check so the two
+                        // passes cannot describe the same operand differently.
+                        Err(non_bool_operand(
+                            "not",
+                            LogicalOperand::Only,
+                            &actual,
+                            None,
+                            expr.span(),
+                        ))
                     }
                 }
                 UnaryOp::Len => {
@@ -8840,12 +8851,14 @@ impl Builder<'_> {
         right: &Expr,
         types: &HashMap<SymbolId, Type>,
     ) -> Result<Option<(Type, Type)>, Diagnostic> {
-        let Ok(nullable_ty @ Type::Nullable(_)) =
-            self.infer_expr_type(left, types, None).map(first_of_multi)
-        else {
+        let Ok(nullable_ty) = self.infer_expr_type(left, types, None).map(first_of_multi) else {
             return Ok(None);
         };
-        let inner = nullable_ty.nullable_inner().expect("matched Type::Nullable");
+        // `unknown` takes this rule too: it is the top type, so nil is one of
+        // its values and it refines to itself once nil is ruled out.
+        let Some(inner) = nullable_ty.nil_test_inner() else {
+            return Ok(None);
+        };
         // `bool?` is the one nullable type whose inner values include the value
         // a reader expects `or` to fall through on, so `flag or true` cannot be
         // read without knowing which rule applies.
@@ -8899,7 +8912,9 @@ impl Builder<'_> {
                     };
                     let value_ty =
                         first_of_multi(self.infer_expr_type(value, types, None)?);
-                    if matches!(value_ty, Type::Nil | Type::Nullable(_)) {
+                    // `unknown` admits nil the same way `T?` does, so it is a
+                    // valid nil-test operand.
+                    if matches!(value_ty, Type::Nil) || value_ty.admits_nil() {
                         return Ok(Type::Bool);
                     }
                     // An empty multi-value result (e.g. `string.byte` with a
@@ -14106,8 +14121,8 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let inner = nullable_ty
-            .nullable_inner()
-            .expect("caller checked the nullable left operand");
+            .nil_test_inner()
+            .expect("caller checked the nil-admitting left operand");
         let left_value = self.lower_expr(left, scope, Some(nullable_ty.clone()))?;
         let is_null = self.emit(Instruction::IsNull {
             value: left_value,

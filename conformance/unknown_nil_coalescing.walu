@@ -1,0 +1,97 @@
+-- `unknown` is the top type, so nil is one of the values it holds. That makes
+-- `x == nil`, `x ~= nil`, and the nil-coalescing `or` well-typed on a bare
+-- `unknown`, exactly as they are on a `T?` -- see nullable_or_default.walu.
+--
+-- Rule out the reading this file exists to prevent: `or` here is still
+-- nil-coalescing, NOT Lua truthiness. A present `false` is a value, not an
+-- absence, so it is returned rather than replaced by the fallback. See
+-- conformance/luau/DEVIATIONS.md ("strict-bool").
+--
+-- `unknown` narrows to itself on a nil test: there is no narrower non-nil type
+-- to name, so the tests below check the value, not a refined static type.
+local function pick(m: unknown): unknown
+    return m or "fallback"
+end
+
+local function is_absent(m: unknown): bool
+    return m == nil
+end
+
+local function is_present(m: unknown): bool
+    return m ~= nil
+end
+
+-- Only nil takes the fallback.
+assert(pick(nil) == "fallback")
+assert(is_absent(nil))
+assert(not is_present(nil))
+
+-- A present `false` is NOT an absence. Lua's `or` would yield "fallback" here;
+-- Waluau's yields `false`.
+assert(pick(false) == false)
+assert(not is_absent(false))
+assert(is_present(false))
+
+-- So is a present `true`, and the other falsy-in-Lua value, zero.
+assert(pick(true) == true)
+assert(pick(0) == 0)
+assert(is_present(0))
+assert(not is_absent(0))
+
+-- Present values of every other shape come back unchanged.
+assert(pick("here") == "here")
+assert(is_present("here"))
+assert(pick(7) == 7)
+assert(pick(2.5) == 2.5)
+
+-- `== nil` agrees with the dynamic type test, which was previously the only
+-- way to nil-test an `unknown`.
+local function agrees(m: unknown): bool
+    return (m == nil) == (type(m) == "nil")
+end
+
+assert(agrees(nil))
+assert(agrees(false))
+assert(agrees(0))
+assert(agrees("here"))
+
+-- Direct comparisons, not just through a parameter.
+local text: unknown = "value"
+assert(text ~= nil)
+assert(not (text == nil))
+assert((text or "unused") == "value")
+
+-- The fallback is evaluated only when the left operand is nil, and `false`
+-- does not trigger it.
+local calls: i32 = 0
+
+local function bump(): unknown
+    calls += 1
+    return "bumped"
+end
+
+local function default_with_bump(m: unknown): unknown
+    return m or bump()
+end
+
+assert(default_with_bump(false) == false)
+assert(calls == 0)
+assert(default_with_bump("kept") == "kept")
+assert(calls == 0)
+assert(default_with_bump(nil) == "bumped")
+assert(calls == 1)
+
+-- The upstream Lua idiom this unblocks: a defaulted optional argument on an
+-- untyped parameter, whose inferred type is `unknown`.
+local function label(given: unknown): unknown
+    given = given or "malformed"
+    return given
+end
+
+assert(label(nil) == "malformed")
+assert(label("unfinished capture") == "unfinished capture")
+
+-- Chaining still works, and stops at the first present value.
+local missing: unknown = nil
+assert((missing or missing or "third") == "third")
+assert((missing or "second" or "third") == "second")
