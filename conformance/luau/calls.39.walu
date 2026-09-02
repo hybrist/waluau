@@ -2,7 +2,7 @@
 -- tests/conformance/calls.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: recursive unlpack returns a runtime-variable number of values; kept under waluau-zxju because that bead contemplates a variadic multi-value IR, but a statically fixed result arity may be deliberate, which would make this heterogeneous-values
 -- This chunk contains only calls.luau checks that currently fail in Waluau.
 -- Remove this directive when the chunk passes.
 --

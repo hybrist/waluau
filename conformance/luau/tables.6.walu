@@ -2,7 +2,7 @@
 -- tests/conformance/tables.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: needs Luau's 'any' type name; 'unknown' is checked where 'any' is not, so aliasing them may be wrong and the rejection may be a deliberate difference rather than waluau-jehg
 -- This chunk contains only checks from tables.luau that currently fail in
 -- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/tables.walu. Top-level do scope wrappers

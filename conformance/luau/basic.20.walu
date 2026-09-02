@@ -2,7 +2,7 @@
 -- tests/conformance/basic.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: assigns nil to a numeric for-loop variable; may be the uninitialized-local inference gap (waluau-3em1) or a deliberate rule that a loop variable keeps its numeric type
 -- This chunk retains checks from the upstream source that still fail in
 -- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/basic.walu in original source order.

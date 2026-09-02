@@ -2,7 +2,7 @@
 -- tests/conformance/pm.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33
 -- This chunk contains only pm.luau checks that currently fail in Waluau.
 -- Remove this directive when the chunk passes.
 --

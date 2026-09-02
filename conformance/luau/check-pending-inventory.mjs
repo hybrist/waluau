@@ -11,8 +11,9 @@ const directory = dirname(fileURLToPath(import.meta.url));
 // concurrent branches. These four totals still fail the gate on any drift.
 const EXPECTED_TOTAL = 1098;
 const EXPECTED_ENABLED = 441;
-const EXPECTED_PENDING = 235;
-const EXPECTED_OUT_OF_SCOPE = 422;
+const EXPECTED_PENDING = 236;
+const EXPECTED_UNTRIAGED = 30;
+const EXPECTED_OUT_OF_SCOPE = 421;
 
 // Deliberate differences between Waluau and the reference Luau implementation.
 // A chunk blocked by one of these carries `-- conformance: out-of-scope: <slug>`
@@ -96,6 +97,7 @@ const trackedByFamily = {
 };
 
 const PENDING_DIRECTIVE = /^-- conformance: pending$/m;
+const UNTRIAGED_DIRECTIVE = /^-- conformance: untriaged: (.+)$/m;
 const OUT_OF_SCOPE_DIRECTIVE = /^-- conformance: out-of-scope: (.+)$/m;
 
 const files = (await readdir(directory)).filter((file) => file.endsWith('.walu'));
@@ -105,15 +107,31 @@ const sources = new Map(
   ),
 );
 
+// `untriaged` is a variant of `pending`, not a third category: an untriaged
+// chunk is counted in `pending` and reported as a subset of it. The three
+// directives are mutually exclusive.
 const pending = [];
-const outOfScope = new Map();
+const untriaged = new Map(); // file -> free-text reason
+const outOfScope = new Map(); // file -> deviation slugs
 for (const [file, source] of [...sources].sort(([a], [b]) => a.localeCompare(b))) {
   const isPending = PENDING_DIRECTIVE.test(source);
+  const untriagedMatch = source.match(UNTRIAGED_DIRECTIVE);
   const outOfScopeMatch = source.match(OUT_OF_SCOPE_DIRECTIVE);
+  const markers = [isPending, untriagedMatch, outOfScopeMatch].filter(Boolean).length;
   assert.ok(
-    !(isPending && outOfScopeMatch),
-    `${file} carries both 'pending' and 'out-of-scope'; a chunk carries exactly one`,
+    markers <= 1,
+    `${file} carries more than one of 'pending', 'untriaged' and 'out-of-scope'; a chunk carries exactly one`,
   );
+  if (untriagedMatch) {
+    const reason = untriagedMatch[1].trim();
+    assert.ok(
+      reason.length >= 20,
+      `${file} must say what the open question is after 'untriaged:', not just that there is one`,
+    );
+    untriaged.set(file, reason);
+    pending.push(file);
+    continue;
+  }
   if (isPending) {
     pending.push(file);
     continue;
@@ -134,6 +152,11 @@ assert.equal(files.length, EXPECTED_TOTAL, 'total Luau chunk count changed; reco
 assert.equal(enabled, EXPECTED_ENABLED, 'enabled Luau chunk count changed; reconcile DEVIATIONS.md');
 assert.equal(pending.length, EXPECTED_PENDING, 'pending chunk count changed; reconcile DEVIATIONS.md');
 assert.equal(
+  untriaged.size,
+  EXPECTED_UNTRIAGED,
+  'untriaged chunk count changed; reconcile DEVIATIONS.md',
+);
+assert.equal(
   outOfScope.size,
   EXPECTED_OUT_OF_SCOPE,
   'out-of-scope chunk count changed; reconcile DEVIATIONS.md',
@@ -142,9 +165,13 @@ assert.equal(
 const familyOf = (file) => file.replace(/\.walu$/, '').split('.')[0];
 
 const pendingByFamily = new Map();
+const untriagedByFamily = new Map();
 for (const file of pending) {
   const family = familyOf(file);
   pendingByFamily.set(family, (pendingByFamily.get(family) ?? 0) + 1);
+  if (untriaged.has(file)) {
+    untriagedByFamily.set(family, (untriagedByFamily.get(family) ?? 0) + 1);
+  }
 }
 const chunksByDeviation = new Map();
 const familiesByDeviation = new Map();
@@ -191,19 +218,28 @@ const generated = {
     `A chunk may name more than one deviation, so these counts sum to more than the ${outOfScope.size} out-of-scope chunks. List the exact set for one deviation with \`rg -l 'out-of-scope:.*<slug>' conformance/luau\`.`,
   ].join('\n'),
   pending: [
-    '| Pending family | Chunks | Open beads |',
-    '| --- | ---: | --- |',
+    '| Pending family | Chunks | Untriaged | Open beads |',
+    '| --- | ---: | ---: | --- |',
     ...[...pendingByFamily.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(
         ([family, count]) =>
-          `| \`${family}*\` | ${count} | ${trackedByFamily[family]
+          `| \`${family}*\` | ${count} | ${untriagedByFamily.get(family) ?? 0} | ${trackedByFamily[
+            family
+          ]
             .split(',')
             .map((bead) => `\`${bead}\``)
             .join(', ')} |`,
       ),
     '',
-    `Total: ${pending.length} pending chunks in ${pendingByFamily.size} families.`,
+    `Total: ${pending.length} pending chunks in ${pendingByFamily.size} families, of which ${untriaged.size} are untriaged.`,
+  ].join('\n'),
+  untriaged: [
+    '| Chunk | Open question |',
+    '| --- | --- |',
+    ...[...untriaged.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+      .map(([file, reason]) => `| \`${file.replace(/\.walu$/, '')}\` | ${reason} |`),
   ].join('\n'),
 };
 
@@ -237,5 +273,7 @@ assert.match(
 );
 
 console.log(
-  `Luau inventory verified: ${files.length} total, ${enabled} enabled, ${pending.length} pending, ${outOfScope.size} out of scope across ${chunksByDeviation.size} documented deviations.`,
+  `Luau inventory verified: ${files.length} total, ${enabled} enabled, ` +
+    `${pending.length} pending (${untriaged.size} untriaged), ` +
+    `${outOfScope.size} out of scope across ${chunksByDeviation.size} documented deviations.`,
 );

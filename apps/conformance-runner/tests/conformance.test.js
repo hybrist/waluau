@@ -339,11 +339,12 @@ describe('browser conformance', () => {
   for (const { name, source } of cases) {
     if (DEDICATED_ASYNC_DOM_CASES.has(name)) continue;
 
-    const { pending, outOfScope, expectedErrors } = conformanceExpectations(source);
+    const { pending, untriaged, outOfScope, expectedErrors } = conformanceExpectations(source);
     // An out-of-scope chunk is inverse-tested exactly like a pending one: it
     // must still fail today, so a chunk that starts passing breaks the suite
-    // whichever marker it carries. The two differ only in whether anyone is
-    // expected to make them pass.
+    // whichever marker it carries. They differ only in whether anyone is
+    // expected to make them pass. `untriaged` is a variant of pending, so
+    // `pending` is already true for it here.
     const inverseTested = pending || outOfScope.length > 0;
     const fullSource = sourceForCase({ name, source });
     const options = optionsForCase(name);
@@ -369,9 +370,14 @@ describe('browser conformance', () => {
       });
     } else if (inverseTested) {
       // Inverse test: a pending chunk should pass eventually but does not yet,
-      // and an out-of-scope chunk is not expected to pass at all. Either way we
-      // only verify that it currently fails; we do not care how.
-      const label = pending ? 'pending' : `out-of-scope (${outOfScope.join(', ')})`;
+      // an untriaged one has an undecided bucket, and an out-of-scope one is
+      // not expected to pass at all. In every case we only verify that it
+      // currently fails; we do not care how.
+      const label = untriaged
+        ? `untriaged (${untriaged})`
+        : pending
+          ? 'pending'
+          : `out-of-scope (${outOfScope.join(', ')})`;
       it(`${label} ${name} (currently fails)`, async () => {
         const outcome = await runConformanceOutcome(fullSource, options);
         expect(outcome.failed).toBe(true);

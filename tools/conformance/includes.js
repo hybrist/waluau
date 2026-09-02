@@ -36,18 +36,31 @@ export const CONFORMANCE_PENDING_DIRECTIVE = /^--\s*conformance:\s*pending\s*$/m
 export const CONFORMANCE_OUT_OF_SCOPE_DIRECTIVE =
   /^--\s*conformance:\s*out-of-scope:\s*(.+)$/m;
 
+// A variant of `pending` for a chunk whose bucket could not be decided: it is
+// not clear whether a bounded gap or a deliberate difference is what actually
+// stops it. It counts inside the pending total rather than forming a third
+// category, and the runner treats it exactly like `pending`. The inline reason
+// is required and free text; it records the open question so a later audit can
+// grep for the doubt instead of re-deriving it.
+export const CONFORMANCE_UNTRIAGED_DIRECTIVE = /^--\s*conformance:\s*untriaged:\s*(.+)$/m;
+
 // One expected fragment of a fail test's failure message. May appear multiple
 // times; every fragment must be present in the actual failure.
 export const CONFORMANCE_ERROR_DIRECTIVE = /^--\s*conformance:\s*error=(.+)$/gm;
 
-// Parses the pending/out-of-scope/fail expectations encoded in a conformance
-// file's source. `pending` is true when the file carries a
-// `-- conformance: pending` directive. `outOfScope` lists the deviation slugs
-// named by a `-- conformance: out-of-scope:` directive, and is empty otherwise.
+// Parses the pending/untriaged/out-of-scope/fail expectations encoded in a
+// conformance file's source. `pending` is true when the file carries either a
+// `-- conformance: pending` or a `-- conformance: untriaged:` directive, since
+// untriaged is a variant of pending rather than a separate kind. `untriaged`
+// additionally carries that directive's free-text reason, or null.
+// `outOfScope` lists the deviation slugs named by a
+// `-- conformance: out-of-scope:` directive, and is empty otherwise.
 // `expectedErrors` lists the `-- conformance: error=` fragments; a non-empty
 // list marks the file as a fail test.
 export function conformanceExpectations(source) {
-  const pending = CONFORMANCE_PENDING_DIRECTIVE.test(source);
+  const untriagedMatch = source.match(CONFORMANCE_UNTRIAGED_DIRECTIVE);
+  const untriaged = untriagedMatch ? untriagedMatch[1].trim() : null;
+  const pending = CONFORMANCE_PENDING_DIRECTIVE.test(source) || untriaged !== null;
   const outOfScopeMatch = source.match(CONFORMANCE_OUT_OF_SCOPE_DIRECTIVE);
   const outOfScope = outOfScopeMatch
     ? outOfScopeMatch[1]
@@ -59,7 +72,7 @@ export function conformanceExpectations(source) {
   for (const match of source.matchAll(CONFORMANCE_ERROR_DIRECTIVE)) {
     expectedErrors.push(match[1].trim());
   }
-  return { pending, outOfScope, expectedErrors };
+  return { pending, untriaged, outOfScope, expectedErrors };
 }
 
 // Collapses runs of whitespace to single spaces and trims, so expected

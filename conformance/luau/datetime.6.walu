@@ -2,7 +2,7 @@
 -- tests/conformance/datetime.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: blocker is using the os.date overload set as a value (waluau-31kg); it was previously filed under the calendar deviation, and whether overload-as-value stays rejected by design is undecided
 -- These checks pass os.date and os.time as values into a dynamic pcall with a
 -- forwarded vararg list. os.date is an overload set, so using it as a value
 -- needs an explicit function type, exactly as math.log does; that is the first

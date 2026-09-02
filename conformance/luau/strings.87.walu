@@ -2,7 +2,7 @@
 -- tests/conformance/strings.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: asserts tostring{} starts with 'table:'; Wasm GC exposes no stable address to print, so whether any textual form is correct is an open design question under waluau-nsp4 and may end up a deviation
 -- This chunk contains only strings.luau checks that currently fail in Waluau.
 -- Remove this directive when the whole chunk passes.
 --
