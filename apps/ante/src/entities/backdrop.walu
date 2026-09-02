@@ -1,16 +1,14 @@
--- The vault the duel is fought in: a dark stone field lit by one high lamp,
--- crossed by the faint shafts that lamp throws across it, and closing to black
--- at the walls.
+-- The astral sea the duel hangs above: slow nebula currents and distant stars
+-- supplied by Ante's WebGL2 effect program, with the edges closing to black so
+-- the standing chrome and pale card faces stay crisp against it.
 --
--- It used to be a flat fill with a fan of hairlines struck over it, which left
--- every object on the board floating on an even sheet of near-black with
--- nothing behind it. The three passes here are what give the board a room:
--- the field carries the lamp's falloff, the shafts read as light rather than
--- as ruled lines because they fade along their own length, and the vignette
--- closes the corners so the eye settles on the table.
+-- The old lamplit vault remains below as the optional shader's graceful
+-- fallback. A bad local shader revision must not make the duel unreadable or
+-- replace the whole app with a fatal presentation panel.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local plate = require("../plate")
+local graphics_module = require("waluau:engine/graphics")
 
 const CLEAR: string = "#09090b"
 const FIELD: string = "#15151b"
@@ -156,9 +154,38 @@ function draw_vignette(graphics: ui.Graphics, bounds: box.Rect): unit
     )
 end
 
+-- One viewport-sized quad lets the fragment program own the entire sky. Its
+-- UVs remain 0..1 while u_aspect keeps nebulae and stars circular on wide and
+-- tall canvases. u_time is the engine's standard per-frame shader clock.
+function draw_astral_sea(surface: ui.Surface, bounds: box.Rect): bool
+    if bounds.width <= 0.0 or bounds.height <= 0.0 then
+        return false
+    end
+    local maybe_shader: graphics_module.Shader? = surface.effects.astral_sea.shader
+    if maybe_shader == nil then
+        return false
+    end
+    local graphics = surface.graphics
+    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(
+        maybe_shader::graphics_module.Shader,
+        {graphics_module.float_parameter("u_aspect", bounds.width / bounds.height)}
+    )
+    if not binding.ok then
+        graphics:use_default_shader()
+        return false
+    end
+    graphics:set_color("#ffffffff")
+    graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+    graphics:use_default_shader()
+    return true
+end
+
 function draw_at(surface: ui.Surface, bounds: box.Rect): unit
     local graphics = surface.graphics
     graphics:clear(CLEAR)
+    if draw_astral_sea(surface, bounds) then
+        return
+    end
     draw_field(graphics, bounds)
     draw_shafts(graphics, bounds)
     draw_vignette(graphics, bounds)

@@ -1,45 +1,52 @@
 import { test, expect } from '@playwright/test';
-import { beginHeist, frameSignature, openGame, settleBoard } from './game-driver.js';
+import {
+  beginHeist,
+  countAimPromptInk,
+  foregroundSignature,
+  openGame,
+  settleBoard,
+} from './game-driver.js';
 
 test('casts the chosen spell at a targeted ward for mana', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
-  // The default spell pick is FIREBOLT; the board settles to a still frame
-  // once the opening deal finishes. Every assertion below is measured against
-  // that frame, so wait for the deal to have stopped rather than for a
-  // duration long enough to have covered it — a baseline captured mid-deal is
-  // a frame the board will never return to.
+  // The default spell pick is FIREBOLT; the foreground settles once the
+  // opening deal finishes even though the astral sea keeps moving. Every
+  // assertion below is measured against that bright card-and-chrome ink, so a
+  // baseline captured mid-deal can never be mistaken for the finished board.
   await beginHeist(page, canvas);
   await settleBoard(canvas);
-  const baseline = await frameSignature(canvas);
+  const baseline = await foregroundSignature(canvas);
 
-  // Key 1 opens targeting (the aim ring and prompt change the frame);
-  // Escape cancels without charging mana, restoring the settled board.
+  // Key 1 opens targeting; Escape cancels without charging mana, restoring
+  // both the prompt and the settled foreground while the sea flows underneath.
   await page.keyboard.press('1');
-  await expect.poll(() => frameSignature(canvas)).not.toBe(baseline);
+  await expect.poll(() => countAimPromptInk(canvas)).toBeGreaterThan(30);
   await page.keyboard.press('Escape');
-  await expect.poll(() => frameSignature(canvas)).toBe(baseline);
+  await expect.poll(() => countAimPromptInk(canvas)).toBeLessThan(5);
+  await expect.poll(() => foregroundSignature(canvas)).toBe(baseline);
 
   // Aiming at the middle ward and confirming burns it. The burn-and-replace
-  // choreography visibly changes the frame, then the discard pile, deck
-  // count, ward, and spent mana settle to a new still frame. Motion and
+  // choreography visibly changes the foreground, then the discard pile, deck
+  // count, ward, and spent mana settle to a new arrangement. Motion and
   // settling are polled rather than sampled at fixed instants: under CI's
   // software rasterizer the frame rate is too low for two captures 100ms
   // apart to be guaranteed to differ while a card is in flight.
   await page.keyboard.press('1');
   await page.keyboard.press('ArrowRight');
-  const midFlight = await frameSignature(canvas);
+  await expect.poll(() => countAimPromptInk(canvas)).toBeGreaterThan(30);
   await page.keyboard.press('Enter');
-  await expect.poll(() => frameSignature(canvas), { timeout: 10_000 }).not.toBe(midFlight);
+  await expect.poll(() => countAimPromptInk(canvas), { timeout: 10_000 }).toBeLessThan(5);
+  await expect.poll(() => foregroundSignature(canvas), { timeout: 10_000 }).not.toBe(baseline);
   let resolved = 0;
   await expect
     .poll(
       async () => {
-        const before = await frameSignature(canvas);
+        const before = await foregroundSignature(canvas);
         await page.waitForTimeout(400);
-        const after = await frameSignature(canvas);
+        const after = await foregroundSignature(canvas);
         resolved = after;
         return before === after && after !== baseline;
       },
@@ -47,6 +54,6 @@ test('casts the chosen spell at a targeted ward for mana', async ({ page }) => {
     )
     .toBe(true);
   await page.waitForTimeout(300);
-  expect(await frameSignature(canvas)).toBe(resolved);
+  expect(await foregroundSignature(canvas)).toBe(resolved);
   expect(pageErrors).toEqual([]);
 });

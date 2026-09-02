@@ -15,6 +15,29 @@ export function frameSignature(canvas) {
   });
 }
 
+// The astral sea is intentionally alive, so a whole-frame hash can no longer
+// say whether the deal itself has settled. Bright foreground ink excludes the
+// dark nebulae and their restrained starlight while retaining card stock,
+// ranks, labels, and the standing controls whose positions change during play.
+export function foregroundSignature(canvas) {
+  return canvas.evaluate((node) => {
+    const gl = node.getContext('webgl2');
+    const data = new Uint8Array(node.width * node.height * 4);
+    gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    let hash = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const red = data[index];
+      const green = data[index + 1];
+      const blue = data[index + 2];
+      if (red + green + blue > 550) {
+        const pixel = index / 4;
+        hash = (hash * 33 + pixel + red * 3 + green * 5 + blue * 7) >>> 0;
+      }
+    }
+    return hash;
+  });
+}
+
 // Two consecutive identical frames: the board has finished whatever it was
 // animating and the next press will mean what it says rather than being spent
 // skipping ahead. Only the board settles this way — the city map behind the
@@ -24,7 +47,7 @@ export async function settleBoard(canvas) {
   let previous = -1;
   await expect
     .poll(async () => {
-      const current = await frameSignature(canvas);
+      const current = await foregroundSignature(canvas);
       const stable = current === previous;
       previous = current;
       return stable;

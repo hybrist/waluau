@@ -208,6 +208,8 @@ test('production includes and compiles every registered external shader source',
   const shaders = await readShaderSources();
   const renderSource = await readFile(join(ANTE_ROOT, 'src', 'render.walu'), 'utf8');
 
+  expect(SHADER_SOURCES['ante.effects.astral-sea']).toBe('src/shaders/astral-sea.frag');
+
   for (const name of Object.keys(SHADER_SOURCES)) {
     expect(renderSource).not.toContain(shaders[name].trim());
   }

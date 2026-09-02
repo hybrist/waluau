@@ -9,6 +9,7 @@ local shader_program = require("./shader_program")
 type Graphics = engine.Graphics
 type Source = shader_sources.Source
 export type EffectShaders = {
+    astral_sea: shader_program.State,
     card_paper: shader_program.State,
     gold_shimmer: shader_program.State,
     defeat_shroud: shader_program.State,
@@ -40,6 +41,11 @@ export type State = {
 export type Diagnostics = { fatal_error: string, warnings: string }
 
 function State.new(): State
+    local astral: shader_program.State = shader_program.State.new(
+        "ante.effects.astral-sea",
+        "astral sea",
+        false
+    )
     local paper: shader_program.State = shader_program.State.new(
         "ante.effects.card-paper",
         "card paper",
@@ -87,6 +93,7 @@ function State.new(): State
     )
     return {
         shaders = {
+            astral_sea = astral,
             card_paper = paper,
             gold_shimmer = gold,
             defeat_shroud = defeat,
@@ -100,7 +107,7 @@ function State.new(): State
             paper_board = nil,
             paper_press = nil
         },
-        programs = {paper, gold, defeat, burn, red, blue, black, green, ice},
+        programs = {astral, paper, gold, defeat, burn, red, blue, black, green, ice},
         vertex_source = shader_sources.open("ante.effects.vertex"),
         vertex_text = "",
         vertex_ready = false,

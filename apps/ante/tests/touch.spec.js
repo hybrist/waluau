@@ -6,7 +6,7 @@ import {
   countAimPromptInk,
   countCardBackInk,
   countModalHeadingInk,
-  frameSignature,
+  foregroundSignature,
   openGame,
   tapDesignPoint,
   tapMenuItem,
@@ -18,16 +18,17 @@ import {
 // the same callbacks a mouse uses, and the controls that used to be key hints
 // are now things to tap.
 
-// Poll until two captures in a row match, so a board that is still dealing is
-// never mistaken for a settled one.
+// Poll bright card-and-chrome ink until two captures in a row match, so a board
+// that is still dealing is never mistaken for a settled one while the dark
+// astral sea continues moving beneath it.
 async function settledSignature(page, canvas) {
   let settled = 0;
   await expect
     .poll(
       async () => {
-        const before = await frameSignature(canvas);
+        const before = await foregroundSignature(canvas);
         await page.waitForTimeout(400);
-        const after = await frameSignature(canvas);
+        const after = await foregroundSignature(canvas);
         settled = after;
         return before === after;
       },
