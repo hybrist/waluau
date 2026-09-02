@@ -4,8 +4,8 @@
 -- Both used to be a line of text — "HEARTS 3 / 3" and "GOLD 10" — which is the
 -- one place in the duel where a resource was spelled rather than shown. A
 -- heart that has been spent is now a hollow the shape of the one beside it,
--- and the pool is a struck coin, so the corner reads at a glance and at the
--- same distance the rest of the board does.
+-- and the pool is a struck gold coin, so the corner reads at a glance and at
+-- the same distance the rest of the board does.
 local game = require("../game")
 local run_module = require("../run")
 local box = require("../ui/layout")
@@ -24,18 +24,90 @@ const HEART_STRENGTH: f64 = 0.32
 const SPENT_INK: string = "#3a2a30"
 const SPENT_HOLLOW: string = "#131317"
 
+-- Gold is the amber the rest of the vault already writes prices and the
+-- selected menu line in, so the purse names the same metal the shop asks for.
 const COIN_RADIUS: f64 = 8.0
-const COIN_INK: string = "#67e8f9"
-const COIN_FACE: string = "#0d3d47"
+const COIN_INK: string = "#fbbf24"
+const COIN_CHANNEL: string = "#6b4410"
 const COIN_RIM: f64 = 0.62
 const COIN_CROWN: f64 = 1.45
+const COIN_CHANNEL_RADIUS: f64 = 5.6
+const COIN_BOSS_RADIUS: f64 = 3.4
 const COUNT_SIZE: f64 = 11.0
 const COUNT_GAP: f64 = 8.0
 
--- A heart at a width, drawn as its two lobes and the point below them. The
--- lobes are domes so the light lands on their upper left; the point is one
--- triangle shaded from the same side, which keeps the two halves reading as
--- one solid body rather than as three shapes that happen to touch.
+-- The heart is one surface. It used to be two domes standing on a triangle,
+-- and the seams showed: each dome is a stack of stepped circles, so the lobes
+-- read as rings sitting on a point rather than as one body. Now the outline
+-- is the classic parametric heart, tessellated as a single fan whose centre
+-- vertex carries the crown brightness and whose rim vertices carry the rim
+-- brightness, so the light rolls across the whole shape in one ramp.
+const HEART_SEGMENTS: i32 = 32
+-- The outline is written in half-widths from its own origin, a point between
+-- the cleft and the tip. Its bounding box sits this far below that origin, so
+-- lifting the origin by it centres the heart on the row.
+const HEART_LIFT: f64 = 0.16
+-- How far the fan centre drifts toward the light, in half-widths. Every
+-- triangle ramps from that centre outward, so this is where the highlight
+-- lands; it stays small enough that every rim point is still in view of it
+-- across the cleft.
+const CROWN_DRIFT: f64 = 0.12
+-- Where the light comes from, as a unit vector in screen space: above and to
+-- the left, the side every plate and dome on the board is lit from.
+const LIGHT_X: f64 = -0.55
+const LIGHT_Y: f64 = -0.83
+-- How far the rim brightness swings between the lit edge and the shaded one.
+const RIM_SWING: f64 = 0.28
+
+-- One point of the heart outline at parameter `t` (0 is the cleft, going
+-- round the right lobe first), in half-widths, with screen y pointing down.
+function heart_x(t: f64): f64
+    local s: f64 = math.sin(t)
+    return s * s * s
+end
+
+function heart_y(t: f64): f64
+    local lobes: f64 = 13.0 * math.cos(t) - 5.0 * math.cos(2.0 * t)
+    local cleft: f64 = 2.0 * math.cos(3.0 * t) + math.cos(4.0 * t)
+    return (cleft - lobes) / 16.0
+end
+
+-- One heart's fan: where its outline is drawn from, where its crown sits, and
+-- the two brightnesses the surface runs between.
+type HeartFan = {
+    origin_x: f64,
+    origin_y: f64,
+    half: f64,
+    crown_x: f64,
+    crown_y: f64,
+    crown: f64,
+    rim: f64,
+    -- The crown's distance to the tip, the farthest point of the rim.
+    reach: f64
+}
+
+-- One rim vertex. Its brightness leans from the rim value toward the crown
+-- where it faces the light and away where it turns from it, and it only
+-- reaches the rim value at the crown's full reach: the cleft sits close to
+-- the crown, and giving it the tip's darkness would cut a seam down the
+-- middle of the one body this is meant to be.
+function emit_heart_rim(graphics: ui.Graphics, fan: HeartFan, t: f64): unit
+    local nx: f64 = heart_x(t)
+    local ny: f64 = heart_y(t)
+    local x: f64 = fan.origin_x + nx * fan.half
+    local y: f64 = fan.origin_y + ny * fan.half
+    local facing: f64 = nx * LIGHT_X + (ny - HEART_LIFT) * LIGHT_Y
+    local lit: f64 = fan.rim + (fan.crown - fan.rim) * RIM_SWING * facing
+    local dx: f64 = x - fan.crown_x
+    local dy: f64 = y - fan.crown_y
+    local along: f64 = math.min(1.0, math.sqrt(dx * dx + dy * dy) / fan.reach)
+    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, fan.crown + (lit - fan.crown) * along)
+end
+
+-- A heart at a width, as one fan: brightest at its crown, falling to the rim,
+-- and along the rim brighter where it faces the light than where it turns
+-- away. Equal `rim` and `crown` give a flat heart, which is what an outline
+-- and its hollow are cut from.
 function draw_heart(
     graphics: ui.Graphics,
     center_x: f64,
@@ -45,23 +117,33 @@ function draw_heart(
     rim: f64,
     crown: f64
 ): unit
-    local lobe: f64 = width * 0.27
-    local lobe_y: f64 = center_y - width * 0.12
+    local half: f64 = width * 0.5
+    local origin_y: f64 = center_y - half * HEART_LIFT
+    local crown_x: f64 = center_x + half * CROWN_DRIFT * LIGHT_X
+    local crown_y: f64 = origin_y + half * CROWN_DRIFT * LIGHT_Y
+    local tip_x: f64 = center_x + heart_x(math.pi) * half
+    local tip_y: f64 = origin_y + heart_y(math.pi) * half
+    local fan: HeartFan = {
+        origin_x = center_x,
+        origin_y = origin_y,
+        half = half,
+        crown_x = crown_x,
+        crown_y = crown_y,
+        crown = crown,
+        rim = rim,
+        reach = math.sqrt(
+            (tip_x - crown_x) * (tip_x - crown_x) + (tip_y - crown_y) * (tip_y - crown_y)
+        )
+    }
+    local step: f64 = math.pi * 2.0 / (HEART_SEGMENTS::f64)
     graphics:set_color(color)
-    plate.shaded_triangle(
-        graphics,
-        center_x - width * 0.5,
-        center_y - width * 0.07,
-        crown,
-        center_x + width * 0.5,
-        center_y - width * 0.07,
-        rim,
-        center_x,
-        center_y + width * 0.45,
-        rim
-    )
-    plate.dome(graphics, center_x - width * 0.23, lobe_y, lobe, rim, crown)
-    plate.dome(graphics, center_x + width * 0.23, lobe_y, lobe, rim, crown)
+    graphics:ensure_capacity(HEART_SEGMENTS * 3)
+    for segment = 0::i32, HEART_SEGMENTS - 1 do
+        local from: f64 = (segment::f64) * step
+        graphics:emit_shaded_vertex(crown_x, crown_y, 0.0, 0.0, 0.0, crown)
+        emit_heart_rim(graphics, fan, from)
+        emit_heart_rim(graphics, fan, from + step)
+    end
 end
 
 function draw_pip(graphics: ui.Graphics, center_x: f64, center_y: f64, held: bool): unit
@@ -82,7 +164,7 @@ function draw_pip(graphics: ui.Graphics, center_x: f64, center_y: f64, held: boo
     -- A spent heart keeps its own outline and loses its body, so the row still
     -- says how many the run started with.
     draw_heart(graphics, center_x, center_y, PIP_WIDTH, SPENT_INK, 1.0, 1.0)
-    draw_heart(graphics, center_x, center_y - 0.5, PIP_WIDTH - 3.0, SPENT_HOLLOW, 1.0, 1.0)
+    draw_heart(graphics, center_x, center_y, PIP_WIDTH - 3.0, SPENT_HOLLOW, 1.0, 1.0)
 end
 
 function draw_hearts(graphics: ui.Graphics, bounds: box.Rect, held: i32, most: i32): unit
@@ -97,24 +179,19 @@ function draw_hearts(graphics: ui.Graphics, bounds: box.Rect, held: i32, most: i
     end
 end
 
--- The pool as a struck coin: a domed blank with its face sunk into it and the
--- count beside it, which is the same two-surface reading the ability sockets
--- use one corner away.
+-- The pool as a struck gold coin: a domed blank, a channel sunk inside its
+-- rim, and the relief raised again in the middle — the profile a coin shows
+-- edge-on, and the same two-surface reading the ability sockets use one
+-- corner away. The count beside it is written in the same metal.
 function draw_purse(graphics: ui.Graphics, bounds: box.Rect, gold: i32): unit
     local center_x: f64 = bounds.x + COIN_RADIUS
     local center_y: f64 = bounds.y + ROW_HEIGHT * 0.5
     graphics:set_color(COIN_INK)
     plate.dome(graphics, center_x, center_y, COIN_RADIUS, COIN_RIM, COIN_CROWN)
-    graphics:set_color(COIN_FACE)
-    plate.well(graphics, center_x, center_y, COIN_RADIUS - 2.2, 1.35, 0.62)
-    ink.text_centered(
-        graphics,
-        "$",
-        center_x,
-        center_y + COUNT_SIZE * 0.34,
-        COUNT_SIZE - 2.0,
-        COIN_INK
-    )
+    graphics:set_color(COIN_CHANNEL)
+    plate.well(graphics, center_x, center_y, COIN_CHANNEL_RADIUS, 1.35, 0.62)
+    graphics:set_color(COIN_INK)
+    plate.dome(graphics, center_x, center_y, COIN_BOSS_RADIUS, COIN_RIM, COIN_CROWN)
     ink.text(
         graphics,
         tostring(gold),
