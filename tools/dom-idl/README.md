@@ -10,6 +10,13 @@ Regenerate the checked-in output with:
 pnpm generate:dom-externs
 ```
 
+The generator formats `externs/dom.walu` with `waluau fmt` before writing it,
+so the checked-in file matches `pnpm format:check`. It uses the binary named by
+`WALUAU_BIN`, then a previously built `target/{debug,release}/waluau`, and
+otherwise falls back to `cargo run -p waluau-cli`. The generator's tests
+(`pnpm test:dom-externs`) run in the Rust CI workflow and compare a fresh
+generation against the checked-in output.
+
 The generator writes:
 
 - `externs/dom.walu`: Waluau extern type, method, and property declarations.

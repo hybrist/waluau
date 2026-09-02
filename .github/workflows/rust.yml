@@ -94,3 +94,31 @@ jobs:
 
       - name: Build wasm target
         run: cargo build --target wasm32-unknown-unknown --manifest-path crates/waluau-wasm/Cargo.toml
+
+  dom-externs:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the waluau CLI for the formatter pass
+        run: cargo build -p waluau-cli
+
+      - name: Run DOM extern generator tests
+        run: pnpm test:dom-externs
