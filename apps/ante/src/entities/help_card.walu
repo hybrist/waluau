@@ -34,10 +34,9 @@ function body(): ui.Node
             modal.body_line("WIN A HAND TO CLEAR THE DUEL. A LOSS COSTS ONE HEART."),
             modal.body_line("A TIE LEAVES THE DUEL LIVE FOR ANOTHER HAND."),
             ui.Node.gap(0.0, BLOCK_GAP - LINE_GAP),
-            modal.heading("3. THE TARGET"),
-            modal.body_line(
-                "CLEARING A DUEL REQUIRES ITS TARGET IN GOLD." .. " WHAT IS LEFT CARRIES ON."
-            ),
+            modal.heading("3. THE RUN"),
+            modal.body_line("HEARTS ARE YOUR LIVES. THEY DO NOT REFILL BETWEEN DUELS."),
+            modal.body_line("GOLD AND SPELLS CARRY ON."),
             ui.Node.gap(0.0, BLOCK_GAP - LINE_GAP),
             modal.keys_line("ARROWS MOVE   SPACE SELECT   ENTER CONFIRM   H HISTORY"),
             modal.keys_line("C SORT BY COLOR   V SORT BY RANK   1 AND 2 USE SPELLS"),
@@ -47,14 +46,8 @@ function body(): ui.Node
     )
 end
 
--- The target is separate from winning the hand: it is what leaving the duel
--- costs, so it remains its own numbered block.
 function node(): ui.Node
-    return modal.node(
-        "THE JOB",
-        "WIN BEFORE YOUR HEARTS RUN OUT, THEN REACH THE GOLD TARGET",
-        body()
-    )
+    return modal.node("THE JOB", "KEEP WINNING WHILE YOUR HEARTS DWINDLE", body())
 end
 
 return { node = node }

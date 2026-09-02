@@ -3,17 +3,16 @@
 -- Every other test here is deterministic: it pins a seed and asserts an exact
 -- structural fact, or arranges the cards outright through the fixture. This one
 -- is the opposite kind — it plays whole duels from a shuffled deck to a natural
--- verdict and aggregates what came out, because the target the run charges to
--- clear a duel has to be a number somebody measured against real play.
+-- verdict and aggregates what came out, so changes to scoring and wagering
+-- remain visible at the boundary between duels.
 --
 -- The reference player is the Opponent's own policy played from the player'
 -- side: the strongest swap the purse covers, then the strongest pair. That
 -- makes this a mirror match, so what it reports is a strong player's income
--- rather than a median one — which is the number the target needs, because an
--- target tuned to weak play never becomes a wall. It is also why income is
--- structurally positive: the player pays a gold per card offered in a swap
--- and wins `round + pot + hand bonus` back, and half of every pot is the
--- Opponent's wager, which nothing ever charged it for.
+-- rather than a median one. Income is structurally positive: the player pays
+-- a gold per card offered in a swap and wins `round + pot + hand bonus` back,
+-- and half of every pot is the Opponent's wager, which nothing ever charged it
+-- for.
 --
 -- Bands, not values. Shuffles move these numbers around and a regression guard
 -- that has to be re-pinned every time the deal changes is a guard nobody keeps.
@@ -65,9 +64,9 @@ end
 -- Play until the player clears the duel or has lost as many hands as a fresh
 -- run has hearts. The rules do not own health, so the harness mirrors the
 -- screen's stopping condition here.
-local function autopilot(state: game.State): unit
+local function autopilot(state: game.State, hearts: i32): unit
     local losses: i32 = 0
-    for _ = 1, run.max_hearts * 2 do
+    for _ = 1, hearts * 2 do
         if state:is_finished() then
             return
         end
@@ -84,7 +83,7 @@ local function autopilot(state: game.State): unit
         end
         if (trick::game.Trick).winner < 0 then
             losses += 1
-            if losses >= run.max_hearts then
+            if losses >= hearts then
                 return
             end
         end
@@ -94,7 +93,7 @@ end
 local function play_duel(boss: bool, gold: i32, seed: i32): Trial
     math.randomseed(seed)
     local state: game.State = game.State.new(boss, starter_loadout(), gold)
-    autopilot(state)
+    autopilot(state, run.max_hearts)
     return {
         cleared = state:is_victory(),
         exit_gold = state:view().player_points,
@@ -159,7 +158,6 @@ describe(
                 -- wins one and a band reaching 0 would mean the duel is not winnable.
                 expect(clear_percent(sample)):toBeGreaterThanOrEqual(40)
                 expect(clear_percent(sample)):toBeLessThanOrEqual(70)
-                -- The number the target table is tuned against.
                 expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(12)
                 expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(35)
                 expect(mean_income(sample)):toBeGreaterThanOrEqual(5)
@@ -185,9 +183,8 @@ describe(
         it(
             "pays a duel the same however big the purse it opened with",
             function()
-                -- The load-bearing fact under the target. Gold a swap wagers comes
-                -- back inside the pot that swap wins, so carrying more in should not
-                -- let a run outrun a rising target by hoarding.
+                -- Gold a swap wagers comes back inside the pot that swap wins, so
+                -- carrying more in should not distort the duel's payout.
                 local lean: Sample = measure(false, game.starting_gold, STANDARD_TRIALS)
                 local flush: Sample = measure(false, 40, STANDARD_TRIALS)
                 expect(mean_income(flush)):toBe(mean_income(lean))
@@ -214,18 +211,17 @@ describe(
 )
 
 -- One whole run, duel after duel, until something ends it. The reference
--- player never shops and never casts, so the only things gold moves for are
--- swaps and targets — which is the comparison this is here to make.
-type RunTrial = { duels: i32, ended_by: run.Outcome, purse: i32 }
+-- player never shops and never casts, and lost hearts persist between duels.
+type RunTrial = { duels: i32, ended_by: run.Outcome }
 
 local function play_run(seed: i32): RunTrial
     local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-    -- Bounded well past anything the target curve allows so a mis-tuned table
-    -- fails as an assertion rather than as a hung suite.
+    -- Bounded well past the victory milestone so a failure to exhaust the
+    -- run's hearts becomes an assertion rather than a hung suite.
     for attempt = 1::i32, 40 do
         math.randomseed(seed * 1000 + attempt)
         local duel: game.State = game.State.new(state:boss(), state.spells, state.gold)
-        autopilot(duel)
+        autopilot(duel, state.hearts)
         -- The live game screen charges health as each breach resolves. This aggregate
         -- runner plays the whole vault in one call, then applies those same
         -- losses before asking the run for its outcome.
@@ -237,10 +233,10 @@ local function play_run(seed: i32): RunTrial
         local reached: i32 = state.duel
         local outcome: run.Outcome = state:settle(duel:is_victory(), duel:gold())
         if run.outcome_is_loss(outcome) then
-            return { duels = reached - 1, ended_by = outcome, purse = duel:gold() }
+            return { duels = reached - 1, ended_by = outcome }
         end
     end
-    return { duels = 40, ended_by = "none", purse = state.gold }
+    return { duels = 40, ended_by = "none" }
 end
 
 -- Enough runs to see the tail of the depth distribution without the suite
@@ -248,17 +244,15 @@ end
 -- one or two duels' worth of play.
 const RUN_TRIALS: i32 = 150
 
--- Run sampling checks that accumulated hand losses and the rising target both
--- remain meaningful stopping conditions, while successful runs can still
--- reach the back half of the authored table.
+-- Run sampling checks that accumulated hand losses remain the stopping
+-- condition while successful runs can still reach later duels.
 describe(
     "Ante Magic run economy",
     function()
         it(
-            "ends every run it plays",
+            "ends sampled runs as their persistent hearts run out",
             function()
                 local held: i32 = 0
-                local short: i32 = 0
                 local unfinished: i32 = 0
                 local deepest: i32 = 0
                 local total: i32 = 0
@@ -266,8 +260,6 @@ describe(
                     local trial: RunTrial = play_run(seed)
                     if trial.ended_by == "lost-health" then
                         held += 1
-                    elseif trial.ended_by == "lost-target" then
-                        short += 1
                     else
                         unfinished += 1
                     end
@@ -276,75 +268,16 @@ describe(
                         deepest = trial.duels
                     end
                 end
-                -- Nothing walks forever: past the table the target outruns what a duel
-                -- pays, so even a run that never loses a round is eventually stopped.
                 expect(unfinished):toBe(0)
-                -- The opponent stays the executioner by a wide margin. A target that
-                -- took a large share of these would have overtaken ordinary hand
-                -- rewards and turned the ramp into a second loss condition.
-                expect(held):toBeGreaterThan(RUN_TRIALS / 2)
-                expect(short * 10):toBeLessThan(held)
-                -- Runs get deep enough for the table's back half to be reachable, which
-                -- is the only reason writing a back half is worth anything.
+                expect(held):toBe(RUN_TRIALS)
+                -- Runs get deep enough for later duels to be reachable even though
+                -- their margin for another lost hand keeps shrinking.
                 expect(deepest):toBeGreaterThanOrEqual(4)
                 -- A run clears about one duel on average — the coin flip compounding,
                 -- p/(1-p) at a 54 percent clear rate. Hundredths, because a mean under
                 -- two does not survive integer division.
                 expect((total * 100) / RUN_TRIALS):toBeGreaterThanOrEqual(70)
                 expect((total * 100) / RUN_TRIALS):toBeLessThan(200)
-            end
-        )
-
-        it(
-            "spends act three out of the pile the first two acts banked",
-            function()
-                -- The design claim, checked against the table directly rather than
-                -- through the shuffle: at a cleared duel's pay, the purse rises
-                -- through act one, holds through act two, and falls through act
-                -- three. A statistical version of this would need runs to reach duel
-                -- nine, and a coin-flip duel means almost none do.
-                --
-                -- Representative cleared-duel income keeps this structural check
-                -- independent of shuffle variance.
-                local purse: i32 = game.starting_gold
-                local peak: i32 = purse
-                local peak_vault: i32 = 0
-                for duel = 1::i32, run.run_length(false) do
-                    local income: i32 = 25
-                    if run.boss_at(duel, false) then
-                        income = 36
-                    end
-                    purse = purse + income - run.target_at(duel, false)
-                    if purse > peak then
-                        peak = purse
-                        peak_vault = duel
-                    end
-                end
-                -- The pile peaks in the middle of the run, not at the end of it.
-                expect(peak_vault):toBeGreaterThanOrEqual(3)
-                expect(peak_vault):toBeLessThanOrEqual(6)
-                -- And the last duel is reached on fumes: cleared, but with nothing to
-                -- spare, so any duel along the way that paid less than average is a
-                -- run that does not get there at all.
-                expect(purse):toBeGreaterThanOrEqual(0)
-                expect(purse):toBeLessThan(25)
-                -- At the pay of an ordinary rather than a lucky run, the table wins.
-                local lean: i32 = game.starting_gold
-                local died_at: i32 = 0
-                for duel = 1::i32, run.run_length(false) do
-                    if died_at == 0 then
-                        local income: i32 = 20
-                        if run.boss_at(duel, false) then
-                            income = 30
-                        end
-                        lean = lean + income - run.target_at(duel, false)
-                        if lean < 0 then
-                            died_at = duel
-                        end
-                    end
-                end
-                expect(died_at):toBeGreaterThanOrEqual(6)
-                expect(died_at):toBeLessThanOrEqual(run.run_length(false))
             end
         )
     end

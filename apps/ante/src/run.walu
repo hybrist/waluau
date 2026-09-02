@@ -36,16 +36,11 @@ export type State = {
 -- Every third duel is the boss battle variant, so a run's cadence is two
 -- standard heists and then a seven-card hand.
 const BOSS_EVERY: i32 = 3
--- Nine duels is the run the target table is written for: three acts of two
--- heists and a boss, ending on one. The boss rush is a shorter, steeper sprint
--- rather than nine consecutive seven-card battles.
+-- Nine duels marks a completed run: three acts of two heists and a boss,
+-- ending on one. The boss rush is a shorter sprint made entirely of
+-- seven-card battles.
 const RUN_LENGTH: i32 = 9
 const RUSH_LENGTH: i32 = 5
--- Past the last duel the city keeps going and the table runs out, so the target
--- takes over on a formula. The step grows with every duel beyond the finish,
--- which is what makes the tail end: the demand climbs past a typical duel's
--- rarity-weighted pay immediately and never comes back down.
-const ENDLESS_STEP: i32 = 6
 -- Two spells are as many as the player can hold ready at once — keys 1 and 2
 -- in the duel. A full loadout cannot take on another kind.
 const MAX_SPELLS: i32 = 2
@@ -86,8 +81,8 @@ function State:next_is_boss(): bool
     return boss_at(self.duel + 1, self.rush)
 end
 
--- How many duels the authored curve covers. The run does not stop there — what
--- it marks is where the table ends and the endless formula takes over.
+-- How many duels earn the run's victory milestone. The run does not stop
+-- there: clearing the milestone carries it into the endless city.
 function run_length(rush: bool): i32
     if rush then
         return RUSH_LENGTH
@@ -95,87 +90,40 @@ function run_length(rush: bool): i32
     return RUN_LENGTH
 end
 
--- What clearing the numbered duel costs, taken out of the gold the player
--- walk out holding. Priced against measured play rather than guessed: a cleared
--- standard duel pays about twenty-five gold and a boss about thirty-six (see
--- `economy.test.walu`), and the table is built around those numbers crossing it.
---
--- The first act asks for well under that pay, so a run that is going well banks
--- a surplus. The second holds near it. The third asks more than a typical duel
--- pays, so the pile that took two acts to build is what act three is spent out
--- of — a run arrives at the last duel on fumes, and one that stumbled anywhere
--- along the way does not arrive at all. That is where the difficulty ramps: not
--- in making a round harder to win, which nothing here touches, but in what
--- winning has to be worth by the time the run is deep.
---
--- Boss duels take the largest steps, which is what makes the end of an act a
--- gold wall as well as a seven-card one.
---
--- The table is written out inside the function rather than held module-side so
--- the values sit next to the reasoning about them.
-function target_at(duel: i32, rush: bool): i32
-    local table_values: {i32} = {6, 10, 18, 21, 25, 35, 38, 43, 70}
-    if rush then
-        table_values = {12, 24, 38, 55, 80}
-    end
-    local length: i32 = #table_values
-    if duel < 1 then
-        return table_values[1]
-    end
-    if duel <= length then
-        return table_values[duel]
-    end
-    -- Past the table the demand climbs by a step that itself grows, so the gap
-    -- between what a duel pays and what it costs to leave widens every time.
-    local target: i32 = table_values[length]
-    for step = 1::i32, duel - length do
-        target += ENDLESS_STEP + step
-    end
-    return target
-end
-
-function State:target(): i32
-    return target_at(self.duel, self.rush)
-end
-
--- Whether the run is past the duel its table was written for, and walking on
--- for the sake of walking on.
+-- Whether the run has passed its victory milestone and kept walking.
 function State:endless(): bool
     return self.duel > run_length(self.rush)
 end
 
--- The verdict of a fought duel, read as a moment in the run. Health or the
--- target can end it; clearing it either advances or crosses the finish line.
--- This says which without applying any of them — one classifier, so the screen
--- showing a verdict and the settle that acts on it agree.
+-- The verdict of a fought duel, read as a moment in the run. Exhausting the
+-- run's hearts ends it; clearing the duel either advances or crosses the
+-- finish line. This says which without applying any of them — one classifier,
+-- so the screen showing a verdict and the settle that acts on it agree.
 --
--- "won" is a milestone rather than a stop: the last duel of the table
+-- "won" is a milestone rather than a stop: the last authored duel
 -- is cleared exactly the way any other is, and the run walks on into the
 -- endless city.
-export type Outcome = "none" | "lost-health" | "lost-target" | "advance" | "won"
+export type Outcome = "none" | "lost-health" | "advance" | "won"
 
 function outcome_is_loss(outcome: Outcome): bool
-    return outcome == "lost-health" or outcome == "lost-target"
+    return outcome == "lost-health"
 end
 
 function outcome_walks_on(outcome: Outcome): bool
     return outcome == "advance" or outcome == "won"
 end
 
-function outcome_of(duel: i32, rush: bool, hearts: i32, cleared: bool, carried_gold: i32): Outcome
+function outcome_of(duel: i32, rush: bool, hearts: i32, cleared: bool): Outcome
     -- Health can end the run during a duel before the rules report a verdict.
-    -- It therefore outranks both that verdict and the purse.
+    -- It therefore outranks that verdict.
     if hearts <= 0 then
         return "lost-health"
     end
     if not cleared then
         return "none"
     end
-    if carried_gold < target_at(duel, rush) then
-        return "lost-target"
-    end
     -- The finish line is a moment the run passes through once, not a state it
-    -- stays in, so this is the duel the table ends on and no duel after it.
+    -- stays in, so this is the final authored duel and no duel after it.
     if duel == run_length(rush) then
         return "won"
     end
@@ -184,10 +132,9 @@ end
 
 -- The run as the board reads it: which duel of the sequence this is, how many
 -- the player have already taken, whether this one and the next are boss
--- battles, the gold and hearts the run carried in, what leaving this duel and
--- the next one costs, how far the authored curve runs, and the verdict on the
--- live duel. Screens treat this snapshot as presentation data and do not
--- mutate it.
+-- battles, the gold and hearts the run carried in, where the victory milestone
+-- stands, and the verdict on the live duel. Screens treat this snapshot as
+-- presentation data and do not mutate it.
 --
 -- `outcome` is the rules module's answer about a duel this module has not
 -- settled yet, so it arrives rather than being re-derived here; a live duel
@@ -200,8 +147,6 @@ export type View = {
     carried_gold: i32,
     hearts: i32,
     max_hearts: i32,
-    target: i32,
-    ante_ahead: i32,
     run_length: i32,
     outcome: Outcome
 }
@@ -215,22 +160,20 @@ function State:view(outcome: Outcome): View
         carried_gold = self.gold,
         hearts = self.hearts,
         max_hearts = MAX_HEARTS,
-        target = self:target(),
-        ante_ahead = target_at(self.duel + 1, self.rush),
         run_length = run_length(self.rush),
         outcome = outcome
     }
 end
 
--- The live duel has been fought to a verdict. Taking it advances the run,
--- charges the duel its target, and carries what is left into the next one;
--- losing the run — to health or a target the purse could not cover — starts a
--- fresh one. A duel the run already spent gold in is never fought twice.
+-- The live duel has been fought to a verdict. Taking it advances the run and
+-- carries its remaining gold into the next one; losing the run to exhausted
+-- hearts starts a fresh one. A duel the run already spent gold in is never
+-- fought twice.
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished duel decided is not this module's to decide again.
 function State:settle(cleared: bool, carried_gold: i32): Outcome
-    local outcome: Outcome = outcome_of(self.duel, self.rush, self.hearts, cleared, carried_gold)
+    local outcome: Outcome = outcome_of(self.duel, self.rush, self.hearts, cleared)
     if outcome == "none" then
         return outcome
     end
@@ -238,9 +181,9 @@ function State:settle(cleared: bool, carried_gold: i32): Outcome
         self:restart(self.start_spell, self.rush)
         return outcome
     end
-    -- Taking the last duel of the table and taking any other one are the same
+    -- Taking the victory milestone and taking any other duel are the same
     -- movement; what differs is only the screen that says so.
-    self.gold = carried_gold - self:target()
+    self.gold = carried_gold
     self.cleared += 1
     self.duel += 1
     return outcome
@@ -380,7 +323,7 @@ function State.restore(snapshot_value: string): State?
         return nil
     end
     local restored: State = decoded.state
-    -- No upper selected on the duel: a run past the end of its table is a run
+    -- No upper bound on the duel: a run past its victory milestone is a run
     -- that won and kept walking, not a payload from another build.
     if restored.duel < 1 then
         return nil
@@ -416,7 +359,6 @@ end
 
 return {
     boss_at = boss_at,
-    target_at = target_at,
     run_length = run_length,
     outcome_of = outcome_of,
     outcome_is_loss = outcome_is_loss,

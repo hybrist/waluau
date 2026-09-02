@@ -74,16 +74,20 @@ describe(
                 state:settle(true, 31)
                 expect(state.duel):toBe(2)
                 expect(state.cleared):toBe(1)
-                -- The duel charged its target on the way out; the rest carries.
-                expect(state.gold):toBe(31 - run.target_at(1, false))
+                expect(state.gold):toBe(31)
                 expect(state:boss()):toBe(false)
                 -- The duel after this one is where the cadence lands, so the board can
                 -- warn about it while this one is still being fought.
                 expect(state:next_is_boss()):toBe(true)
                 state:settle(true, 18)
                 expect(state.duel):toBe(3)
-                expect(state.gold):toBe(18 - run.target_at(2, false))
+                expect(state.gold):toBe(18)
                 expect(state:boss()):toBe(true)
+                -- An empty purse still advances after a win; gold is a resource
+                -- to spend, not a second condition for surviving the run.
+                state:settle(true, 0)
+                expect(state.duel):toBe(4)
+                expect(state.gold):toBe(0)
             end
         )
 
@@ -191,7 +195,7 @@ describe(
                 if restored ~= nil then
                     expect(restored.duel):toBe(2)
                     expect(restored.cleared):toBe(1)
-                    expect(restored.gold):toBe(27 - run.target_at(1, true))
+                    expect(restored.gold):toBe(27)
                     expect(restored.hearts):toBe(run.max_hearts - 1)
                     expect(restored.spells[1].kind):toBe(spells.SpellKind.RaiseCard)
                     expect(restored.spells[1].level):toBe(1)
@@ -352,110 +356,15 @@ describe(
 )
 
 describe(
-    "Ante Magic target",
-    function()
-        it(
-            "climbs across the run and takes its largest steps on boss duels",
-            function()
-                local previous: i32 = 0
-                for duel = 1::i32, run.run_length(false) do
-                    local target: i32 = run.target_at(duel, false)
-                    expect(target):toBeGreaterThan(previous)
-                    previous = target
-                end
-                -- Every boss duel asks for more of a step up than the standard duel
-                -- before it, so the end of an act is a gold wall as well as an
-                -- seven-card one.
-                for duel = 3::i32, run.run_length(false) do
-                    if run.boss_at(duel, false) then
-                        local boss_step: i32 = run.target_at(
-                            duel,
-                            false
-                        ) - run.target_at(duel - 1, false)
-                        local before: i32 = run.target_at(
-                            duel - 1,
-                            false
-                        ) - run.target_at(duel - 2, false)
-                        expect(boss_step):toBeGreaterThan(before)
-                    end
-                end
-                -- The table crosses what a duel pays rather than staying under it.
-                -- Early duels ask for below the rarity-weighted pay measured in
-                -- economy.test.walu, so a run that is going well banks a surplus;
-                -- late duels spend the run out of that pile.
-                expect(run.target_at(1, false)):toBeLessThan(25)
-                expect(run.target_at(2, false)):toBeLessThan(25)
-                expect(run.target_at(3, false)):toBeLessThan(25)
-                expect(run.target_at(run.run_length(false), false)):toBeGreaterThan(36)
-                expect(run.target_at(run.run_length(false) - 1, false)):toBeGreaterThan(25)
-            end
-        )
-
-        it(
-            "keeps climbing past the table, faster than a duel can pay",
-            function()
-                local finish: i32 = run.run_length(false)
-                local previous_step: i32 = 0
-                for past = 1::i32, 4 do
-                    local step: i32 = run.target_at(
-                        finish + past,
-                        false
-                    ) - run.target_at(finish + past - 1, false)
-                    expect(step):toBeGreaterThan(previous_step)
-                    previous_step = step
-                    -- The tail always ends. Every duel past the finish asks for more
-                    -- than a typical boss pays (measured in economy.test.walu), and
-                    -- the shortfall widens with the step, so a run walks on out of
-                    -- whatever surplus it arrived with and no further.
-                    expect(run.target_at(finish + past, false)):toBeGreaterThan(36)
-                end
-                -- Concretely: a run that finished the table holding fifty walks about
-                -- two more duels, not twenty.
-                local purse: i32 = 50
-                local walked: i32 = 0
-                for past = 1::i32, 20 do
-                    local target: i32 = run.target_at(finish + past, false)
-                    if purse + 36 < target then
-                        break
-                    end
-                    purse = purse + 36 - target
-                    walked = past
-                end
-                expect(walked):toBeGreaterThan(0)
-                expect(walked):toBeLessThan(5)
-            end
-        )
-
-        it(
-            "asks a boss rush for a steeper target over a shorter run",
-            function()
-                expect(run.run_length(true)):toBeLessThan(run.run_length(false))
-                expect(run.target_at(1, true)):toBeGreaterThan(run.target_at(1, false))
-                expect(run.target_at(3, true)):toBeGreaterThan(run.target_at(3, false))
-            end
-        )
-    end
-)
-
-describe(
     "Ante Magic run outcomes",
     function()
         it(
             "names the things a fought duel or exhausted heart pool can become",
             function()
-                local target: i32 = run.target_at(1, false)
-                expect(tostring(run.outcome_of(1, false, run.max_hearts, false, 99))):toBe("none")
-                -- Holding exactly the target clears; a single gold short does not.
-                expect(
-                    tostring(run.outcome_of(1, false, run.max_hearts, true, target))
-                ):toBe("advance")
-                expect(
-                    tostring(run.outcome_of(1, false, run.max_hearts, true, target - 1))
-                ):toBe("lost-target")
-                -- A live duel is not settled, whatever purse it currently holds.
-                expect(tostring(run.outcome_of(1, false, run.max_hearts, false, 0))):toBe("none")
+                expect(tostring(run.outcome_of(1, false, run.max_hearts, false))):toBe("none")
+                expect(tostring(run.outcome_of(1, false, run.max_hearts, true))):toBe("advance")
                 -- The last heart can disappear before the duel has otherwise ended.
-                expect(tostring(run.outcome_of(1, false, 0, false, 99))):toBe("lost-health")
+                expect(tostring(run.outcome_of(1, false, 0, false))):toBe("lost-health")
             end
         )
 
@@ -482,25 +391,23 @@ describe(
             "passes through the finish line once and walks on",
             function()
                 local finish: i32 = run.run_length(false)
+                expect(tostring(run.outcome_of(finish, false, run.max_hearts, true))):toBe("won")
                 expect(
-                    tostring(run.outcome_of(finish, false, run.max_hearts, true, 999))
-                ):toBe("won")
-                expect(
-                    tostring(run.outcome_of(finish - 1, false, run.max_hearts, true, 999))
+                    tostring(run.outcome_of(finish - 1, false, run.max_hearts, true))
                 ):toBe("advance")
                 -- Not a state the run stays in: the duel after the finish is an
-                -- ordinary one again, however far past the table it is.
+                -- ordinary one again, however far past the milestone it is.
                 expect(
-                    tostring(run.outcome_of(finish + 1, false, run.max_hearts, true, 999))
+                    tostring(run.outcome_of(finish + 1, false, run.max_hearts, true))
                 ):toBe("advance")
                 expect(
-                    tostring(run.outcome_of(finish + 7, false, run.max_hearts, true, 999))
+                    tostring(run.outcome_of(finish + 7, false, run.max_hearts, true))
                 ):toBe("advance")
             end
         )
 
         it(
-            "takes the last duel of the table and keeps the run going",
+            "takes the victory milestone and keeps the run going",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 local finish: i32 = run.run_length(false)
@@ -511,39 +418,10 @@ describe(
                 -- purse survived, and the loadout was never reset.
                 expect(state.duel):toBe(finish + 1)
                 expect(state.cleared):toBe(finish)
-                expect(state.gold):toBe(200 - run.target_at(finish, false))
+                expect(state.gold):toBe(200)
                 expect(state:endless()):toBe(true)
                 expect(tostring(state:settle(true, 200))):toBe("advance")
                 expect(state.duel):toBe(finish + 2)
-            end
-        )
-
-        it(
-            "ends a run that opened the duel but could not pay the target",
-            function()
-                local state: run.State = run.State.new(spells.SpellKind.FreezeRay, false)
-                state:settle(true, 40)
-                local short: i32 = run.target_at(state.duel, false) - 1
-                expect(tostring(state:settle(true, short))):toBe("lost-target")
-                -- A fresh first duel follows, with the starting spell back at full
-                -- price and the purse gone.
-                expect(state.duel):toBe(1)
-                expect(state.cleared):toBe(0)
-                expect(state.gold):toBe(game.starting_gold)
-                expect(state.start_spell):toBe(spells.SpellKind.FreezeRay)
-            end
-        )
-
-        it(
-            "still charges an endless run, and still ends it",
-            function()
-                local state: run.State = run.State.new(spells.SpellKind.Clone, false)
-                state.duel = run.run_length(false) + 3
-                state.cleared = run.run_length(false) + 2
-                local target: i32 = state:target()
-                expect(tostring(state:settle(true, target - 1))):toBe("lost-target")
-                expect(state.duel):toBe(1)
-                expect(state:endless()):toBe(false)
             end
         )
 
@@ -559,9 +437,7 @@ describe(
                 if restored ~= nil then
                     expect(restored.duel):toBe(run.run_length(false) + 3)
                     expect(restored.gold):toBe(61)
-                    -- The target is read back off the duel rather than stored, so a
-                    -- payload from before the finish line needs nothing added to it.
-                    expect(restored:target()):toBe(state:target())
+                    expect(restored:endless()):toBe(true)
                 end
             end
         )
@@ -647,7 +523,7 @@ describe(
                 expect(state.cleared):toBe(1)
 
                 local second: game.State = game.State.new(state:boss(), state.spells, state.gold)
-                expect(second:gold()):toBe(42 - run.target_at(1, false))
+                expect(second:gold()):toBe(42)
                 expect(second:is_boss()):toBe(false)
                 expect(second:is_finished()):toBe(false)
                 expect(second:spell_kind(0)):toBe(spells.SpellKind.Firebolt)
@@ -657,7 +533,7 @@ describe(
                 expect(state.cleared):toBe(2)
                 -- The third duel is the boss battle and opens with seven cards.
                 local third: game.State = game.State.new(state:boss(), state.spells, state.gold)
-                expect(third:gold()):toBe(30 - run.target_at(2, false))
+                expect(third:gold()):toBe(30)
                 expect(third:is_boss()):toBe(true)
                 expect(third:hand_size()):toBe(7)
             end
@@ -676,7 +552,7 @@ describe(
                 expect(state:boss()):toBe(true)
                 expect(state:next_is_boss()):toBe(true)
                 local second: game.State = game.State.new(state:boss(), state.spells, state.gold)
-                expect(second:gold()):toBe(25 - run.target_at(1, true))
+                expect(second:gold()):toBe(25)
                 expect(second:hand_size()):toBe(7)
             end
         )

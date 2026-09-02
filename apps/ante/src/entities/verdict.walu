@@ -1,8 +1,8 @@
 -- The verdict of the duel just fought, read as a moment in the run. Taking it
--- is an intermission — the gold left after the target is the stake the next duel
--- opens with — while losing it is where the whole run stops.
+-- is an intermission — its remaining gold is the stake the next duel opens
+-- with — while losing the last heart is where the whole run stops.
 --
--- There are four of those moments and they are branched on the run's own
+-- There are three of those moments and they are branched on the run's own
 -- classifier rather than re-decided from the board, so what this screen says
 -- and what the run then does are the same answer.
 local game = require("../game")
@@ -13,23 +13,17 @@ local modal = require("./modal")
 local label = require("./label")
 
 const HEADLINE_SIZE: f64 = 18.0
-const LEDGER_HEADLINE_SIZE: f64 = 15.0
 const FIGURE_SIZE: f64 = 44.0
-const LEDGER_FIGURE_SIZE: f64 = 40.0
 const NOTE_SIZE: f64 = 13.0
 const KEYS_SIZE: f64 = 12.0
 
 const HEADLINE_INK: string = "#67e8f9"
 const FIGURE_INK: string = "#f8fafc"
-const OWED_INK: string = "#fb7185"
 const QUIET_INK: string = "#8a8a92"
 const WON_INK: string = "#fbbf24"
 
 const BLOCK_GAP: f64 = 26.0
 const FIGURE_GAP: f64 = 18.0
--- Daylight between the two halves of a comparison, wide enough that they read
--- as two figures rather than one number split in half.
-const LEDGER_GAP: f64 = 64.0
 
 function walks_on(run: run_module.View): bool
     return run_module.outcome_walks_on(run.outcome)
@@ -37,9 +31,6 @@ end
 
 function title_of(run: run_module.View): string
     if run.outcome == "lost-health" then
-        return "THE RUN ENDS"
-    end
-    if run.outcome == "lost-target" then
         return "THE RUN ENDS"
     end
     if run.outcome == "won" then
@@ -51,10 +42,6 @@ end
 function subtitle_of(run: run_module.View): string
     if run.outcome == "lost-health" then
         return "YOUR LAST HEART WAS LOST IN DUEL " .. tostring(run.duel)
-    end
-    -- The duel opened and the player still could not afford to leave it.
-    if run.outcome == "lost-target" then
-        return "DUEL " .. tostring(run.duel) .. " WON, BUT THE GOLD TARGET WAS MISSED"
     end
     if run.outcome == "won" then
         return "ALL " .. tostring(run.run_length) .. " DUELS WON. THE CITY GOES ON PAST THEM"
@@ -80,35 +67,8 @@ function figure(
     )
 end
 
--- Two figures side by side, for the verdict that is about a comparison: what
--- was held against what was owed. A screen that showed only the shortfall would
--- read as an arbitrary death.
-function ledger(left_label: string, left_value: i32, right_label: string, right_value: i32): ui.Node
-    return ui.Node.flow(
-        {
-            figure(
-                left_label,
-                HEADLINE_INK,
-                tostring(left_value),
-                FIGURE_INK,
-                LEDGER_HEADLINE_SIZE,
-                LEDGER_FIGURE_SIZE
-            ),
-            figure(
-                right_label,
-                OWED_INK,
-                tostring(right_value),
-                OWED_INK,
-                LEDGER_HEADLINE_SIZE,
-                LEDGER_FIGURE_SIZE
-            )
-        },
-        box.row(LEDGER_GAP, "center", "start")
-    ):wide()
-end
-
--- What the run walks away with. A lost duel has only what it took; the other
--- three are all comparisons against the target, so they are two figures.
+-- What the run walks away with. Exhausting its hearts reports how far it got;
+-- clearing a duel reports the gold carried into the shop and the next duel.
 function tally(state: game.View, run: run_module.View): ui.Node
     if run.outcome == "lost-health" then
         return figure(
@@ -120,20 +80,18 @@ function tally(state: game.View, run: run_module.View): ui.Node
             FIGURE_SIZE
         )
     end
-    if run.outcome == "lost-target" then
-        return ledger("GOLD HELD", state.player_points, "TARGET", run.target)
-    end
+    local figure_ink: string = FIGURE_INK
     if run.outcome == "won" then
-        return figure(
-            "GOLD CARRIED ON",
-            HEADLINE_INK,
-            tostring(state.player_points - run.target),
-            WON_INK,
-            HEADLINE_SIZE,
-            FIGURE_SIZE
-        )
+        figure_ink = WON_INK
     end
-    return ledger("GOLD CARRIED ON", state.player_points - run.target, "TARGET MET", run.target)
+    return figure(
+        "GOLD CARRIED ON",
+        HEADLINE_INK,
+        tostring(state.player_points),
+        figure_ink,
+        HEADLINE_SIZE,
+        FIGURE_SIZE
+    )
 end
 
 function ahead_text(run: run_module.View): string
@@ -141,12 +99,11 @@ function ahead_text(run: run_module.View): string
     if run.next_is_boss then
         text = text .. "   CHALLENGE"
     end
-    return text .. "   TARGET " .. tostring(run.ante_ahead)
+    return text
 end
 
 -- The next duel is not dealt straight off the verdict: the shop stands
--- between them, spending this pile of gold. A run that has walked off the end
--- of the table has no shop ahead of it, only more city.
+-- between them, spending this pile of gold.
 function onward(run: run_module.View): {ui.Node}
     if not walks_on(run) then
         return {
@@ -184,10 +141,4 @@ function node(state: game.View, run: run_module.View): ui.Node
     return modal.node(title_of(run), subtitle_of(run), body(state, run))
 end
 
-return {
-    node = node,
-    -- The comparison the three target-facing verdicts are all about, exported so
-    -- its two halves can be measured without playing a duel to reach one.
-    ledger = ledger,
-    ledger_gap = LEDGER_GAP
-}
+return { node = node }
