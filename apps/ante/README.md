@@ -26,36 +26,23 @@ After the river feint, each side commits two private cards and the strongest
 five-card poker hand among those two and the five community cards wins. As in
 Texas Hold'em, the winning five may use both, one, or neither committed card.
 
-A vault is one heist inside a longer roguelike run of nine, and clearing one
-costs its ante: the vault takes a cut of the mana the robbers are holding, and
-what is left is what the next vault is dealt with. The pool is the run's, not
-the vault's, and every cast spends from it for good. Between two vaults the run
-stops at the shop, where that same mana buys spell scrolls and healing potions.
+A vault is one heist inside a longer roguelike run of nine. The pool is the
+run's, not the vault's: clearing one carries its remaining mana into the next,
+and every cast spends from it for good. Between two vaults the run stops at the
+shop, where that same mana buys spell scrolls and healing potions.
 
 A run also starts with three hearts. Every hand the Arch Mage wins removes one,
 including a hand inside a vault the player ultimately clears. Hearts travel
-through the fence and into later vaults, and nothing inside a vault gives one
-back — clearing one does not repair anything. The shop is the only place they
-move upward, one potion at a time. Losing the last heart ends the run as soon as
-that hand resolves, and a potion cannot buy it back.
+through the fence and into later vaults, and clearing one does not repair them.
+The shop is the only place they move upward, one potion at a time. Every loss
+therefore shrinks the run's remaining margin for error, and losing the last
+heart ends the run as soon as that hand resolves; a potion cannot buy it back.
+The next heist is then the first vault of a fresh run. R restarts the run from
+vault one at any point, which is also why a settled vault is never left standing
+on the board.
 
-The ante climbs, and it climbs past what a typical vault pays. Early vaults ask
-for well under it, so a run that is going well banks a surplus; the last act
-asks for more than ordinary hands earn, so the third act is spent out of the
-pile the first two banked and the ninth vault is reached on fumes. A rare hand
-can beat the curve with a windfall. That is the ramp: not a breach that is
-harder to win, but a win that has to be worth more.
-
-There are two ways a run ends. Losing the last heart ends it immediately.
-Clearing a vault and then not holding its ante ends it too. In either case the
-next heist is the first vault of a fresh run. R restarts the run from vault one
-at any point, which is also why a settled vault is never left standing on the
-board.
-
-Clearing the ninth vault wins the run — and does not stop it. The city goes on,
-the table runs out, and the ante takes over on a formula whose step grows every
-vault, so an endless run walks on out of whatever surplus it arrived with and no
-further.
+Clearing the ninth vault wins the run — and does not stop it. The city and its
+sequence of vaults continue for as long as the run still has hearts.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
 once, on keys 1 and 2. A visit to the shop stocks exactly two offers, drawn
@@ -78,8 +65,8 @@ than five, widening every feint and committed-pair choice. Spent pairs are
 replaced after each breach so the seven-card choice remains the challenge until
 the vault is cleared or the run runs out of hearts. Everything else — feints,
 wagers, and scoring — matches a standard vault. The menu's BOSS RUSH starts a
-run made of nothing else: five vaults rather than nine, on its own steeper ante.
-Both hand rows tighten their pitch (and the fan its tilt and arc) so a
+run made of nothing else: five vaults rather than nine. Both hand rows tighten
+their pitch (and the fan its tilt and arc) so a
 seven-relic row still clears the deck and the three right-edge piles.
 
 The browser entry imports only the engine facade and contains no DOM or canvas
@@ -229,7 +216,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `city_map.walu` | DOM-free city generation, the alternating vendor/vault route, and the camera pans and dissolves that carry it between screens. |
 | `city_map_render.walu` | WebGL2 primitive drawing for the city, its walked and upcoming route, the last authored vault's landmark house, and the colored street streak, all at one opacity. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
-| `run.walu` | DOM-free run state: the vault sequence, its boss cadence and ante table, the finish line and endless tail, the spell loadout, and the mana and hearts carried between vaults — including the one way hearts climb back. |
+| `run.walu` | DOM-free run state: the vault sequence, its boss cadence, victory milestone and endless tail, the spell loadout, and the mana and hearts carried between vaults — including the one way hearts climb back. |
 | `shop.walu` | DOM-free intermission between vaults: behavior-bearing item stock, quoted prices, spent offers, cursor input, and hot-replacement snapshots. |
 | `items/` | The common item behavior/snapshot seam, its restore catalog, and the concrete offers: spell scrolls that teach or raise a spell without replacing the loadout, and a healing potion that gives back one heart. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and presentation snapshots. |
@@ -255,8 +242,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
-| `run.test.walu` | Deterministic Vitest assertions for the boss cadence, ante table and endless tail, persistent hearts, mana carryover, the carried loadout, and run outcomes. |
-| `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how a run ends, played from a shuffled deck by a reference policy — the numbers the ante table is priced against. |
+| `run.test.walu` | Deterministic Vitest assertions for the boss cadence and endless tail, persistent hearts, mana carryover, the carried loadout, and run outcomes. |
+| `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how persistent hearts end a run, played from a shuffled deck by a reference policy. |
 | `shop.test.walu` | Deterministic Vitest assertions for item stock, spending, spell levels, full-loadout and full-health refusal, healing purchases, lifecycle, and snapshots. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
 | `ui/node.test.walu` | Headless assertions for retained identity, layout, arrangement, hit order, and controlled presentation. |

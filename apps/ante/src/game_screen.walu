@@ -180,11 +180,10 @@ end
 -- run, or the first of a fresh one.
 --
 -- A taken duel is followed by the shop rather than by a deal: the run has
--- already moved on and is holding what the target left of the gold it carried
--- out, which is exactly what the intermission spends. Taking the last duel of
--- the table walks the same way — the run is won and goes on regardless. A lost
--- run has nothing to spend and no loadout to spend it on, so its fresh first
--- duel is dealt straight away.
+-- already moved on and is holding the gold it carried out, which is exactly
+-- what the intermission spends. Taking the victory milestone walks the same
+-- way — the run is won and goes on regardless. A lost run has nothing to spend
+-- and no loadout to spend it on, so its fresh first duel is dealt straight away.
 function State:advance_run(city: city_map.State): unit
     local outcome: run_module.Outcome = self.run:settle(self.rules:is_victory(), self.rules:gold())
     if run_module.outcome_walks_on(outcome) then
@@ -206,9 +205,9 @@ function State:leave_shop(): unit
     self:deal_vault()
 end
 
--- Which stop of the route carries the last duel the run's target table is
--- written for. The route runs past it — a run that takes it walks on into the
--- endless city — so this names a landmark, not an end.
+-- Which stop of the route carries the run's victory milestone. The route runs
+-- past it — a run that takes it walks on into the endless city — so this names
+-- a landmark, not an end.
 function State:landmark_stop(): i32
     return city_map.duel_stop(run_module.run_length(self.run.rush))
 end
@@ -257,13 +256,7 @@ function State:run_outcome(): run_module.Outcome
         return "none"
     end
     local run: run_module.State = self.run
-    return run_module.outcome_of(
-        run.duel,
-        run.rush,
-        run.hearts,
-        self.rules:is_victory(),
-        self.rules:gold()
-    )
+    return run_module.outcome_of(run.duel, run.rush, run.hearts, self.rules:is_victory())
 end
 
 -- Losing the last heart finishes the screen's live duel immediately even when
@@ -550,8 +543,8 @@ function State:consume_gate(city: city_map.State, command: flow.Command): bool
     if result == "live" then
         return false
     end
-    -- Restart is a run restart, not a redeal of the live duel: a duel the
-    -- run already paid gold into cannot be fought a second time.
+    -- Restart is a run restart, not a redeal of the live duel: a duel the run
+    -- already fought cannot be attempted a second time.
     if result == "reset" then
         self:reset(city, self.run.rush, self.run.start_spell)
     elseif result == "advance" then
