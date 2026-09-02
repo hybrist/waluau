@@ -2,7 +2,7 @@
 -- tests/conformance/basic.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: asserts that a function falling off the end equals nil; whether Waluau's unit result is a deliberate difference from Lua's implicit nil return, or a bounded nullable-inference gap, is undecided
 -- This chunk retains checks from the upstream source that still fail in
 -- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/basic.walu in original source order.

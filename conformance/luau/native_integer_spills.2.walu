@@ -2,9 +2,9 @@
 -- tests/conformance/native_integer_spills.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: out-of-scope: sparse-mixed-hash-tables
+-- conformance: untriaged: FUNC_LIST[2] on a fresh {} looks like a sparse hole at index 1, but upstream assigns FUNC_LIST[1] in the range that became native_integer_spills.1, so the hole is a provenance-split artifact and the real blocker is probably the dense-array inference gap waluau-j74d
 -- This chunk contains only native_integer_spills.luau checks that currently fail in
--- Waluau. This is a documented deliberate difference, not scheduled work; see DEVIATIONS.md.
+-- Waluau. Which bucket this belongs in is undecided; see the untriaged directive above.
 --
 -- Split from conformance/luau/native_integer_spills.walu. Minimal setup is
 -- repeated as needed so each numbered chunk is independently discoverable by

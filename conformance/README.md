@@ -29,9 +29,9 @@ assert(add(-1, 1) == 0)
 
 ## Test kinds
 
-By default a file is a **pass** test as described above. Two directives, parsed
-from the raw source (so they work even in files that intentionally don't
-compile), opt a file into other kinds:
+By default a file is a **pass** test as described above. Directives parsed from
+the raw source (so they work even in files that intentionally don't compile) opt
+a file into other kinds:
 
 - `-- conformance: pending` marks a **pending** test: one that *should* pass
   eventually but doesn't yet. The runner only verifies the file currently fails
@@ -46,8 +46,16 @@ compile), opt a file into other kinds:
   turns the suite red either way. This directive is used by the vendored Luau
   suite under `luau/`, where the slugs are validated against
   [`luau/DEVIATIONS.md`](./luau/DEVIATIONS.md) by
-  `conformance/luau/check-pending-inventory.mjs`. A file carries `pending` or
-  `out-of-scope`, never both.
+  `conformance/luau/check-pending-inventory.mjs`. A file carries at most one of
+  `pending`, `untriaged` and `out-of-scope`, never two.
+
+- `-- conformance: untriaged: <reason>` is a **variant of `pending`**, not a
+  separate kind: it marks a file that currently fails where it is not clear
+  whether a bounded gap or a deliberate difference is what stops it. It counts
+  inside the pending total and the runner treats it identically. The inline
+  reason is required free text and must state the open question, so a later
+  audit can grep for the doubt rather than re-derive it. It is used by the
+  vendored Luau suite under `luau/`.
 
 - `-- conformance: error=<text>` marks a **fail** test: a file that must never
   pass (typically a syntax or type error, rarely a runtime trap). Each `error=`
@@ -64,7 +72,7 @@ the runner verifies the actual outcome does **not** match the expected failure
 expected failure starts appearing, the test goes red — remove `pending`. See
 `string_subtraction.walu`.
 
-`out-of-scope` behaves as `pending` does in this table.
+`untriaged` and `out-of-scope` both behave as `pending` does in this table.
 
 | `pending` | `error=` | Kind | Runner verifies |
 |-----------|----------|------|-----------------|

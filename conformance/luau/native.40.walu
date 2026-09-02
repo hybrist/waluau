@@ -2,7 +2,7 @@
 -- tests/conformance/native.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: interpolates a buffer into a string template; same open question as strings.87 about what tostring should produce for a reference value, tracked by waluau-nsp4
 -- This chunk contains only native.luau checks that currently fail in Waluau.
 -- Remove this directive when the whole chunk passes.
 --

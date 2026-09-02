@@ -2,7 +2,7 @@
 -- tests/conformance/pcall.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: first blocker is a 'function' statement inside a nested block (waluau-jehg), but the chunk asserts Lua's 'stack overflow' message and Wasm stack exhaustion may not be able to produce it at all
 -- This chunk contains only pcall.luau checks that currently fail in Waluau.
 -- Remove this directive when the chunk passes.
 --

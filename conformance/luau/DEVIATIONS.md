@@ -8,18 +8,23 @@ source loading, and untyped table behavior that are not part of that contract.
 
 Bead IDs are repository issue records. Inspect one with `bd show <id> --json`.
 
-## Three markers, three meanings
+## The markers
 
-Every imported chunk carries exactly one state:
+Every imported chunk carries exactly one directive, or none:
 
 | Marker | Meaning | Runner |
 | --- | --- | --- |
 | none | Enabled. The chunk compiles and passes in the browser. | must pass |
 | `-- conformance: pending` | A bounded gap someone could fix. Every pending family names the open beads that own it. | must currently fail |
+| `-- conformance: untriaged: <reason>` | A **variant of pending**, for a chunk whose bucket could not be decided. Counted inside the pending total. | must currently fail |
 | `-- conformance: out-of-scope: <slug>[,<slug>]` | A documented deliberate difference blocks it. Nobody is expected to make it pass. | must currently fail |
 
-Both non-enabled states are **inverse-tested**: the browser suite fails if such
-a chunk starts passing, so neither marker can go stale. They differ only in what
+The headline split therefore stays three-way — enabled / pending / out-of-scope
+— with untriaged reported as a subset of pending, as in
+`236 pending (30 untriaged)`.
+
+All three non-enabled states are **inverse-tested**: the browser suite fails if
+such a chunk starts passing, so no marker can go stale. They differ only in what
 the number means. The pending count is the addressable backlog; the out-of-scope
 count is coverage Waluau has decided not to buy.
 
@@ -27,28 +32,58 @@ Each slug in an `out-of-scope` directive names a section below and is validated
 by [`check-pending-inventory.mjs`](./check-pending-inventory.mjs). A chunk may
 name more than one when several deviations independently block it.
 
+### When to reach for `untriaged`
+
+Use `untriaged` when you **cannot tell which bucket a chunk belongs in** — when
+the evidence does not settle whether a bounded gap or a deliberate difference is
+what actually stops it. It is not a softer `pending` for work nobody wants to do,
+and it is not a holding pen for chunks nobody has looked at: it records a
+specific question that a specific reading raised.
+
+The reason is required, free text, and is the whole point of the directive. It
+must say **what the open question is**, and where you have one, name the
+alternative classification you rejected and why it is still live:
+
+```lua
+-- conformance: untriaged: first blocker is recursive return inference (waluau-9f8d),
+-- but waluau-9f8d.5 reports the operative blocker as the undeclared exit(1) in
+-- statically dead code, which would make this static-names
+```
+
+It defaults toward `pending`, deliberately. Over-claiming `out-of-scope` is the
+failure mode that makes the whole split worthless, so a chunk you are unsure
+about must not sit in the "won't fix" bucket. `untriaged` beats `out-of-scope`
+whenever there is real doubt; it costs a slightly overstated backlog and buys a
+grep that finds the doubt instead of a later audit re-deriving it.
+
+Resolving one means moving it to plain `pending` or to `out-of-scope` with a
+slug, then rerunning `check-pending-inventory.mjs --write`.
+
 Reproduce the directory-level counts from the repository root with:
 
 ```sh
 find conformance/luau -maxdepth 1 -name '*.walu' -print | wc -l
-rg -l '^-- conformance: pending$' conformance/luau -g '*.walu' | wc -l
+rg -l '^-- conformance: (pending$|untriaged:)' conformance/luau -g '*.walu' | wc -l
+rg -l '^-- conformance: untriaged:' conformance/luau -g '*.walu' | wc -l
 rg -l '^-- conformance: out-of-scope:' conformance/luau -g '*.walu' | wc -l
 ```
 
-List the exact chunk set behind one deviation with, for example:
+List the exact chunk set behind one deviation, or every open question, with:
 
 ```sh
 rg -l 'out-of-scope:.*aot-loadstring' conformance/luau -g '*.walu'
+rg '^-- conformance: untriaged:' conformance/luau -g '*.walu'
 ```
 
 ## Snapshot
 
-The directory holds **1,098 chunks**: **441 enabled**, **235 pending**, and
-**422 out of scope**. These are an exact filesystem snapshot, not a target.
-`node conformance/luau/check-pending-inventory.mjs` verifies them, checks that
-every chunk carries exactly one marker, checks every named slug against the
-documented set, checks that every pending family names an open bead, and
-verifies the two generated tables below. Run it with `--write` to regenerate
+The directory holds **1,098 chunks**: **441 enabled**, **236 pending** of which
+**30 are untriaged**, and **421 out of scope**. These are an exact filesystem
+snapshot, not a target. `node conformance/luau/check-pending-inventory.mjs`
+verifies them, checks that every chunk carries at most one marker, requires every
+`untriaged` directive to state its open question, checks every named slug against
+the documented set, checks that every pending family names an open bead, and
+verifies the three generated tables below. Run it with `--write` to regenerate
 those tables after reclassifying a chunk.
 
 Splitting can increase both the total and the non-enabled counts: one coarse
@@ -65,6 +100,12 @@ that most of `native.luau` does not assert the native tier at all. Only
 call `is_native()`; the rest of that source is ordinary Luau, much of it fuzzer
 regressions, so 24 `native.*` chunks are now tracked as bounded gaps.
 
+The 30 chunks that probe left genuinely undecided now carry `untriaged` with the
+question written down, rather than being silently absorbed into either bucket.
+Two of them had been claimed as `out-of-scope` on that first pass;
+`native_integer_spills.2` moved back, and `utf8.2` stayed after re-reading it
+(see [`aot-loadstring`](#aot-loadstring)).
+
 ## Out-of-scope inventory
 
 Generated from the chunk markers. Do not edit by hand; run
@@ -77,7 +118,7 @@ Generated from the chunk markers. Do not edit by hand; run
 | `typed-coroutine` | 82 | `closure`, `coroutine`, `cyield`, `errors`, `gc`, `iter`, `pcall` |
 | `aot-loadstring` | 56 | `basic`, `calls`, `constructs`, `errors`, `gc`, `literals`, `locals`, `math`, `pm`, `strings`, `utf8` |
 | `static-names` | 50 | `basic`, `buffers`, `calls`, `closure`, `coroutine`, `cyield`, `errors`, `events`, `gc`, `iter`, `math`, `native`, `pcall`, `stringinterp` |
-| `sparse-mixed-hash-tables` | 45 | `attrib`, `basic`, `bitwise`, `clear`, `closure`, `constructs`, `events`, `gc`, `iter`, `literals`, `locals`, `move`, `native`, `native_integer_spills`, `pm`, `sort`, `tables`, `vararg` |
+| `sparse-mixed-hash-tables` | 44 | `attrib`, `basic`, `bitwise`, `clear`, `closure`, `constructs`, `events`, `gc`, `iter`, `literals`, `locals`, `move`, `native`, `native_integer_spills`, `pm`, `sort`, `tables`, `vararg` |
 | `metatable-events` | 42 | `calls`, `closure`, `coroutine`, `errors`, `events`, `gc`, `iter`, `native`, `pcall`, `pm`, `strings`, `tmerror` |
 | `strict-bool` | 33 | `basic`, `closure`, `constructs`, `ifelseexpr`, `native`, `pcall` |
 | `luau-integer-vm-extension` | 25 | `integers`, `integers_regspill` |
@@ -92,45 +133,89 @@ Generated from the chunk markers. Do not edit by hand; run
 | `browser-clocks-and-calendars` | 6 | `datetime` |
 | `reserved-type-keywords` | 1 | `stringinterp` |
 
-A chunk may name more than one deviation, so these counts sum to more than the 422 out-of-scope chunks. List the exact set for one deviation with `rg -l 'out-of-scope:.*<slug>' conformance/luau`.
+A chunk may name more than one deviation, so these counts sum to more than the 421 out-of-scope chunks. List the exact set for one deviation with `rg -l 'out-of-scope:.*<slug>' conformance/luau`.
 
 <!-- /generated:out-of-scope -->
 
 ## Pending inventory
 
 Generated from the chunk markers and the bead attribution in
-[`check-pending-inventory.mjs`](./check-pending-inventory.mjs).
+[`check-pending-inventory.mjs`](./check-pending-inventory.mjs). The untriaged
+column is the subset of each family whose bucket is still undecided.
 
 <!-- generated:pending -->
 
-| Pending family | Chunks | Open beads |
-| --- | ---: | --- |
-| `classes*` | 49 | `waluau-wll8` |
-| `pm*` | 33 | `waluau-zxju`, `waluau-lz2e`, `waluau-dbyy`, `waluau-esz6`, `waluau-4487`, `waluau-274e`, `waluau-j74d` |
-| `calls*` | 32 | `waluau-j74d`, `waluau-jehg`, `waluau-zxju`, `waluau-2dow`, `waluau-lz2e`, `waluau-9f8d` |
-| `native*` | 24 | `waluau-j74d`, `waluau-pndm`, `waluau-31kg`, `waluau-9ttd`, `waluau-uneu`, `waluau-2dow`, `waluau-nsp4`, `waluau-rndq`, `waluau-esz6`, `waluau-9f8d` |
-| `pcall*` | 23 | `waluau-wb7a`, `waluau-zxju`, `waluau-jehg`, `waluau-n6u8`, `waluau-274e` |
-| `strings*` | 22 | `waluau-j74d`, `waluau-esz6`, `waluau-nlyf`, `waluau-vogb`, `waluau-nsp4`, `waluau-dbyy`, `waluau-9f8d` |
-| `vector_library*` | 11 | `waluau-uneu` |
-| `basic*` | 5 | `waluau-jehg`, `waluau-pndm`, `waluau-n6u8`, `waluau-9f8d` |
-| `constructs*` | 5 | `waluau-jehg`, `waluau-9f8d` |
-| `errors*` | 5 | `waluau-wb7a`, `waluau-jehg`, `waluau-844l` |
-| `iter*` | 5 | `waluau-j74d`, `waluau-dbyy`, `waluau-3em1`, `waluau-n6u8` |
-| `bitwise*` | 4 | `waluau-dbyy`, `waluau-esz6`, `waluau-rndq`, `waluau-3em1` |
-| `closure*` | 4 | `waluau-j74d`, `waluau-9f8d` |
-| `math*` | 4 | `waluau-dbyy`, `waluau-jehg`, `waluau-n6u8`, `waluau-9f8d` |
-| `tables*` | 2 | `waluau-jehg`, `waluau-9f8d` |
-| `assert*` | 1 | `waluau-9f8d` |
-| `attrib*` | 1 | `waluau-zxju` |
-| `buffers*` | 1 | `waluau-2dow` |
-| `datetime*` | 1 | `waluau-31kg`, `waluau-9f8d` |
-| `explicit_type_instantiations*` | 1 | `waluau-9ttd` |
-| `native_integer_spills*` | 1 | `waluau-3em1` |
-| `vector*` | 1 | `waluau-uneu` |
+| Pending family | Chunks | Untriaged | Open beads |
+| --- | ---: | ---: | --- |
+| `classes*` | 49 | 0 | `waluau-wll8` |
+| `pm*` | 33 | 11 | `waluau-zxju`, `waluau-lz2e`, `waluau-dbyy`, `waluau-esz6`, `waluau-4487`, `waluau-274e`, `waluau-j74d` |
+| `calls*` | 32 | 5 | `waluau-j74d`, `waluau-jehg`, `waluau-zxju`, `waluau-2dow`, `waluau-lz2e`, `waluau-9f8d` |
+| `native*` | 24 | 3 | `waluau-j74d`, `waluau-pndm`, `waluau-31kg`, `waluau-9ttd`, `waluau-uneu`, `waluau-2dow`, `waluau-nsp4`, `waluau-rndq`, `waluau-esz6`, `waluau-9f8d` |
+| `pcall*` | 23 | 2 | `waluau-wb7a`, `waluau-zxju`, `waluau-jehg`, `waluau-n6u8`, `waluau-274e` |
+| `strings*` | 22 | 1 | `waluau-j74d`, `waluau-esz6`, `waluau-nlyf`, `waluau-vogb`, `waluau-nsp4`, `waluau-dbyy`, `waluau-9f8d` |
+| `vector_library*` | 11 | 0 | `waluau-uneu` |
+| `basic*` | 5 | 2 | `waluau-jehg`, `waluau-pndm`, `waluau-n6u8`, `waluau-9f8d` |
+| `constructs*` | 5 | 0 | `waluau-jehg`, `waluau-9f8d` |
+| `errors*` | 5 | 2 | `waluau-wb7a`, `waluau-jehg`, `waluau-844l` |
+| `iter*` | 5 | 0 | `waluau-j74d`, `waluau-dbyy`, `waluau-3em1`, `waluau-n6u8` |
+| `bitwise*` | 4 | 0 | `waluau-dbyy`, `waluau-esz6`, `waluau-rndq`, `waluau-3em1` |
+| `closure*` | 4 | 0 | `waluau-j74d`, `waluau-9f8d` |
+| `math*` | 4 | 0 | `waluau-dbyy`, `waluau-jehg`, `waluau-n6u8`, `waluau-9f8d` |
+| `native_integer_spills*` | 2 | 1 | `waluau-3em1` |
+| `tables*` | 2 | 2 | `waluau-jehg`, `waluau-9f8d` |
+| `assert*` | 1 | 0 | `waluau-9f8d` |
+| `attrib*` | 1 | 0 | `waluau-zxju` |
+| `buffers*` | 1 | 0 | `waluau-2dow` |
+| `datetime*` | 1 | 1 | `waluau-31kg`, `waluau-9f8d` |
+| `explicit_type_instantiations*` | 1 | 0 | `waluau-9ttd` |
+| `vector*` | 1 | 0 | `waluau-uneu` |
 
-Total: 235 pending chunks in 22 families.
+Total: 236 pending chunks in 22 families, of which 30 are untriaged.
 
 <!-- /generated:pending -->
+
+## Open questions (untriaged)
+
+Generated from the `untriaged` directives themselves. Each row is a chunk whose
+bucket a future audit still has to settle; the reason names the alternative
+classification wherever the doubt has one.
+
+<!-- generated:untriaged -->
+
+| Chunk | Open question |
+| --- | --- |
+| `basic.18` | asserts that a function falling off the end equals nil; whether Waluau's unit result is a deliberate difference from Lua's implicit nil return, or a bounded nullable-inference gap, is undecided |
+| `basic.20` | assigns nil to a numeric for-loop variable; may be the uninitialized-local inference gap (waluau-3em1) or a deliberate rule that a loop variable keeps its numeric type |
+| `calls.16` | first blocker is recursive return inference (waluau-9f8d), but waluau-9f8d.5 reports the operative blocker as the undeclared exit(1) in statically dead code, which would make this static-names |
+| `calls.33` | recursive unlpack returns a runtime-variable number of values; kept under waluau-zxju because that bead contemplates a variadic multi-value IR, but a statically fixed result arity may be deliberate, which would make this heterogeneous-values |
+| `calls.37` | recursive unlpack returns a runtime-variable number of values; kept under waluau-zxju because that bead contemplates a variadic multi-value IR, but a statically fixed result arity may be deliberate, which would make this heterogeneous-values |
+| `calls.38` | recursive unlpack returns a runtime-variable number of values; kept under waluau-zxju because that bead contemplates a variadic multi-value IR, but a statically fixed result arity may be deliberate, which would make this heterogeneous-values |
+| `calls.39` | recursive unlpack returns a runtime-variable number of values; kept under waluau-zxju because that bead contemplates a variadic multi-value IR, but a statically fixed result arity may be deliberate, which would make this heterogeneous-values |
+| `datetime.6` | blocker is using the os.date overload set as a value (waluau-31kg); it was previously filed under the calendar deviation, and whether overload-as-value stays rejected by design is undecided |
+| `errors.50` | 'unterminated string literal': the imported text carries a raw newline inside a short string, which Lua rejects too, so compare the chunk against the upstream errors.luau source before assuming a lexer gap (waluau-jehg) |
+| `errors.54` | needs error{msg='x'} to raise a non-string value; waluau-844l decides whether Waluau carries an unknown-typed error payload or keeps a deliberate string-only error channel, which would make this out-of-scope |
+| `native_integer_spills.2` | FUNC_LIST[2] on a fresh {} looks like a sparse hole at index 1, but upstream assigns FUNC_LIST[1] in the range that became native_integer_spills.1, so the hole is a provenance-split artifact and the real blocker is probably the dense-array inference gap waluau-j74d |
+| `native.12` | only diagnostic is a positionless 'multi-assignment targets must be names' (waluau-pndm), but the fuzzfail body also reads undeclared globals, so the real blocker may be static-names |
+| `native.30` | only diagnostic is a positionless 'multi-assignment targets must be names' (waluau-pndm), but the fuzzfail body also reads undeclared globals, so the real blocker may be static-names |
+| `native.40` | interpolates a buffer into a string template; same open question as strings.87 about what tostring should produce for a reference value, tracked by waluau-nsp4 |
+| `pcall.8` | first blocker is a 'function' statement inside a nested block (waluau-jehg), but the chunk asserts Lua's 'stack overflow' message and Wasm stack exhaustion may not be able to produce it at all |
+| `pcall.9` | first blocker is a 'function' statement inside a nested block (waluau-jehg), but the chunk asserts Lua's 'stack overflow' message and Wasm stack exhaustion may not be able to produce it at all |
+| `pm.54` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.55` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.56` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.57` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.58` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.59` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.60` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.61` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.62` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.63` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `pm.64` | recursive range returns a runtime-variable number of values spread into string.char; same waluau-zxju versus heterogeneous-values question as calls.33 |
+| `strings.87` | asserts tostring{} starts with 'table:'; Wasm GC exposes no stable address to print, so whether any textual form is correct is an open design question under waluau-nsp4 and may end up a deviation |
+| `tables.2` | asserts evaluation-order side effects of duplicate record fields in {a = 1, a = side_effect(), a = 3}; may be the statically shaped record model rather than a gap, which would make this sparse-mixed-hash-tables |
+| `tables.6` | needs Luau's 'any' type name; 'unknown' is checked where 'any' is not, so aliasing them may be wrong and the rejection may be a deliberate difference rather than waluau-jehg |
+
+<!-- /generated:untriaged -->
 
 ## Documented deviations
 
@@ -315,6 +400,15 @@ are outside the runtime language contract. Upstream's `dostring` helper is a
 `basic.2.patched` mentions `loadstring` only in adaptation comments and is
 enabled. A chunk with a direct assertion that is independent of generated source
 should be split.
+
+`utf8.2` is worth spelling out, because its *first* diagnostic is not this
+deviation. The lexer rejects the `"\u{D800}"` escape it uses to test unpaired
+surrogates, and whether that rejection is itself deliberate is an open language
+question tracked by `waluau-ba0o`. It stays out of scope under `aot-loadstring`
+regardless: its `checksyntax` helper calls `loadstring` and is invoked from the
+chunk's own live assertions, so the chunk cannot pass however the surrogate
+question is decided. The uncertainty is about the slug attribution of the first
+blocker, not about the bucket, which is why it is not `untriaged`.
 
 ### `binary-packing`
 

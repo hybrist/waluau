@@ -2,7 +2,7 @@
 -- tests/conformance/native.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: untriaged: only diagnostic is a positionless 'multi-assignment targets must be names' (waluau-pndm), but the fuzzfail body also reads undeclared globals, so the real blocker may be static-names
 -- This chunk contains only native.luau checks that currently fail in Waluau.
 -- Remove this directive when the whole chunk passes.
 --
