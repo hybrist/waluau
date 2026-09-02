@@ -2,9 +2,9 @@
 -- tests/conformance/locals.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: aot-loadstring,sparse-mixed-hash-tables
 -- This chunk retains checks from the upstream source that still fail in
--- Waluau. Remove this directive when the whole chunk passes.
+-- Waluau. This is a documented deliberate difference, not scheduled work; see DEVIATIONS.md.
 -- Split from conformance/luau/locals.walu in original source order.
 -- Upstream source lines 31-138.
 

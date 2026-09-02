@@ -2,7 +2,7 @@
 -- tests/conformance/datetime.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: browser-clocks-and-calendars
 -- checkDateTable round-trips os.date("!*t") through os.time. Browser os.date
 -- returns a formatted string and browser os.time takes no calendar table, so
 -- neither side of the round trip exists. See DEVIATIONS.md, "Browser clocks

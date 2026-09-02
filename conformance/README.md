@@ -39,6 +39,16 @@ compile), opt a file into other kinds:
   feature lands and the file starts passing, the pending test goes red — that's
   the signal to remove the directive. See `string_sub.walu`.
 
+- `-- conformance: out-of-scope: <slug>[,<slug>]` marks a test that fails for a
+  deliberate difference rather than a gap, so nobody is expected to make it
+  pass. The slugs justify the claim inline. The runner treats it exactly like
+  `pending` — the file must still fail today — so a file that starts passing
+  turns the suite red either way. This directive is used by the vendored Luau
+  suite under `luau/`, where the slugs are validated against
+  [`luau/DEVIATIONS.md`](./luau/DEVIATIONS.md) by
+  `conformance/luau/check-pending-inventory.mjs`. A file carries `pending` or
+  `out-of-scope`, never both.
+
 - `-- conformance: error=<text>` marks a **fail** test: a file that must never
   pass (typically a syntax or type error, rarely a runtime trap). Each `error=`
   line is a required fragment of the failure message; the directive may be
@@ -53,6 +63,8 @@ the runner verifies the actual outcome does **not** match the expected failure
 (the file may currently pass, or fail with a different message). When the
 expected failure starts appearing, the test goes red — remove `pending`. See
 `string_subtraction.walu`.
+
+`out-of-scope` behaves as `pending` does in this table.
 
 | `pending` | `error=` | Kind | Runner verifies |
 |-----------|----------|------|-----------------|

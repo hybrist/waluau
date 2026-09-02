@@ -2,7 +2,7 @@
 -- tests/conformance/ifelseexpr.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: strict-bool
 -- The upstream helper leaves `condition` untyped and uses it in a statement
 -- condition. Waluau deliberately requires statement conditions to be bool;
 -- it does not apply Lua/Luau truthiness to an unknown value.

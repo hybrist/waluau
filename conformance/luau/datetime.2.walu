@@ -2,7 +2,7 @@
 -- tests/conformance/datetime.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: browser-clocks-and-calendars
 -- Browser os.date always returns a formatted string, so the "*t" calendar
 -- table has no typed signature. Requesting it raises rather than silently
 -- formatting the literal text. See DEVIATIONS.md, "Browser clocks and

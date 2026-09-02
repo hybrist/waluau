@@ -2,7 +2,7 @@
 -- tests/conformance/datetime.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: browser-clocks-and-calendars
 -- os.time's calendar-table form has no browser host-boundary representation:
 -- a declared host import carries primitives, not records, so Waluau's os.time
 -- takes no arguments and cannot fail. The first reported error is therefore

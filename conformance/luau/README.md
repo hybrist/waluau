@@ -24,55 +24,69 @@ Do not silently edit an imported assertion. Preserve source order, keep every
 removed interval represented by another chunk, and repeat only setup needed for
 standalone execution.
 
-## Enabled and pending chunks
+## Enabled, pending, and out-of-scope chunks
 
-A chunk without `-- conformance: pending` must compile and pass in the browser.
-A pending chunk is expected to fail today; if it starts passing, the runner
-fails so the marker cannot become stale.
+Every chunk is in exactly one of three states:
 
-Pending does **not** always mean “planned feature.” Some chunks expose a bounded
-language or library gap, while others test deliberate differences such as the
-typed coroutine API, runtime source compilation, native/JIT machinery, or
-sparse Lua tables. [`DEVIATIONS.md`](./DEVIATIONS.md) records those broad
-categories, their semantic impact, the exact affected chunk sets, and related
-beads.
+- **Enabled** — no directive. The chunk must compile and pass in the browser.
+- `-- conformance: pending` — a bounded gap someone could fix. Every pending
+  family is owned by an open bead.
+- `-- conformance: out-of-scope: <slug>[,<slug>]` — a documented deliberate
+  difference blocks it, such as runtime source compilation, Luau VM internals,
+  the typed coroutine API, or sparse Lua tables. Nobody is expected to make it
+  pass. Each slug names a section of [`DEVIATIONS.md`](./DEVIATIONS.md).
 
-Splitting can increase both the total and pending chunk counts: one coarse
-pending program may become several focused pending chunks plus newly enabled
-chunks. The meaningful progress metric is enabled upstream coverage, not a
-monotonically decreasing pending count.
+The distinction exists so the headline number means something. A chunk that
+tests `loadstring` or the native JIT is not backlog; counting it with a real
+inference gap made the pending number overstate the addressable work by roughly
+two to one.
+
+Both non-enabled states are **inverse-tested**. The browser suite runs them and
+requires them to fail today, so a chunk that starts passing turns the suite red
+whichever marker it carries and the marker cannot go stale.
+
+Splitting can increase both the total and the non-enabled counts: one coarse
+chunk may become several focused chunks plus newly enabled ones. The meaningful
+progress metric is enabled upstream coverage, not a monotonically decreasing
+pending count.
 
 Reproduce the current directory-level counts from the repository root with:
 
 ```sh
 find conformance/luau -maxdepth 1 -name '*.walu' -print | wc -l
 rg -l '^-- conformance: pending$' conformance/luau -g '*.walu' | wc -l
+rg -l '^-- conformance: out-of-scope:' conformance/luau -g '*.walu' | wc -l
 ```
 
-The difference is the enabled count. The full behavior check is:
+The full behavior check is:
 
 ```sh
 node conformance/luau/check-pending-inventory.mjs
 pnpm --filter conformance-runner test:browser
 ```
 
-The inventory check pins the exact snapshot, verifies every pending filename is
-covered by the family mapping in [`DEVIATIONS.md`](./DEVIATIONS.md), checks the
-compact intentional-execution sets, and keeps `native.53` as the sole exact-name
-VM/JIT exclusion. The browser suite then executes every other pending chunk as
-an inverse test: if any starts passing, the suite fails until it is enabled or
-split.
+The inventory check pins the whole-directory totals, verifies that every chunk
+carries exactly one marker, validates every out-of-scope slug against the
+documented deviation set, requires every pending family to name an open bead,
+and keeps `native.53` as the sole exact-name VM/JIT runner exclusion. The two
+inventory tables in [`DEVIATIONS.md`](./DEVIATIONS.md) are **generated from the
+chunk markers** rather than hand-maintained; regenerate them with
+`node conformance/luau/check-pending-inventory.mjs --write`.
 
-## Working a pending chunk
+## Working a chunk
 
-1. Read its provenance header and find its category in
-   [`DEVIATIONS.md`](./DEVIATIONS.md).
-2. If it is a fixable gap, use the linked bead or create a discovered-from bead
-   under `waluau-q7qg` before changing code.
-3. If independent assertions already pass, split at upstream assertion
+1. Read its provenance header and its marker.
+2. Pending: find the owning bead in the generated pending table in
+   [`DEVIATIONS.md`](./DEVIATIONS.md), or create a discovered-from bead before
+   changing code.
+3. Out-of-scope: read the named deviation section first. If you believe the
+   chunk is misclassified, recompile it and read its first diagnostic before
+   arguing from intent — the classification is evidence-based.
+4. If independent assertions already pass, split at upstream assertion
    boundaries. Do not rewrite them merely to make the compiler accept them.
-4. Remove `-- conformance: pending` only when the complete resulting chunk
-   passes in the browser.
+5. Remove a directive only when the complete resulting chunk passes in the
+   browser. Reclassifying between the two directives requires rerunning the
+   inventory check with `--write`.
 
 ## Updating the import
 
@@ -82,6 +96,7 @@ To re-sync against a newer upstream revision:
    between verbatim chunks and explicitly adapted companions.
 2. Update the commit SHA above and in every imported header.
 3. Reapply existing provenance-preserving splits against the new source ranges.
-4. Recompute the inventory in [`DEVIATIONS.md`](./DEVIATIONS.md), then run the
-   browser suite. Any pending chunk that now passes must be enabled or split so
-   its passing coverage is visible.
+4. Reclassify the new chunks by compiling each one and reading its first
+   diagnostic, then run `check-pending-inventory.mjs --write` and the browser
+   suite. Any non-enabled chunk that now passes must be enabled or split so its
+   passing coverage is visible.

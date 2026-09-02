@@ -2,9 +2,9 @@
 -- tests/conformance/tables.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: sparse-mixed-hash-tables
 -- This chunk contains only checks from tables.luau that currently fail in
--- Waluau. Remove this directive when the whole chunk passes.
+-- Waluau. This is a documented deliberate difference, not scheduled work; see DEVIATIONS.md.
 -- Split from conformance/luau/tables.walu. Top-level do scope wrappers
 -- are flattened in tail chunks where needed so each numbered chunk is
 -- independently discoverable by the conformance runner.

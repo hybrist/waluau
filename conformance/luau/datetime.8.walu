@@ -2,7 +2,7 @@
 -- tests/conformance/datetime.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: browser-clocks-and-calendars
 -- These os.time calls pass a calendar table, which browser os.time does not
 -- accept: a declared host import carries primitives, not records. Waluau's
 -- surplus-fixed-argument rule keeps the calls compiling, so they read the

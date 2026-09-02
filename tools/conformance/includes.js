@@ -27,21 +27,39 @@ export function conformanceIncludePaths(testName, source) {
 // checks that such a test currently fails (it does not care how).
 export const CONFORMANCE_PENDING_DIRECTIVE = /^--\s*conformance:\s*pending\s*$/m;
 
+// Marks a test that fails for a deliberate difference rather than a gap, so
+// nobody is expected to make it pass. The directive carries its justification
+// inline as one or more comma-separated deviation slugs, for example
+// `-- conformance: out-of-scope: aot-loadstring,sparse-mixed-hash-tables`.
+// The runner treats it exactly like `pending`: the file must still fail today,
+// so a chunk that starts passing breaks the suite either way.
+export const CONFORMANCE_OUT_OF_SCOPE_DIRECTIVE =
+  /^--\s*conformance:\s*out-of-scope:\s*(.+)$/m;
+
 // One expected fragment of a fail test's failure message. May appear multiple
 // times; every fragment must be present in the actual failure.
 export const CONFORMANCE_ERROR_DIRECTIVE = /^--\s*conformance:\s*error=(.+)$/gm;
 
-// Parses the pending/fail expectations encoded in a conformance file's source.
-// `pending` is true when the file carries a `-- conformance: pending` directive.
+// Parses the pending/out-of-scope/fail expectations encoded in a conformance
+// file's source. `pending` is true when the file carries a
+// `-- conformance: pending` directive. `outOfScope` lists the deviation slugs
+// named by a `-- conformance: out-of-scope:` directive, and is empty otherwise.
 // `expectedErrors` lists the `-- conformance: error=` fragments; a non-empty
 // list marks the file as a fail test.
 export function conformanceExpectations(source) {
   const pending = CONFORMANCE_PENDING_DIRECTIVE.test(source);
+  const outOfScopeMatch = source.match(CONFORMANCE_OUT_OF_SCOPE_DIRECTIVE);
+  const outOfScope = outOfScopeMatch
+    ? outOfScopeMatch[1]
+        .split(',')
+        .map((slug) => slug.trim())
+        .filter(Boolean)
+    : [];
   const expectedErrors = [];
   for (const match of source.matchAll(CONFORMANCE_ERROR_DIRECTIVE)) {
     expectedErrors.push(match[1].trim());
   }
-  return { pending, expectedErrors };
+  return { pending, outOfScope, expectedErrors };
 }
 
 // Collapses runs of whitespace to single spaces and trims, so expected

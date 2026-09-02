@@ -2,9 +2,9 @@
 -- tests/conformance/integers_regspill.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: luau-integer-vm-extension,native-jit-register-layout
 -- This chunk contains only integers_regspill.luau checks that currently fail in
--- Waluau. Remove this directive when the whole chunk passes.
+-- Waluau. This is a documented deliberate difference, not scheduled work; see DEVIATIONS.md.
 --
 -- Split from conformance/luau/integers_regspill.walu. Common setup is repeated
 -- as needed so each numbered chunk is independently discoverable by the

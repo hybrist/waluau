@@ -2,9 +2,9 @@
 -- tests/conformance/native.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: native-jit-register-layout
 -- This chunk contains only native.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- This is a documented deliberate difference, not scheduled work; see DEVIATIONS.md.
 --
 -- Split from conformance/luau/native.walu. Each numbered chunk preserves a
 -- contiguous section of the original test body so the conformance runner can

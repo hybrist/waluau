@@ -339,13 +339,18 @@ describe('browser conformance', () => {
   for (const { name, source } of cases) {
     if (DEDICATED_ASYNC_DOM_CASES.has(name)) continue;
 
-    const { pending, expectedErrors } = conformanceExpectations(source);
+    const { pending, outOfScope, expectedErrors } = conformanceExpectations(source);
+    // An out-of-scope chunk is inverse-tested exactly like a pending one: it
+    // must still fail today, so a chunk that starts passing breaks the suite
+    // whichever marker it carries. The two differ only in whether anyone is
+    // expected to make them pass.
+    const inverseTested = pending || outOfScope.length > 0;
     const fullSource = sourceForCase({ name, source });
     const options = optionsForCase(name);
 
     if (INTENTIONAL_VM_JIT_EXCLUSIONS.has(name)) {
       it.skip(`excluded ${name} (intentional deviation)`, () => {});
-    } else if (expectedErrors.length > 0 && pending) {
+    } else if (expectedErrors.length > 0 && inverseTested) {
       // Fail test that is also pending: the expected failure is not produced
       // yet, so verify the actual outcome does NOT match it. When the bug is
       // fixed and the expected failure appears, this test breaks, prompting
@@ -362,10 +367,12 @@ describe('browser conformance', () => {
           expect(normalizeWhitespace(outcome.message)).toContain(normalizeWhitespace(fragment));
         }
       });
-    } else if (pending) {
-      // Pending test: should pass eventually but does not yet. Only verify it
-      // currently fails; we do not care how.
-      it(`pending ${name} (currently fails)`, async () => {
+    } else if (inverseTested) {
+      // Inverse test: a pending chunk should pass eventually but does not yet,
+      // and an out-of-scope chunk is not expected to pass at all. Either way we
+      // only verify that it currently fails; we do not care how.
+      const label = pending ? 'pending' : `out-of-scope (${outOfScope.join(', ')})`;
+      it(`${label} ${name} (currently fails)`, async () => {
         const outcome = await runConformanceOutcome(fullSource, options);
         expect(outcome.failed).toBe(true);
       });

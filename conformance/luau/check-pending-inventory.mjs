@@ -1,130 +1,29 @@
 import assert from 'node:assert/strict';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const expectedPendingByFamily = {
-  apicalls: 1,
-  assert: 1,
-  attrib: 2,
-  basic: 14,
-  bitwise: 5,
-  buffers: 2,
-  calls: 41,
-  classes: 49,
-  clear: 1,
-  closure: 19,
-  constructs: 39,
-  coroutine: 22,
-  coverage: 1,
-  cyield: 13,
-  datetime: 7,
-  debug: 1,
-  debugger: 1,
-  errors: 80,
-  events: 25,
-  exceptions: 1,
-  explicit_type_instantiations: 1,
-  gc: 22,
-  ifelseexpr: 3,
-  integers: 19,
-  integers_regspill: 6,
-  interrupt: 1,
-  iter: 31,
-  iter_fenv: 1,
-  literals: 4,
-  locals: 1,
-  math: 7,
-  move: 1,
-  native: 51,
-  native_integer_spills: 3,
-  native_types: 1,
-  native_userdata: 1,
-  ndebug_upvalues: 1,
-  pcall: 65,
-  pm: 43,
-  safeenv: 1,
-  sort: 1,
-  stringinterp: 2,
-  strings: 25,
-  tables: 4,
-  tmerror: 1,
-  tpack: 19,
-  types: 1,
-  udata_direct: 1,
-  userdata: 1,
-  utf8: 1,
-  vararg: 1,
-  vector: 1,
-  vector_library: 11,
-};
 
-// Every pending chunk inherits one of these exact family mappings. `deviation:`
-// entries name sections in DEVIATIONS.md; `bead:` entries name open tracked
-// implementation work. A family may have both because its chunks can contain
-// several independent blockers.
-const trackedByFamily = {
-  apicalls: 'deviation:embedding-hooks',
-  assert: 'deviation:strict-bool; bead:waluau-9f8d',
-  attrib: 'deviation:sparse-mixed-hash-tables',
-  basic: 'deviation:sparse-mixed-hash-tables,strict-bool,aot-loadstring,static-names; bead:waluau-9f8d',
-  bitwise: 'deviation:sparse-mixed-hash-tables; bead:waluau-rndq,waluau-dbyy,waluau-esz6,waluau-3em1',
-  buffers: 'deviation:embedding-hooks; bead:waluau-2dow',
-  calls: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-jnyd,waluau-zxju,waluau-n6u8,waluau-9f8d',
-  classes: 'bead:waluau-wll8',
-  clear: 'deviation:sparse-mixed-hash-tables',
-  closure: 'deviation:typed-coroutine,aot-loadstring,sparse-mixed-hash-tables,static-names; bead:waluau-9f8d',
-  constructs: 'deviation:strict-bool,aot-loadstring,sparse-mixed-hash-tables; bead:waluau-9f8d',
-  coroutine: 'deviation:typed-coroutine',
-  coverage: 'deviation:embedding-hooks',
-  cyield: 'deviation:native-c-yield,typed-coroutine',
-  datetime: 'deviation:browser-clocks-and-calendars; bead:waluau-9f8d',
-  debug: 'deviation:embedding-hooks',
-  debugger: 'deviation:embedding-hooks',
-  errors: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-wb7a,waluau-fg46,waluau-9f8d',
-  events: 'deviation:metatable-events',
-  exceptions: 'deviation:embedding-hooks',
-  explicit_type_instantiations: 'bead:waluau-9ttd',
-  gc: 'deviation:wasm-gc-observability',
-  ifelseexpr: 'deviation:strict-bool',
-  integers: 'deviation:luau-integer-vm-extension',
-  integers_regspill: 'deviation:native-jit-register-layout',
-  interrupt: 'deviation:embedding-hooks',
-  iter: 'deviation:sparse-mixed-hash-tables,typed-coroutine,metatable-events; bead:waluau-zxju,waluau-n6u8,waluau-yfus',
-  iter_fenv: 'deviation:embedding-hooks',
-  literals: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-9f8d',
-  locals: 'deviation:aot-loadstring,sparse-mixed-hash-tables',
-  math: 'deviation:aot-loadstring; bead:waluau-2dow,waluau-jnyd,waluau-n6u8',
-  move: 'deviation:sparse-mixed-hash-tables',
-  native: 'deviation:native-jit-register-layout',
-  native_integer_spills: 'deviation:native-jit-register-layout',
-  native_types: 'deviation:native-jit-register-layout',
-  native_userdata: 'deviation:native-jit-register-layout,reference-test-userdata',
-  ndebug_upvalues: 'deviation:embedding-hooks',
-  pcall: 'deviation:typed-coroutine; bead:waluau-d480,waluau-wb7a,waluau-esz6,waluau-9f8d',
-  pm: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-dbyy,waluau-esz6,waluau-wb7a,waluau-lz2e',
-  safeenv: 'deviation:embedding-hooks',
-  sort: 'deviation:aot-loadstring,sparse-mixed-hash-tables',
-  stringinterp: 'deviation:static-names,reserved-type-keywords',
-  strings: 'deviation:aot-loadstring,sparse-mixed-hash-tables,metatable-events; bead:waluau-dbyy,waluau-nlyf,waluau-vogb,waluau-fg46,waluau-9f8d',
-  tables: 'deviation:aot-loadstring,sparse-mixed-hash-tables; bead:waluau-zxju',
-  tmerror: 'deviation:metatable-events',
-  tpack: 'deviation:binary-packing',
-  types: 'deviation:embedding-hooks',
-  udata_direct: 'deviation:reference-test-userdata',
-  userdata: 'deviation:reference-test-userdata',
-  utf8: 'deviation:aot-loadstring; bead:waluau-zxju',
-  vararg: 'deviation:sparse-mixed-hash-tables; bead:waluau-n6u8,waluau-zxju',
-  vector: 'bead:waluau-uneu',
-  vector_library: 'bead:waluau-uneu',
-};
+// Whole-directory pins. Per-family numbers are NOT restated here: they are
+// derived from the chunk markers below and written into DEVIATIONS.md by
+// `--write`, because a hand-maintained per-family table merges silently between
+// concurrent branches. These four totals still fail the gate on any drift.
+const EXPECTED_TOTAL = 1098;
+const EXPECTED_ENABLED = 441;
+const EXPECTED_PENDING = 235;
+const EXPECTED_OUT_OF_SCOPE = 422;
 
+// Deliberate differences between Waluau and the reference Luau implementation.
+// A chunk blocked by one of these carries `-- conformance: out-of-scope: <slug>`
+// and nobody is expected to make it pass. Every slug has a section in
+// DEVIATIONS.md stating the difference and why Waluau keeps it.
 const documentedDeviations = new Set([
   'aot-loadstring',
   'binary-packing',
   'browser-clocks-and-calendars',
   'embedding-hooks',
+  'heterogeneous-values',
   'luau-integer-vm-extension',
   'metatable-events',
   'native-c-yield',
@@ -133,138 +32,198 @@ const documentedDeviations = new Set([
   'reserved-type-keywords',
   'sparse-mixed-hash-tables',
   'static-names',
+  'static-type-errors',
   'strict-bool',
   'typed-coroutine',
   'wasm-gc-observability',
 ]);
+
+// Open tracked work covering the chunks that carry `-- conformance: pending`.
 const openBeads = new Set([
+  'waluau-274e',
   'waluau-2dow',
+  'waluau-31kg',
   'waluau-3em1',
+  'waluau-4487',
+  'waluau-844l',
   'waluau-9f8d',
   'waluau-9ttd',
   'waluau-d480',
   'waluau-dbyy',
   'waluau-esz6',
-  'waluau-fg46',
-  'waluau-jnyd',
+  'waluau-j74d',
+  'waluau-jehg',
   'waluau-lz2e',
   'waluau-n6u8',
   'waluau-nlyf',
+  'waluau-nsp4',
+  'waluau-pndm',
   'waluau-rndq',
   'waluau-uneu',
   'waluau-vogb',
   'waluau-wb7a',
   'waluau-wll8',
-  'waluau-yfus',
   'waluau-zxju',
 ]);
 
-const range = (stem, from, to) =>
-  Array.from({ length: to - from + 1 }, (_, offset) => `${stem}.${from + offset}.walu`);
-const names = (stem, numbers) => numbers.map((number) => `${stem}.${number}.walu`);
+// Beads owning the remaining pending chunks of each family. Counts are derived,
+// so this table only records attribution. A family listed here with no pending
+// chunk left, or a pending family missing from it, fails the gate.
+const trackedByFamily = {
+  assert: 'waluau-9f8d',
+  attrib: 'waluau-zxju',
+  basic: 'waluau-jehg,waluau-pndm,waluau-n6u8,waluau-9f8d',
+  bitwise: 'waluau-dbyy,waluau-esz6,waluau-rndq,waluau-3em1',
+  buffers: 'waluau-2dow',
+  calls: 'waluau-j74d,waluau-jehg,waluau-zxju,waluau-2dow,waluau-lz2e,waluau-9f8d',
+  classes: 'waluau-wll8',
+  closure: 'waluau-j74d,waluau-9f8d',
+  constructs: 'waluau-jehg,waluau-9f8d',
+  datetime: 'waluau-31kg,waluau-9f8d',
+  errors: 'waluau-wb7a,waluau-jehg,waluau-844l',
+  explicit_type_instantiations: 'waluau-9ttd',
+  iter: 'waluau-j74d,waluau-dbyy,waluau-3em1,waluau-n6u8',
+  math: 'waluau-dbyy,waluau-jehg,waluau-n6u8,waluau-9f8d',
+  native:
+    'waluau-j74d,waluau-pndm,waluau-31kg,waluau-9ttd,waluau-uneu,waluau-2dow,waluau-nsp4,waluau-rndq,waluau-esz6,waluau-9f8d',
+  native_integer_spills: 'waluau-3em1',
+  pcall: 'waluau-wb7a,waluau-zxju,waluau-jehg,waluau-n6u8,waluau-274e',
+  pm: 'waluau-zxju,waluau-lz2e,waluau-dbyy,waluau-esz6,waluau-4487,waluau-274e,waluau-j74d',
+  strings: 'waluau-j74d,waluau-esz6,waluau-nlyf,waluau-vogb,waluau-nsp4,waluau-dbyy,waluau-9f8d',
+  tables: 'waluau-jehg,waluau-9f8d',
+  vector: 'waluau-uneu',
+  vector_library: 'waluau-uneu',
+};
 
-const intentionalExecutionModel = new Set([
-  ...names('native', [
-    ...Array.from({ length: 6 }, (_, index) => index + 2),
-    ...Array.from({ length: 9 }, (_, index) => index + 10),
-    ...Array.from({ length: 25 }, (_, index) => index + 21),
-    47, 48, 49,
-    ...Array.from({ length: 8 }, (_, index) => index + 51),
-  ]),
-  ...range('integers', 1, 19),
-  ...range('integers_regspill', 1, 6),
-  ...range('native_integer_spills', 1, 3),
-  'native_types.walu',
-  'native_userdata.walu',
-  ...names('gc', [2, 3, 4, ...Array.from({ length: 19 }, (_, index) => index + 6)]),
-  ...range('events', 1, 25),
-  ...range('cyield', 1, 13),
-  'apicalls.walu',
-  'exceptions.walu',
-  'coverage.walu',
-  'debug.walu',
-  'debugger.walu',
-  'interrupt.walu',
-  'iter_fenv.walu',
-  'ndebug_upvalues.walu',
-  'safeenv.walu',
-  'types.walu',
-  'udata_direct.walu',
-  'userdata.walu',
-]);
+const PENDING_DIRECTIVE = /^-- conformance: pending$/m;
+const OUT_OF_SCOPE_DIRECTIVE = /^-- conformance: out-of-scope: (.+)$/m;
 
 const files = (await readdir(directory)).filter((file) => file.endsWith('.walu'));
 const sources = new Map(
-  await Promise.all(files.map(async (file) => [file, await readFile(resolve(directory, file), 'utf8')])),
+  await Promise.all(
+    files.map(async (file) => [file, await readFile(resolve(directory, file), 'utf8')]),
+  ),
 );
-const pending = [...sources]
-  .filter(([, source]) => /^-- conformance: pending$/m.test(source))
-  .map(([file]) => file)
-  .sort();
-const actualPendingByFamily = Object.fromEntries(
-  Object.keys(expectedPendingByFamily).map((family) => [family, 0]),
-);
-const deviationsDocument = await readFile(resolve(directory, 'DEVIATIONS.md'), 'utf8');
-const familyTable = deviationsDocument
-  .split('## Exhaustive pending-family mapping')[1]
-  ?.split('## Fixable gaps remain tracked work')[0];
-assert.ok(familyTable, 'DEVIATIONS.md is missing the exhaustive pending-family table');
-const documentedFamilies = [];
-let documentedPendingCount = 0;
 
-for (const line of familyTable.split('\n').filter((candidate) => /^\| `/.test(candidate))) {
-  const families = [...line.matchAll(/`([^`]+)\*`/g)].map((match) => match[1]);
-  const reportedCount = Number(line.split('|')[2].trim());
-  assert.ok(families.length > 0, `unparseable family table row: ${line}`);
-  assert.equal(
-    reportedCount,
-    families.reduce((sum, family) => sum + (expectedPendingByFamily[family] ?? 0), 0),
-    `family table row has a stale count: ${line}`,
-  );
-  documentedFamilies.push(...families);
-  documentedPendingCount += reportedCount;
-}
-
-for (const file of pending) {
-  const family = file.split('.')[0];
+const pending = [];
+const outOfScope = new Map();
+for (const [file, source] of [...sources].sort(([a], [b]) => a.localeCompare(b))) {
+  const isPending = PENDING_DIRECTIVE.test(source);
+  const outOfScopeMatch = source.match(OUT_OF_SCOPE_DIRECTIVE);
   assert.ok(
-    Object.hasOwn(actualPendingByFamily, family),
-    `pending chunk ${file} has no family mapping in DEVIATIONS.md`,
+    !(isPending && outOfScopeMatch),
+    `${file} carries both 'pending' and 'out-of-scope'; a chunk carries exactly one`,
   );
-  actualPendingByFamily[family] += 1;
+  if (isPending) {
+    pending.push(file);
+    continue;
+  }
+  if (!outOfScopeMatch) continue;
+  const slugs = outOfScopeMatch[1].split(',').map((slug) => slug.trim());
+  for (const slug of slugs) {
+    assert.ok(
+      documentedDeviations.has(slug),
+      `${file} names undocumented deviation '${slug}'; add a DEVIATIONS.md section first`,
+    );
+  }
+  outOfScope.set(file, slugs);
 }
 
-assert.equal(files.length, 1098, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(pending.length, 657, 'pending Luau chunk count changed; reconcile DEVIATIONS.md');
-assert.equal(files.length - pending.length, 441, 'enabled Luau chunk count changed');
-assert.deepEqual(actualPendingByFamily, expectedPendingByFamily, 'pending family counts changed');
-assert.deepEqual(
-  documentedFamilies.sort(),
-  Object.keys(expectedPendingByFamily).sort(),
-  'DEVIATIONS.md must name every pending family exactly once',
+const enabled = files.length - pending.length - outOfScope.size;
+assert.equal(files.length, EXPECTED_TOTAL, 'total Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(enabled, EXPECTED_ENABLED, 'enabled Luau chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(pending.length, EXPECTED_PENDING, 'pending chunk count changed; reconcile DEVIATIONS.md');
+assert.equal(
+  outOfScope.size,
+  EXPECTED_OUT_OF_SCOPE,
+  'out-of-scope chunk count changed; reconcile DEVIATIONS.md',
 );
-assert.equal(documentedPendingCount, pending.length, 'DEVIATIONS.md family counts do not sum to pending');
-assert.deepEqual(
-  Object.keys(trackedByFamily),
-  Object.keys(expectedPendingByFamily),
-  'every pending family must have a deviation or open-bead mapping',
-);
-for (const [family, mapping] of Object.entries(trackedByFamily)) {
-  assert.match(mapping, /(?:deviation|bead):/, `${family} has no concrete inventory mapping`);
-  for (const group of mapping.split('; ')) {
-    const [kind, values] = group.split(':');
-    const allowed = kind === 'deviation' ? documentedDeviations : kind === 'bead' ? openBeads : null;
-    assert.ok(allowed, `${family} has unknown mapping kind ${kind}`);
-    for (const value of values.split(',')) {
-      assert.ok(allowed.has(value), `${family} maps to unknown ${kind} ${value}`);
-    }
+
+const familyOf = (file) => file.replace(/\.walu$/, '').split('.')[0];
+
+const pendingByFamily = new Map();
+for (const file of pending) {
+  const family = familyOf(file);
+  pendingByFamily.set(family, (pendingByFamily.get(family) ?? 0) + 1);
+}
+const chunksByDeviation = new Map();
+const familiesByDeviation = new Map();
+for (const [file, slugs] of outOfScope) {
+  for (const slug of slugs) {
+    chunksByDeviation.set(slug, (chunksByDeviation.get(slug) ?? 0) + 1);
+    if (!familiesByDeviation.has(slug)) familiesByDeviation.set(slug, new Set());
+    familiesByDeviation.get(slug).add(familyOf(file));
   }
 }
-assert.equal(intentionalExecutionModel.size, 153, 'intentional execution-model set is malformed');
 
-for (const file of intentionalExecutionModel) {
-  assert.ok(sources.has(file), `documented intentional chunk ${file} does not exist`);
-  assert.match(sources.get(file), /^-- conformance: pending$/m, `${file} is no longer pending`);
+assert.deepEqual(
+  Object.keys(trackedByFamily).sort(),
+  [...pendingByFamily.keys()].sort(),
+  'every pending family must name its open beads, and only pending families may appear',
+);
+for (const [family, beads] of Object.entries(trackedByFamily)) {
+  for (const bead of beads.split(',')) {
+    assert.ok(openBeads.has(bead), `${family} maps to unknown or closed bead ${bead}`);
+  }
+}
+for (const slug of documentedDeviations) {
+  assert.ok(chunksByDeviation.has(slug), `documented deviation '${slug}' has no chunk; drop it`);
+}
+
+// The two inventory tables in DEVIATIONS.md are generated from the markers
+// above, so a stale count cannot survive a merge. `--write` regenerates them.
+const deviationsPath = resolve(directory, 'DEVIATIONS.md');
+const deviationsDocument = await readFile(deviationsPath, 'utf8');
+const generated = {
+  'out-of-scope': [
+    '| Deviation | Out-of-scope chunks | Families |',
+    '| --- | ---: | --- |',
+    ...[...chunksByDeviation.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(
+        ([slug, count]) =>
+          `| \`${slug}\` | ${count} | ${[...familiesByDeviation.get(slug)]
+            .sort()
+            .map((family) => `\`${family}\``)
+            .join(', ')} |`,
+      ),
+    '',
+    `A chunk may name more than one deviation, so these counts sum to more than the ${outOfScope.size} out-of-scope chunks. List the exact set for one deviation with \`rg -l 'out-of-scope:.*<slug>' conformance/luau\`.`,
+  ].join('\n'),
+  pending: [
+    '| Pending family | Chunks | Open beads |',
+    '| --- | ---: | --- |',
+    ...[...pendingByFamily.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(
+        ([family, count]) =>
+          `| \`${family}*\` | ${count} | ${trackedByFamily[family]
+            .split(',')
+            .map((bead) => `\`${bead}\``)
+            .join(', ')} |`,
+      ),
+    '',
+    `Total: ${pending.length} pending chunks in ${pendingByFamily.size} families.`,
+  ].join('\n'),
+};
+
+let updated = deviationsDocument;
+for (const [key, body] of Object.entries(generated)) {
+  const begin = `<!-- generated:${key} -->`;
+  const end = `<!-- /generated:${key} -->`;
+  const block = new RegExp(`${begin}[\\s\\S]*?${end}`);
+  assert.match(deviationsDocument, block, `DEVIATIONS.md is missing the ${key} generated block`);
+  updated = updated.replace(block, `${begin}\n\n${body}\n\n${end}`);
+}
+
+if (process.argv.includes('--write')) {
+  await writeFile(deviationsPath, updated);
+} else {
+  assert.equal(
+    updated,
+    deviationsDocument,
+    'DEVIATIONS.md inventory tables are stale; rerun this script with --write',
+  );
 }
 
 const runner = await readFile(
@@ -278,5 +237,5 @@ assert.match(
 );
 
 console.log(
-  `Luau inventory verified: ${files.length} total, ${files.length - pending.length} enabled, ${pending.length} pending; ${intentionalExecutionModel.size} intentional execution-model chunks.`,
+  `Luau inventory verified: ${files.length} total, ${enabled} enabled, ${pending.length} pending, ${outOfScope.size} out of scope across ${chunksByDeviation.size} documented deviations.`,
 );

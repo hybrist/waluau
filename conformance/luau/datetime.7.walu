@@ -2,7 +2,7 @@
 -- tests/conformance/datetime.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
+-- conformance: out-of-scope: browser-clocks-and-calendars
 -- Every check here starts from os.date("*t") or os.date("!*t") calendar
 -- tables, mutates their fields, and feeds them back to os.time. Browser os.*
 -- has no calendar-table value and reports no isdst, because it does not model
