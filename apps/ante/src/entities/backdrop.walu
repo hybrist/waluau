@@ -1,167 +1,135 @@
--- The vault the duel is fought in: a dark stone field lit by one high lamp,
--- crossed by the faint shafts that lamp throws across it, and closing to black
--- at the walls.
+-- The astral sea the vault opens onto: nebulas drifting behind the table and
+-- a field of stars turning slowly through them, closing to black at the
+-- board's walls so the eye still settles on the cards.
 --
--- It used to be a flat fill with a fan of hairlines struck over it, which left
--- every object on the board floating on an even sheet of near-black with
--- nothing behind it. The three passes here are what give the board a room:
--- the field carries the lamp's falloff, the shafts read as light rather than
--- as ruled lines because they fade along their own length, and the vignette
--- closes the corners so the eye settles on the table.
+-- The sea is a fragment program (shaders/astral-sea.frag) drawn over the
+-- board as one quad, with the board's clock as its phase. It moves on its
+-- own — nothing in the game drives it — so a viewer who has asked their
+-- browser for reduced motion is shown one fixed moment of it instead. That
+-- still is baked once into a render target the size of the board and drawn
+-- as a sprite from then on, which also keeps a software rasterizer from
+-- paying for the whole sky every frame.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
-local plate = require("../plate")
+local graphics_module = require("waluau:engine/graphics")
+local ink = require("../ink")
 
 const CLEAR: string = "#09090b"
-const FIELD: string = "#15151b"
-const RULE: string = "#24242c"
-const RULE_PITCH: f64 = 48.0
+-- What stands in for the sea until its program has compiled: the deep
+-- between the nebulas, so the board is never a different room for a frame.
+const DEEP: string = "#05030e"
+-- The moment of the sea a viewer who prefers reduced motion sees. Some way
+-- into the drift rather than its first second, so the gas has folded.
+const STILL_PHASE: f64 = 140.0
 
--- The lamp: how bright the field is directly under it against how dark it
--- falls away, and how far down the board its centre hangs. Above centre,
--- because the vault's far wall is up there and the table is nearer.
-const LAMP_CORE: f64 = 1.0
-const LAMP_EDGE: f64 = 0.30
-const LAMP_DROP: f64 = 0.42
--- The field is drawn as a coarse grid because the falloff is two-dimensional
--- and a quad interpolates its corners linearly. Ten by six cells is finer than
--- the ramp it is sampling, so the seams do not show.
-const LAMP_COLUMNS: i32 = 10
-const LAMP_ROWS: i32 = 6
-
--- The vignette closes the last of the way to black at the very edge, past
--- where the lamp's own falloff has already taken the field down.
-const VIGNETTE_DEPTH: f64 = 0.55
-const VIGNETTE_BAND: f64 = 0.22
-
--- Brightness of the lamp at a point given in 0..1 across the board, falling
--- with the square of the distance from where it hangs. Squared rather than
--- linear so the bright part stays broad and the corners go quickly.
-function lamp_at(across: f64, down: f64): f64
-    local dx: f64 = (across - 0.5) * 2.0
-    local dy: f64 = (down - LAMP_DROP) * 2.0
-    local reach: f64 = math.min(1.0, (dx * dx + dy * dy * 0.72))
-    return LAMP_CORE + (LAMP_EDGE - LAMP_CORE) * reach
-end
-
-function draw_field(graphics: ui.Graphics, bounds: box.Rect): unit
-    graphics:set_color(FIELD)
-    local cell_width: f64 = bounds.width / (LAMP_COLUMNS::f64)
-    local cell_height: f64 = bounds.height / (LAMP_ROWS::f64)
-    for row = 0::i32, LAMP_ROWS - 1 do
-        local top: f64 = (row::f64) / (LAMP_ROWS::f64)
-        local bottom: f64 = ((row + 1)::f64) / (LAMP_ROWS::f64)
-        for column = 0::i32, LAMP_COLUMNS - 1 do
-            local left: f64 = (column::f64) / (LAMP_COLUMNS::f64)
-            local right: f64 = ((column + 1)::f64) / (LAMP_COLUMNS::f64)
-            plate.shaded_rectangle(
-                graphics,
-                bounds.x + left * bounds.width,
-                bounds.y + top * bounds.height,
-                cell_width,
-                cell_height,
-                lamp_at(left, top),
-                lamp_at(right, top),
-                lamp_at(right, bottom),
-                lamp_at(left, bottom)
-            )
-        end
+function use_sea(surface: ui.Surface, aspect: f64, phase: f64): bool
+    local maybe_shader: graphics_module.Shader? = surface.effects.astral_sea.shader
+    if maybe_shader == nil then
+        return false
     end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
+        shader,
+        {
+            graphics_module.float_parameter("u_aspect", aspect),
+            graphics_module.float_parameter("u_phase", phase)
+        }
+    )
+    return binding.ok
 end
 
--- The shafts, struck at a fixed spacing so a wider canvas gets more of them
--- rather than a stretched few. Each one is drawn as a run of segments whose
--- brightness follows the same lamp, which is what makes it read as light
--- falling across the floor instead of as a ruled diagonal.
-const SHAFT_STEPS: i32 = 6
-
-function draw_shafts(graphics: ui.Graphics, bounds: box.Rect): unit
-    graphics:set_color(RULE)
-    graphics:set_line_width(1.0)
-    local columns: i32 = math.ceil(bounds.width / RULE_PITCH)::i32
-    local red: f64 = graphics.red
-    local green: f64 = graphics.green
-    local blue: f64 = graphics.blue
-    for column = 0::i32, columns do
-        local offset: f64 = (column::f64) * RULE_PITCH
-        local from_x: f64 = bounds.x + offset
-        local to_x: f64 = bounds.x + bounds.width - offset
-        for step = 0::i32, SHAFT_STEPS - 1 do
-            local start: f64 = (step::f64) / (SHAFT_STEPS::f64)
-            local finish: f64 = ((step + 1)::f64) / (SHAFT_STEPS::f64)
-            local middle: f64 = (start + finish) * 0.5
-            local at_x: f64 = from_x + (to_x - from_x) * middle
-            local lit: f64 = lamp_at((at_x - bounds.x) / bounds.width, middle)
-            graphics:set_color_rgba(red * lit, green * lit, blue * lit, 1.0)
-            graphics:line(
-                from_x + (to_x - from_x) * start,
-                bounds.y + bounds.height * start,
-                from_x + (to_x - from_x) * finish,
-                bounds.y + bounds.height * finish
-            )
-        end
+-- The sea at one phase over one rectangle. False while the program is still
+-- loading, or has failed, so the caller can stand something in for it.
+function draw_sea(surface: ui.Surface, bounds: box.Rect, phase: f64): bool
+    local graphics = surface.graphics
+    if not use_sea(surface, bounds.width / bounds.height, phase) then
+        return false
     end
+    graphics:set_color("#ffffffff")
+    graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+    ink.stop_effect(graphics)
+    return true
 end
 
--- Black closing in from all four walls, thinning to nothing a fifth of the
--- way in. A veil rather than a darker fill: the shafts and the field's own
--- falloff both stay visible through it.
-function draw_vignette(graphics: ui.Graphics, bounds: box.Rect): unit
-    graphics:set_color(CLEAR)
-    local band_x: f64 = bounds.width * VIGNETTE_BAND
-    local band_y: f64 = bounds.height * VIGNETTE_BAND
-    plate.veil_rectangle(
-        graphics,
-        bounds.x,
-        bounds.y,
-        bounds.width,
-        band_y,
-        VIGNETTE_DEPTH,
-        VIGNETTE_DEPTH,
-        0.0,
-        0.0
-    )
-    plate.veil_rectangle(
-        graphics,
-        bounds.x,
-        bounds.y + bounds.height - band_y,
-        bounds.width,
-        band_y,
-        0.0,
-        0.0,
-        VIGNETTE_DEPTH,
-        VIGNETTE_DEPTH
-    )
-    plate.veil_rectangle(
-        graphics,
-        bounds.x,
-        bounds.y,
-        band_x,
-        bounds.height,
-        VIGNETTE_DEPTH,
-        0.0,
-        0.0,
-        VIGNETTE_DEPTH
-    )
-    plate.veil_rectangle(
-        graphics,
-        bounds.x + bounds.width - band_x,
-        bounds.y,
-        band_x,
-        bounds.height,
-        0.0,
-        VIGNETTE_DEPTH,
-        VIGNETTE_DEPTH,
-        0.0
-    )
+function bake_still(surface: ui.Surface, width: i32, height: i32): graphics_module.RenderTarget?
+    local graphics = surface.graphics
+    local result: graphics_module.RenderTargetResult = graphics:create_render_target(width, height)
+    if not result.ok then
+        return nil
+    end
+    local target: graphics_module.RenderTarget = result.target
+    if not graphics:set_render_target(target) then
+        graphics:release_render_target(target)
+        return nil
+    end
+    graphics:push_identity()
+    graphics:clear(CLEAR)
+    local drawn: bool = draw_sea(surface, box.rect(0.0, 0.0, width::f64, height::f64), STILL_PHASE)
+    graphics:pop()
+    graphics:set_screen_target()
+    if not drawn then
+        graphics:release_render_target(target)
+        return nil
+    end
+    return target
+end
+
+-- The still sea at the board's current size, baking it first if the program
+-- is ready. A bake at another size is from before a resize and is replaced.
+-- As with the card paper, the bake only starts while drawing to the screen:
+-- switching targets inside a capture would hand the rest of the capture to
+-- the wrong surface.
+function still_sea(surface: ui.Surface, bounds: box.Rect): graphics_module.RenderTarget?
+    local graphics = surface.graphics
+    local width: i32 = math.ceil(bounds.width)::i32
+    local height: i32 = math.ceil(bounds.height)::i32
+    local baked: graphics_module.RenderTarget? = surface.effects.sea_still
+    if baked ~= nil then
+        local still: graphics_module.RenderTarget = baked::graphics_module.RenderTarget
+        if still.width == width and still.height == height then
+            return still
+        end
+        graphics:release_render_target(still)
+        surface.effects.sea_still = nil
+    end
+    if surface.effects.astral_sea.shader == nil or graphics.current_target ~= 0 then
+        return nil
+    end
+    local fresh: graphics_module.RenderTarget? = bake_still(surface, width, height)
+    surface.effects.sea_still = fresh
+    return fresh
 end
 
 function draw_at(surface: ui.Surface, bounds: box.Rect): unit
     local graphics = surface.graphics
     graphics:clear(CLEAR)
-    draw_field(graphics, bounds)
-    draw_shafts(graphics, bounds)
-    draw_vignette(graphics, bounds)
+    if bounds.width <= 0.0 or bounds.height <= 0.0 then
+        return
+    end
+    if surface.reduced_motion then
+        local still: graphics_module.RenderTarget? = still_sea(surface, bounds)
+        if still ~= nil then
+            graphics:set_color("#ffffffff")
+            if graphics:draw_render_target(
+                still::graphics_module.RenderTarget,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height
+            ) then
+                return
+            end
+        end
+        -- No bake to draw from — inside a capture, say — but the program may
+        -- still be ready: the same fixed moment, drawn directly.
+        if draw_sea(surface, bounds, STILL_PHASE) then
+            return
+        end
+    elseif draw_sea(surface, bounds, graphics.time) then
+        return
+    end
+    graphics:set_color(DEEP)
+    graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
 end
 
 function node(): ui.Node
@@ -173,4 +141,4 @@ function node(): ui.Node
     )
 end
 
-return { node = node, draw_at = draw_at, lamp_at = lamp_at }
+return { node = node, draw_at = draw_at }

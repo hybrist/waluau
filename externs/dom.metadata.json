@@ -162,6 +162,10 @@
       "parent": "EventTarget"
     },
     {
+      "interface": "MediaQueryList",
+      "parent": "EventTarget"
+    },
+    {
       "interface": "Location",
       "parent": null
     },
@@ -1600,6 +1604,16 @@
       "emittedName": "requestResize",
       "params": [],
       "returnType": "unit"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "matchMedia",
+      "emittedName": "matchMedia",
+      "params": [
+        "query: string"
+      ],
+      "returnType": "MediaQueryList"
     },
     {
       "interface": "Window",
@@ -4089,6 +4103,50 @@
         "property: string"
       ],
       "returnType": "unit"
+    },
+    {
+      "interface": "MediaQueryList",
+      "kind": "attribute",
+      "idlName": "media",
+      "emittedName": "media",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "MediaQueryList",
+      "kind": "attribute",
+      "idlName": "matches",
+      "emittedName": "matches",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "MediaQueryList",
+      "kind": "operation",
+      "idlName": "addListener",
+      "emittedName": "addListener",
+      "params": [
+        "callback: ((Event) -> unit)?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MediaQueryList",
+      "kind": "operation",
+      "idlName": "removeListener",
+      "emittedName": "removeListener",
+      "params": [
+        "callback: ((Event) -> unit)?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MediaQueryList",
+      "kind": "attribute",
+      "idlName": "onchange",
+      "emittedName": "onchange",
+      "type": "(Event) -> unit",
+      "readonly": false
     },
     {
       "interface": "Screen",
@@ -11514,12 +11572,6 @@
       "interface": "Window",
       "member": "viewport",
       "reason": "Web IDL type Viewport is not part of the selected DOM interface surface",
-      "issue": null
-    },
-    {
-      "interface": "Window",
-      "member": "matchMedia",
-      "reason": "Web IDL type MediaQueryList is not part of the selected DOM interface surface",
       "issue": null
     },
     {

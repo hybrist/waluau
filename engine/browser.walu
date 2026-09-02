@@ -482,4 +482,13 @@ function start(config: Config, game: Game): Session
     }
 end
 
-return { start = start }
+-- Whether the person at the browser has asked for less motion. Decoration
+-- that moves on its own — a drifting background, an idle shimmer — should
+-- hold still for them; motion that carries meaning, a card being dealt, is not
+-- what the preference is about. Read from the live media query, so a game that
+-- asks each frame follows a setting changed mid-session.
+function prefers_reduced_motion(): bool
+    return window:matchMedia("(prefers-reduced-motion: reduce)").matches
+end
+
+return { start = start, prefers_reduced_motion = prefers_reduced_motion }

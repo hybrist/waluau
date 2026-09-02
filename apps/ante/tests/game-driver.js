@@ -178,7 +178,15 @@ export function countModalHeadingInk(canvas) {
   );
 }
 
+// The board's astral sea drifts on its own, and this suite reads a board as
+// settled when two consecutive frames match. Asking for reduced motion holds
+// the sea still, the same way it does for a player who has asked their
+// browser for it, so a settled board is a still frame again. Asked of the
+// page rather than in the config's `use`: the page fixture's context did not
+// pick the option up from there, while the emulation below persists across
+// every navigation the page makes.
 export async function openGame(page) {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await expect(page.locator('h1')).toHaveText('Ante Magic', { timeout: GAME_READY_TIMEOUT });
   return page.locator('canvas#walua-game-canvas');
