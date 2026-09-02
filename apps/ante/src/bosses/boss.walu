@@ -1,0 +1,44 @@
+-- The bosses a run can be sent against, as identities rather than a flag. A
+-- boss duel is not one variant of the rules: it is a named opponent, and which
+-- one the run drew is what decides how that duel is dealt. The run owns the
+-- draw (see run.walu); this module owns the roster it draws from.
+--
+-- `Vanilla` is the boss battle as it has always been fought — both sides hold
+-- seven relics and nothing else moves. It is the whole roster for now, so
+-- every boss duel draws it; the point of the seam is that the next boss is a
+-- member here rather than another branch inside the rules.
+export enum Kind { Vanilla }
+
+-- Whether a value that arrived through a decoder names a boss this build
+-- knows. JSON unpacking checks an enum's shape (an integer), not its domain,
+-- so a restore asks this before trusting a kind.
+function Kind.valid(value: Kind): bool
+    for _, member in pairs(Kind) do
+        if value == member then
+            return true
+        end
+    end
+    return false
+end
+
+function Kind:__tostring(): string
+    if self == Kind.Vanilla then
+        return "Arch Mage"
+    else
+        return "Unknown Boss"
+    end
+end
+
+-- Every boss in the roster, in a fresh table the caller may keep and mutate:
+-- this is what a drained draw pool is refilled from. Written out rather than
+-- walked with pairs so the order a run works through the roster is the order
+-- the roster is declared in, not whatever iteration hands back.
+function all(): {Kind}
+    return {Kind.Vanilla}
+end
+
+function count(): i32
+    return #all()
+end
+
+return { all = all, count = count }
