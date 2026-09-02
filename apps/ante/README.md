@@ -69,6 +69,19 @@ run made of nothing else: five vaults rather than nine. Both hand rows tighten
 their pitch (and the fan its tilt and arc) so a
 seven-relic row still clears the deck and the three right-edge piles.
 
+Which boss a boss vault is fought against is drawn rather than fixed, and it is
+drawn before the vault rather than at its door: a run always knows which boss is
+coming, which is what will let a fence say what the robbers should be preparing
+for. The boss standing in a boss vault is the one the run walked in carrying,
+and the roll for the next one is made once that vault is behind it. A run keeps
+the bosses it has not fought in a pot and takes each roll out of it; only an
+empty pot throws the roster back in, holding back the boss just fought, so
+working through the roster and starting it over cannot stand the same boss up
+twice running. The roster holds one boss today, the seven-relic Arch Mage above,
+so every roll returns it and nothing the player sees has changed; the pot is
+what a second boss, and the endless city's unbounded run of boss vaults, will be
+rolled out of.
+
 The browser entry imports only the engine facade and contains no DOM or canvas
 host calls. The menu, game, help, history, and final outcome all use the live
 canvas size. A uniform unit scale keeps cards, text, circles, and line widths

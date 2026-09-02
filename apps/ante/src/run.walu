@@ -4,12 +4,14 @@
 -- takes costs a heart, and reaching zero ends the run.
 --
 -- This module owns the shape of the sequence — which duel is live, how much
--- gold it opens with, which duels are boss battles, and the spell loadout
--- every duel is fought with — and nothing about the duel inside a duel.
+-- gold it opens with, which duels are boss battles and which boss is standing
+-- in the next of them, and the spell loadout every duel is fought with — and
+-- nothing about the duel inside a duel.
 -- Whether the live duel was cleared is the rules module's answer, so nothing
 -- here duplicates it. What the intermission between duels sells is the
 -- shop's answer; item effects use this module's mutable run state to apply the
 -- purchase.
+local bosses = require("./bosses/boss")
 local game = require("./game")
 local spells = require("./spells/spell")
 
@@ -23,6 +25,15 @@ local spells = require("./spells/spell")
 -- run that ends can start over carrying what it originally set out with rather
 -- than what it had bought by the time it died. `rush` is the boss-rush run,
 -- where every duel is a boss battle rather than every third.
+--
+-- `next_boss` is who the run's next boss duel is fought against, and it is
+-- rolled ahead of that duel rather than when it starts: a run always knows
+-- which boss is coming, which is what lets the duels and the fence before it
+-- say so. While the cadence is on a boss duel it names the boss standing
+-- there; the roll for the one after happens once that duel is behind the run.
+-- `boss_pool` is what it is rolled out of — the bosses not drawn since the
+-- pool was last filled, so a run works through the whole roster before any
+-- boss comes back.
 export type State = {
     duel: i32,
     gold: i32,
@@ -30,7 +41,9 @@ export type State = {
     cleared: i32,
     spells: {game.Spell},
     start_spell: spells.SpellKind,
-    rush: bool
+    rush: bool,
+    boss_pool: {bosses.Kind},
+    next_boss: bosses.Kind
 }
 
 -- Every third duel is the boss battle variant, so a run's cadence is two
@@ -47,12 +60,17 @@ const MAX_SPELLS: i32 = 2
 -- Three lost hands across the whole run. A won duel repairs nothing: health is
 -- run state, just like the purse and loadout it carries through the shop.
 const MAX_HEARTS: i32 = 3
-const SNAPSHOT_SCHEMA: string = "duel-run-v5"
+const SNAPSHOT_SCHEMA: string = "duel-run-v6"
 
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
 -- the starting spell the run sets out with, and the whole of its opening
 -- loadout.
 function State.new(spell: spells.SpellKind, rush: bool): State
+    -- The opening roll comes out of a full roster and off to the side of the
+    -- record, so the run is already carrying its first boss by the time it has
+    -- a first duel to fight.
+    local pool: {bosses.Kind} = bosses.all()
+    local next_boss: bosses.Kind = draw_from(pool)
     return {
         duel = 1,
         gold = game.starting_gold,
@@ -60,7 +78,9 @@ function State.new(spell: spells.SpellKind, rush: bool): State
         cleared = 0,
         spells = {spells.Spell.new(spell, 1)},
         start_spell = spell,
-        rush = rush
+        rush = rush,
+        boss_pool = pool,
+        next_boss = next_boss
     }
 end
 
@@ -79,6 +99,55 @@ end
 
 function State:next_is_boss(): bool
     return boss_at(self.duel + 1, self.rush)
+end
+
+-- The roster a drained pool is filled from. Every boss goes back in except the
+-- one just fought, which is held back so that working through the roster and
+-- starting it over cannot hand out the same boss twice running. A roster with
+-- nothing else to offer — which is the roster today — hands that boss straight
+-- back rather than refilling to nothing: the bias is against a repeat, not a
+-- rule that there can never be one.
+function refilled_pool(last: bosses.Kind): {bosses.Kind}
+    local pool: {bosses.Kind} = bosses.all()
+    if #pool < 2 then
+        return pool
+    end
+    for index, kind in pool do
+        if kind == last then
+            table.remove(pool, index)
+            return pool
+        end
+    end
+    return pool
+end
+
+-- Take a boss out of the pool, which is what makes the draw one without
+-- replacement: what has been rolled is gone until the pool is filled again.
+function draw_from(pool: {bosses.Kind}): bosses.Kind
+    local index: i32 = math.random(#pool)
+    local kind: bosses.Kind = pool[index]
+    table.remove(pool, index)
+    return kind
+end
+
+-- Roll who the next boss duel is fought against. Called once the boss duel
+-- that was standing is behind the run, so the boss it just fought is the one
+-- the refill holds back.
+function State:roll_next_boss(): unit
+    if #self.boss_pool == 0 then
+        self.boss_pool = refilled_pool(self.next_boss)
+    end
+    self.next_boss = draw_from(self.boss_pool)
+end
+
+-- Which boss the live duel is fought against, or nil when the cadence has not
+-- put one there. The boss standing in a live boss duel is the one the run has
+-- been carrying since before it: nothing is rolled at the door.
+function State:boss_kind(): bosses.Kind?
+    if not self:boss() then
+        return nil
+    end
+    return self.next_boss
 end
 
 -- How many duels earn the run's victory milestone. The run does not stop
@@ -183,9 +252,16 @@ function State:settle(cleared: bool, carried_gold: i32): Outcome
     end
     -- Taking the victory milestone and taking any other duel are the same
     -- movement; what differs is only the screen that says so.
+    --
+    -- Whether a boss was standing here is read before the duel number moves: a
+    -- boss the run has now fought is a boss it needs a fresh roll to replace.
+    local fought_boss: bool = self:boss()
     self.gold = carried_gold
     self.cleared += 1
     self.duel += 1
+    if fought_boss then
+        self:roll_next_boss()
+    end
     return outcome
 end
 
@@ -198,6 +274,11 @@ function State:restart(spell: spells.SpellKind, rush: bool): unit
     self.spells = fresh.spells
     self.start_spell = spell
     self.rush = rush
+    -- A fresh run has fought nobody, so it takes the new run's pool and its
+    -- opening roll rather than remembering the roster the dead run had worked
+    -- through.
+    self.boss_pool = fresh.boss_pool
+    self.next_boss = fresh.next_boss
 end
 
 -- Charge exactly one heart for a hand the Opponent took. A terminal reveal
@@ -354,11 +435,37 @@ function State.restore(snapshot_value: string): State?
     if not spells.SpellKind.valid(restored.start_spell) then
         return nil
     end
+    -- The pool is a subset of the roster, so it holds known bosses, each at
+    -- most once, and never more of them than the roster has.
+    if #restored.boss_pool > bosses.count() then
+        return nil
+    end
+    for index, kind in restored.boss_pool do
+        if not bosses.Kind.valid(kind) then
+            return nil
+        end
+        for previous = 1::i32, index - 1 do
+            if restored.boss_pool[previous] == kind then
+                return nil
+            end
+        end
+    end
+    if not bosses.Kind.valid(restored.next_boss) then
+        return nil
+    end
+    -- The coming boss was taken out of the pool when it was rolled, so a
+    -- payload holding it in both places is one this build could deal twice.
+    for kind in restored.boss_pool do
+        if kind == restored.next_boss then
+            return nil
+        end
+    end
     return restored
 end
 
 return {
     boss_at = boss_at,
+    refilled_pool = refilled_pool,
     run_length = run_length,
     outcome_of = outcome_of,
     outcome_is_loss = outcome_is_loss,

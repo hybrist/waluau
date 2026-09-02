@@ -5,6 +5,7 @@ require("waluau:vitest")
 
 local game = require("./game")
 local game_fixture = require("../test/game_fixture")
+local bosses = require("./bosses/boss")
 local run = require("./run")
 local flow = require("./flow")
 local spells = require("./spells/spell")
@@ -208,7 +209,7 @@ describe(
                 -- payload carrying a stale schema marker, or one with trailing
                 -- garbage — is a normal refusal rather than a crash.
                 expect(run.State.restore("duel-run-v3,1,10,0,1,0") == nil):toBe(true)
-                local stale_schema: string = string.gsub(encoded, "duel%-run%-v5", "duel-run-v4")
+                local stale_schema: string = string.gsub(encoded, "duel%-run%-v6", "duel-run-v5")
                 expect(run.State.restore(stale_schema) == nil):toBe(true)
                 expect(run.State.restore(encoded .. ",unexpected") == nil):toBe(true)
                 -- A spell kind is bounded by the spells that exist, and health by what
@@ -554,6 +555,133 @@ describe(
                 local second: game.State = game.State.new(state:boss(), state.spells, state.gold)
                 expect(second:gold()):toBe(25)
                 expect(second:hand_size()):toBe(7)
+            end
+        )
+    end
+)
+
+describe(
+    "Ante Magic boss draw",
+    function()
+        -- Walk the run to the numbered duel, clearing every duel on the way.
+        local function reach_duel(state: run.State, duel: i32): unit
+            while state.duel < duel do
+                state:settle(true, 500)
+            end
+        end
+
+        it(
+            "carries the coming boss from the first duel of the run",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                -- Nobody is standing in the first duel, and the run already
+                -- knows who is standing in the third.
+                expect(state:boss()):toBe(false)
+                expect(state:boss_kind() == nil):toBe(true)
+                expect(state.next_boss):toBe(bosses.Kind.Vanilla)
+
+                local coming: bosses.Kind = state.next_boss
+                reach_duel(state, 3)
+                expect(state:boss()):toBe(true)
+                local drawn: bosses.Kind? = state:boss_kind()
+                expect(drawn == nil):toBe(false)
+                if drawn ~= nil then
+                    -- The boss standing in the duel is the one the run walked in
+                    -- with, not one rolled at the door.
+                    expect(drawn::bosses.Kind):toBe(coming)
+                end
+            end
+        )
+
+        it(
+            "rolls the next boss only once the boss duel is behind the run",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                local coming: bosses.Kind = state.next_boss
+                reach_duel(state, 3)
+                -- Approaching the duel and standing in it leave the roll alone.
+                expect(state.next_boss):toBe(coming)
+
+                state:settle(true, 500)
+                expect(state.duel):toBe(4)
+                expect(state:boss_kind() == nil):toBe(true)
+                -- The duel after a boss duel is fought against nobody, and the
+                -- run is already carrying the boss of the sixth.
+                expect(bosses.Kind.valid(state.next_boss)):toBe(true)
+            end
+        )
+
+        it(
+            "takes a rolled boss out of the pool and fills it again when the roster runs out",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                -- The opening roll has already taken its boss out of the pool.
+                expect(#state.boss_pool):toBe(bosses.count() - 1)
+
+                -- Every boss has now been fought, so the roll after the third
+                -- duel can only be made by throwing the roster back in.
+                reach_duel(state, 4)
+                expect(#state.boss_pool):toBe(bosses.count() - 1)
+                expect(bosses.Kind.valid(state.next_boss)):toBe(true)
+            end
+        )
+
+        it(
+            "hands the last boss straight back when the roster has nobody else",
+            function()
+                -- With one boss on the roster the hold-back would refill to
+                -- nothing, so the repeat wins over the bias.
+                local pool: {bosses.Kind} = run.refilled_pool(bosses.Kind.Vanilla)
+                expect(#pool):toBe(1)
+                expect(pool[1]):toBe(bosses.Kind.Vanilla)
+            end
+        )
+
+        it(
+            "forgets the bosses a dead run fought",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                reach_duel(state, 3)
+                for _ = 1, run.max_hearts do
+                    state:lose_hand()
+                end
+                state:settle(false, 500)
+                expect(state.duel):toBe(1)
+                -- A fresh run is carrying its own opening roll out of a full
+                -- roster rather than what the dead one had worked through.
+                expect(#state.boss_pool):toBe(bosses.count() - 1)
+                expect(bosses.Kind.valid(state.next_boss)):toBe(true)
+            end
+        )
+
+        it(
+            "round-trips the coming boss and refuses a roll this build cannot play",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                reach_duel(state, 3)
+                local encoded: string = state:snapshot()
+                local restored: run.State? = run.State.restore(encoded)
+                expect(restored == nil):toBe(false)
+                if restored ~= nil then
+                    local live: run.State = restored::run.State
+                    expect(live:boss_kind() == nil):toBe(false)
+                    expect(live.next_boss):toBe(state.next_boss)
+                    expect(live:snapshot()):toBe(encoded)
+                end
+
+                -- A boss this build does not have, more bosses in the pool than
+                -- the roster holds, and a coming boss still sitting in the pool
+                -- it was rolled out of are all normal refusals.
+                local unknown_boss: string = string.gsub(
+                    encoded,
+                    '"next_boss":%d+',
+                    '"next_boss":99'
+                )
+                expect(run.State.restore(unknown_boss) == nil):toBe(true)
+                state.boss_pool = {bosses.Kind.Vanilla, bosses.Kind.Vanilla}
+                expect(run.State.restore(state:snapshot()) == nil):toBe(true)
+                state.boss_pool = {state.next_boss}
+                expect(run.State.restore(state:snapshot()) == nil):toBe(true)
             end
         )
     end
