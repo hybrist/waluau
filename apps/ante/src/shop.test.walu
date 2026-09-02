@@ -4,6 +4,7 @@ require("waluau:vitest")
 
 local item_ = require("./items/item")
 local item_catalog = require("./items/catalog")
+local potion_ = require("./items/potion")
 local run_ = require("./run")
 local scroll_ = require("./items/scroll")
 local shop_ = require("./shop")
@@ -11,6 +12,7 @@ local spell_ = require("./spells/spell")
 
 type Item = item_.Item
 type RunState = run_.State
+type HealingPotion = potion_.HealingPotion
 type ShopState = shop_.State
 type SpellKind = spell_.SpellKind
 type SpellScroll = scroll_.SpellScroll
@@ -108,6 +110,86 @@ describe(
                 expect(run:carries(SpellKind.Firebolt)):toBe(true)
                 expect(run:carries(SpellKind.Clone)):toBe(true)
                 expect(run:carries(SpellKind.FreezeRay)):toBe(false)
+            end
+        )
+
+        it(
+            "sells a heart back to a damaged run and nothing to a whole one",
+            function()
+                local run, shop = shopping_run(SpellKind.Firebolt, 20)
+                local potion: HealingPotion = potion_.HealingPotion.new()
+                stock(shop, potion::Item, potion:base_price(run))
+
+                -- At full health the offer stands on the shelf greyed out rather
+                -- than taking gold for a heart there is no room to give back.
+                expect(potion:can_use(run)):toBe(false)
+                expect(shop:slot_available(run, 0)):toBe(false)
+                expect(shop:confirm_choice(run)):toBe(false)
+                expect(run.gold):toBe(20)
+                expect(run.hearts):toBe(run_.max_hearts)
+                expect(shop.slots[1].sold):toBe(false)
+
+                run:lose_hand()
+                expect(shop:slot_available(run, 0)):toBe(true)
+                expect(shop:confirm_choice(run)):toBe(false)
+                expect(run.hearts):toBe(run_.max_hearts)
+                expect(run.gold):toBe(20 - potion_.price)
+                expect(shop.slots[1].sold):toBe(true)
+            end
+        )
+
+        it(
+            "stocks the potion among the offers a visit can roll",
+            function()
+                math.randomseed(7)
+                local run, _ = shopping_run(SpellKind.Firebolt, 30)
+                local potions: i32 = 0
+                local scrolls: i32 = 0
+                for _ = 1, 40 do
+                    local visit: ShopState = ShopState.new(run)
+                    expect(#visit.slots):toBe(shop_.DEFAULT_SHOP_ITEM_COUNT)
+                    for slot in visit.slots do
+                        if slot.item:describe() == "Healing Potion (+1 heart)" then
+                            potions += 1
+                        else
+                            scrolls += 1
+                        end
+                    end
+                end
+                -- Neither offer crowds the other out: the potion shares one pool
+                -- with the scrolls and is drawn from it like anything else.
+                expect(potions > 0):toBe(true)
+                expect(scrolls > 0):toBe(true)
+            end
+        )
+
+        it(
+            "round-trips a potion through the item catalog",
+            function()
+                local run, shop = shopping_run(SpellKind.Firebolt, 20)
+                run:lose_hand()
+                stock(shop, potion_.HealingPotion.new()::Item, potion_.price)
+                expect(shop.slots[1].item:describe()):toBe("Healing Potion (+1 heart)")
+
+                local encoded: string = shop:snapshot()
+                local restored: ShopState? = ShopState.restore(encoded)
+                expect(restored == nil):toBe(false)
+                if restored ~= nil then
+                    local visit: ShopState = restored::ShopState
+                    expect(visit.slots[1].item:describe()):toBe("Healing Potion (+1 heart)")
+                    expect(visit:snapshot()):toBe(encoded)
+                    -- Behavior survives the round trip, not just the caption.
+                    visit.slots[1].item:use(run)
+                    expect(run.hearts):toBe(run_.max_hearts)
+                end
+
+                local empty: item_.Snapshot = { kind = "healing-potion", payload = '{"hearts":0}' }
+                expect(item_catalog.restore(empty) == nil):toBe(true)
+                local overfull: item_.Snapshot = {
+                    kind = "healing-potion",
+                    payload = '{"hearts":' .. run_.max_hearts + 1 .. '}'
+                }
+                expect(item_catalog.restore(overfull) == nil):toBe(true)
             end
         )
 

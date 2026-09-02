@@ -1,0 +1,75 @@
+-- The one offer that sells health rather than power. Hearts are the run's
+-- other pool and the only one nothing gives back: a duel takes them, clearing
+-- a duel does not repair them, and losing the last one ends the run outright.
+-- A potion is where that becomes a decision instead of a ratchet — the same
+-- mana that buys a scroll for the rest of the run can instead buy back one
+-- hand's worth of the mistakes already made.
+local run_ = require("../run")
+local item_ = require("./item")
+
+type Item = item_.Item
+type ItemSnapshot = item_.Snapshot
+type RunState = run_.State
+
+-- One heart, which is one hand the Arch Mage is allowed to take. Out of a pool
+-- of three, that is a third of the run's health, so a potion is never a top-up.
+const RESTORED_HEARTS: i32 = 1
+
+-- Dearer than a scroll, which costs four. A scroll compounds — it is cast in
+-- every duel left in the run — while a potion is spent the moment it is drunk.
+-- What it buys instead is that there are more duels left at all, and with only
+-- three hearts in the run there is no second chance to price against.
+const PRICE: i32 = 6
+
+-- Matches the heart pips in the board's bottom-left corner, so an offer names
+-- the resource it moves in the colour that resource is already drawn in.
+const ACCENT: string = "#fb7185"
+
+export type HealingPotion = Item & { hearts: i32 }
+
+function HealingPotion:can_use(run: RunState)
+    return run:can_heal()
+end
+
+function HealingPotion:use(run: RunState)
+    run:heal(self.hearts)
+end
+
+function HealingPotion:describe(): string
+    return "Healing Potion (+" .. self.hearts .. " heart)"
+end
+
+function HealingPotion:accent(): string
+    return ACCENT
+end
+
+function HealingPotion:base_price(run: RunState): i32
+    return PRICE
+end
+
+type Snapshot = { hearts: i32 }
+
+function HealingPotion:snapshot(): ItemSnapshot
+    local payload: Snapshot = { hearts = self.hearts }
+    return { kind = "healing-potion", payload = json.pack(payload) }
+end
+
+function HealingPotion.restore(payload: string): HealingPotion?
+    local decoded: Snapshot? = json.unpack<Snapshot>(payload)
+    if decoded == nil then
+        return nil
+    end
+    local restored: Snapshot = decoded::Snapshot
+    -- A potion that restores nothing is not a cheaper potion, it is a payload
+    -- from somewhere this build did not write.
+    if restored.hearts < 1 or restored.hearts > run_.max_hearts then
+        return nil
+    end
+    return { hearts = restored.hearts }
+end
+
+function HealingPotion.new(): HealingPotion
+    return { hearts = RESTORED_HEARTS }
+end
+
+return { restored_hearts = RESTORED_HEARTS, price = PRICE }

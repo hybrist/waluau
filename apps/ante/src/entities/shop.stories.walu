@@ -6,6 +6,7 @@ local shop_ = require("../shop")
 local shop_entity = require("./shop")
 local spells = require("../spells/spell")
 local scroll_ = require("../items/scroll")
+local potion_ = require("../items/potion")
 local item_ = require("../items/item")
 
 type ShopState = shop_.State
@@ -26,6 +27,9 @@ type SoldChoice = "none" | "first" | "second" | "both"
 local stock_gold = storybook.range("gold", 30, 0, 100, 5)
 local stock_cursor = storybook.range("cursor", 0, 0, 2, 1)
 local stock_duel = storybook.range("duel", 2, 1, 9, 1)
+-- The potion offer reads off the run's health rather than off the visit, so
+-- health is a knob here: full hearts is what greys the second row out.
+local stock_hearts = storybook.range("hearts", 2, 0, 3, 1)
 local stock_sold = storybook.select(
     "sold",
     "none"::SoldChoice,
@@ -45,10 +49,12 @@ local function make_run(spell: SpellKind, gold: i32, duel: i32): RunState
     return state
 end
 
+-- One of each kind of offer, so the stock stories show a scroll row and a
+-- potion row side by side.
 local function slots(first_sold: bool, second_sold: bool): {Slot}
     return {
         { item = SpellScroll.new(SpellKind.Firebolt, 2)::Item, price = 5, sold = first_sold },
-        { item = SpellScroll.new(SpellKind.Clone, 1)::Item, price = 8, sold = second_sold }
+        { item = potion_.HealingPotion.new()::Item, price = potion_.price, sold = second_sold }
     }
 end
 
@@ -66,6 +72,7 @@ local function present_stock(): unit
     stock_run.gold = stock_gold.value()
     stock_run.duel = stock_duel.value()
     stock_run.cleared = stock_run.duel - 1
+    stock_run.hearts = stock_hearts.value()
     stock_shop.cursor = stock_cursor.value()
     apply_sold(stock_shop, storybook.selected<SoldChoice>(stock_sold))
     stock_view:present(stock_shop, stock_run)
@@ -88,9 +95,11 @@ end
 local unavailable_run: RunState = make_run(SpellKind.Firebolt, 15, 3)
 unavailable_run:learn_spell(spells.Spell.new(SpellKind.Clone, 1))
 local unavailable_shop: ShopState = ShopState.new(unavailable_run)
+-- Two offers the run cannot take, for two different reasons: both keys are
+-- already spoken for, and there is no damage for a potion to undo.
 unavailable_shop.slots = {
-    { item = SpellScroll.new(SpellKind.Firebolt, 1)::Item, price = 4, sold = false },
-    { item = SpellScroll.new(SpellKind.FreezeRay, 1)::Item, price = 4, sold = false }
+    { item = SpellScroll.new(SpellKind.FreezeRay, 1)::Item, price = 4, sold = false },
+    { item = potion_.HealingPotion.new()::Item, price = potion_.price, sold = false }
 }
 local unavailable_view: shop_entity.Stateful = shop_entity.Stateful.new(
     unavailable_shop,
@@ -105,6 +114,9 @@ type InteractiveSession = { run: RunState, shop: ShopState }
 
 function InteractiveSession.new(): InteractiveSession
     local run: RunState = make_run(SpellKind.Firebolt, 45, 2)
+    -- Down a heart, so the potion row is a purchase to try rather than a
+    -- greyed line.
+    run:lose_hand()
     local shop: ShopState = ShopState.new(run)
     shop.slots = slots(false, false)
     return { run = run, shop = shop }
@@ -174,6 +186,7 @@ storybook.publish(
                 stock_gold.declaration,
                 stock_cursor.declaration,
                 stock_duel.declaration,
+                stock_hearts.declaration,
                 stock_sold.declaration
             }
         ),

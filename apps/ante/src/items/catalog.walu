@@ -2,6 +2,7 @@
 -- The shop stores only the common Item interface and delegates reconstruction
 -- here, so adding another item does not add a purchase branch to the shop.
 local item_ = require("./item")
+local potion_ = require("./potion")
 local scroll_ = require("./scroll")
 
 type Item = item_.Item
@@ -12,6 +13,12 @@ function restore(snapshot: Snapshot): Item?
         local scroll: scroll_.SpellScroll? = scroll_.SpellScroll.restore(snapshot.payload)
         if scroll ~= nil then
             return scroll::Item
+        end
+    end
+    if snapshot.kind == "healing-potion" then
+        local potion: potion_.HealingPotion? = potion_.HealingPotion.restore(snapshot.payload)
+        if potion ~= nil then
+            return potion::Item
         end
     end
     return nil

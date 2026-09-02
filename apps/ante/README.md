@@ -30,12 +30,14 @@ A vault is one heist inside a longer roguelike run of nine, and clearing one
 costs its ante: the vault takes a cut of the mana the robbers are holding, and
 what is left is what the next vault is dealt with. The pool is the run's, not
 the vault's, and every cast spends from it for good. Between two vaults the run
-stops at the shop, where that same mana buys spell scrolls.
+stops at the shop, where that same mana buys spell scrolls and healing potions.
 
 A run also starts with three hearts. Every hand the Arch Mage wins removes one,
 including a hand inside a vault the player ultimately clears. Hearts travel
-through the fence and into later vaults without refilling; losing the last one
-ends the run as soon as that hand resolves.
+through the fence and into later vaults, and nothing inside a vault gives one
+back — clearing one does not repair anything. The shop is the only place they
+move upward, one potion at a time. Losing the last heart ends the run as soon as
+that hand resolves, and a potion cannot buy it back.
 
 The ante climbs, and it climbs past what a typical vault pays. Early vaults ask
 for well under it, so a run that is going well banks a surplus; the last act
@@ -56,15 +58,20 @@ vault, so an endless run walks on out of whatever surplus it arrived with and no
 further.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
-once, on keys 1 and 2. A visit to the shop stocks exactly two spell scrolls,
-drawn without replacement. A scroll for a known spell carries its next level;
-a scroll for a new kind starts at level one and takes the next free key. There
-is no separate learn-or-upgrade product and no trade prompt: once both keys are
-taken, a scroll for another kind is unavailable rather than forgetting a spell
-the run already carries. Every scroll costs four mana. Buying one marks that
-line sold and nothing takes its place; reaching the next shop is what restocks
-the offers. Losing the last heart ends the run and everything it bought with
-it, so a fresh run sets out with its starting spell at level one again.
+once, on keys 1 and 2. A visit to the shop stocks exactly two offers, drawn
+without replacement from one pool: a scroll for each of the four spells, plus a
+healing potion. A scroll for a known spell carries its next level; a scroll for
+a new kind starts at level one and takes the next free key. There is no separate
+learn-or-upgrade product and no trade prompt: once both keys are taken, a scroll
+for another kind is unavailable rather than forgetting a spell the run already
+carries. The potion restores one heart and is unavailable at full health, which
+is the same rule wearing different clothes — an offer the run cannot take is
+shown greyed rather than rerolled into one it can. Every scroll costs four mana
+and the potion six, dearer because a scroll is cast for the rest of the run
+while a potion is spent the moment it is drunk. Buying an offer marks that line
+sold and nothing takes its place; reaching the next shop is what restocks them.
+Losing the last heart ends the run and everything it bought with it, so a fresh
+run sets out with its starting spell at level one again.
 
 Every third vault of a run is a boss battle: both sides hold seven relics rather
 than five, widening every feint and committed-pair choice. Spent pairs are
@@ -222,9 +229,9 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `city_map.walu` | DOM-free city generation, the alternating vendor/vault route, and the camera pans and dissolves that carry it between screens. |
 | `city_map_render.walu` | WebGL2 primitive drawing for the city, its walked and upcoming route, the last authored vault's landmark house, and the colored street streak, all at one opacity. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
-| `run.walu` | DOM-free run state: the vault sequence, its boss cadence and ante table, the finish line and endless tail, the spell loadout, and the mana and hearts carried between vaults. |
+| `run.walu` | DOM-free run state: the vault sequence, its boss cadence and ante table, the finish line and endless tail, the spell loadout, and the mana and hearts carried between vaults — including the one way hearts climb back. |
 | `shop.walu` | DOM-free intermission between vaults: behavior-bearing item stock, quoted prices, spent offers, cursor input, and hot-replacement snapshots. |
-| `items/` | The common item behavior/snapshot seam, its restore catalog, and concrete spell scrolls that teach or raise a spell without replacing the loadout. |
+| `items/` | The common item behavior/snapshot seam, its restore catalog, and the concrete offers: spell scrolls that teach or raise a spell without replacing the loadout, and a healing potion that gives back one heart. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and presentation snapshots. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
@@ -250,7 +257,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence, ante table and endless tail, persistent hearts, mana carryover, the carried loadout, and run outcomes. |
 | `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how a run ends, played from a shuffled deck by a reference policy — the numbers the ante table is priced against. |
-| `shop.test.walu` | Deterministic Vitest assertions for item stock, spending, spell levels, full-loadout refusal, lifecycle, and snapshots. |
+| `shop.test.walu` | Deterministic Vitest assertions for item stock, spending, spell levels, full-loadout and full-health refusal, healing purchases, lifecycle, and snapshots. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
 | `ui/node.test.walu` | Headless assertions for retained identity, layout, arrangement, hit order, and controlled presentation. |
 | `ui/presentation.test.walu` | Headless assertions for composition and the type-sized retained presenters. |

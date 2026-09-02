@@ -104,6 +104,47 @@ describe(
         )
 
         it(
+            "heals damage taken but never past the pool the run opened with",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                -- Nothing to undo yet, so there is no sale to make.
+                expect(state:can_heal()):toBe(false)
+                expect(state:heal(1)):toBe(false)
+                expect(state.hearts):toBe(run.max_hearts)
+
+                state:lose_hand()
+                expect(state:can_heal()):toBe(true)
+                expect(state:heal(1)):toBe(true)
+                expect(state.hearts):toBe(run.max_hearts)
+
+                -- Healing more than was lost tops out at full rather than banking
+                -- the overflow against damage the run has not taken yet.
+                state:lose_hand()
+                expect(state:heal(run.max_hearts)):toBe(true)
+                expect(state.hearts):toBe(run.max_hearts)
+
+                state:lose_hand()
+                expect(state:heal(0)):toBe(false)
+                expect(state:heal(-1)):toBe(false)
+                expect(state.hearts):toBe(run.max_hearts - 1)
+            end
+        )
+
+        it(
+            "cannot heal a run the last heart already ended",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
+                for _ = 1, run.max_hearts do
+                    state:lose_hand()
+                end
+                expect(state.hearts):toBe(0)
+                expect(state:can_heal()):toBe(false)
+                expect(state:heal(1)):toBe(false)
+                expect(state.hearts):toBe(0)
+            end
+        )
+
+        it(
             "ends the run on the last heart, gold and all",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
