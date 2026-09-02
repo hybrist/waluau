@@ -19,6 +19,7 @@ local card_draw = require("./card_draw")
 const WIDTH = 420.0
 const HEIGHT = 280.0
 const COLORS_WIDTH = 560.0
+const COURTS_HEIGHT = 500.0
 const BACKGROUND = "#0b0b12"
 
 -- Every story here draws under the same kind of uniform viewport scale the
@@ -165,6 +166,21 @@ local function colors(): ui.Node
         table.insert(cards, state(card(11 + suit, suit), false, false, false, true, false))
     end
     return card_row.node(cards, card_entity.width + GAP)
+end
+
+-- All twelve court plates together: a production proof of both the atlas
+-- mapping and the school-by-rank visual system.
+local function courts(): ui.Node
+    const GAP = 12.0
+    local rows: {ui.Node} = {}
+    for rank = 11::i32, 13::i32 do
+        local cards: {ui.Node} = {}
+        for suit = 0::i32, 3::i32 do
+            table.insert(cards, state(card(rank, suit), false, false, false, false, false))
+        end
+        table.insert(rows, card_row.node(cards, card_entity.width + GAP))
+    end
+    return ui.Node.down({ gap = GAP, align = "center" }, rows)
 end
 
 -- The turn itself, looping: the same flip the board plays when a card is
@@ -494,6 +510,20 @@ storybook.publish(
                     update = tick,
                     width = COLORS_WIDTH,
                     height = HEIGHT,
+                    scale = STAGE_SCALE,
+                    background = BACKGROUND
+                }
+            )
+        ),
+        storybook.story(
+            "Every court",
+            book:scene(
+                {
+                    node = courts,
+                    load = load,
+                    update = tick,
+                    width = COLORS_WIDTH,
+                    height = COURTS_HEIGHT,
                     scale = STAGE_SCALE,
                     background = BACKGROUND
                 }

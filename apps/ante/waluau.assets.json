@@ -3,6 +3,7 @@
   "assets": [
     { "name": "card_back", "path": "assets/card-back.png", "type": "image" },
     { "name": "suit_symbols", "path": "assets/suit-symbols.png", "type": "image" },
+    { "name": "face_cards", "path": "assets/face-cards.png", "type": "image" },
     { "name": "ice_noise", "path": "assets/ice-noise.png", "type": "image" },
     { "name": "vault_font", "path": "assets/Cinzel-Bold.ttf", "type": "font", "family": "Arcane Duel" },
     { "name": "card_flip", "path": "assets/card-flip.wav", "type": "audio" }

@@ -15,7 +15,8 @@ export type Surface = {
     graphics: Graphics,
     effects: effect_shaders.EffectShaders,
     card_back: graphics_module.Texture?,
-    suit_symbols: graphics_module.Texture?
+    suit_symbols: graphics_module.Texture?,
+    face_cards: graphics_module.Texture?
 }
 export type Measure = (Graphics?, layout.Intrinsic) -> unit
 export type Paint = (Surface, layout.Rect) -> unit

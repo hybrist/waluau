@@ -238,11 +238,45 @@ function stroke_ring(graphics: graphics_module.Graphics, x: f64, y: f64, radius:
     graphics:stroke()
 end
 
--- The high ranks remain recognisable face cards, but their people belong to
--- this world: Jack is a hooded adept, Queen an orb-bearing seer, King a
--- crowned hierophant. Ace stands apart as one large school omen. These plates
--- borrow tarot's frontal, emblematic figures without copying poker courts.
+-- Twelve hand-printed court plates share one four-column by three-row atlas:
+-- schools across, then apprentice, seer and mage down. The transparent cells
+-- leave the live parchment, school field and pressed-paper pass visible, while
+-- the generous source resolution keeps the figures crisp through card flips.
+function draw_court_plate(surface: ui.Surface, rank: i32, suit: i32, x: f64, y: f64): bool
+    local maybe_texture: graphics_module.Texture? = surface.face_cards
+    if rank < 11 or rank > 13 or suit < 0 or suit > 3 then
+        return false
+    end
+    if maybe_texture == nil then
+        return false
+    end
+    local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
+    if texture.width <= 0 or texture.height <= 0 or texture.width * 3 ~= texture.height * 4 then
+        return false
+    end
+    local cell_width: f64 = (texture.width::f64) / 4.0
+    local cell_height: f64 = (texture.height::f64) / 3.0
+    surface.graphics:set_color("#ffffffff")
+    return surface.graphics:draw_sprite(
+        texture,
+        x + 5.0,
+        y + 22.0,
+        82.0,
+        82.0,
+        (suit::f64) * cell_width,
+        ((rank - 11)::f64) * cell_height,
+        cell_width,
+        cell_height
+    )
+end
+
+-- Ace stands apart as one large school omen. The primitive court fallback is
+-- retained only for an asset that has not arrived or fails atlas validation,
+-- so asynchronous loading never leaves a face card blank.
 function draw_high_arcana(surface: ui.Surface, rank: i32, suit: i32, x: f64, y: f64): unit
+    if draw_court_plate(surface, rank, suit, x, y) then
+        return
+    end
     local graphics = surface.graphics
     local center_x: f64 = x + WIDTH * 0.5
     local center_y: f64 = y + HEIGHT * 0.5

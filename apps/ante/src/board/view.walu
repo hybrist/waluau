@@ -267,7 +267,8 @@ function State:prepare_surface(surface: ui.Surface): unit
             graphics = surface.graphics,
             effects = surface.effects,
             card_back = surface.card_back,
-            suit_symbols = surface.suit_symbols
+            suit_symbols = surface.suit_symbols,
+            face_cards = surface.face_cards
         }
         return
     end
@@ -276,6 +277,7 @@ function State:prepare_surface(surface: ui.Surface): unit
     current.effects = surface.effects
     current.card_back = surface.card_back
     current.suit_symbols = surface.suit_symbols
+    current.face_cards = surface.face_cards
 end
 
 function State:measure_arrange(surface: ui.Surface, width: f64, height: f64): unit
