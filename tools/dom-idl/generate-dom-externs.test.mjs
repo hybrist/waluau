@@ -13,6 +13,20 @@ function readRepoFile(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+// The generator formats its output with `waluau fmt`, which wraps long
+// `declare function` parameter lists one per line. Fold those back onto one
+// line so the declaration-shape assertions below can stay single-line regexes.
+function unwrapDeclarations(source) {
+  return source.replace(/\(\n((?:[ \t]+[^\n]*\n)+)\)/g, (_, body) => {
+    const params = body.trim().split('\n').map((line) => line.trim());
+    return `(${params.join(' ')})`;
+  });
+}
+
+function readExterns() {
+  return unwrapDeclarations(readRepoFile('externs/dom.walu'));
+}
+
 function runGenerator({
   input,
   filter = 'tools/dom-idl/filter.json',
@@ -42,17 +56,19 @@ function runGenerator({
 
   execFileSync(process.execPath, args, { cwd: repoRoot });
 
+  const rawExterns = readFileSync(externs, 'utf8');
   return {
-    externs: readFileSync(externs, 'utf8'),
+    rawExterns,
+    externs: unwrapDeclarations(rawExterns),
     metadata: readFileSync(metadata, 'utf8'),
     diagnostics: readFileSync(diagnostics, 'utf8'),
   };
 }
 
 test('DOM extern generation is stable', () => {
-  const { externs, metadata, diagnostics } = runGenerator();
+  const { rawExterns, metadata, diagnostics } = runGenerator();
 
-  assert.equal(externs, readRepoFile('externs/dom.walu'));
+  assert.equal(rawExterns, readRepoFile('externs/dom.walu'));
   assert.equal(metadata, readRepoFile('externs/dom.metadata.json'));
   assert.equal(diagnostics, readRepoFile('externs/dom.diagnostics.txt'));
 });
@@ -91,7 +107,7 @@ test('selected DOM interfaces are emitted in parent-before-child order', () => {
     generated.externs.indexOf('type Parent = extern') < generated.externs.indexOf('type Child = extern extends Parent'),
     'parent extern should be emitted before child extern',
   );
-  assert.match(generated.externs, /^declare property Child:owner: Parent\?$/m);
+  assert.match(generated.externs, /^declare property Child: owner: Parent\?$/m);
   assert.deepEqual(inheritance, ['Parent', 'Child']);
 });
 
@@ -137,13 +153,13 @@ test('skip diagnostics reference tracked compiler/tooling limitations where appl
 });
 
 test('generated externs emit nullable primitive attributes', () => {
-  const externs = readRepoFile('externs/dom.walu');
-  assert.match(externs, /^declare property HTMLInputElement:selectionStart: u32\?$/m);
-  assert.match(externs, /^declare property HTMLInputElement:selectionEnd: u32\?$/m);
+  const externs = readExterns();
+  assert.match(externs, /^declare property HTMLInputElement: selectionStart: u32\?$/m);
+  assert.match(externs, /^declare property HTMLInputElement: selectionEnd: u32\?$/m);
 });
 
 test('generated externs emit DOM inheritance syntax', () => {
-  const externs = readRepoFile('externs/dom.walu');
+  const externs = readExterns();
   assert.match(externs, /^type Event = extern$/m);
   assert.match(externs, /^type Node = extern extends EventTarget$/m);
   assert.match(externs, /^type Document = extern extends Node$/m);
@@ -158,7 +174,7 @@ test('generated externs emit DOM inheritance syntax', () => {
 });
 
 test('generated DOM externs keep nullable-parent inheritance chains parent-first', () => {
-  const externs = readRepoFile('externs/dom.walu');
+  const externs = readExterns();
   const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
   const inheritance = metadata.inheritance.map((entry) => entry.interface);
 
@@ -189,13 +205,13 @@ test('generated DOM externs keep nullable-parent inheritance chains parent-first
 });
 
 test('generated externs expose the DOM window root', () => {
-  const externs = readRepoFile('externs/dom.walu');
-  assert.match(externs, /^declare property Window:document: Document$/m);
+  const externs = readExterns();
+  assert.match(externs, /^declare property Window: document: Document$/m);
   assert.match(externs, /^declare function dom_window\(\): Window$/m);
 });
 
 test('generated externs expose narrow DOM Promise APIs for fetch and Response.text', () => {
-  const externs = readRepoFile('externs/dom.walu');
+  const externs = readExterns();
   const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
   const diagnostics = readRepoFile('externs/dom.diagnostics.txt');
 
@@ -257,9 +273,9 @@ test('DOM Promise generation keeps nested generic Promise returns disabled', () 
 });
 
 test('generated externs expose minimal DOM event callbacks', () => {
-  const externs = readRepoFile('externs/dom.walu');
-  assert.match(externs, /^declare property Event:type: string$/m);
-  assert.match(externs, /^declare property Event:target: EventTarget$/m);
+  const externs = readExterns();
+  assert.match(externs, /^declare property Event: type: string$/m);
+  assert.match(externs, /^declare property Event: target: EventTarget$/m);
   assert.match(
     externs,
     /^declare function EventTarget:add_event_listener\(type: string, callback: \(\(Event\) -> unit\)\?\): unit$/m,
@@ -267,22 +283,22 @@ test('generated externs expose minimal DOM event callbacks', () => {
 });
 
 test('generated externs expose minimal DOM mutation and storage APIs', () => {
-  const externs = readRepoFile('externs/dom.walu');
+  const externs = readExterns();
   assert.match(externs, /^type Storage = extern$/m);
   assert.match(externs, /^type HTMLInputElement = extern extends HTMLElement$/m);
   assert.match(externs, /^type HTMLTextAreaElement = extern extends HTMLElement$/m);
-  assert.match(externs, /^declare property HTMLElement:value: string$/m);
-  assert.match(externs, /^declare property Document:body: HTMLElement$/m);
-  assert.match(externs, /^declare property Document:document_element: Element$/m);
+  assert.match(externs, /^declare property HTMLElement: value: string$/m);
+  assert.match(externs, /^declare property Document: body: HTMLElement$/m);
+  assert.match(externs, /^declare property Document: document_element: Element$/m);
   assert.match(externs, /^declare function Node:replace_child\(new_child: Node, old_child: Node\): Node$/m);
   assert.match(externs, /^declare function Node:remove_child\(child: Node\): Node$/m);
   assert.match(externs, /^declare function Element:get_attribute\(name: string\): string\?$/m);
-  assert.match(externs, /^declare property Window:local_storage: Storage$/m);
+  assert.match(externs, /^declare property Window: local_storage: Storage$/m);
   assert.match(externs, /^declare function Storage:get_item\(key: string\): string\?$/m);
 });
 
 test('generated externs expose a focused canvas 2D rendering slice', () => {
-  const externs = readRepoFile('externs/dom.walu');
+  const externs = readExterns();
   const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
   const diagnostics = readRepoFile('externs/dom.diagnostics.txt');
 
@@ -292,7 +308,7 @@ test('generated externs expose a focused canvas 2D rendering slice', () => {
     externs,
     /^declare function HTMLCanvasElement:get_context\(context_id: string\): CanvasRenderingContext2D\?$/m,
   );
-  assert.match(externs, /^declare property CanvasRenderingContext2D:canvas: HTMLCanvasElement$/m);
+  assert.match(externs, /^declare property CanvasRenderingContext2D: canvas: HTMLCanvasElement$/m);
   assert.match(externs, /^declare function CanvasRenderingContext2D:fillRect\(x: f64, y: f64, w: f64, h: f64\): unit$/m);
   assert.match(externs, /^declare function CanvasRenderingContext2D:clearRect\(x: f64, y: f64, w: f64, h: f64\): unit$/m);
   assert.match(externs, /^declare function CanvasRenderingContext2D:fillText\(text: string, x: f64, y: f64\): unit$/m);
@@ -301,8 +317,8 @@ test('generated externs expose a focused canvas 2D rendering slice', () => {
   // waluau-b3hl: the (DOMString or CanvasGradient or CanvasPattern) union is
   // collapsed to `string` through filter.json's unionTypeMap, so the paint
   // style properties are emitted instead of skipped.
-  assert.match(externs, /^declare property CanvasRenderingContext2D:fillStyle: string$/m);
-  assert.match(externs, /^declare property CanvasRenderingContext2D:strokeStyle: string$/m);
+  assert.match(externs, /^declare property CanvasRenderingContext2D: fillStyle: string$/m);
+  assert.match(externs, /^declare property CanvasRenderingContext2D: strokeStyle: string$/m);
   assert.doesNotMatch(diagnostics, /skip CanvasRenderingContext2D\.fillStyle/);
   assert.doesNotMatch(diagnostics, /skip CanvasRenderingContext2D\.strokeStyle/);
   const emittedCanvasMembers = metadata.emittedMembers.map(
@@ -361,8 +377,8 @@ test('unionTypeMap collapses exact Web IDL union shapes and skips unmapped union
   });
 
   // A mapped union collapses in attribute, nullable-attribute, and parameter positions.
-  assert.match(generated.externs, /^declare property Painter:paint: string$/m);
-  assert.match(generated.externs, /^declare property Painter:maybePaint: string\?$/m);
+  assert.match(generated.externs, /^declare property Painter: paint: string$/m);
+  assert.match(generated.externs, /^declare property Painter: maybePaint: string\?$/m);
   assert.match(generated.externs, /^declare function Painter:apply\(style: string\): unit$/m);
   // A union without a unionTypeMap entry is still skipped with the tracked issue ref.
   assert.doesNotMatch(generated.externs, /unmapped/);
@@ -373,7 +389,7 @@ test('unionTypeMap collapses exact Web IDL union shapes and skips unmapped union
 });
 
 test('generated externs sanitize reserved DOM parameter names deterministically', () => {
-  const externs = readRepoFile('externs/dom.walu');
+  const externs = readExterns();
   const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
   const diagnostics = readRepoFile('externs/dom.diagnostics.txt');
 
@@ -475,7 +491,7 @@ test('optional parameters and Web IDL overloads emit extern overload declaration
 });
 
 test('generated canvas externs expose fill, stroke, and both arc overloads', () => {
-  const externs = readRepoFile('externs/dom.walu');
+  const externs = readExterns();
   const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
 
   assert.match(externs, /^declare function CanvasRenderingContext2D:fill\(\): unit$/m);

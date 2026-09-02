@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +41,40 @@ function parseArgs(argv) {
 
 function resolveRepoPath(value) {
   return path.resolve(repoRoot, value);
+}
+
+// The generated externs are checked in formatted, so the generator runs its
+// output through `waluau fmt` rather than reproducing the formatter's
+// line-wrapping rules here. The CLI binary is taken from $WALUAU_BIN, then a
+// previously built target/{debug,release}/waluau, then `cargo run`.
+function formatterCommand() {
+  if (process.env.WALUAU_BIN) {
+    return { command: process.env.WALUAU_BIN, args: ['fmt', '-'] };
+  }
+  for (const profile of ['debug', 'release']) {
+    const bin = path.join(repoRoot, 'target', profile, 'waluau');
+    if (existsSync(bin)) {
+      return { command: bin, args: ['fmt', '-'] };
+    }
+  }
+  return { command: 'cargo', args: ['run', '--quiet', '-p', 'waluau-cli', '--', 'fmt', '-'] };
+}
+
+function formatWaluau(source) {
+  const { command, args } = formatterCommand();
+  const result = spawnSync(command, args, {
+    cwd: repoRoot,
+    input: source,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.error) {
+    throw new Error(`failed to run waluau fmt (${command}): ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`waluau fmt exited with status ${result.status}:\n${result.stderr}`);
+  }
+  return result.stdout;
 }
 
 function memberKey(member) {
@@ -681,6 +717,7 @@ async function main() {
     filter: JSON.parse(filterRaw),
     patches: JSON.parse(patchesRaw),
   });
+  generated.externs = formatWaluau(generated.externs);
   for (const target of [options.out, options.metadataOut, options.diagnosticsOut]) {
     await mkdir(path.dirname(resolveRepoPath(target)), { recursive: true });
   }
@@ -698,4 +735,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { generate, parseAndMergeIdls };
+export { formatWaluau, generate, parseAndMergeIdls };
