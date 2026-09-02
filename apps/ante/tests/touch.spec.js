@@ -6,8 +6,8 @@ import {
   countAimPromptInk,
   countCardBackInk,
   countModalHeadingInk,
-  frameSignature,
   openGame,
+  settleBoard,
   tapDesignPoint,
   tapMenuItem,
 } from './game-driver.js';
@@ -17,25 +17,6 @@ import {
 // that a run can be played that way at all: the engine hands touch contacts to
 // the same callbacks a mouse uses, and the controls that used to be key hints
 // are now things to tap.
-
-// Poll until two captures in a row match, so a board that is still dealing is
-// never mistaken for a settled one.
-async function settledSignature(page, canvas) {
-  let settled = 0;
-  await expect
-    .poll(
-      async () => {
-        const before = await frameSignature(canvas);
-        await page.waitForTimeout(400);
-        const after = await frameSignature(canvas);
-        settled = after;
-        return before === after;
-      },
-      { timeout: GAME_READY_TIMEOUT },
-    )
-    .toBe(true);
-  return settled;
-}
 
 test('reaches a live board from the menu with taps only', async ({ page }) => {
   const pageErrors = [];
@@ -61,7 +42,7 @@ test('arms and calls off a spell by tapping its socket', async ({ page }) => {
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(40);
-  const baseline = await settledSignature(page, canvas);
+  await settleBoard(canvas);
 
   // The socket is the finger's version of the number key: it opens targeting,
   // and tapping the same socket again calls the aim off without spending gold.
@@ -86,7 +67,7 @@ test('opens and closes the rules from the standing controls', async ({ page }) =
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(40);
-  await settledSignature(page, canvas);
+  await settleBoard(canvas);
 
   // HELP raises the rules over the board, and a tap anywhere puts them away
   // again — the control answers wherever the duel has got to.

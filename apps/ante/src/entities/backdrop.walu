@@ -1,42 +1,30 @@
--- The vault the duel is fought in: a dark stone field lit by one high lamp,
--- crossed by the faint shafts that lamp throws across it, and closing to black
--- at the walls.
+-- The Astral Sea the duel is fought across: a cosmic, magical expanse of
+-- swirling nebulas, ethereal waves, and twinkling starfields.
 --
--- It used to be a flat fill with a fan of hairlines struck over it, which left
--- every object on the board floating on an even sheet of near-black with
--- nothing behind it. The three passes here are what give the board a room:
--- the field carries the lamp's falloff, the shafts read as light rather than
--- as ruled lines because they fade along their own length, and the vignette
--- closes the corners so the eye settles on the table.
+-- When the GPU shader pipeline is live, the backdrop draws through the
+-- procedural `ante.effects.astral-sea` fragment shader, which drives domain-warped
+-- nebula clouds, celestial ether currents, and twinkling stars with time. A
+-- deep cosmic gradient and vignette are retained as a graceful fallback for
+-- headless tests or before GPU shaders settle.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local plate = require("../plate")
+local graphics_module = require("waluau:engine/graphics")
 
-const CLEAR: string = "#09090b"
-const FIELD: string = "#15151b"
-const RULE: string = "#24242c"
+const CLEAR: string = "#06060f"
+const FIELD: string = "#0e0d1f"
+const RULE: string = "#1a1638"
 const RULE_PITCH: f64 = 48.0
 
--- The lamp: how bright the field is directly under it against how dark it
--- falls away, and how far down the board its centre hangs. Above centre,
--- because the vault's far wall is up there and the table is nearer.
 const LAMP_CORE: f64 = 1.0
 const LAMP_EDGE: f64 = 0.30
 const LAMP_DROP: f64 = 0.42
--- The field is drawn as a coarse grid because the falloff is two-dimensional
--- and a quad interpolates its corners linearly. Ten by six cells is finer than
--- the ramp it is sampling, so the seams do not show.
 const LAMP_COLUMNS: i32 = 10
 const LAMP_ROWS: i32 = 6
 
--- The vignette closes the last of the way to black at the very edge, past
--- where the lamp's own falloff has already taken the field down.
 const VIGNETTE_DEPTH: f64 = 0.55
 const VIGNETTE_BAND: f64 = 0.22
 
--- Brightness of the lamp at a point given in 0..1 across the board, falling
--- with the square of the distance from where it hangs. Squared rather than
--- linear so the bright part stays broad and the corners go quickly.
 function lamp_at(across: f64, down: f64): f64
     local dx: f64 = (across - 0.5) * 2.0
     local dy: f64 = (down - LAMP_DROP) * 2.0
@@ -69,10 +57,6 @@ function draw_field(graphics: ui.Graphics, bounds: box.Rect): unit
     end
 end
 
--- The shafts, struck at a fixed spacing so a wider canvas gets more of them
--- rather than a stretched few. Each one is drawn as a run of segments whose
--- brightness follows the same lamp, which is what makes it read as light
--- falling across the floor instead of as a ruled diagonal.
 const SHAFT_STEPS: i32 = 6
 
 function draw_shafts(graphics: ui.Graphics, bounds: box.Rect): unit
@@ -103,9 +87,6 @@ function draw_shafts(graphics: ui.Graphics, bounds: box.Rect): unit
     end
 end
 
--- Black closing in from all four walls, thinning to nothing a fifth of the
--- way in. A veil rather than a darker fill: the shafts and the field's own
--- falloff both stay visible through it.
 function draw_vignette(graphics: ui.Graphics, bounds: box.Rect): unit
     graphics:set_color(CLEAR)
     local band_x: f64 = bounds.width * VIGNETTE_BAND
@@ -156,12 +137,30 @@ function draw_vignette(graphics: ui.Graphics, bounds: box.Rect): unit
     )
 end
 
-function draw_at(surface: ui.Surface, bounds: box.Rect): unit
-    local graphics = surface.graphics
+function draw_fallback(graphics: ui.Graphics, bounds: box.Rect): unit
     graphics:clear(CLEAR)
     draw_field(graphics, bounds)
     draw_shafts(graphics, bounds)
     draw_vignette(graphics, bounds)
+end
+
+function draw_at(surface: ui.Surface, bounds: box.Rect): unit
+    local maybe_shader: graphics_module.Shader? = surface.effects.astral_sea.shader
+    if maybe_shader ~= nil then
+        local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+        local aspect: f64 = bounds.width / bounds.height
+        local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
+            shader,
+            {graphics_module.float_parameter("u_aspect", aspect)}
+        )
+        if binding.ok then
+            surface.graphics:set_color("#ffffff")
+            surface.graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+            surface.graphics:use_default_shader()
+            return
+        end
+    end
+    draw_fallback(surface.graphics, bounds)
 end
 
 function node(): ui.Node

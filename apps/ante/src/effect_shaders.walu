@@ -18,6 +18,7 @@ export type EffectShaders = {
     black_hole: shader_program.State,
     green_growth: shader_program.State,
     ice_freeze: shader_program.State,
+    astral_sea: shader_program.State,
     -- The tileable data texture the ice shader samples. Presentation resource
     -- loading fills it in; it travels with the effect registry.
     noise_texture: graphics_module.Texture?,
@@ -85,6 +86,11 @@ function State.new(): State
         "ice",
         false
     )
+    local astral: shader_program.State = shader_program.State.new(
+        "ante.effects.astral-sea",
+        "astral sea",
+        false
+    )
     return {
         shaders = {
             card_paper = paper,
@@ -96,11 +102,12 @@ function State.new(): State
             black_hole = black,
             green_growth = green,
             ice_freeze = ice,
+            astral_sea = astral,
             noise_texture = nil,
             paper_board = nil,
             paper_press = nil
         },
-        programs = {paper, gold, defeat, burn, red, blue, black, green, ice},
+        programs = {paper, gold, defeat, burn, red, blue, black, green, ice, astral},
         vertex_source = shader_sources.open("ante.effects.vertex"),
         vertex_text = "",
         vertex_ready = false,

@@ -15,21 +15,24 @@ export function frameSignature(canvas) {
   });
 }
 
-// Two consecutive identical frames: the board has finished whatever it was
-// animating and the next press will mean what it says rather than being spent
-// skipping ahead. Only the board settles this way — the city map behind the
-// menu and the shop pans for as long as it is up, and a reveal left standing
-// burns its lost cards forever.
+
+// The action prompt ink ("PLAY: SELECT TWO CARDS", "SWAP AT LEAST...", etc.)
+// displayed in amber gold once opening deals or card animations settle.
+export function countActionPromptInk(canvas) {
+  return countDesignInk(
+    canvas,
+    { centerOffsetX: -160, actionOffsetY: -10, width: 320, height: 40 },
+    [251, 191, 36],
+    [30, 30, 30],
+  );
+}
+
+// Waits for the board to finish opening deals or card animations and present
+// its live action prompt to accept input.
 export async function settleBoard(canvas) {
-  let previous = -1;
   await expect
-    .poll(async () => {
-      const current = await frameSignature(canvas);
-      const stable = current === previous;
-      previous = current;
-      return stable;
-    }, { timeout: GAME_READY_TIMEOUT })
-    .toBe(true);
+    .poll(async () => countActionPromptInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(15);
 }
 
 // Read a rectangle expressed in Ante's live logical coordinates. Anchors let
