@@ -1529,12 +1529,19 @@ fn is_nullable_inner_type(ty: &Type) -> bool {
 
 fn require_nullable_inner_type(ty: &Type) -> Result<(), Diagnostic> {
     if is_nullable_inner_type(ty) {
-        Ok(())
-    } else {
-        Err(Diagnostic::new(format!(
-            "nullable modifier '?' is not supported on {ty}"
-        )))
+        return Ok(());
     }
+    // `unknown` is the top type: nil is already one of its values, so `?` adds
+    // nothing. It is rejected as redundant, not as a type that excludes nil --
+    // `x == nil` and the nil-coalescing `or` both apply to a bare `unknown`.
+    if *ty == Type::Unknown {
+        return Err(Diagnostic::new(
+            "'unknown?' is redundant: unknown already includes nil. Write 'unknown'",
+        ));
+    }
+    Err(Diagnostic::new(format!(
+        "nullable modifier '?' is not supported on {ty}"
+    )))
 }
 
 /// The reserved `enum` type: "a value of any nominal enum", usable where a

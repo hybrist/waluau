@@ -28,8 +28,8 @@ for n in $(seq 1 25); do
 done
 ```
 
-After the browser `os.*` split in `waluau-qabb`, the directory has **1,098
-chunks**: **436 enabled** and **662 pending**. These numbers are an exact
+After `waluau-tg4g` made `unknown` admit nil, the directory has **1,098
+chunks**: **441 enabled** and **657 pending**. These numbers are an exact
 filesystem snapshot, not a target. Run
 `node conformance/luau/check-pending-inventory.mjs` to verify the counts, every
 family mapping below, the compact intentional sets, and the sole exact runner
@@ -38,11 +38,12 @@ exclusion.
 PR #642 split eight coarse inputs into 79 chunks; later gap fixes and focused
 splits can likewise change both the total and the enabled/pending counts. The
 meaningful measure remains independently passing upstream coverage. The most
-recent change is `waluau-qabb`, which enabled `datetime.1` and split the rest
-of that source into seven focused pending chunks, moving the snapshot from
-1,091/435/656 to 1,098/436/662. It follows `waluau-9f8d.1`, which enabled
-`calls.17` and `calls.18`, and `waluau-9f8d.2`, which enabled `pm.85`, `pm.97`,
-`pm.98`, and `pm.100`-`pm.102`.
+recent change is `waluau-tg4g`, which made `unknown` admit nil in the type
+checker and enabled `constructs.51`, `constructs.52`, `pm.133`, `pm.134`, and
+`pm.143` without splitting anything, moving the snapshot from 1,098/436/662 to
+1,098/441/657. It follows `waluau-qabb`, which enabled `datetime.1` and split
+the rest of that source into seven focused pending chunks, and `waluau-9f8d.2`,
+which enabled `pm.85`, `pm.97`, `pm.98`, and `pm.100`-`pm.102`.
 
 ## Intentional execution-model inventory
 
@@ -205,6 +206,14 @@ booleans. It does not apply Lua/Luau truthiness to nil, numbers, strings,
 records, or `unknown`, and `and`/`or` do not return an arbitrary selected
 operand. This keeps control flow statically typed and makes nullable handling
 explicit.
+
+The one value-producing form is nil-coalescing `or`: when the left operand's
+type admits nil -- `T?`, and since `waluau-tg4g` also the top type `unknown` --
+`a or b` yields `a` when it is present and `b` when it is nil. That is a nil
+test, not a truthiness test, so a present `false` or `0` is returned rather
+than replaced, which is where Lua's `or` would differ. `bool?` is rejected
+outright because the two readings coincide there.
+`conformance/unknown_nil_coalescing.walu` pins the `false` case.
 
 Exact impact in the provenance-split `ifelseexpr` source is three pending
 chunks: `ifelseexpr.1`, `ifelseexpr.3`, and `ifelseexpr.9`. PR #646 enabled the
@@ -438,7 +447,7 @@ independent reason:
 
 The browser probe covers every pending file, while this table assigns every
 current filename stem to at least one documented deviation or **open** bead.
-Counts sum to all **662 pending chunks**. The `trackedByFamily` data in
+Counts sum to all **657 pending chunks**. The `trackedByFamily` data in
 `check-pending-inventory.mjs` is the machine-checked form of this table: an
 unknown family, changed count, missing mapping, or stale compact set fails
 `./check`. A family mapping names its primary blockers; individual coarse
@@ -457,7 +466,7 @@ assertion range becomes independently useful.
 | `classes*` | 49 | Luau class declarations `waluau-wll8` |
 | `clear*` | 1 | Sparse/mixed/hash tables |
 | `closure*` | 19 | Typed coroutines, AOT source loading, sparse tables, static names; dynamic calls/inference `waluau-9f8d` |
-| `constructs*` | 41 | Strict booleans, AOT source loading, sparse tables; dynamic calls/inference `waluau-9f8d` |
+| `constructs*` | 39 | Strict booleans, AOT source loading, sparse tables; dynamic calls/inference `waluau-9f8d` |
 | `coroutine*` | 22 | [Typed coroutine API](#typed-coroutine-api) |
 | `coverage*` | 1 | Embedding/instrumentation hooks |
 | `cyield*` | 13 | [Native C-yield continuations](#native-c-yield-continuations) and typed coroutines |
@@ -484,7 +493,7 @@ assertion range becomes independently useful.
 | `native_userdata*` | 1 | Native/JIT plus reference test userdata |
 | `ndebug_upvalues*` | 1 | Embedding/instrumentation hooks |
 | `pcall*` | 65 | Typed coroutines; runtime-sized multi-success `waluau-d480`, `xpcall` `waluau-wb7a`, protected builtins `waluau-esz6`, dynamic calls/inference `waluau-9f8d` |
-| `pm*` | 46 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
+| `pm*` | 43 | AOT source loading and sparse tables; pattern coercion/replacements `waluau-dbyy`, protected calls `waluau-esz6`, `waluau-wb7a` |
 | `safeenv*` | 1 | Embedding/environment hooks |
 | `sort*` | 1 | AOT source loading and sparse/mixed/hash tables |
 | `stringinterp*` | 2 | [Static lexical names](#static-lexical-names-and-module-environments) (`stringinterp.4`) and [reserved primitive type keywords](#reserved-primitive-type-keywords) (`stringinterp.8`) |

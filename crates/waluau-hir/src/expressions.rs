@@ -1900,16 +1900,17 @@ fn infer_expr_inner(
             }
             BinaryOp::And | BinaryOp::Or => {
                 if matches!(op, BinaryOp::Or) {
-                    // `a or b` where `a: T?` supplies a default rather than
-                    // testing truthiness. Probe the left operand without an
-                    // expectation so a nullable does not collapse to bool.
+                    // `a or b` where `a` admits nil supplies a default rather
+                    // than testing truthiness. Probe the left operand without
+                    // an expectation so a nil-admitting type does not collapse
+                    // to bool. `unknown` takes this rule too: it is the top
+                    // type, so nil is one of its values.
                     let probe = infer_expr(left, vars, fn_signatures, active_type_params, None)
                         .map(first_of_multi)
                         .ok();
-                    if let Some(nullable_ty @ Type::Nullable(_)) = probe {
-                        let inner = nullable_ty
-                            .nullable_inner()
-                            .expect("matched Type::Nullable");
+                    if let Some(nullable_ty) = probe
+                        && let Some(inner) = nullable_ty.nil_test_inner()
+                    {
                         reject_ambiguous_nullable_or(&inner)?;
                         let fallback_ty = nullable_or_fallback_type(
                             right,
@@ -1966,7 +1967,9 @@ fn infer_expr_inner(
                         active_type_params,
                         None,
                     )?);
-                    if matches!(value_ty, Type::Nil | Type::Nullable(_)) {
+                    // `unknown` admits nil the same way `T?` does, so it is a
+                    // valid nil-test operand.
+                    if matches!(value_ty, Type::Nil) || value_ty.admits_nil() {
                         return Ok(Type::Bool);
                     }
                     // An empty multi-value result (e.g. `string.byte` with a
