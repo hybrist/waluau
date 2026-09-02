@@ -4,6 +4,7 @@
 local run_ = require("./run")
 local item_ = require("./items/item")
 local item_catalog = require("./items/catalog")
+local potion_ = require("./items/potion")
 local scroll_ = require("./items/scroll")
 local spell_ = require("./spells/spell")
 
@@ -17,18 +18,24 @@ const SNAPSHOT_SCHEMA: string = "duel-shop-v5"
 export type Slot = { item: Item, price: i32, sold: bool }
 export type State = { open: bool, slots: {Slot}, cursor: i32 }
 
-function all_scroll_items(run: RunState): {Item}
-    local scrolls: {Item} = {}
+-- Everything a visit could stock: a scroll for every kind of spell, at
+-- whatever level the run would take it at, plus the one potion. A shelf that
+-- the run cannot buy from is still stocked — a full loadout and full health
+-- are facts the offer shows greyed out, not facts that quietly reroll the
+-- shelf into something the player was always going to be able to afford.
+function all_items(run: RunState): {Item}
+    local items: {Item} = {}
     for _, kind in pairs(spell_.SpellKind) do
         local level: i32 = run:current_spell_level(kind) + 1
-        table.insert(scrolls, scroll_.SpellScroll.new(kind, level)::Item)
+        table.insert(items, scroll_.SpellScroll.new(kind, level)::Item)
     end
-    return scrolls
+    table.insert(items, potion_.HealingPotion.new()::Item)
+    return items
 end
 
 function roll_slots(run: RunState): {Slot}
     local slots: {Slot} = {}
-    local items: {Item} = all_scroll_items(run)
+    local items: {Item} = all_items(run)
     for _ = 1, DEFAULT_SHOP_ITEM_COUNT do
         local index: i32 = math.random(#items) - 1
         local item: Item = table.remove(items, index + 1)

@@ -267,6 +267,29 @@ function State:lose_hand(): bool
     return self.hearts == 0
 end
 
+-- Whether there is damage a potion could undo. A run at full health has
+-- nothing to restore, and a run at zero is already over — settle restarts it
+-- rather than letting anything buy it back — so neither is a sale the shop
+-- should make.
+function State:can_heal(): bool
+    return self.hearts > 0 and self.hearts < MAX_HEARTS
+end
+
+-- Give back hearts a duel took, never past the pool the run opened with. This
+-- is the one thing that moves health upward: nothing inside a duel repairs it
+-- and clearing one does not either, so health only ever climbs by something
+-- bought in the intermission.
+function State:heal(hearts: i32): bool
+    if hearts < 1 or not self:can_heal() then
+        return false
+    end
+    self.hearts += hearts
+    if self.hearts > MAX_HEARTS then
+        self.hearts = MAX_HEARTS
+    end
+    return true
+end
+
 -- Whether the loadout already holds that kind of spell, and therefore whether
 -- an intermission has anything new to offer in it.
 function State:carries(kind: spells.SpellKind): bool
