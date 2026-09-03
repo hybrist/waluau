@@ -1,15 +1,13 @@
--- The vault the duel is fought in: a dark stone field lit by one high lamp,
--- crossed by the faint shafts that lamp throws across it, and closing to black
--- at the walls.
+-- The Astral Sea the duel is fought across: a cosmic, magical expanse of
+-- swirling violet and celestial cyan nebulae, drifting stardust, and deep
+-- void, subtly animated behind the duel board.
 --
--- It used to be a flat fill with a fan of hairlines struck over it, which left
--- every object on the board floating on an even sheet of near-black with
--- nothing behind it. The three passes here are what give the board a room:
--- the field carries the lamp's falloff, the shafts read as light rather than
--- as ruled lines because they fade along their own length, and the vignette
--- closes the corners so the eye settles on the table.
+-- Drawn via a procedural WebGL2 fragment shader (astral-sea.frag) when
+-- compiled, with a dark stone field fallback if shaders are unavailable.
 local box = require("../ui/layout")
 local ui = require("../ui/node")
+local graphics_module = require("waluau:engine/graphics")
+local ink = require("../ink")
 local plate = require("../plate")
 
 const CLEAR: string = "#09090b"
@@ -158,6 +156,23 @@ end
 
 function draw_at(surface: ui.Surface, bounds: box.Rect): unit
     local graphics = surface.graphics
+    local maybe_shader: graphics_module.Shader? = surface.effects.astral_sea.shader
+    if maybe_shader ~= nil then
+        local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+        if not shader.released then
+            local aspect: f64 = bounds.width / bounds.height
+            local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(
+                shader,
+                {graphics_module.float_parameter("u_aspect", aspect)}
+            )
+            if binding.ok then
+                graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
+                graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+                ink.stop_effect(graphics)
+                return
+            end
+        end
+    end
     graphics:clear(CLEAR)
     draw_field(graphics, bounds)
     draw_shafts(graphics, bounds)

@@ -5,12 +5,88 @@ export const GAME_READY_TIMEOUT = 20_000;
 export function frameSignature(canvas) {
   return canvas.evaluate((node) => {
     const gl = node.getContext('webgl2');
-    const data = new Uint8Array(node.width * node.height * 4);
-    gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    const cssScale = Math.min(node.clientWidth / 700, node.clientHeight / 600);
+    const logicalWidth = node.clientWidth / cssScale;
+    const logicalHeight = node.clientHeight / cssScale;
+    const extra = Math.max(0, logicalHeight - 600);
+    const computerY = 116 + extra * 0.3;
+    const playerY = logicalHeight - 91 - extra * 0.2;
+    const wardY = ((computerY + 64 + playerY) * 0.5 + 12) - 64;
+    const densityX = node.width / node.clientWidth;
+    const densityY = node.height / node.clientHeight;
+
+    const regions = [
+      // Deck
+      { x: 56 + 21, y: wardY + 29, width: 50, height: 70 },
+      // Table cards (left, center, right)
+      { x: logicalWidth * 0.5 - 116 - 25, y: wardY + 29, width: 50, height: 70 },
+      { x: logicalWidth * 0.5 - 25, y: wardY + 29, width: 50, height: 70 },
+      { x: logicalWidth * 0.5 + 116 - 25, y: wardY + 29, width: 50, height: 70 },
+      // Player hand card 1 (played during trick commits)
+      { x: logicalWidth * 0.5 - 70 - 14, y: playerY + 40, width: 28, height: 28 },
+    ];
+
     let hash = 0;
-    for (let index = 0; index < data.length; index += 32) {
-      hash = (hash * 33 + data[index] + data[index + 1] * 3 + data[index + 2] * 7) >>> 0;
+    for (const region of regions) {
+      const left = Math.round(region.x * cssScale * densityX);
+      const top = Math.round(region.y * cssScale * densityY);
+      const width = Math.max(1, Math.round(region.width * cssScale * densityX));
+      const height = Math.max(1, Math.round(region.height * cssScale * densityY));
+      const bottom = node.height - top - height;
+      if (left < 0 || bottom < 0 || left + width > node.width || bottom + height > node.height) {
+        continue;
+      }
+      const data = new Uint8Array(width * height * 4);
+      gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+      for (let i = 0; i < data.length; i += 16) {
+        hash = (hash * 33 + data[i] + data[i + 1] * 3 + data[i + 2] * 7) >>> 0;
+      }
     }
+
+    // Aim prompt ink count (Firebolt / spell targeting)
+    const aimLeft = Math.round((logicalWidth * 0.5 - 160) * cssScale * densityX);
+    const aimTop = Math.round((wardY - 51) * cssScale * densityY);
+    const aimWidth = Math.max(1, Math.round(320 * cssScale * densityX));
+    const aimHeight = Math.max(1, Math.round(16 * cssScale * densityY));
+    const aimBottom = node.height - aimTop - aimHeight;
+    let aimInk = 0;
+    if (aimLeft >= 0 && aimBottom >= 0 && aimLeft + aimWidth <= node.width && aimBottom + aimHeight <= node.height) {
+      const aimPixels = new Uint8Array(aimWidth * aimHeight * 4);
+      gl.readPixels(aimLeft, aimBottom, aimWidth, aimHeight, gl.RGBA, gl.UNSIGNED_BYTE, aimPixels);
+      for (let i = 0; i < aimPixels.length; i += 4) {
+        if (
+          Math.abs(aimPixels[i] - 239) <= 30 &&
+          Math.abs(aimPixels[i + 1] - 68) <= 30 &&
+          Math.abs(aimPixels[i + 2] - 68) <= 30
+        ) {
+          aimInk += 1;
+        }
+      }
+    }
+    hash = (hash * 33 + aimInk) >>> 0;
+
+    // Modal heading ink count (Help / Rules / History)
+    const modalLeft = Math.round((logicalWidth * 0.5 - 300) * cssScale * densityX);
+    const modalTop = Math.round(30 * cssScale * densityY);
+    const modalWidth = Math.max(1, Math.round(180 * cssScale * densityX));
+    const modalHeight = Math.max(1, Math.round(40 * cssScale * densityY));
+    const modalBottom = node.height - modalTop - modalHeight;
+    let modalInk = 0;
+    if (modalLeft >= 0 && modalBottom >= 0 && modalLeft + modalWidth <= node.width && modalBottom + modalHeight <= node.height) {
+      const modalPixels = new Uint8Array(modalWidth * modalHeight * 4);
+      gl.readPixels(modalLeft, modalBottom, modalWidth, modalHeight, gl.RGBA, gl.UNSIGNED_BYTE, modalPixels);
+      for (let i = 0; i < modalPixels.length; i += 4) {
+        if (
+          Math.abs(modalPixels[i] - 251) <= 20 &&
+          Math.abs(modalPixels[i + 1] - 191) <= 20 &&
+          Math.abs(modalPixels[i + 2] - 36) <= 20
+        ) {
+          modalInk += 1;
+        }
+      }
+    }
+    hash = (hash * 33 + modalInk) >>> 0;
+
     return hash;
   });
 }

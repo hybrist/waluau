@@ -1,0 +1,40 @@
+-- Visual inspection for the animated Astral Sea duel background.
+local storybook = require("waluau:engine/storybook")
+local layout = require("./ui/layout")
+local ui = require("./ui/node")
+local ui_story = require("./ui/story")
+local backdrop = require("./entities/backdrop")
+
+const WIDTH: u32 = 900
+const HEIGHT: u32 = 540
+const BACKGROUND: string = "#05020c"
+local book = ui_story.Book.new()
+
+local function backdrop_node(): ui.Node
+    return ui.Node.measured(
+        function(graphics: ui.Graphics?, into: layout.Intrinsic): unit
+            layout.set_fixed(into, WIDTH::f64, HEIGHT::f64)
+        end,
+        function(surface: ui.Surface, bounds: layout.Rect): unit
+            backdrop.draw_at(surface, bounds)
+        end
+    )
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Astral Sea",
+            book:scene(
+                {
+                    node = backdrop_node,
+                    width = WIDTH,
+                    height = HEIGHT,
+                    scale = 1.0,
+                    background = BACKGROUND
+                }
+            ),
+            {}
+        )
+    }
+)

@@ -360,7 +360,7 @@ scopes prevent the covered board from responding.
 | `entities/ledger.walu` | The breach ledger, one row per played hand. |
 | `entities/verdict.walu` | The verdict of a fought vault, read as a moment in the run. |
 | `entities/school_tile.walu` | One school of magic as a swatch, running the card's own field. |
-| `entities/backdrop.walu` | The vault behind everything. |
+| `entities/backdrop.walu` | The animated Astral Sea behind the duel. |
 
 Vite discovers every `src/shaders/*.frag` file through `shader-sources.js` and
 maps it through the plugin's `shaderSources` option. Production bundles the same source contract; in
