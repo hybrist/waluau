@@ -16,7 +16,10 @@ export type Surface = {
     effects: effect_shaders.EffectShaders,
     card_back: graphics_module.Texture?,
     suit_symbols: graphics_module.Texture?,
-    face_cards: graphics_module.Texture?
+    face_cards: graphics_module.Texture?,
+    -- True when the browser reports prefers-reduced-motion: decoration that
+    -- would move on its own holds still, starting with the backdrop.
+    reduced_motion: bool
 }
 export type Measure = (Graphics?, layout.Intrinsic) -> unit
 export type Paint = (Surface, layout.Rect) -> unit

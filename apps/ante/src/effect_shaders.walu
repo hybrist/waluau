@@ -18,6 +18,7 @@ export type EffectShaders = {
     black_hole: shader_program.State,
     green_growth: shader_program.State,
     ice_freeze: shader_program.State,
+    astral_sea: shader_program.State,
     -- The tileable data texture the ice shader samples. Presentation resource
     -- loading fills it in; it travels with the effect registry.
     noise_texture: graphics_module.Texture?,
@@ -27,7 +28,11 @@ export type EffectShaders = {
     -- these in lazily once the paper program compiles; a rebuild of that
     -- program drops them so the next card re-bakes from the new source.
     paper_board: graphics_module.RenderTarget?,
-    paper_press: graphics_module.RenderTarget?
+    paper_press: graphics_module.RenderTarget?,
+    -- The still astral sea a viewer who prefers reduced motion sees, baked
+    -- once at the board's size by the backdrop and dropped here whenever the
+    -- sea program is rebuilt, so the next frame re-bakes from the new source.
+    sea_still: graphics_module.RenderTarget?
 }
 export type State = {
     shaders: EffectShaders,
@@ -85,6 +90,11 @@ function State.new(): State
         "ice",
         false
     )
+    local sea: shader_program.State = shader_program.State.new(
+        "ante.effects.astral-sea",
+        "astral sea",
+        false
+    )
     return {
         shaders = {
             card_paper = paper,
@@ -96,11 +106,13 @@ function State.new(): State
             black_hole = black,
             green_growth = green,
             ice_freeze = ice,
+            astral_sea = sea,
             noise_texture = nil,
             paper_board = nil,
-            paper_press = nil
+            paper_press = nil,
+            sea_still = nil
         },
-        programs = {paper, gold, defeat, burn, red, blue, black, green, ice},
+        programs = {paper, gold, defeat, burn, red, blue, black, green, ice, sea},
         vertex_source = shader_sources.open("ante.effects.vertex"),
         vertex_text = "",
         vertex_ready = false,
@@ -139,7 +151,18 @@ function State:refresh(graphics: Graphics): unit
         if program.label == self.shaders.card_paper.label and (vertex_changed or changed[index]) then
             self:release_paper_bake(graphics)
         end
+        if program.label == self.shaders.astral_sea.label and (vertex_changed or changed[index]) then
+            self:release_sea_bake(graphics)
+        end
     end
+end
+
+function State:release_sea_bake(graphics: Graphics): unit
+    local still: graphics_module.RenderTarget? = self.shaders.sea_still
+    if still ~= nil then
+        graphics:release_render_target(still::graphics_module.RenderTarget)
+    end
+    self.shaders.sea_still = nil
 end
 
 function State:release_paper_bake(graphics: Graphics): unit
@@ -194,6 +217,7 @@ function State:release(graphics: Graphics): unit
         program:release(graphics)
     end
     self:release_paper_bake(graphics)
+    self:release_sea_bake(graphics)
     local noise: graphics_module.Texture? = self.shaders.noise_texture
     if noise ~= nil then
         graphics:release_texture(noise::graphics_module.Texture)

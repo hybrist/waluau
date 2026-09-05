@@ -14,11 +14,12 @@ export type ParticleSystem = particles_module.ParticleSystem
 export type ParticleColor = particles_module.Color
 export type ParticleQuad = particles_module.Quad
 
-local VERSION <const>: string = "1.6.0"
+local VERSION <const>: string = "1.7.0"
 
 return {
     VERSION = VERSION,
     start = browser.start,
+    prefers_reduced_motion = browser.prefers_reduced_motion,
     -- Particle emitters are a graphics-adjacent subsystem rather than part of
     -- the renderer, so the facade exposes their constructor directly.
     new_particle_system = particles_module.new,

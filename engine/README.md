@@ -110,8 +110,10 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.6.0`)
+- `VERSION`: the semantic API version (`1.7.0`)
 - `start`: the browser lifecycle entry point
+- `prefers_reduced_motion`: whether the browser's `prefers-reduced-motion` media
+  query matches, for decoration that would otherwise move on its own
 - `Config`, `Game`, `Session`, `Input`, `Graphics`, and `ParticleSystem`:
   canonical public types
 - `new_particle_system`, `particle_color`, `particle_hex`, and `particle_quad`:

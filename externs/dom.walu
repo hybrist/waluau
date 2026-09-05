@@ -41,6 +41,7 @@ type HTMLHeadElement = extern extends HTMLElement
 type HTMLSlotElement = extern extends HTMLElement
 type ValidityState = extern
 type Window = extern extends EventTarget
+type MediaQueryList = extern extends EventTarget
 type Location = extern
 type History = extern
 type Navigator = extern
@@ -236,6 +237,7 @@ declare property Window: credentialless: bool
 declare property Window: onorientationchange: (Event) -> unit
 declare function Window:navigate(dir: string): unit
 declare function Window:requestResize(): unit
+declare function Window:matchMedia(query: string): MediaQueryList
 declare property Window: screen: Screen
 declare function Window:moveTo(x: i32, y: i32): unit
 declare function Window:moveBy(x: i32, y: i32): unit
@@ -534,6 +536,11 @@ declare property CSSPseudoElement: selectorText: string
 declare function CSSPseudoElement:pseudo(type: string): CSSPseudoElement?
 declare function StylePropertyMapReadOnly:has(property: string): bool
 declare function StylePropertyMap:delete(property: string): unit
+declare property MediaQueryList: media: string
+declare property MediaQueryList: matches: bool
+declare function MediaQueryList:addListener(callback: ((Event) -> unit)?): unit
+declare function MediaQueryList:removeListener(callback: ((Event) -> unit)?): unit
+declare property MediaQueryList: onchange: (Event) -> unit
 declare property Screen: availWidth: i32
 declare property Screen: availHeight: i32
 declare property Screen: colorDepth: u32

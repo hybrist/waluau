@@ -742,7 +742,6 @@ skip Window.getScreenDetails: unsupported generic Web IDL type Promise<ScreenDet
 skip Window.indexedDB: Web IDL type IDBFactory is not part of the selected DOM interface surface
 skip Window.launchQueue: Web IDL type LaunchQueue is not part of the selected DOM interface surface
 skip Window.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Window.matchMedia: Web IDL type MediaQueryList is not part of the selected DOM interface surface
 skip Window.name: disabled -- member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Window.navigation: Web IDL type Navigation is not part of the selected DOM interface surface
 skip Window.onbeforeunload: unsupported Web IDL type OnBeforeUnloadEventHandler

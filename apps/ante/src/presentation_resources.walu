@@ -28,7 +28,8 @@ export type State = {
     -- Resource failures are historical; shader diagnostics instead describe
     -- only the current live revision so a valid HMR edit can clear them.
     warnings: string,
-    shader_warnings: string
+    shader_warnings: string,
+    reduced_motion: bool
 }
 
 const SOUND_PATH: string = "assets/card-flip.wav"
@@ -51,7 +52,10 @@ function State.new(): State
         fatal_audio_code = "",
         fatal_audio_message = "",
         warnings = "",
-        shader_warnings = ""
+        shader_warnings = "",
+        -- Read once: the preference is the viewer's, not the frame's, and a
+        -- change mid-session takes effect with the next load.
+        reduced_motion = engine.prefers_reduced_motion()
     }
 end
 
@@ -214,7 +218,8 @@ function State:surface(graphics: engine.Graphics): ui.Surface
         effects = self.effects,
         card_back = self.texture,
         suit_symbols = self.suit_texture,
-        face_cards = self.face_texture
+        face_cards = self.face_texture,
+        reduced_motion = self.reduced_motion
     }
 end
 
