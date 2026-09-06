@@ -152,7 +152,8 @@ test('turns a .test.walu import into a versioned test runner module', async () =
       entry,
     );
 
-    assert.match(transformed.code, /registerWaluGlueTests\(\{ run, wasmUrl: versionedWasmUrl\(\) \}\)/);
+    assert.match(transformed.code, /registerWaluGlueTests\(\{/);
+    assert.match(transformed.code, /shaderSources: shaderSourceHost/);
     assert.match(transformed.code, /waluau-hmr=1/);
     assert.doesNotMatch(transformed.code, /replaceWaluauGame/);
     assert.doesNotMatch(transformed.code, /createWaluauBook/);
@@ -690,10 +691,10 @@ test('loads shader sources in production and accepts dev updates without rebuild
   }
 });
 
-test('turns compiler-discovered shader requires into stateful Vite modules', async () => {
+test('gives test modules stateful hosts for compiler-discovered shader requires', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {
-    const entry = join(root, 'effect.stories.walu');
+    const entry = join(root, 'effect.test.walu');
     const shader = join(root, 'effects', 'required.frag');
     const importName = '__waluau_shader_require_1234';
     const script = `
@@ -718,6 +719,7 @@ test('turns compiler-discovered shader requires into stateful Vite modules', asy
     const aggregateId = /import shaderSourceHost from "(virtual:waluau-shader-sources:[^"]+)"/
       .exec(transformed.code)?.[1];
     assert(aggregateId);
+    assert.match(transformed.code, /shaderSources: shaderSourceHost/);
     const aggregate = plugin.load(plugin.resolveId(aggregateId));
     const stateId = new RegExp(
       'import waluauImportedShader0 from "(virtual:waluau-imported-shader:[^"]+)"',

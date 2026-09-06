@@ -184,7 +184,7 @@ export function createWaluTestHost(api = vitest) {
 // Registers a test module compiled ahead of time by the waluau CLI, using the
 // generated glue module's `run` entry point. Called from the module the
 // waluau() vite plugin generates for each *.test.walu file.
-export async function registerWaluGlueTests({ run, api, wasmUrl }) {
+export async function registerWaluGlueTests({ run, api, wasmUrl, shaderSources }) {
   const host = createWaluTestHost(api);
   try {
     const loaded = await run({
@@ -196,6 +196,7 @@ export async function registerWaluGlueTests({ run, api, wasmUrl }) {
           bytesConstants: context.bytesConstants,
           hostImports: host.hostImports,
           getWasmExports: context.getWasmExports,
+          shaderSources,
           // These suites run in a real browser, so the test document is the
           // DOM output root. A test module only has to reach a DOM extern
           // transitively — requiring a module that itself requires
