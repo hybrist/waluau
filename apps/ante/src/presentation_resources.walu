@@ -6,7 +6,7 @@ local graphics_module = require("waluau:engine/graphics")
 local resources = require("waluau:engine/resources")
 local audio = require("waluau:engine/audio")
 local assets = require("waluau:assets")
-local effect_shaders = require("./effect_shaders")
+local shader_program = require("./shader_program")
 local failure = require("./presentation/failure")
 local ui = require("./ui/node")
 local layout = require("./layout")
@@ -16,9 +16,8 @@ export type State = {
     texture: graphics_module.Texture?,
     suit_texture: graphics_module.Texture?,
     face_texture: graphics_module.Texture?,
+    noise_texture: graphics_module.Texture?,
     font: graphics_module.Font?,
-    effects: effect_shaders.EffectShaders,
-    effect_set: effect_shaders.State,
     graphics: engine.Graphics?,
     sound_finished: bool,
     audio_unlocked: bool,
@@ -36,15 +35,13 @@ const SOUND_PATH: string = "assets/card-flip.wav"
 const FLIP_SOUND_VOLUME: f64 = 0.62
 
 function State.new(): State
-    local effect_set: effect_shaders.State = effect_shaders.State.new()
     return {
         bundle = nil,
         texture = nil,
         suit_texture = nil,
         face_texture = nil,
+        noise_texture = nil,
         font = nil,
-        effects = effect_set.shaders,
-        effect_set = effect_set,
         graphics = nil,
         sound_finished = false,
         audio_unlocked = false,
@@ -90,8 +87,7 @@ end
 
 function State:prepare(graphics: engine.Graphics): unit
     self.graphics = graphics
-    self.effect_set:refresh(graphics)
-    local shader_diagnostics: effect_shaders.Diagnostics = self.effect_set:diagnostics()
+    local shader_diagnostics: shader_program.Diagnostics = shader_program.compile(graphics)
     self.fatal_shader_error = shader_diagnostics.fatal_error
     if shader_diagnostics.warnings ~= self.shader_warnings then
         self.shader_warnings = shader_diagnostics.warnings
@@ -145,7 +141,7 @@ function State:prepare(graphics: engine.Graphics): unit
             resources.release_image(source)
             bundle.ice_noise = nil
             if result.ok then
-                self.effects.noise_texture = result.texture
+                self.noise_texture = result.texture
             else
                 self:append_warning(result.error.code .. ": " .. result.error.message)
             end
@@ -209,16 +205,15 @@ function State:can_update(): bool
     return #self.fatal_audio_code == 0 and self.sound_finished and self.audio_unlocked
 end
 
--- The surface every entity of the game draws on: the live graphics, the effect
--- programs, and the packaged card back once it has arrived. This module owns
--- all three, so it is where the three become one value.
+-- The surface every entity draws on: live graphics and the packaged textures
+-- that have arrived. Shader imports live in their rendering modules instead.
 function State:surface(graphics: engine.Graphics): ui.Surface
     return {
         graphics = graphics,
-        effects = self.effects,
         card_back = self.texture,
         suit_symbols = self.suit_texture,
         face_cards = self.face_texture,
+        ice_noise = self.noise_texture,
         reduced_motion = self.reduced_motion
     }
 end
@@ -241,7 +236,6 @@ function State:dispose(): unit
     local maybe_graphics: engine.Graphics? = self.graphics
     if maybe_graphics ~= nil then
         local graphics: engine.Graphics = maybe_graphics::engine.Graphics
-        self.effect_set:release(graphics)
         local maybe_texture: graphics_module.Texture? = self.texture
         if maybe_texture ~= nil then
             graphics:release_texture(maybe_texture::graphics_module.Texture)
@@ -256,6 +250,11 @@ function State:dispose(): unit
         if maybe_faces ~= nil then
             graphics:release_texture(maybe_faces::graphics_module.Texture)
             self.face_texture = nil
+        end
+        local maybe_noise: graphics_module.Texture? = self.noise_texture
+        if maybe_noise ~= nil then
+            graphics:release_texture(maybe_noise::graphics_module.Texture)
+            self.noise_texture = nil
         end
         local maybe_font: graphics_module.Font? = self.font
         if maybe_font ~= nil then

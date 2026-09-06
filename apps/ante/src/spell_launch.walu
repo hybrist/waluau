@@ -1,7 +1,6 @@
 -- Stable spell-launch seam. Targeting supplies the destination; each spell
 -- implementation owns its carrier and impact without sharing an edit site.
 local engine = require("waluau:engine")
-local effect_shaders = require("./effect_shaders")
 local spell_cast = require("./spell_cast")
 local spells = require("./spells/spell")
 local firebolt = require("./spell_launch_firebolt")
@@ -10,7 +9,6 @@ local raise_card = require("./spell_launch_raise_card")
 local clone = require("./spell_launch_clone")
 
 type Graphics = engine.Graphics
-type EffectShaders = effect_shaders.EffectShaders
 
 function name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Firebolt then
@@ -87,7 +85,6 @@ end
 
 function draw(
     graphics: Graphics,
-    effects: EffectShaders,
     kind: spells.SpellKind?,
     clock: f64,
     target_x: f64,
@@ -96,18 +93,18 @@ function draw(
 ): unit
     local cast: spell_cast.Cast = spell_cast.Cast.new(clock, target_x, target_y)
     if kind == spells.SpellKind.Firebolt then
-        firebolt.draw(graphics, effects, cast, sparks.trail)
+        firebolt.draw(graphics, cast, sparks.trail)
     elseif kind == spells.SpellKind.FreezeRay then
-        freeze_ray.draw(graphics, effects, cast)
+        freeze_ray.draw(graphics, cast)
     elseif kind == spells.SpellKind.RaiseCard then
-        raise_card.draw(graphics, effects, cast)
+        raise_card.draw(graphics, cast)
     elseif kind == spells.SpellKind.Clone then
-        clone.draw(graphics, effects, cast)
+        clone.draw(graphics, cast)
     end
     -- One burst for every spell, outside the dispatch because the sparks a
     -- landing threw are still in the air after the carrier that threw them is
     -- gone. Fire is the only one of the four that burns.
-    spell_cast.draw_burst(graphics, effects, sparks.burst, kind == spells.SpellKind.Firebolt)
+    spell_cast.draw_burst(graphics, sparks.burst, kind == spells.SpellKind.Firebolt)
 end
 
 return { draw = draw, step = step, new_sparks = new_sparks, name = name, color = color }

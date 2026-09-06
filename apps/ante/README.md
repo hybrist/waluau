@@ -255,8 +255,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `spell_cast.walu` | Target-aware spell trajectory and shared impact geometry. |
 | `spell_launch*.walu` | Stable launch seam plus one independently editable carrier/impact module per spell. |
 | `burn_particles.walu` | Shared card-burn shader binding and deterministic ash/ember primitives. |
-| `effect_shaders.walu` | Required effect imports and their presentation cache coordination. |
-| `shader_program.walu` | Small application interface over one Vite-managed fragment program. |
+| `shader_program.walu` | Registered Vite-managed fragment programs behind declaration, binding, prewarming, and diagnostic handling. |
 | `src/shaders/` | Independently reloadable effect fragment stages required by Waluau modules. |
 | `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
@@ -366,11 +365,15 @@ scopes prevent the covered board from responding.
 | `entities/school_tile.walu` | One school of magic as a swatch, running the card's own field. |
 | `entities/backdrop.walu` | The vault behind everything. |
 
-`effect_shaders.walu` requires every `src/shaders/*.frag` file it uses. Vite
-turns each require into a stateful JavaScript module associated with the engine
-canvas. Production bundles the same source contract; in development, a fragment
-edit replaces only its host-owned WebGLProgram without rebuilding the Wasm game.
-Tests discover the required fragment files rather than maintaining shader totals.
+Each rendering module requires the `src/shaders/*.frag` files it uses. Shared
+burn binding lives with `burn_particles.walu`; no shader handle travels through
+the retained UI surface and renderers have no shader refresh or disposal
+lifecycle. `shader_program.walu` registers declarations for prewarming and
+diagnostics, while the browser engine owns their lifetime. Vite turns each
+require into a stateful JavaScript module associated with the engine canvas.
+Production bundles the same source contract; in development, a fragment edit
+replaces only its host-owned WebGLProgram without rebuilding the Wasm game.
+Tests pin every fragment to its rendering owner.
 Invalid live edits keep the previous program allocated while reporting the
 current shader diagnostic (fatal overlay for the defeat shroud, console warning
 for optional effects), and a later valid edit clears that diagnostic.

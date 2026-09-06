@@ -1,12 +1,10 @@
 -- Clone's carrier and impact.
 local engine = require("waluau:engine")
-local effect_shaders = require("./effect_shaders")
 local spell_cast = require("./spell_cast")
 
 type Graphics = engine.Graphics
-type EffectShaders = effect_shaders.EffectShaders
 
-function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
+function draw(graphics: Graphics, cast: spell_cast.Cast): unit
     if cast.progress < 1.0 then
         local head: spell_cast.Point = cast:at(cast.progress)
         for spore = 0::i32, 7::i32 do

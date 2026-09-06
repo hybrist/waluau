@@ -19,6 +19,18 @@ const ANTE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VITE_CONFIG = join(ANTE_ROOT, 'vite.config.js');
 const SHADER_RELATIVE_DIRECTORY = join('src', 'shaders');
 const DEFEAT_FILE = 'defeat-shroud.frag';
+const SHADER_OWNERS = Object.freeze({
+  'astral-sea.frag': join('entities', 'backdrop.walu'),
+  'black-hole.frag': join('entities', 'card.walu'),
+  'blue-caustics.frag': join('entities', 'card.walu'),
+  'card-burn.frag': 'burn_particles.walu',
+  'card-paper.frag': join('entities', 'card.walu'),
+  'defeat-shroud.frag': 'render.walu',
+  'gold-shimmer.frag': 'render.walu',
+  'green-growth.frag': join('entities', 'card.walu'),
+  'ice-freeze.frag': join('entities', 'powered_card.walu'),
+  'red-fire.frag': join('entities', 'card.walu'),
+});
 
 async function readShaderSources(root = ANTE_ROOT) {
   const directory = join(root, SHADER_RELATIVE_DIRECTORY);
@@ -31,6 +43,16 @@ async function readShaderSources(root = ANTE_ROOT) {
       await readFile(join(directory, filename), 'utf8'),
     ]),
   ));
+}
+
+async function readWaluauModules(directory) {
+  const modules = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) modules.push(...await readWaluauModules(path));
+    else if (entry.name.endsWith('.walu')) modules.push({ path, source: await readFile(path, 'utf8') });
+  }
+  return modules;
 }
 
 async function installRuntimeProbe(page) {
@@ -200,13 +222,18 @@ async function copyAnteApp(destination) {
   ]);
 }
 
-test('production includes and compiles every required fragment shader', async ({ page }) => {
+test('production colocates and compiles every required fragment shader', async ({ page }) => {
   const shaders = await readShaderSources();
-  const effectSource = await readFile(join(ANTE_ROOT, 'src', 'effect_shaders.walu'), 'utf8');
+  const sourceRoot = join(ANTE_ROOT, 'src');
+  const modules = await readWaluauModules(sourceRoot);
+  expect(Object.keys(SHADER_OWNERS).sort()).toEqual(Object.keys(shaders));
 
   for (const filename of Object.keys(shaders)) {
-    expect(effectSource).toContain(`require("./shaders/${filename}")`);
-    expect(effectSource).not.toContain(shaders[filename].trim());
+    const owners = modules.filter(({ source }) => source.includes(`shaders/${filename}")`));
+    expect(owners.map(({ path }) => path)).toEqual([
+      join(sourceRoot, SHADER_OWNERS[filename]),
+    ]);
+    expect(owners[0].source).not.toContain(shaders[filename].trim());
   }
 
   await installRuntimeProbe(page);

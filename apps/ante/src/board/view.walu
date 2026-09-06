@@ -265,20 +265,20 @@ function State:prepare_surface(surface: ui.Surface): unit
     if retained == nil then
         self.surface = {
             graphics = surface.graphics,
-            effects = surface.effects,
             card_back = surface.card_back,
             suit_symbols = surface.suit_symbols,
             face_cards = surface.face_cards,
+            ice_noise = surface.ice_noise,
             reduced_motion = surface.reduced_motion
         }
         return
     end
     local current: ui.Surface = retained::ui.Surface
     current.graphics = surface.graphics
-    current.effects = surface.effects
     current.card_back = surface.card_back
     current.suit_symbols = surface.suit_symbols
     current.face_cards = surface.face_cards
+    current.ice_noise = surface.ice_noise
     current.reduced_motion = surface.reduced_motion
 end
 

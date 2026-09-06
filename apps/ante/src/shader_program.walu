@@ -1,50 +1,98 @@
--- One Vite-managed fragment program behind a small application interface.
--- The host owns compilation, HMR, and the WebGLProgram; Ante keeps only the
--- current generation's typed shader view and presentation diagnostics.
+-- Ante's one application interface to Vite-managed fragment programs. A
+-- declaration registers an import for prewarming and diagnostics; renderers
+-- only ask that declaration for its current typed shader when they bind it.
+-- The host owns HMR and the WebGLProgram, while Graphics owns the lifetime of
+-- this Wasm generation's typed views.
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 
 type Graphics = engine.Graphics
-export type State = {
+export opaque type Program = {
     label: string,
     required: bool,
     imported: extern,
     revision: i32,
     error: string,
-    shader: graphics_module.Shader?
+    current: graphics_module.Shader?
 }
+export type Diagnostics = { fatal_error: string, warnings: string }
 
-function State.new(imported: extern, label: string, required: bool): State
-    return {
+local programs: {Program} = {}
+
+function new(imported: extern, label: string, required: bool): Program
+    local program: Program = {
         label = label,
         required = required,
         imported = imported,
         revision = -1,
         error = "",
-        shader = nil
+        current = nil
     }
+    table.insert(programs, program)
+    return program
 end
 
--- Refresh this Wasm generation's view of the host-owned program. The host
--- compiles only new source revisions, so this is cheap to call every frame.
--- Returning a revision change lets callers invalidate shader-derived caches.
-function State:refresh(graphics: Graphics): bool
-    local previous_revision: i32 = self.revision
-    local result: graphics_module.ShaderResult = graphics:compile_shader(self.imported)
+local function update(program: Program, graphics: Graphics): unit
+    local result: graphics_module.ShaderResult = graphics:compile_shader(program.imported)
     if result.ok then
-        self.shader = result.shader
-        self.revision = result.shader.revision
-        self.error = ""
+        program.current = result.shader
+        program.revision = result.shader.revision
+        program.error = ""
     else
-        self.error = self.label .. " " .. result.error.code .. ": " .. result.error.message
+        program.error = program.label .. " " .. result.error.code .. ": " .. result.error.message
     end
-    return self.revision ~= previous_revision
 end
 
-function State:release(graphics: Graphics): unit
-    local shader: graphics_module.Shader? = self.shader
-    if shader ~= nil then
-        graphics:release_shader(shader::graphics_module.Shader)
+-- Bind this generation's view immediately before drawing. The host compiles
+-- only new source revisions, so the common unchanged path is a cached lookup;
+-- a failed HMR edit leaves `current` pointing at the last good program.
+function Program:bind(graphics: Graphics, parameters: {graphics_module.ShaderParameter}): bool
+    update(self, graphics)
+    local shader: graphics_module.Shader? = self.current
+    if shader == nil then
+        return false
     end
-    self.shader = nil
+    return graphics:bind_shader(shader::graphics_module.Shader, parameters).ok
 end
+
+-- Shader-derived caches compare this after resolving the shader. The token
+-- advances only when the host has installed a valid replacement, so a failed
+-- edit keeps both the last good program and anything baked from it.
+-- TODO(waluau-ifj2): Replace this token and the card/backdrop comparisons with
+-- revision-change callbacks once optional function fields and cross-module
+-- captured callbacks compile correctly.
+function Program:version(graphics: Graphics): i32
+    update(self, graphics)
+    return self.revision
+end
+
+local function append_warning(warnings: string, warning: string): string
+    if #warning == 0 then
+        return warnings
+    end
+    if #warnings > 0 then
+        warnings ..= "; "
+    end
+    return warnings .. warning
+end
+
+-- Prewarm every declared program and report the current revision's failures.
+-- A future loading screen can call this same function; calling it each frame
+-- also makes required/optional diagnostics follow shader-only HMR edits.
+function compile(graphics: Graphics): Diagnostics
+    local fatal_error: string = ""
+    local warnings: string = ""
+    for program in programs do
+        update(program, graphics)
+        if program.required then
+            if #program.error > 0 then
+                fatal_error = program.error
+            end
+        else
+            warnings = append_warning(warnings, program.error)
+        end
+    end
+    return { fatal_error = fatal_error, warnings = warnings }
+end
+
+return { new = new, compile = compile }
