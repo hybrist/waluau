@@ -1231,10 +1231,13 @@ describe('browser conformance', () => {
       expect(initialCanvas).not.toBeNull();
       expect(initialContext).not.toBeNull();
       await expect.poll(() => first.exports.draw_count(), { timeout: 10_000 }).toBeGreaterThan(0);
+      expect(first.exports.bind_render_target()).toBe(1);
+      expect(initialContext.getParameter(initialContext.FRAMEBUFFER_BINDING)).not.toBeNull();
 
       first.exports.suspend_game();
       const suspendedDrawCount = first.exports.draw_count();
       expect(initialRoot.getAttribute('data-waluau-surface-handoff')).toBe('1');
+      expect(initialContext.getParameter(initialContext.FRAMEBUFFER_BINDING)).toBeNull();
 
       const replacement = await compileAndInstantiateWithExports(files, '/main.walu', {
         domOutputRoot: document,
@@ -1254,12 +1257,23 @@ describe('browser conformance', () => {
       expect(first.exports.keypress_count()).toBe(0);
       expect(replacement.keypress_count()).toBe(1);
 
-      // Once adopted, a stale reference to the suspended Session cannot tear
-      // down the surface now owned by its replacement.
+      // Each owner marks the handoff with its generation. Even while B is
+      // suspended, stale A cannot mistake B's marker for its own and tear down
+      // the shared surface before C claims it.
+      replacement.suspend_game();
+      expect(retainedRoot.getAttribute('data-waluau-surface-handoff')).toBe('1.');
       first.exports.stop_game();
       expect(first.root.querySelector('#walua-game-canvas')).toBe(initialCanvas);
 
+      const third = await compileAndInstantiateWithExports(files, '/main.walu', {
+        domOutputRoot: document,
+      });
+      expect(first.root.querySelector('#walua-game-canvas')).toBe(initialCanvas);
+      expect(initialCanvas.getContext('webgl2')).toBe(initialContext);
       replacement.stop_game();
+      expect(first.root.querySelector('#walua-game-canvas')).toBe(initialCanvas);
+
+      third.stop_game();
       expect(first.root.querySelector('#walua-game-canvas')).toBeNull();
     } finally {
       first.cleanup();

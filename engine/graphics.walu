@@ -569,6 +569,21 @@ function Graphics:present(): unit
     self:flush()
 end
 
+function disable_shader_attributes(gl: WebGL2RenderingContext, shader: Shader): unit
+    if shader.position_location >= 0 then
+        gl:disableVertexAttribArray(shader.position_location::u32)
+    end
+    if shader.color_location >= 0 then
+        gl:disableVertexAttribArray(shader.color_location::u32)
+    end
+    if shader.uv_location >= 0 then
+        gl:disableVertexAttribArray(shader.uv_location::u32)
+    end
+    if shader.textured_location >= 0 then
+        gl:disableVertexAttribArray(shader.textured_location::u32)
+    end
+end
+
 -- A Graphics value belongs to one Wasm generation even when its canvas and
 -- WebGL2 context survive into the next one. Release everything this generation
 -- created so adopting the context cannot accumulate unreachable GPU objects.
@@ -577,8 +592,16 @@ function Graphics:dispose(): unit
         return
     end
     self.used = 0
+    -- WebGL keeps deleted objects alive while context bindings still reference
+    -- them. Reset the shared context before releasing this generation's
+    -- resources so its successor always begins on the canvas framebuffer.
+    game_gpu_screen_bind(self.gl)
+    game_gpu_texture_unbind(self.gl)
+    self.gl:useProgram(nil)
+    self.gl:bindBuffer(GL_ARRAY_BUFFER, nil)
     for index = 1, #self.shaders do
         local shader: Shader = self.shaders[index]
+        disable_shader_attributes(self.gl, shader)
         if not shader.released then
             self.gl:deleteProgram(shader.program)
             shader.program = nil
@@ -591,6 +614,7 @@ function Graphics:dispose(): unit
         game_gpu_resource_release(self.owned_gpu_resources[index])
     end
     self.owned_gpu_resources = {}
+    disable_shader_attributes(self.gl, self.default_shader)
     if not self.default_shader.released then
         self.gl:deleteProgram(self.default_shader.program)
         self.default_shader.program = nil

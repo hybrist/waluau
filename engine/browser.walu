@@ -11,7 +11,9 @@ local GAME_TITLE_ID <const>: string = "walua-game-title"
 local GAME_CANVAS_ID <const>: string = "walua-game-canvas"
 local SURFACE_HANDOFF_ATTRIBUTE <const>: string = "data-waluau-surface-handoff"
 local SURFACE_HOST_ATTRIBUTE <const>: string = "data-waluau-surface-host"
-local SURFACE_HANDOFF_VERSION <const>: string = "1"
+local SURFACE_VERSION_ATTRIBUTE <const>: string = "data-waluau-surface-version"
+local SURFACE_GENERATION_ATTRIBUTE <const>: string = "data-waluau-surface-generation"
+local SURFACE_VERSION <const>: string = "1"
 
 export type Config = {
     title: string,
@@ -68,7 +70,7 @@ export type Session = {
     suspend: () -> unit
 }
 
-type Surface = { root: Element, heading: Element, canvas: HTMLCanvasElement }
+type Surface = { root: Element, heading: Element, canvas: HTMLCanvasElement, generation: string }
 
 -- Browsers number pointer buttons 0/1/2 = left/middle/right, and a finger or
 -- pen tip reports 0 like a left click; game code sees the Love2D-style
@@ -162,13 +164,22 @@ function acquire_surface(document: Document, host: Element, host_key: string): S
     local previous_root: Element? = document:get_element_by_id(GAME_ROOT_ID)
     if previous_root ~= nil then
         local retained_root: Element = previous_root::Element
+        local retained_generation: string? = retained_root:get_attribute(
+            SURFACE_GENERATION_ATTRIBUTE
+        )
         if retained_root:get_attribute(
+            SURFACE_VERSION_ATTRIBUTE
+        ) ~= SURFACE_VERSION or retained_generation == nil or retained_root:get_attribute(
             SURFACE_HANDOFF_ATTRIBUTE
-        ) ~= SURFACE_HANDOFF_VERSION or retained_root:get_attribute(
+        ) ~= retained_generation or retained_root:get_attribute(
             SURFACE_HOST_ATTRIBUTE
         ) ~= host_key then
             error("game engine found an active or incompatible canvas")
         end
+
+        assert(retained_generation ~= nil)
+        local generation_text: string = retained_generation::string
+        local generation: string = generation_text .. "."
 
         local retained_heading: Element? = document:query_selector(
             "#" .. GAME_ROOT_ID .. " > #" .. GAME_TITLE_ID
@@ -185,7 +196,13 @@ function acquire_surface(document: Document, host: Element, host_key: string): S
         local canvas_element: Element = retained_element::Element
         if HTMLCanvasElement(retained_canvas) = canvas_element then
             retained_root:remove_attribute(SURFACE_HANDOFF_ATTRIBUTE)
-            return { root = retained_root, heading = heading, canvas = retained_canvas }
+            retained_root:set_attribute(SURFACE_GENERATION_ATTRIBUTE, generation)
+            return {
+                root = retained_root,
+                heading = heading,
+                canvas = retained_canvas,
+                generation = generation
+            }
         end
         error("game engine suspended surface does not contain a canvas")
     end
@@ -193,6 +210,8 @@ function acquire_surface(document: Document, host: Element, host_key: string): S
     local root: Element = document:create_element("main")
     root.id = GAME_ROOT_ID
     root:set_attribute(SURFACE_HOST_ATTRIBUTE, host_key)
+    root:set_attribute(SURFACE_VERSION_ATTRIBUTE, SURFACE_VERSION)
+    root:set_attribute(SURFACE_GENERATION_ATTRIBUTE, "1")
     host:append_child(root)
 
     local heading: Element = document:create_element("h1")
@@ -203,7 +222,7 @@ function acquire_surface(document: Document, host: Element, host_key: string): S
     element.id = GAME_CANVAS_ID
     root:append_child(element)
     if HTMLCanvasElement(canvas) = element then
-        return { root = root, heading = heading, canvas = canvas }
+        return { root = root, heading = heading, canvas = canvas, generation = "1" }
     end
     error("game engine could not create a WebGL2 canvas")
     -- `error` never returns at runtime; this unreachable value keeps the
@@ -492,14 +511,14 @@ function start(config: Config, game: Game): Session
                 -- tearing down its successor's canvas.
                 local still_owned: bool = not suspended_for_handoff or root:get_attribute(
                     SURFACE_HANDOFF_ATTRIBUTE
-                ) == SURFACE_HANDOFF_VERSION
+                ) == surface.generation
                 local mounted_root: Element? = document:get_element_by_id(root.id)
                 if still_owned and mounted_root == root then
                     host:remove_child(root)
                 end
             else
                 suspended_for_handoff = true
-                root:set_attribute(SURFACE_HANDOFF_ATTRIBUTE, SURFACE_HANDOFF_VERSION)
+                root:set_attribute(SURFACE_HANDOFF_ATTRIBUTE, surface.generation)
             end
         end
         local function resize_viewport(width: u32, height: u32): unit

@@ -3,6 +3,7 @@
 local engine = require("waluau:engine")
 
 local session: engine.Session? = nil
+local active_graphics: engine.Graphics? = nil
 local draws: i32 = 0
 local keypresses: i32 = 0
 
@@ -13,6 +14,7 @@ local function update(dt: f64, input: engine.Input): unit
 end
 
 local function draw(graphics: engine.Graphics, alpha: f64): unit
+    active_graphics = graphics
     draws += 1
     graphics:clear("#0f172a")
 end
@@ -48,6 +50,16 @@ end
 
 export function keypress_count(): i32
     return keypresses
+end
+
+export function bind_render_target(): bool
+    local graphics: engine.Graphics? = active_graphics
+    if graphics == nil then
+        return false
+    end
+    local running: engine.Graphics = graphics::engine.Graphics
+    local result = running:create_render_target(16, 16)
+    return result.ok and running:set_render_target(result.target)
 end
 
 export function suspend_game(): unit
