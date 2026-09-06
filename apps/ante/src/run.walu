@@ -165,8 +165,8 @@ function State:endless(): bool
 end
 
 -- The verdict of a fought duel, read as a moment in the run. Exhausting the
--- run's hearts ends it; so does reaching a boss duel's end without winning its
--- final hand. Clearing the duel either advances or crosses the finish line.
+-- run's hearts ends it; so does losing a boss duel's final hand. Clearing the
+-- duel either advances or crosses the finish line.
 -- This says which without applying any of them — one classifier, so the
 -- screen showing a verdict and the settle that acts on it agree.
 --
@@ -240,7 +240,7 @@ end
 
 -- The live duel has been fought to a verdict. Taking it advances the run and
 -- carries its remaining gold into the next one; losing the run to exhausted
--- hearts or a non-winning boss finale starts a fresh one. A duel the run
+-- hearts or an Opponent-winning boss finale starts a fresh one. A duel the run
 -- already spent gold in is never fought twice.
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:

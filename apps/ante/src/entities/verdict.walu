@@ -44,7 +44,7 @@ function subtitle_of(run: run_module.View): string
         return "YOUR LAST HEART WAS LOST IN DUEL " .. tostring(run.duel)
     end
     if run.outcome == "lost-duel" then
-        return "THE FINAL HAND DID NOT WIN DUEL " .. tostring(run.duel)
+        return "THE BOSS TOOK THE FINAL HAND IN DUEL " .. tostring(run.duel)
     end
     if run.outcome == "won" then
         return "ALL " .. tostring(run.run_length) .. " DUELS WON. THE CITY GOES ON PAST THEM"

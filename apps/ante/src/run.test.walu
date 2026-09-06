@@ -397,7 +397,7 @@ describe(
         )
 
         it(
-            "loses and restarts the run after a non-winning final boss hand",
+            "loses and restarts the run after the Opponent wins a final boss hand",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Clone, true)
                 state.hearts = run.max_hearts - 1

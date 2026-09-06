@@ -1196,7 +1196,7 @@ function State:play(first: i32, second: i32): Trick?
 
     -- A standard duel clears on its first player win. A boss duel keeps going
     -- through early wins and losses until either side has fewer than the two
-    -- cards needed for another hand. Its final winner is read by is_victory;
+    -- cards needed for another hand. Its final result is read by is_victory;
     -- the run pays each earlier and final Opponent win from its hearts.
     local exhausted: bool = #self.player_hand < 2 or #self.computer_hand < 2
     if (not self.boss and self.last_winner > 0) or (self.boss and exhausted) then
@@ -1542,11 +1542,11 @@ function State:is_finished(): bool
 end
 
 function State:is_victory(): bool
-    return self.finished and (not self.boss or self.last_winner > 0)
+    return self.finished and (not self.boss or self.last_winner >= 0)
 end
 
 function View:cleared(): bool
-    return self.finished and (not self.boss or self.last_winner > 0)
+    return self.finished and (not self.boss or self.last_winner >= 0)
 end
 
 function State:is_boss(): bool

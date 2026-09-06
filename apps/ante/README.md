@@ -58,21 +58,21 @@ shown greyed rather than rerolled into one it can. Every scroll costs four mana
 and the potion six, dearer because a scroll is cast for the rest of the run
 while a potion is spent the moment it is drunk. Buying an offer marks that line
 sold and nothing takes its place; reaching the next shop is what restocks them.
-Losing the last heart, or failing to win a boss's final hand, ends the run and
-everything it bought with it, so a fresh run sets out with its starting spell
-at level one again.
+Losing the last heart, or losing a boss's final hand, ends the run and everything
+it bought with it, so a fresh run sets out with its starting spell at level one
+again.
 
 Every third vault of a run is a boss battle: both sides start with seven relics
 rather than five, widening the opening feint and committed-pair choice. Spent
 pairs are not replaced. The hands shrink by two after every breach until fewer
 than two relics remain and no further hand can be played. The player has to
-survive that whole duel and win its final hand; an earlier win only earns its
-gold, while every Arch Mage win still costs a heart. A loss or tie on the final
-hand ends the run even if hearts remain. Everything else — feints, wagers, and
-scoring — matches a standard vault. The menu's BOSS RUSH starts a run made of
-nothing else: five vaults rather than nine. Both hand rows tighten their pitch
-(and the fan its tilt and arc) so a seven-relic row still clears the deck and
-the three right-edge piles.
+survive that whole duel without losing its final hand; an earlier win only earns
+its gold, while every Arch Mage win still costs a heart. A win or tie on the
+final hand clears the boss. A loss ends the run even if hearts remain.
+Everything else — feints, wagers, and scoring — matches a standard vault. The
+menu's BOSS RUSH starts a run made of nothing else: five vaults rather than nine.
+Both hand rows tighten their pitch (and the fan its tilt and arc) so a
+seven-relic row still clears the deck and the three right-edge piles.
 
 Which boss a boss vault is fought against is drawn rather than fixed, and it is
 drawn before the vault rather than at its door: a run always knows which boss is

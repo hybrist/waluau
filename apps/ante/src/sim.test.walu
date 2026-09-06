@@ -968,7 +968,7 @@ describe(
     "Ante Magic boss battle",
     function()
         it(
-            "spends its seven-card hands down and requires a final-hand win",
+            "spends its seven-card hands down and requires a non-losing final hand",
             function()
                 math.randomseed(50)
                 local state = game.State.new(true, starter_loadout(), game.starting_gold)
@@ -1008,20 +1008,34 @@ describe(
         )
 
         it(
-            "loses a depleted boss duel when the final hand is not a win",
+            "loses a depleted boss duel when the Opponent wins the final hand",
             function()
-                for final_winner = -1::i32, 0::i32 do
-                    math.randomseed(53 + final_winner)
-                    local state = game.State.new(true, starter_loadout(), game.starting_gold)
-                    play_boss_hand(state, 1)
-                    play_boss_hand(state, 1)
-                    play_boss_hand(state, final_winner)
+                math.randomseed(52)
+                local state = game.State.new(true, starter_loadout(), game.starting_gold)
+                play_boss_hand(state, 1)
+                play_boss_hand(state, 1)
+                play_boss_hand(state, -1)
 
-                    expect(state:is_finished()):toBe(true)
-                    expect(state:is_victory()):toBe(false)
-                    expect(state:view():cleared()):toBe(false)
-                    expect(state:view().history[3].winner):toBe(final_winner)
-                end
+                expect(state:is_finished()):toBe(true)
+                expect(state:is_victory()):toBe(false)
+                expect(state:view():cleared()):toBe(false)
+                expect(state:view().history[3].winner):toBe(-1)
+            end
+        )
+
+        it(
+            "clears a depleted boss duel when the final hand is a tie",
+            function()
+                math.randomseed(53)
+                local state = game.State.new(true, starter_loadout(), game.starting_gold)
+                play_boss_hand(state, -1)
+                play_boss_hand(state, 1)
+                play_boss_hand(state, 0)
+
+                expect(state:is_finished()):toBe(true)
+                expect(state:is_victory()):toBe(true)
+                expect(state:view():cleared()):toBe(true)
+                expect(state:view().history[3].winner):toBe(0)
             end
         )
 

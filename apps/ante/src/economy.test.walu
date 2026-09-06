@@ -249,13 +249,13 @@ end
 const RUN_TRIALS: i32 = 150
 
 -- Run sampling checks both terminal conditions: accumulated hand losses can
--- exhaust the persistent hearts, and a non-winning boss finale can end a run
+-- exhaust the persistent hearts, and an Opponent-winning boss finale can end a run
 -- sooner while successful runs still reach later duels.
 describe(
     "Ante Magic run economy",
     function()
         it(
-            "ends sampled runs on exhausted hearts or a non-winning boss finale",
+            "ends sampled runs on exhausted hearts or an Opponent-winning boss finale",
             function()
                 local lost_health: i32 = 0
                 local lost_duel: i32 = 0
