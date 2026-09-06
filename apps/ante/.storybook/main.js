@@ -1,5 +1,3 @@
-import { shaderSources } from '../shader-sources.js';
-
 /** @type {import('@waluau/storybook').StorybookConfig} */
 export default {
   stories: ['../src/**/*.stories.walu'],
@@ -11,7 +9,6 @@ export default {
     options: {
       waluau: {
         manifest: 'waluau.assets.json',
-        shaderSources,
       },
     },
   },

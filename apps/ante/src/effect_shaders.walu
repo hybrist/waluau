@@ -1,13 +1,21 @@
--- External shader source polling and GPU lifetime for Ante Magic effects.
--- The registry names programs once; shader_program owns the repeated source,
--- rebuild, diagnostic, and release lifecycle behind a small interface.
+-- Vite-managed shader imports and presentation lifetime for Ante Magic effects.
+-- Each require becomes a stateful host module that owns compilation, HMR, and
+-- its WebGLProgram on the engine canvas across Wasm generations.
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
-local shader_sources = require("waluau:engine/shader_sources")
 local shader_program = require("./shader_program")
+local card_paper = require("./shaders/card-paper.frag")
+local gold_shimmer = require("./shaders/gold-shimmer.frag")
+local defeat_shroud = require("./shaders/defeat-shroud.frag")
+local card_burn = require("./shaders/card-burn.frag")
+local red_fire = require("./shaders/red-fire.frag")
+local blue_caustics = require("./shaders/blue-caustics.frag")
+local black_hole = require("./shaders/black-hole.frag")
+local green_growth = require("./shaders/green-growth.frag")
+local ice_freeze = require("./shaders/ice-freeze.frag")
+local astral_sea = require("./shaders/astral-sea.frag")
 
 type Graphics = engine.Graphics
-type Source = shader_sources.Source
 export type EffectShaders = {
     card_paper: shader_program.State,
     gold_shimmer: shader_program.State,
@@ -34,67 +42,24 @@ export type EffectShaders = {
     -- sea program is rebuilt, so the next frame re-bakes from the new source.
     sea_still: graphics_module.RenderTarget?
 }
-export type State = {
-    shaders: EffectShaders,
-    programs: {shader_program.State},
-    vertex_source: Source,
-    vertex_text: string,
-    vertex_ready: bool,
-    vertex_error: string
-}
+export type State = { shaders: EffectShaders, programs: {shader_program.State} }
 export type Diagnostics = { fatal_error: string, warnings: string }
 
 function State.new(): State
-    local paper: shader_program.State = shader_program.State.new(
-        "ante.effects.card-paper",
-        "card paper",
-        false
-    )
-    local gold: shader_program.State = shader_program.State.new(
-        "ante.effects.gold-shimmer",
-        "gold shimmer",
-        false
-    )
+    local paper: shader_program.State = shader_program.State.new(card_paper, "card paper", false)
+    local gold: shader_program.State = shader_program.State.new(gold_shimmer, "gold shimmer", false)
     local defeat: shader_program.State = shader_program.State.new(
-        "ante.effects.defeat-shroud",
+        defeat_shroud,
         "defeat shroud",
         true
     )
-    local burn: shader_program.State = shader_program.State.new(
-        "ante.effects.card-burn",
-        "card burn",
-        false
-    )
-    local red: shader_program.State = shader_program.State.new(
-        "ante.effects.red-fire",
-        "red",
-        false
-    )
-    local blue: shader_program.State = shader_program.State.new(
-        "ante.effects.blue-caustics",
-        "blue",
-        false
-    )
-    local black: shader_program.State = shader_program.State.new(
-        "ante.effects.black-hole",
-        "black",
-        false
-    )
-    local green: shader_program.State = shader_program.State.new(
-        "ante.effects.green-growth",
-        "green",
-        false
-    )
-    local ice: shader_program.State = shader_program.State.new(
-        "ante.effects.ice-freeze",
-        "ice",
-        false
-    )
-    local sea: shader_program.State = shader_program.State.new(
-        "ante.effects.astral-sea",
-        "astral sea",
-        false
-    )
+    local burn: shader_program.State = shader_program.State.new(card_burn, "card burn", false)
+    local red: shader_program.State = shader_program.State.new(red_fire, "red", false)
+    local blue: shader_program.State = shader_program.State.new(blue_caustics, "blue", false)
+    local black: shader_program.State = shader_program.State.new(black_hole, "black", false)
+    local green: shader_program.State = shader_program.State.new(green_growth, "green", false)
+    local ice: shader_program.State = shader_program.State.new(ice_freeze, "ice", false)
+    local sea: shader_program.State = shader_program.State.new(astral_sea, "astral sea", false)
     return {
         shaders = {
             card_paper = paper,
@@ -112,46 +77,21 @@ function State.new(): State
             paper_press = nil,
             sea_still = nil
         },
-        programs = {paper, gold, defeat, burn, red, blue, black, green, ice, sea},
-        vertex_source = shader_sources.open("ante.effects.vertex"),
-        vertex_text = "",
-        vertex_ready = false,
-        vertex_error = ""
+        programs = {paper, gold, defeat, burn, red, blue, black, green, ice, sea}
     }
 end
 
--- Poll every source before rebuilding anything. Independent revisions stay
--- current even when the shared vertex stage or another effect fails.
+-- Refresh every imported handle before drawing. Each host module compiles its
+-- own revisions independently and retains its last good program on failure.
 function State:refresh(graphics: Graphics): unit
-    local vertex_changed: bool = false
-    local vertex: shader_sources.SourceUpdate = self.vertex_source:poll()
-    if vertex.changed then
-        vertex_changed = true
-        if vertex.ok then
-            self.vertex_text = vertex.source
-            self.vertex_ready = true
-            self.vertex_error = ""
-        else
-            self.vertex_ready = false
-            self.vertex_error = vertex.error.code .. ": " .. vertex.error.message
-        end
-    end
-
-    local changed: {bool} = {}
     for program in self.programs do
-        table.insert(changed, program:poll())
-    end
-    if not self.vertex_ready then
-        return
-    end
-    for index, program in self.programs do
-        program:refresh(graphics, self.vertex_text, vertex_changed, changed[index])
+        local changed: bool = program:refresh(graphics)
         -- A rebuilt paper program orphans the baked card stock; dropping the
         -- bake here lets the next drawn card re-bake from the new source.
-        if program.label == self.shaders.card_paper.label and (vertex_changed or changed[index]) then
+        if program.label == self.shaders.card_paper.label and changed then
             self:release_paper_bake(graphics)
         end
-        if program.label == self.shaders.astral_sea.label and (vertex_changed or changed[index]) then
+        if program.label == self.shaders.astral_sea.label and changed then
             self:release_sea_bake(graphics)
         end
     end
@@ -191,17 +131,6 @@ end
 function State:diagnostics(): Diagnostics
     local fatal_error: string = ""
     local warnings: string = ""
-    if #self.vertex_error > 0 then
-        for program in self.programs do
-            local error: string = program.label .. " " .. self.vertex_error
-            if program.required then
-                fatal_error = error
-            else
-                warnings = append_warning(warnings, error)
-            end
-        end
-        return { fatal_error = fatal_error, warnings = warnings }
-    end
     for program in self.programs do
         if program.required then
             fatal_error = program.error

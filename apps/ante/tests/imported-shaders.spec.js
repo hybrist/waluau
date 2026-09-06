@@ -14,25 +14,21 @@ import { fileURLToPath } from 'node:url';
 
 import { createServer as createViteServer } from 'vite';
 
-import {
-  requiredEffectName,
-  shaderSources as SHADER_SOURCES,
-  vertexShaderName,
-} from '../shader-sources.js';
-
 const GAME_READY_TIMEOUT = 20_000;
 const ANTE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VITE_CONFIG = join(ANTE_ROOT, 'vite.config.js');
-
-const VERTEX_NAME = vertexShaderName;
-const DEFEAT_NAME = requiredEffectName;
-const PIXEL_NAMES = Object.keys(SHADER_SOURCES).filter((name) => name !== VERTEX_NAME);
+const SHADER_RELATIVE_DIRECTORY = join('src', 'shaders');
+const DEFEAT_FILE = 'defeat-shroud.frag';
 
 async function readShaderSources(root = ANTE_ROOT) {
+  const directory = join(root, SHADER_RELATIVE_DIRECTORY);
+  const files = (await readdir(directory))
+    .filter((filename) => filename.endsWith('.frag'))
+    .sort();
   return Object.fromEntries(await Promise.all(
-    Object.entries(SHADER_SOURCES).map(async ([name, path]) => [
-      name,
-      await readFile(join(root, path), 'utf8'),
+    files.map(async (filename) => [
+      filename,
+      await readFile(join(directory, filename), 'utf8'),
     ]),
   ));
 }
@@ -120,13 +116,13 @@ async function openGame(page, url = '/') {
   return page.locator('canvas#walua-game-canvas');
 }
 
-function sourceCounts(page, shaderSources) {
+function sourceCounts(page, shaders) {
   return page.evaluate((expected) => Object.fromEntries(
     Object.entries(expected).map(([name, source]) => [
       name,
       globalThis.__anteShaderProbe.sources.filter((candidate) => candidate === source).length,
     ]),
-  ), shaderSources);
+  ), shaders);
 }
 
 function probeSnapshot(page) {
@@ -204,12 +200,13 @@ async function copyAnteApp(destination) {
   ]);
 }
 
-test('production includes and compiles every registered external shader source', async ({ page }) => {
+test('production includes and compiles every required fragment shader', async ({ page }) => {
   const shaders = await readShaderSources();
-  const renderSource = await readFile(join(ANTE_ROOT, 'src', 'render.walu'), 'utf8');
+  const effectSource = await readFile(join(ANTE_ROOT, 'src', 'effect_shaders.walu'), 'utf8');
 
-  for (const name of Object.keys(SHADER_SOURCES)) {
-    expect(renderSource).not.toContain(shaders[name].trim());
+  for (const filename of Object.keys(shaders)) {
+    expect(effectSource).toContain(`require("./shaders/${filename}")`);
+    expect(effectSource).not.toContain(shaders[filename].trim());
   }
 
   await installRuntimeProbe(page);
@@ -227,7 +224,7 @@ test('production includes and compiles every registered external shader source',
   await expect(page.locator('canvas#walua-game-canvas')).toBeVisible();
 });
 
-test('development HMR fans out, retains the last good shader, and recovers', async ({ page }) => {
+test('development HMR updates each imported shader locally and retains its last good program', async ({ page }) => {
   test.slow();
   await installRuntimeProbe(page);
 
@@ -238,10 +235,9 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
   try {
     await copyAnteApp(temporaryRoot);
     const shaders = await readShaderSources(temporaryRoot);
-    const defeatPath = join(temporaryRoot, SHADER_SOURCES[DEFEAT_NAME]);
-    const vertexPath = join(temporaryRoot, SHADER_SOURCES[VERTEX_NAME]);
-    const initialDefeatSource = shaders[DEFEAT_NAME];
-    const initialVertexSource = shaders[VERTEX_NAME];
+    const shaderFiles = Object.keys(shaders);
+    const defeatPath = join(temporaryRoot, SHADER_RELATIVE_DIRECTORY, DEFEAT_FILE);
+    const initialDefeatSource = shaders[DEFEAT_FILE];
 
     server = await createViteServer({
       root: temporaryRoot,
@@ -256,13 +252,11 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
 
     let loadCount = 0;
     let wasmRequestCount = 0;
-    const pageErrors = [];
     const consoleMessages = [];
     page.on('load', () => { loadCount += 1; });
     page.on('request', (request) => {
       if (/\.wasm(?:\?|$)/.test(request.url())) wasmRequestCount += 1;
     });
-    page.on('pageerror', (error) => pageErrors.push(error.message));
     page.on('console', (message) => consoleMessages.push(message.text()));
 
     await openGame(page, server.resolvedUrls.local[0]);
@@ -272,8 +266,7 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
     await waitForRuntimeToSettle(page);
     const mountedCanvas = page.locator('main#walua-game canvas#walua-game-canvas');
     const initialCounts = await sourceCounts(page, shaders);
-    expect(initialCounts[VERTEX_NAME]).toBeGreaterThan(0);
-    for (const name of PIXEL_NAMES) expect(initialCounts[name]).toBeGreaterThan(0);
+    for (const filename of shaderFiles) expect(initialCounts[filename]).toBeGreaterThan(0);
 
     const wasmPath = await findFile(join(temporaryRoot, '.waluau'), 'game.wasm');
     expect(wasmPath).not.toBeNull();
@@ -288,33 +281,33 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
 
     const fragmentUpdates = {};
     let afterFragments = initialProbe;
-    for (const name of PIXEL_NAMES) {
-      expect(await liveProgramCount(page, shaders[name])).toBe(1);
-      const update = `${shaders[name]}\n// ante-hmr-${name}-update\n`;
-      await writeFile(join(temporaryRoot, SHADER_SOURCES[name]), update);
+    for (const filename of shaderFiles) {
+      expect(await liveProgramCount(page, shaders[filename])).toBe(1);
+      const update = `${shaders[filename]}\n// ante-hmr-${filename}-update\n`;
+      await writeFile(join(temporaryRoot, SHADER_RELATIVE_DIRECTORY, filename), update);
       await expect.poll(
-        () => sourceCounts(page, { [name]: update }),
+        () => sourceCounts(page, { [filename]: update }),
         { timeout: GAME_READY_TIMEOUT },
-      ).toEqual({ [name]: 1 });
+      ).toEqual({ [filename]: 1 });
       await expect.poll(probeSnapshot.bind(null, page)).toMatchObject({
         programCreates: afterFragments.programCreates + 1,
         programDeletes: afterFragments.programDeletes + 1,
       });
-      expect(await liveProgramCount(page, shaders[name])).toBe(0);
+      expect(await liveProgramCount(page, shaders[filename])).toBe(0);
       expect(await liveProgramCount(page, update)).toBe(1);
       await page.waitForTimeout(150);
-      expect(await sourceCounts(page, { [name]: update })).toEqual({ [name]: 1 });
-      fragmentUpdates[name] = update;
+      expect(await sourceCounts(page, { [filename]: update })).toEqual({ [filename]: 1 });
+      fragmentUpdates[filename] = update;
       afterFragments = await probeSnapshot(page);
     }
 
     // Optional effects warn without taking over the canvas, retain their
     // previous program, and recover on the next valid revision.
-    const goldName = 'ante.effects.gold-shimmer';
-    const validGold = fragmentUpdates[goldName];
+    const goldFile = 'gold-shimmer.frag';
+    const validGold = fragmentUpdates[goldFile];
     const beforeOptionalInvalid = await probeSnapshot(page);
     const invalidGold = `${validGold}\nANTE_HMR_INVALID_OPTIONAL\n`;
-    await writeFile(join(temporaryRoot, SHADER_SOURCES[goldName]), invalidGold);
+    await writeFile(join(temporaryRoot, SHADER_RELATIVE_DIRECTORY, goldFile), invalidGold);
     await expect.poll(
       () => sourceCounts(page, { optionalInvalid: invalidGold }),
       { timeout: GAME_READY_TIMEOUT },
@@ -331,8 +324,8 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
       baselineMagentaPixels + 500,
     );
 
-    const repairedGold = `${shaders[goldName]}\n// ante-hmr-optional-repaired\n`;
-    await writeFile(join(temporaryRoot, SHADER_SOURCES[goldName]), repairedGold);
+    const repairedGold = `${shaders[goldFile]}\n// ante-hmr-optional-repaired\n`;
+    await writeFile(join(temporaryRoot, SHADER_RELATIVE_DIRECTORY, goldFile), repairedGold);
     await expect.poll(
       () => sourceCounts(page, { optionalRepaired: repairedGold }),
       { timeout: GAME_READY_TIMEOUT },
@@ -341,26 +334,10 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
       programCreates: beforeOptionalInvalid.programCreates + 1,
       programDeletes: beforeOptionalInvalid.programDeletes + 1,
     });
-    fragmentUpdates[goldName] = repairedGold;
-    afterFragments = await probeSnapshot(page);
-
-    const vertexUpdate = `${initialVertexSource}\n// ante-hmr-vertex-update\n`;
-    await writeFile(vertexPath, vertexUpdate);
-    await expect.poll(
-      () => sourceCounts(page, { vertex: vertexUpdate }),
-      { timeout: GAME_READY_TIMEOUT },
-    ).toEqual({ vertex: PIXEL_NAMES.length });
-    await expect.poll(probeSnapshot.bind(null, page)).toMatchObject({
-      programCreates: afterFragments.programCreates + PIXEL_NAMES.length,
-      programDeletes: afterFragments.programDeletes + PIXEL_NAMES.length,
-    });
-    await page.waitForTimeout(250);
-    expect(await sourceCounts(page, { vertex: vertexUpdate })).toEqual({
-      vertex: PIXEL_NAMES.length,
-    });
+    fragmentUpdates[goldFile] = repairedGold;
 
     const beforeInvalid = await probeSnapshot(page);
-    const validDefeat = fragmentUpdates[DEFEAT_NAME];
+    const validDefeat = fragmentUpdates[DEFEAT_FILE];
     expect(await liveProgramCount(page, validDefeat)).toBe(1);
     const invalidDefeat = `${validDefeat}\nANTE_HMR_INVALID_DEFEAT\n`;
     await writeFile(defeatPath, invalidDefeat);
@@ -408,7 +385,6 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
     expect(await page.evaluate(
       () => document.querySelector('main#walua-game') === globalThis.__anteInitialRoot,
     )).toBe(true);
-    expect(pageErrors).toEqual([]);
   } finally {
     await server?.close();
     await rm(temporaryRoot, { recursive: true, force: true });

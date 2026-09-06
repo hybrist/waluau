@@ -1,78 +1,44 @@
--- One independently managed fragment program behind a small lifecycle
--- interface. The effect registry coordinates programs as data instead of
--- duplicating poll, rebuild, diagnostic, and release branches per shader.
+-- One Vite-managed fragment program behind a small application interface.
+-- The host owns compilation, HMR, and the WebGLProgram; Ante keeps only the
+-- current generation's typed shader view and presentation diagnostics.
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
-local shader_sources = require("waluau:engine/shader_sources")
 
 type Graphics = engine.Graphics
-type Source = shader_sources.Source
 export type State = {
     label: string,
     required: bool,
-    source: Source,
-    text: string,
-    ready: bool,
+    imported: extern,
+    revision: i32,
     error: string,
     shader: graphics_module.Shader?
 }
 
-function State.new(name: string, label: string, required: bool): State
+function State.new(imported: extern, label: string, required: bool): State
     return {
         label = label,
         required = required,
-        source = shader_sources.open(name),
-        text = "",
-        ready = false,
+        imported = imported,
+        revision = -1,
         error = "",
         shader = nil
     }
 end
 
--- Consume one source revision and report whether this program must rebuild.
-function State:poll(): bool
-    local update: shader_sources.SourceUpdate = self.source:poll()
-    if not update.changed then
-        return false
-    end
-    if update.ok then
-        self.text = update.source
-        self.ready = true
-        self.error = ""
-    else
-        self.ready = false
-        self.error = self.label .. " " .. update.error.code .. ": " .. update.error.message
-    end
-    return true
-end
-
-function rebuild(
-    state: State,
-    graphics: Graphics,
-    vertex_text: string
-): graphics_module.ShaderResult
-    if state.shader == nil then
-        return graphics:create_shader(vertex_text, state.text)
-    end
-    return graphics:replace_shader(state.shader::graphics_module.Shader, vertex_text, state.text)
-end
-
-function State:refresh(
-    graphics: Graphics,
-    vertex_text: string,
-    vertex_changed: bool,
-    source_changed: bool
-): unit
-    if not self.ready or (not vertex_changed and not source_changed) then
-        return
-    end
-    local result: graphics_module.ShaderResult = rebuild(self, graphics, vertex_text)
+-- Refresh this Wasm generation's view of the host-owned program. The host
+-- compiles only new source revisions, so this is cheap to call every frame.
+-- Returning a revision change lets callers invalidate shader-derived caches.
+function State:refresh(graphics: Graphics): bool
+    local previous_revision: i32 = self.revision
+    local result: graphics_module.ShaderResult = graphics:compile_shader(self.imported)
     if result.ok then
         self.shader = result.shader
+        self.revision = result.shader.revision
         self.error = ""
     else
         self.error = self.label .. " " .. result.error.code .. ": " .. result.error.message
     end
+    return self.revision ~= previous_revision
 end
 
 function State:release(graphics: Graphics): unit

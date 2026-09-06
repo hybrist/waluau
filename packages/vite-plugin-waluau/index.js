@@ -281,7 +281,7 @@ ${exports}
 `;
 }
 
-function testModuleSource(generatedModule, version) {
+function testModuleSource(generatedModule, version, shaderModule) {
   const generatedSpecifier = `${generatedModule}?waluau-hmr=${version}`;
   return `
 import {
@@ -289,6 +289,7 @@ import {
   wasmUrl as generatedWasmUrl,
 } from ${JSON.stringify(generatedSpecifier)};
 import { registerWaluGlueTests } from '@waluau/vite-plugin/testing';
+import shaderSourceHost from ${JSON.stringify(shaderModule)};
 
 function versionedWasmUrl() {
   if (generatedWasmUrl == null) return null;
@@ -297,7 +298,11 @@ function versionedWasmUrl() {
   return url;
 }
 
-await registerWaluGlueTests({ run, wasmUrl: versionedWasmUrl() });
+await registerWaluGlueTests({
+  run,
+  wasmUrl: versionedWasmUrl(),
+  shaderSources: shaderSourceHost,
+});
 `;
 }
 
@@ -827,6 +832,7 @@ export function waluau(options = {}) {
           code: testModuleSource(
             artifacts.module,
             compileStates.get(file).version,
+            shaderModule,
           ),
           map: null,
         };
