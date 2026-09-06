@@ -10,7 +10,63 @@ import { build as viteBuild, createServer as createViteServer } from 'vite';
 
 import { waluau } from './index.js';
 import { buildWaluauImports, WALUAU_IMPORT_MODULE } from './runtime.js';
-import { createWaluauShaderSourceHost } from './shaders.js';
+import {
+  createWaluauImportedShader,
+  createWaluauImportedShaderHost,
+  createWaluauShaderSourceHost,
+} from './shaders.js';
+
+function fakeWebGl() {
+  const deletedPrograms = [];
+  let nextProgram = 0;
+  return {
+    VERTEX_SHADER: 0x8b31,
+    FRAGMENT_SHADER: 0x8b30,
+    COMPILE_STATUS: 0x8b81,
+    LINK_STATUS: 0x8b82,
+    deletedPrograms,
+    createShader: (kind) => ({ kind, source: '' }),
+    shaderSource(shader, source) { shader.source = source; },
+    compileShader() {},
+    getShaderParameter: (shader) => !shader.source.includes('INVALID'),
+    getShaderInfoLog: () => 'test shader compile failure',
+    deleteShader() {},
+    createProgram: () => ({ id: ++nextProgram, shaders: [] }),
+    attachShader(program, shader) { program.shaders.push(shader); },
+    linkProgram() {},
+    getProgramParameter: () => true,
+    getProgramInfoLog: () => '',
+    deleteProgram(program) { deletedPrograms.push(program); },
+  };
+}
+
+test('retains the last good imported shader program across failed source updates', () => {
+  const gl = fakeWebGl();
+  const shader = createWaluauImportedShader('void main() {}', '/effect.frag');
+  assert.equal(shader.compile(gl), true);
+  const first = shader.program();
+  const firstRevision = shader.revision();
+  assert.equal(shader.compile(gl), true, 'explicit prewarm is idempotent');
+  assert.equal(shader.program(), first);
+
+  assert.equal(shader.update('void main() { gl_FragColor = vec4(1.0); }'), true);
+  const second = shader.program();
+  assert.notEqual(second, first);
+  assert.equal(shader.revision(), firstRevision + 1);
+  assert.deepEqual(gl.deletedPrograms, [first]);
+
+  assert.equal(shader.update('INVALID'), false);
+  assert.equal(shader.program(), second, 'failed HMR keeps the live program');
+  assert.equal(shader.revision(), firstRevision + 1);
+  assert.equal(shader.error().code, 'pixel_compile');
+  assert.equal(shader.compile(gl), false, 'a failed revision is not retried every frame');
+
+  const host = createWaluauImportedShaderHost({ __shader: shader });
+  assert.equal(host.imports.__shader(), shader);
+  host.imports.game_imported_shaders_release(gl);
+  assert.equal(shader.program(), null);
+  assert.deepEqual(gl.deletedPrograms, [first, second]);
+});
 
 test('excludes generated compiler artifacts from Vite file watching', () => {
   const root = resolve(tmpdir(), 'waluau-project');
@@ -634,6 +690,54 @@ test('loads shader sources in production and accepts dev updates without rebuild
   }
 });
 
+test('turns compiler-discovered shader requires into stateful Vite modules', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'effect.stories.walu');
+    const shader = join(root, 'effects', 'required.frag');
+    const importName = '__waluau_shader_require_1234';
+    const script = `
+      const fs = require('node:fs');
+      const args = process.argv.slice(1);
+      fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+        success: true,
+        involvedFiles: [args[0]],
+        shaderDependencies: [{ path: ${JSON.stringify(shader)}, importName: ${JSON.stringify(importName)} }],
+        diagnostics: [],
+      }));
+    `;
+    const plugin = waluau({
+      compiler: { command: process.execPath, args: ['-e', script] },
+    });
+    plugin.configResolved({ root });
+    const transformed = await plugin.transform.call(
+      { addWatchFile() {} },
+      'local shader = require("./effects/required.frag")',
+      entry,
+    );
+    const aggregateId = /import shaderSourceHost from "(virtual:waluau-shader-sources:[^"]+)"/
+      .exec(transformed.code)?.[1];
+    assert(aggregateId);
+    const aggregate = plugin.load(plugin.resolveId(aggregateId));
+    const stateId = new RegExp(
+      'import waluauImportedShader0 from "(virtual:waluau-imported-shader:[^"]+)"',
+    ).exec(aggregate)?.[1];
+    assert(stateId);
+    assert.match(aggregate, new RegExp(`"${importName}": waluauImportedShader0`));
+    assert.match(aggregate, /createWaluauImportedShaderHost/);
+
+    const stateModule = plugin.load(plugin.resolveId(stateId));
+    assert.match(stateModule, new RegExp(
+      JSON.stringify(`${shader}?raw`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    ));
+    assert.match(stateModule, /createWaluauImportedShader\(source/);
+    assert.match(stateModule, /import\.meta\.hot\.accept/);
+    assert.doesNotMatch(stateModule, /runWaluau|replaceWaluauGame/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('bundles configured shader source text in a production Vite build', async () => {
   // Vite 8's HTML emitter requires the temporary root to be below the build
   // process cwd when using the in-memory write:false output.
@@ -814,6 +918,127 @@ test('delivers a real Vite shader HMR update without replacing the running game'
       ),
       true,
     );
+    assert.equal(loads, initialLoads);
+    assert.equal((await readFile(counter, 'utf8')).trim().split('\n').length, 1);
+  } finally {
+    await browser?.close();
+    await server?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('recompiles a required shader locally during real Vite HMR', async () => {
+  const root = await mkdtemp(join(resolve('.'), '.waluau-vite-plugin-required-hmr-'));
+  let server;
+  let browser;
+  try {
+    const shader = join(root, 'effects', 'required.frag');
+    const compiler = join(root, 'compiler.cjs');
+    const counter = join(root, 'compiler-invocations.txt');
+    const importName = '__waluau_shader_require_hmr';
+    await mkdir(dirname(shader), { recursive: true });
+    await writeFile(
+      join(root, 'index.html'),
+      '<script type="module" src="/main.walu"></script>',
+    );
+    await writeFile(join(root, 'main.walu'), 'local shader = require("./effects/required.frag")');
+    await writeFile(shader, 'initial required shader');
+    await writeFile(counter, '');
+    await writeFile(compiler, `
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const args = process.argv.slice(2);
+      const wasm = args[args.indexOf('-o') + 1];
+      const report = args[args.indexOf('--report') + 1];
+      fs.appendFileSync(${JSON.stringify(counter)}, 'compile\\n');
+      fs.mkdirSync(path.dirname(wasm), { recursive: true });
+      fs.writeFileSync(wasm, Buffer.from([]));
+      fs.writeFileSync(path.join(path.dirname(wasm), 'game.js'), [
+        'export const wasmUrl = null;',
+        'export async function run({ createImports }) {',
+        '  const exports = {};',
+        '  const imports = createImports({',
+        '    requiredImports: [], bytesConstants: [],',
+        '    getWasmExports: () => exports,',
+        '    assetBaseUrl: new URL("./", import.meta.url), assetManifest: {},',
+        '  }).waluau;',
+        '  const gl = {',
+        '    VERTEX_SHADER: 1, FRAGMENT_SHADER: 2, COMPILE_STATUS: 3, LINK_STATUS: 4,',
+        '    createShader: kind => ({ kind, source: "" }),',
+        '    shaderSource(shader, source) { shader.source = source; },',
+        '    compileShader() {}, getShaderParameter() { return true; },',
+        '    getShaderInfoLog() { return ""; }, deleteShader() {},',
+        '    createProgram: () => ({ shaders: [] }),',
+        '    attachShader(program, shader) { program.shaders.push(shader); },',
+        '    linkProgram() {}, getProgramParameter() { return true; },',
+        '    getProgramInfoLog() { return ""; }, deleteProgram() {},',
+        '  };',
+        '  const shader = imports.${importName}();',
+        '  imports.game_imported_shader_compile(shader, gl);',
+        '  globalThis.__requiredShaderRuns = (globalThis.__requiredShaderRuns || 0) + 1;',
+        '  globalThis.__requiredShaderTest = {',
+        '    shader, revision: () => shader.revision(),',
+        '    source: () => shader.program().shaders[1].source,',
+        '  };',
+        '  return { exports };',
+        '}',
+      ].join('\\n'));
+      fs.writeFileSync(report, JSON.stringify({
+        success: true,
+        involvedFiles: [args[0]],
+        shaderDependencies: [{
+          path: ${JSON.stringify(shader)},
+          importName: ${JSON.stringify(importName)},
+        }],
+        diagnostics: [],
+      }));
+    `);
+
+    server = await createViteServer({
+      root,
+      configFile: false,
+      logLevel: 'silent',
+      resolve: {
+        alias: [
+          {
+            find: '@waluau/vite-plugin/runtime',
+            replacement: resolve('packages/vite-plugin-waluau/runtime.js'),
+          },
+          {
+            find: '@waluau/vite-plugin/hot',
+            replacement: resolve('packages/vite-plugin-waluau/hot.js'),
+          },
+          {
+            find: '@waluau/vite-plugin/shaders',
+            replacement: resolve('packages/vite-plugin-waluau/shaders.js'),
+          },
+        ],
+      },
+      plugins: [waluau({
+        fullScreen: false,
+        compiler: { command: process.execPath, args: [compiler] },
+      })],
+      server: { host: '127.0.0.1', port: 0 },
+    });
+    await server.listen();
+
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    let loads = 0;
+    page.on('load', () => { loads += 1; });
+    await page.goto(server.resolvedUrls.local[0]);
+    await page.waitForFunction(() => globalThis.__requiredShaderTest?.revision() === 1);
+    const initialLoads = loads;
+
+    await writeFile(shader, 'updated required shader');
+    await page.waitForFunction(
+      () => (
+        globalThis.__requiredShaderTest?.revision() === 2
+        && globalThis.__requiredShaderTest?.source() === 'updated required shader'
+      ),
+    );
+
+    assert.equal(await page.evaluate(() => globalThis.__requiredShaderRuns), 1);
     assert.equal(loads, initialLoads);
     assert.equal((await readFile(counter, 'utf8')).trim().split('\n').length, 1);
   } finally {

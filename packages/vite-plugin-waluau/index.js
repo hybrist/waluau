@@ -12,6 +12,7 @@ import { parseStories } from './stories.js';
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(packageRoot, '../..');
 const shaderModulePrefix = 'virtual:waluau-shader-sources:';
+const importedShaderModulePrefix = 'virtual:waluau-imported-shader:';
 const developmentSourcePath = /^__waluau\/sources\/(?:files|packages|virtual)\/s-(?:[A-Za-z0-9._-]|~[0-9A-F]{2})*(?:\/s-(?:[A-Za-z0-9._-]|~[0-9A-F]{2})*)*$/;
 
 function run(command, args, cwd) {
@@ -87,7 +88,7 @@ function reportError(error) {
 `;
 }
 
-function shaderModuleSource(shaderSources) {
+function shaderModuleSource(shaderSources, importedShaders) {
   const shaderImports = shaderSources.map(
     ({ specifier }, index) => `import waluauShaderSource${index} from ${JSON.stringify(specifier)};`,
   ).join('\n');
@@ -103,19 +104,55 @@ function shaderModuleSource(shaderSources) {
     shaderSourceHost.update(${JSON.stringify(name)}, module?.default);
   });`,
   ).join('\n');
+  const importedShaderImports = importedShaders.map(
+    ({ module }, index) => `import waluauImportedShader${index} from ${JSON.stringify(module)};`,
+  ).join('\n');
+  const importedShaderEntries = importedShaders.map(
+    ({ importName }, index) => `${JSON.stringify(importName)}: waluauImportedShader${index}`,
+  ).join(',\n  ');
   return `
-import { createWaluauShaderSourceHost } from '@waluau/vite-plugin/shaders';
+import {
+  createWaluauImportedShaderHost,
+  createWaluauShaderSourceHost,
+} from '@waluau/vite-plugin/shaders';
 ${shaderImports}
+${importedShaderImports}
 
 const shaderSourceHost = createWaluauShaderSourceHost({
   ${initialShaderSources}
+});
+const importedShaderHost = createWaluauImportedShaderHost({
+  ${importedShaderEntries}
 });
 
 if (import.meta.hot) {
 ${shaderHotAccepts}
 }
 
-export default shaderSourceHost;
+export default {
+  imports: { ...shaderSourceHost.imports, ...importedShaderHost.imports },
+};
+`;
+}
+
+function importedShaderStateModuleSource(path) {
+  const rawSpecifier = `${path}?raw`;
+  return `
+import { createWaluauImportedShader } from '@waluau/vite-plugin/shaders';
+import source from ${JSON.stringify(rawSpecifier)};
+
+const shader = createWaluauImportedShader(source, ${JSON.stringify(path)});
+
+if (import.meta.hot) {
+  import.meta.hot.accept(${JSON.stringify(rawSpecifier)}, (module) => {
+    if (!shader.update(module?.default)) {
+      const failure = shader.error();
+      throw new Error(${JSON.stringify(path)} + ': ' + failure.code + ': ' + failure.message);
+    }
+  });
+}
+
+export default shader;
 `;
 }
 
@@ -350,6 +387,7 @@ export function waluau(options = {}) {
   const compiledEntries = new Set();
   const generatedModules = new Set();
   const shaderModules = new Map();
+  const importedShaderModules = new Map();
 
   function resolvePaths(root) {
     appRoot = root;
@@ -597,6 +635,7 @@ export function waluau(options = {}) {
         queued: false,
         involvedFiles: null,
         developmentSources: null,
+        shaderDependencies: [],
         version: 0,
       };
       compileStates.set(entryPath, state);
@@ -640,6 +679,9 @@ export function waluau(options = {}) {
           state.developmentSources = Array.isArray(report?.developmentSources)
             ? report.developmentSources
             : null;
+          state.shaderDependencies = Array.isArray(report?.shaderDependencies)
+            ? report.shaderDependencies
+            : [];
         }
         if (compileFailure != null) {
           throw compilerError(compileFailure, report, entryPath);
@@ -762,7 +804,24 @@ export function waluau(options = {}) {
         .update(file)
         .digest('hex')
         .slice(0, 12)}`;
-      shaderModules.set(`\0${shaderModule}`, shaderModuleSource(resolvedShaderSources()));
+      const importedShaders = compileStates.get(file).shaderDependencies.map(
+        ({ path, importName }) => {
+          if (typeof path !== 'string' || typeof importName !== 'string') {
+            throw new Error('shaderDependencies entries require path and importName strings');
+          }
+          const resolvedPath = resolve(path);
+          const module = `${importedShaderModulePrefix}${createHash('sha256')
+            .update(resolvedPath)
+            .digest('hex')
+            .slice(0, 16)}`;
+          importedShaderModules.set(`\0${module}`, importedShaderStateModuleSource(resolvedPath));
+          return { importName, module };
+        },
+      );
+      shaderModules.set(
+        `\0${shaderModule}`,
+        shaderModuleSource(resolvedShaderSources(), importedShaders),
+      );
       if (isTestModule) {
         return {
           code: testModuleSource(
@@ -794,10 +853,11 @@ export function waluau(options = {}) {
     },
     resolveId(id) {
       if (id.startsWith(shaderModulePrefix)) return `\0${id}`;
+      if (id.startsWith(importedShaderModulePrefix)) return `\0${id}`;
       return null;
     },
     load(id) {
-      return shaderModules.get(id) ?? null;
+      return shaderModules.get(id) ?? importedShaderModules.get(id) ?? null;
     },
     transformIndexHtml() {
       if (!fullScreen) return [];

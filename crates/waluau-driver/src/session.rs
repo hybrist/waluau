@@ -49,6 +49,7 @@ pub struct BuildOutcome {
     pub artifacts: Option<crate::CompileArtifacts>,
     pub diagnostics: Vec<Diagnostic>,
     pub involved_files: Vec<PathBuf>,
+    pub shader_dependencies: Vec<crate::link::ShaderDependency>,
     /// Post-link statement/expression node count of the compiled program
     /// (see [`waluau_ast::metrics::node_count`]); `0` when linking failed.
     pub ast_nodes: usize,
@@ -164,6 +165,7 @@ impl CompilerSession {
                             artifacts: None,
                             diagnostics: vec![error],
                             involved_files: Vec::new(),
+                            shader_dependencies: Vec::new(),
                             ast_nodes: 0,
                             linked_source_bytes: 0,
                         };
@@ -183,6 +185,7 @@ impl CompilerSession {
                     artifacts: None,
                     diagnostics: vec![error],
                     involved_files: Vec::new(),
+                    shader_dependencies: Vec::new(),
                     ast_nodes: 0,
                     linked_source_bytes: 0,
                 };
@@ -193,6 +196,7 @@ impl CompilerSession {
                 artifacts: None,
                 diagnostics: outcome.diagnostics,
                 involved_files: outcome.involved_files,
+                shader_dependencies: outcome.shader_dependencies,
                 ast_nodes: 0,
                 linked_source_bytes: 0,
             };
@@ -216,6 +220,7 @@ impl CompilerSession {
                 artifacts: Some(artifacts),
                 diagnostics: Vec::new(),
                 involved_files: outcome.involved_files,
+                shader_dependencies: outcome.shader_dependencies,
                 ast_nodes,
                 linked_source_bytes,
             },
@@ -223,6 +228,7 @@ impl CompilerSession {
                 artifacts: None,
                 diagnostics,
                 involved_files: outcome.involved_files,
+                shader_dependencies: outcome.shader_dependencies,
                 ast_nodes,
                 linked_source_bytes,
             },

@@ -90,6 +90,16 @@ pub struct LinkOutcome {
     pub program: Program,
     pub diagnostics: Vec<Diagnostic>,
     pub involved_files: Vec<PathBuf>,
+    pub shader_dependencies: Vec<ShaderDependency>,
+}
+
+/// A shader source required by authored Waluau. The source stays outside the
+/// linked program; browser build integrations satisfy `import_name` with a
+/// stateful JavaScript shader module.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShaderDependency {
+    pub path: PathBuf,
+    pub import_name: String,
 }
 
 /// Like [`link_program`], but recovers from module parse errors: every parse
@@ -161,9 +171,12 @@ pub fn link_program_collect_with_assets(
         entry_id,
         builtin_imports,
         builtin_constants,
-        dom_externs,
-        tfjs_externs,
-        vitest_externs,
+        ExternPrograms {
+            dom: dom_externs,
+            tfjs: tfjs_externs,
+            vitest: vitest_externs,
+        },
+        &loader.shader_dependencies,
     ) {
         Ok(program) => {
             if crate::CompilerTimer::enabled() {
@@ -176,6 +189,7 @@ pub fn link_program_collect_with_assets(
                 program,
                 diagnostics: loader.diagnostics,
                 involved_files,
+                shader_dependencies: loader.shader_dependencies,
             })
         }
         // A recovered (partial) AST can break merging in misleading ways —
@@ -186,6 +200,7 @@ pub fn link_program_collect_with_assets(
             program: Arc::unwrap_or_clone(loader.modules[entry_id].program.clone()),
             diagnostics: loader.diagnostics,
             involved_files,
+            shader_dependencies: loader.shader_dependencies,
         }),
         Err(error) => Err(error),
     }
@@ -197,6 +212,8 @@ struct LoadedModule {
     requires: HashMap<String, usize>,
     /// Raw virtual extern module specifiers that do not resolve to source files.
     virtual_requires: HashSet<String>,
+    /// Raw shader require -> generated host import name.
+    shader_requires: HashMap<String, String>,
 }
 
 struct Loader<'a> {
@@ -211,6 +228,8 @@ struct Loader<'a> {
     /// continues past modules with syntax errors using their recovered ASTs.
     diagnostics: Vec<Diagnostic>,
     asset_module_source: Option<&'a str>,
+    shader_dependencies: Vec<ShaderDependency>,
+    shader_by_path: HashMap<PathBuf, String>,
 }
 
 impl<'a> Loader<'a> {
@@ -225,6 +244,8 @@ impl<'a> Loader<'a> {
             requires_vitest_externs: false,
             diagnostics: Vec::new(),
             asset_module_source,
+            shader_dependencies: Vec::new(),
+            shader_by_path: HashMap::new(),
         }
     }
 
@@ -256,6 +277,7 @@ impl<'a> Loader<'a> {
         self.stack.push(path.to_path_buf());
         let mut requires = HashMap::new();
         let mut virtual_requires = HashSet::new();
+        let mut shader_requires = HashMap::new();
         for raw in raw_paths {
             if raw == ASSETS_REQUIRE {
                 let target = self.load_assets()?;
@@ -295,6 +317,23 @@ impl<'a> Loader<'a> {
                 continue;
             }
             let resolved = resolve_module_path(&dir, &raw)?;
+            if is_shader_path(&resolved) {
+                let import_name = if let Some(existing) = self.shader_by_path.get(&resolved) {
+                    existing.clone()
+                } else {
+                    let import_name =
+                        format!("__waluau_shader_require_{}", self.shader_dependencies.len());
+                    self.shader_by_path
+                        .insert(resolved.clone(), import_name.clone());
+                    self.shader_dependencies.push(ShaderDependency {
+                        path: resolved,
+                        import_name: import_name.clone(),
+                    });
+                    import_name
+                };
+                shader_requires.insert(raw, import_name);
+                continue;
+            }
             let target = self.load(&resolved)?;
             requires.insert(raw, target);
         }
@@ -305,6 +344,7 @@ impl<'a> Loader<'a> {
             program,
             requires,
             virtual_requires,
+            shader_requires,
         });
         self.by_path.insert(path.to_path_buf(), id);
         Ok(id)
@@ -340,6 +380,7 @@ impl<'a> Loader<'a> {
             program: Arc::new(program),
             requires,
             virtual_requires: HashSet::new(),
+            shader_requires: HashMap::new(),
         });
         self.by_path.insert(key, id);
         Ok(id)
@@ -406,6 +447,7 @@ impl<'a> Loader<'a> {
             program: Arc::new(program),
             requires,
             virtual_requires,
+            shader_requires: HashMap::new(),
         });
         self.by_path.insert(key, id);
         Ok(id)
@@ -544,6 +586,10 @@ fn resolve_module_path(dir: &Path, raw: &str) -> Result<PathBuf, Diagnostic> {
         .map_err(|error| Diagnostic::new(format!("cannot resolve module \"{raw}\": {error}")))
 }
 
+fn is_shader_path(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("frag")
+}
+
 fn module_prefix(id: usize, entry_id: usize) -> String {
     if id == entry_id {
         String::new()
@@ -552,31 +598,36 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
     }
 }
 
+struct ExternPrograms {
+    dom: Option<Program>,
+    tfjs: Option<Program>,
+    vitest: Option<Program>,
+}
+
 fn merge_with_builtins(
     modules: &[LoadedModule],
     entry_id: usize,
     builtin_imports: Vec<DeclaredImport>,
     builtin_constants: Vec<DeclaredConstant>,
-    dom_externs: Option<Program>,
-    tfjs_externs: Option<Program>,
-    vitest_externs: Option<Program>,
+    externs: ExternPrograms,
+    shader_dependencies: &[ShaderDependency],
 ) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
     let mut declared_constants = builtin_constants;
     let mut type_declarations = Vec::new();
     let mut extern_sources = BTreeMap::new();
-    if let Some(dom_program) = dom_externs {
+    if let Some(dom_program) = externs.dom {
         declared_imports.extend(dom_program.declared_imports);
         extend_unique_type_declarations(&mut type_declarations, dom_program.type_declarations)?;
         extern_sources.extend(dom_program.sources);
     }
-    if let Some(tfjs_program) = tfjs_externs {
+    if let Some(tfjs_program) = externs.tfjs {
         declared_imports.extend(tfjs_program.declared_imports);
         extend_unique_type_declarations(&mut type_declarations, tfjs_program.type_declarations)?;
         extern_sources.extend(tfjs_program.sources);
     }
-    if let Some(vitest_program) = vitest_externs {
+    if let Some(vitest_program) = externs.vitest {
         declared_imports.extend(vitest_program.declared_imports);
         extend_unique_type_declarations(&mut type_declarations, vitest_program.type_declarations)?;
         extern_sources.extend(vitest_program.sources);
@@ -584,6 +635,14 @@ fn merge_with_builtins(
     let mut top_level = Vec::new();
     let mut top_level_file_paths = Vec::new();
     let mut export_cache = HashMap::new();
+
+    declared_imports.extend(shader_dependencies.iter().map(|dependency| DeclaredImport {
+        name: dependency.import_name.clone(),
+        host_name: dependency.import_name.clone(),
+        symbol_id: None,
+        params: Vec::new(),
+        return_type: Type::Extern,
+    }));
 
     for (id, _) in modules.iter().enumerate() {
         if id != entry_id {
@@ -617,6 +676,9 @@ fn merge_with_builtins(
         }
         for raw in &module.virtual_requires {
             imports.insert(raw.clone(), resolve_virtual_import(raw)?);
+        }
+        for (raw, import_name) in &module.shader_requires {
+            imports.insert(raw.clone(), ResolvedImport::Shader(import_name.clone()));
         }
 
         let (re_exports, namespaces, mut value_aliases) =
@@ -792,6 +854,7 @@ enum ResolvedImport {
     Function(String),
     Namespace(ModuleNamespace),
     DomWindow,
+    Shader(String),
 }
 
 /// A module's table export: fields mapping to (mangled) function names, plus
@@ -2474,6 +2537,7 @@ impl Rewriter<'_> {
                                         .insert(name.clone(), dom_window_expr(*span));
                                 }
                             }
+                            ResolvedImport::Shader(_) => {}
                         }
                     }
                 }
@@ -2705,6 +2769,13 @@ impl Rewriter<'_> {
                             span: *span,
                         },
                         ResolvedImport::DomWindow => dom_window_expr(*span),
+                        ResolvedImport::Shader(import_name) => Expr::Call {
+                            callee: Box::new(Expr::Name(import_name.clone(), None, *span)),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            span: *span,
+                            method_call_origin: None,
+                        },
                     };
                 }
             }
@@ -3526,10 +3597,48 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::link_program;
+    use super::{FsModules, link_program, link_program_collect_with};
     use std::fs;
     use tempfile::tempdir;
     use waluau_ast::{Expr, Stmt, Type};
+
+    #[test]
+    fn fragment_shader_require_becomes_a_host_import_without_parsing_glsl() {
+        let dir = tempdir().expect("tempdir should exist");
+        let shader_path = dir.path().join("effect.frag");
+        fs::write(
+            &shader_path,
+            "precision highp float; void main() { nope }\n",
+        )
+        .expect("shader should write");
+        let entry_path = dir.path().join("main.walu");
+        fs::write(
+            &entry_path,
+            "local shader = require(\"./effect.frag\")\nfunction effect(): extern\n    return shader\nend\n",
+        )
+        .expect("entry should write");
+
+        let outcome = link_program_collect_with(&entry_path, &mut FsModules)
+            .expect("shader require should link");
+        assert!(outcome.diagnostics.is_empty(), "{:?}", outcome.diagnostics);
+        assert_eq!(outcome.shader_dependencies.len(), 1);
+        assert_eq!(
+            outcome.shader_dependencies[0].path,
+            shader_path.canonicalize().unwrap()
+        );
+        let import_name = &outcome.shader_dependencies[0].import_name;
+        assert!(outcome.program.declared_imports.iter().any(|import| {
+            import.host_name == *import_name
+                && import.params.is_empty()
+                && import.return_type == Type::Extern
+        }));
+        assert!(matches!(
+            &outcome.program.top_level[0],
+            Stmt::Let { value: Expr::Call { callee, .. }, .. }
+                if matches!(&**callee, Expr::Name(name, _, _) if name == import_name)
+        ));
+        assert!(!outcome.involved_files.contains(&shader_path));
+    }
 
     #[test]
     fn explicit_function_exports_form_a_namespace_and_plain_functions_stay_private() {

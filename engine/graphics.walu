@@ -48,6 +48,12 @@ declare function game_gpu_uniform_type(
     program: WebGLProgram,
     name: string
 ): u32
+declare function game_imported_shader_compile(shader: extern, gl: WebGL2RenderingContext): bool
+declare function game_imported_shader_program(shader: extern): WebGLProgram?
+declare function game_imported_shader_revision(shader: extern): i32
+declare function game_imported_shader_error_code(shader: extern): string
+declare function game_imported_shader_error_message(shader: extern): string
+declare function game_imported_shaders_release(gl: WebGL2RenderingContext): unit
 -- Web IDL types these return as `any`, but these two parameter names always
 -- produce booleans. Keeping the narrowed declarations here makes shader
 -- diagnostics reliable without exposing untyped host values to games.
@@ -103,7 +109,8 @@ export type Shader = {
     time_location: WebGLUniformLocation?,
     pixel_scale_location: WebGLUniformLocation?,
     texture_location: WebGLUniformLocation?,
-    released: bool
+    released: bool,
+    host_owned: bool
 }
 export type ShaderResult = { ok: bool, shader: Shader, error: GraphicsError }
 type CompiledShader = { ok: bool, shader: WebGLShader?, error: GraphicsError }
@@ -175,6 +182,8 @@ export type Graphics = {
     default_shader: Shader,
     active_shader: Shader,
     shaders: {Shader},
+    imported_shader_handles: {extern},
+    imported_shaders: {Shader},
     owned_gpu_resources: {i32},
     next_shader_id: i32,
     time: f64,
@@ -227,7 +236,8 @@ function empty_shader(): Shader
         time_location = nil,
         pixel_scale_location = nil,
         texture_location = nil,
-        released = true
+        released = true,
+        host_owned = false
     }
 end
 
@@ -335,7 +345,8 @@ function build_shader(
             time_location = gl:getUniformLocation(program, "u_time"),
             pixel_scale_location = gl:getUniformLocation(program, "u_pixel_scale"),
             texture_location = gl:getUniformLocation(program, "u_texture"),
-            released = false
+            released = false,
+            host_owned = false
         },
         error = { code = "", message = "" }
     }
@@ -481,6 +492,8 @@ void main() {
         default_shader = default_shader,
         active_shader = default_shader,
         shaders = {},
+        imported_shader_handles = {},
+        imported_shaders = {},
         owned_gpu_resources = {},
         next_shader_id = 1,
         time = 0.0,
@@ -603,7 +616,9 @@ function Graphics:dispose(): unit
         local shader: Shader = self.shaders[index]
         disable_shader_attributes(self.gl, shader)
         if not shader.released then
-            self.gl:deleteProgram(shader.program)
+            if not shader.host_owned then
+                self.gl:deleteProgram(shader.program)
+            end
             shader.program = nil
             shader.uniforms = {}
             shader.released = true
@@ -805,6 +820,121 @@ function Graphics:create_shader(vertex_source: string, pixel_source: string): Sh
     return result
 end
 
+function imported_shader_value(
+    gl: WebGL2RenderingContext,
+    program: WebGLProgram,
+    id: i32,
+    revision: i32
+): Shader
+    return {
+        program = program,
+        id = id,
+        revision = revision,
+        uniforms = {},
+        position_location = gl:getAttribLocation(program, "a_position"),
+        color_location = gl:getAttribLocation(program, "a_color"),
+        uv_location = gl:getAttribLocation(program, "a_uv"),
+        textured_location = gl:getAttribLocation(program, "a_textured"),
+        time_location = gl:getUniformLocation(program, "u_time"),
+        pixel_scale_location = gl:getUniformLocation(program, "u_pixel_scale"),
+        texture_location = gl:getUniformLocation(program, "u_texture"),
+        released = false,
+        host_owned = true
+    }
+end
+
+-- Explicitly prewarms a required shader. The browser host owns the compiled
+-- program, so this same operation is also safe to call lazily before binding
+-- and from Vite's shader-only HMR callback.
+function Graphics:compile_shader(imported: extern): ShaderResult
+    local cached: Shader? = nil
+    for index = 1::i32, #self.imported_shader_handles do
+        if self.imported_shader_handles[index] == imported then
+            cached = self.imported_shaders[index]
+        end
+    end
+
+    if not game_imported_shader_compile(imported, self.gl) then
+        return {
+            ok = false,
+            shader = cached or empty_shader(),
+            error = {
+                code = game_imported_shader_error_code(imported),
+                message = game_imported_shader_error_message(imported)
+            }
+        }
+    end
+
+    local maybe_program: WebGLProgram? = game_imported_shader_program(imported)
+    if maybe_program == nil then
+        return {
+            ok = false,
+            shader = cached or empty_shader(),
+            error = { code = "program", message = "imported shader compiled without a program" }
+        }
+    end
+    local program: WebGLProgram = maybe_program::WebGLProgram
+    local revision: i32 = game_imported_shader_revision(imported)
+    if cached ~= nil then
+        local shader: Shader = cached::Shader
+        if not shader.released and shader.revision == revision and shader.program == maybe_program then
+            return { ok = true, shader = shader, error = { code = "", message = "" } }
+        end
+        local was_active: bool = self.active_shader.id == shader.id
+        if was_active then
+            self:flush()
+        end
+        local replacement: Shader = imported_shader_value(self.gl, program, shader.id, revision)
+        shader.program = replacement.program
+        shader.revision = replacement.revision
+        shader.uniforms = {}
+        shader.position_location = replacement.position_location
+        shader.color_location = replacement.color_location
+        shader.uv_location = replacement.uv_location
+        shader.textured_location = replacement.textured_location
+        shader.time_location = replacement.time_location
+        shader.pixel_scale_location = replacement.pixel_scale_location
+        shader.texture_location = replacement.texture_location
+        shader.released = false
+        shader.host_owned = true
+        if was_active then
+            self.active_shader = shader
+            bind_shader(
+                self.gl,
+                shader,
+                (self.gl.drawingBufferWidth::f64) / self.width,
+                (self.gl.drawingBufferHeight::f64) / self.height,
+                self.time
+            )
+        end
+        return { ok = true, shader = shader, error = { code = "", message = "" } }
+    end
+
+    local shader: Shader = imported_shader_value(self.gl, program, self.next_shader_id, revision)
+    self.next_shader_id += 1
+    table.insert(self.imported_shader_handles, imported)
+    table.insert(self.imported_shaders, shader)
+    table.insert(self.shaders, shader)
+    return { ok = true, shader = shader, error = { code = "", message = "" } }
+end
+
+-- Binding compiles lazily, then uses the same typed parameter validation as
+-- generation-owned shaders. A failed hot edit keeps rendering with the last
+-- good program; explicit compile_shader still exposes its diagnostic.
+function Graphics:bind_imported_shader(
+    imported: extern,
+    parameters: {ShaderParameter}
+): ShaderBindingResult
+    local compiled: ShaderResult = self:compile_shader(imported)
+    if not compiled.ok then
+        if compiled.shader.program ~= nil then
+            return self:bind_shader(compiled.shader, parameters)
+        end
+        return { ok = false, error = compiled.error }
+    end
+    return self:bind_shader(compiled.shader, parameters)
+end
+
 -- Compile and link a replacement before touching the live shader. Failures
 -- preserve the same handle, id, and old program; success updates every
 -- reference to the Shader record.
@@ -916,10 +1046,19 @@ function Graphics:release_shader(shader: Shader): unit
     if self.active_shader.id == shader.id then
         self:use_default_shader()
     end
-    self.gl:deleteProgram(shader.program)
+    if not shader.host_owned then
+        self.gl:deleteProgram(shader.program)
+    end
     shader.program = nil
     shader.uniforms = {}
     shader.released = true
+end
+
+-- Only browser.walu's final stop calls this. A suspend disposes the current
+-- Wasm generation while preserving these Vite-owned programs for its
+-- replacement on the retained canvas.
+function Graphics:release_imported_shaders(): unit
+    game_imported_shaders_release(self.gl)
 end
 
 function parameter_name(parameter: ShaderParameter): string

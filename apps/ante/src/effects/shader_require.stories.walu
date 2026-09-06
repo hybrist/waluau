@@ -1,0 +1,42 @@
+-- A deliberately isolated example of a shader imported as a Waluau module.
+-- The fragment source is not listed in Ante's shader manifest: Vite discovers
+-- it from this require and owns its compiled WebGLProgram across Wasm HMR.
+local shader = require("./shader_require.frag")
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+
+local warmed: bool = false
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+    if not warmed then
+        local compiled: graphics_module.ShaderResult = graphics:compile_shader(shader)
+        if not compiled.ok then
+            error(
+                "shader require failed (" .. compiled.error.code .. "): " .. compiled.error.message
+            )
+        end
+        warmed = true
+    end
+
+    local binding: graphics_module.ShaderBindingResult = graphics:bind_imported_shader(shader, {})
+    if not binding.ok then
+        error("shader require failed (" .. binding.error.code .. "): " .. binding.error.message)
+    end
+    graphics:set_color("#ffffff")
+    graphics:fill_rounded_rectangle(32.0, 32.0, 416.0, 256.0, 28.0)
+    graphics:use_default_shader()
+
+    graphics:set_color("#d8d8e8")
+    graphics:set_font("16px")
+    graphics:print("REQUIRE(\"./SHADER_REQUIRE.FRAG\")", 72.0, 326.0)
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Shader require",
+            { draw = draw, width = 480, height = 360, background = "#09090f" }
+        )
+    }
+)

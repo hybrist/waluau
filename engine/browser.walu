@@ -513,6 +513,9 @@ function start(config: Config, game: Game): Session
                     SURFACE_HANDOFF_ATTRIBUTE
                 ) == surface.generation
                 local mounted_root: Element? = document:get_element_by_id(root.id)
+                if still_owned then
+                    graphics:release_imported_shaders()
+                end
                 if still_owned and mounted_root == root then
                     host:remove_child(root)
                 end
