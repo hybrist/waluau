@@ -532,6 +532,14 @@ fn write_build_report(path: &Path, outcome: &session::BuildOutcome) -> Result<()
                 }))
                 .collect::<Vec<_>>())
             .unwrap_or_default(),
+        "shaderDependencies": outcome
+            .shader_dependencies
+            .iter()
+            .map(|dependency| serde_json::json!({
+                "path": dependency.path.display().to_string(),
+                "importName": dependency.import_name,
+            }))
+            .collect::<Vec<_>>(),
         "diagnostics": diagnostics,
         "workload": {
             "astNodes": outcome.ast_nodes,
@@ -2219,6 +2227,52 @@ mod tests {
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert_eq!(diagnostics[0]["severity"], "error");
         assert!(diagnostics[0]["file"].as_str().is_some());
+    }
+
+    #[test]
+    fn cli_report_separates_shader_dependencies_from_waluau_watch_files() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let shader_path = tempdir.path().join("effect.frag");
+        let entry_path = tempdir.path().join("entry.walu");
+        let output_path = tempdir.path().join("game.wasm");
+        let report_path = tempdir.path().join("report.json");
+        fs::write(&shader_path, "void main() {}\n").expect("shader should write");
+        fs::write(
+            &entry_path,
+            "local shader = require(\"./effect.frag\")\nfunction effect(): extern\n    return shader\nend\n",
+        )
+        .expect("entry should write");
+
+        super::run_with_args([
+            os(&entry_path),
+            OsString::from("-o"),
+            os(&output_path),
+            OsString::from("--report"),
+            os(&report_path),
+        ])
+        .expect("shader require should compile");
+
+        let report: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&report_path).expect("report should exist"))
+                .expect("report should be valid JSON");
+        assert_eq!(report["shaderDependencies"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            report["shaderDependencies"][0]["path"],
+            shader_path.canonicalize().unwrap().display().to_string()
+        );
+        assert!(
+            report["shaderDependencies"][0]["importName"]
+                .as_str()
+                .unwrap()
+                .starts_with("__waluau_shader_require_")
+        );
+        assert!(
+            !report["involvedFiles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|path| path.as_str() == Some(&shader_path.display().to_string()))
+        );
     }
 
     #[test]

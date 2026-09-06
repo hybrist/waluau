@@ -2389,6 +2389,14 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   const shaderSourceHost = options.shaderSources?.imports ?? {
     __waluau_shader_source_revision() { return -1; },
     __waluau_shader_source_text() { return ''; },
+    game_imported_shader_compile() { return 0; },
+    game_imported_shader_program() { return null; },
+    game_imported_shader_revision() { return 0; },
+    game_imported_shader_error_code() { return 'unavailable'; },
+    game_imported_shader_error_message() {
+      return 'Imported shaders require @waluau/vite-plugin';
+    },
+    game_imported_shaders_release() {},
   };
   const hostImports = options.hostImports ?? {};
   const reportAsyncError = (error) => {
