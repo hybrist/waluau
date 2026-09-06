@@ -147,6 +147,7 @@ type UniformResult = { ok: bool, location: WebGLUniformLocation?, actual_kind: u
 
 export type Graphics = {
     gl: WebGL2RenderingContext,
+    buffer: WebGLBuffer?,
     width: f64,
     height: f64,
     draw_width: f64,
@@ -173,6 +174,8 @@ export type Graphics = {
     custom_font_advances: {i32},
     default_shader: Shader,
     active_shader: Shader,
+    shaders: {Shader},
+    owned_gpu_resources: {i32},
     next_shader_id: i32,
     time: f64,
     transforms: {f64},
@@ -184,7 +187,8 @@ export type Graphics = {
     path_start_y: f64,
     current_texture: i32,
     current_target: i32,
-    blend_mode: string
+    blend_mode: string,
+    disposed: bool
 }
 
 -- `flip_v` marks storage whose first row is the logical bottom, which is how
@@ -449,6 +453,7 @@ void main() {
 
     return {
         gl = gl,
+        buffer = buffer,
         width = width,
         height = height,
         draw_width = width,
@@ -475,6 +480,8 @@ void main() {
         custom_font_advances = {},
         default_shader = default_shader,
         active_shader = default_shader,
+        shaders = {},
+        owned_gpu_resources = {},
         next_shader_id = 1,
         time = 0.0,
         transforms = {1.0, 0.0, 0.0, 1.0, 0.0, 0.0},
@@ -486,7 +493,8 @@ void main() {
         path_start_y = 0.0,
         current_texture = 0,
         current_target = 0,
-        blend_mode = "alpha"
+        blend_mode = "alpha",
+        disposed = false
     }
 end
 
@@ -559,6 +567,66 @@ end
 -- Called by browser.walu once per animation frame after draw().
 function Graphics:present(): unit
     self:flush()
+end
+
+function disable_shader_attributes(gl: WebGL2RenderingContext, shader: Shader): unit
+    if shader.position_location >= 0 then
+        gl:disableVertexAttribArray(shader.position_location::u32)
+    end
+    if shader.color_location >= 0 then
+        gl:disableVertexAttribArray(shader.color_location::u32)
+    end
+    if shader.uv_location >= 0 then
+        gl:disableVertexAttribArray(shader.uv_location::u32)
+    end
+    if shader.textured_location >= 0 then
+        gl:disableVertexAttribArray(shader.textured_location::u32)
+    end
+end
+
+-- A Graphics value belongs to one Wasm generation even when its canvas and
+-- WebGL2 context survive into the next one. Release everything this generation
+-- created so adopting the context cannot accumulate unreachable GPU objects.
+function Graphics:dispose(): unit
+    if self.disposed then
+        return
+    end
+    self.used = 0
+    -- WebGL keeps deleted objects alive while context bindings still reference
+    -- them. Reset the shared context before releasing this generation's
+    -- resources so its successor always begins on the canvas framebuffer.
+    game_gpu_screen_bind(self.gl)
+    game_gpu_texture_unbind(self.gl)
+    self.gl:useProgram(nil)
+    self.gl:bindBuffer(GL_ARRAY_BUFFER, nil)
+    for index = 1, #self.shaders do
+        local shader: Shader = self.shaders[index]
+        disable_shader_attributes(self.gl, shader)
+        if not shader.released then
+            self.gl:deleteProgram(shader.program)
+            shader.program = nil
+            shader.uniforms = {}
+            shader.released = true
+        end
+    end
+    self.shaders = {}
+    for index = 1, #self.owned_gpu_resources do
+        game_gpu_resource_release(self.owned_gpu_resources[index])
+    end
+    self.owned_gpu_resources = {}
+    disable_shader_attributes(self.gl, self.default_shader)
+    if not self.default_shader.released then
+        self.gl:deleteProgram(self.default_shader.program)
+        self.default_shader.program = nil
+        self.default_shader.uniforms = {}
+        self.default_shader.released = true
+    end
+    self.gl:deleteBuffer(self.buffer)
+    self.buffer = nil
+    self.current_texture = 0
+    self.current_target = 0
+    self.current_font = 0
+    self.disposed = true
 end
 
 function Graphics:ensure_capacity(vertex_count: i32): unit
@@ -731,6 +799,7 @@ function Graphics:create_shader(vertex_source: string, pixel_source: string): Sh
         self.next_shader_id
     )
     if result.ok then
+        table.insert(self.shaders, result.shader)
         self.next_shader_id += 1
     end
     return result
@@ -1125,6 +1194,7 @@ function texture_from_handle(self: Graphics, resource_handle: i32): TextureResul
     -- against the texture selected when they were emitted.
     self:flush()
     local handle: i32 = game_gpu_texture_from_resource(self.gl, resource_handle)
+    table.insert(self.owned_gpu_resources, handle)
     self.current_texture = 0
     if not game_gpu_resource_ok(handle) then
         return {
@@ -1159,6 +1229,7 @@ end
 function font_from_handle(self: Graphics, resource_handle: i32): FontResult
     self:flush()
     local handle: i32 = game_gpu_font_from_resource(self.gl, resource_handle)
+    table.insert(self.owned_gpu_resources, handle)
     self.current_texture = 0
     if not game_gpu_resource_ok(handle) then
         return {
@@ -1229,6 +1300,7 @@ function Graphics:create_render_target(width: i32, height: i32): RenderTargetRes
     -- Framebuffer allocation also binds its backing texture.
     self:flush()
     local handle: i32 = game_gpu_render_target_create(self.gl, width, height)
+    table.insert(self.owned_gpu_resources, handle)
     self.current_texture = 0
     if not game_gpu_resource_ok(handle) then
         return {

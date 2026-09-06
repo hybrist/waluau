@@ -62,11 +62,13 @@ hot.register({
 ```
 
 The plugin captures the old snapshot, disposes its browser loop, starts the
-new Wasm module, and passes the snapshot to the registered restore closure.
+new Wasm module on the suspended session's existing canvas and WebGL2 context,
+and passes the snapshot to the registered restore closure.
 The snapshot must be a self-contained string; include a schema or build marker
 and return `false` when the new code cannot safely interpret it. Missing
 registration, capture or startup errors, non-string snapshots, and rejected
-or failed restores all fall back to a full page reload.
+or failed restores all fall back to a full page reload. A canvas that cannot be
+adopted is a startup failure and follows the same reload path.
 
 This is transient development state. The plugin never writes it to storage and
 does not promise long-term compatibility. Use the engine save-data service for

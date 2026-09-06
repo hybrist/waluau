@@ -220,8 +220,11 @@ clamped by `max_frame_seconds` to avoid an unbounded catch-up loop.
 `start` returns a `Session`; `Session.stop()` is idempotent and releases the
 browser lifecycle registrations and mounted root owned by that run. Development
 hot replacement uses `Session.suspend()` through a game's
-`waluau:engine/hot` dispose closure; it releases the callbacks while keeping
-the last frame mounted until the replacement presents its first frame.
+`waluau:engine/hot` dispose closure; it releases the callbacks and that Wasm
+generation's renderer resources while leaving its canvas marked for adoption.
+The replacement reuses that exact canvas and WebGL2 context. An active or
+incompatible surface makes replacement fail, and the development host reloads
+the page.
 
 ## Particle systems
 
