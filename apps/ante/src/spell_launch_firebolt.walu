@@ -2,12 +2,10 @@
 -- timing stay in this module and cannot conflict with the other spells.
 local engine = require("waluau:engine")
 local particles = require("waluau:engine/particles")
-local effect_shaders = require("./effect_shaders")
 local burn_particles = require("./burn_particles")
 local spell_cast = require("./spell_cast")
 
 type Graphics = engine.Graphics
-type EffectShaders = effect_shaders.EffectShaders
 
 -- Embers per second while the bolt is in the air. The emitter is moved rather
 -- than teleported, so this rate is spread along the path travelled since the
@@ -68,12 +66,7 @@ function step_trail(
     system:update(dt)
 end
 
-function draw(
-    graphics: Graphics,
-    effects: EffectShaders,
-    cast: spell_cast.Cast,
-    trail: particles.ParticleSystem
-): unit
+function draw(graphics: Graphics, cast: spell_cast.Cast, trail: particles.ParticleSystem): unit
     -- The trail is drawn whatever the carrier is doing: its last embers are
     -- still burning after the head has landed, and cutting them with the head
     -- is exactly what the reconstruction could not avoid.
@@ -81,7 +74,7 @@ function draw(
     if not flying and trail:count() == 0 then
         return
     end
-    local embers_ok: bool = burn_particles.use(graphics, effects, 913, true)
+    local embers_ok: bool = burn_particles.use(graphics, 913, true)
     if not embers_ok then
         burn_particles.stop(graphics)
     end

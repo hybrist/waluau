@@ -10,10 +10,55 @@
 -- of another size scales the whole face rather than reflowing its insides: a
 -- card is a printed object, so it gets larger, not roomier.
 local graphics_module = require("waluau:engine/graphics")
+local shader_program = require("../shader_program")
+local card_paper_shader = require("../shaders/card-paper.frag")
+local red_fire_shader = require("../shaders/red-fire.frag")
+local blue_caustics_shader = require("../shaders/blue-caustics.frag")
+local black_hole_shader = require("../shaders/black-hole.frag")
+local green_growth_shader = require("../shaders/green-growth.frag")
 local game = require("../game")
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
+
+local paper_board: graphics_module.RenderTarget? = nil
+local paper_press: graphics_module.RenderTarget? = nil
+local paper_version: i32 = -1
+
+function release_paper_bake(graphics: ui.Graphics): unit
+    local board: graphics_module.RenderTarget? = paper_board
+    if board ~= nil then
+        graphics:release_render_target(board::graphics_module.RenderTarget)
+    end
+    paper_board = nil
+    local press: graphics_module.RenderTarget? = paper_press
+    if press ~= nil then
+        graphics:release_render_target(press::graphics_module.RenderTarget)
+    end
+    paper_press = nil
+end
+
+local card_paper_program: shader_program.Program = shader_program.new(
+    card_paper_shader,
+    "card paper",
+    false
+)
+local red_fire_program: shader_program.Program = shader_program.new(red_fire_shader, "red", false)
+local blue_caustics_program: shader_program.Program = shader_program.new(
+    blue_caustics_shader,
+    "blue",
+    false
+)
+local black_hole_program: shader_program.Program = shader_program.new(
+    black_hole_shader,
+    "black",
+    false
+)
+local green_growth_program: shader_program.Program = shader_program.new(
+    green_growth_shader,
+    "green",
+    false
+)
 
 -- The design space a card face is drawn in.
 -- 92:128 is within a fraction of the traditional 2.5:3.5 playing-card ratio.
@@ -359,18 +404,14 @@ function use_color_field(
     colored: bool,
     aspect: f64
 ): bool
-    local maybe_shader: graphics_module.Shader? = surface.effects.red_fire.shader
+    local program: shader_program.Program = red_fire_program
     if suit == 1 then
-        maybe_shader = surface.effects.blue_caustics.shader
+        program = blue_caustics_program
     elseif suit == 2 then
-        maybe_shader = surface.effects.black_hole.shader
+        program = black_hole_program
     elseif suit == 3 then
-        maybe_shader = surface.effects.green_growth.shader
+        program = green_growth_program
     end
-    if maybe_shader == nil then
-        return false
-    end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
     local selected_value: f64 = 0.0
     if selected then
         selected_value = 1.0
@@ -379,15 +420,14 @@ function use_color_field(
     if colored then
         colored_value = 1.0
     end
-    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
-        shader,
+    return program:bind(
+        surface.graphics,
         {
             graphics_module.float_parameter("u_aspect", aspect),
             graphics_module.float_parameter("u_selected", selected_value),
             graphics_module.float_parameter("u_colored", colored_value)
         }
     )
-    return binding.ok
 end
 
 -- The card stock itself: a shader that presses pulp mottling, fibers, edge
@@ -398,23 +438,17 @@ end
 -- while sources are still loading, in which case the caller keeps the flat
 -- fill and the print stays clean.
 function use_paper_field(surface: ui.Surface, aspect: f64, press: f64): bool
-    local maybe_shader: graphics_module.Shader? = surface.effects.card_paper.shader
-    if maybe_shader == nil then
-        return false
-    end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
-        shader,
+    return card_paper_program:bind(
+        surface.graphics,
         {
             graphics_module.float_parameter("u_aspect", aspect),
             graphics_module.float_parameter("u_press", press)
         }
     )
-    return binding.ok
 end
 
 -- The paper is identical for every card, so each shader pass renders once
--- into a target the effect registry keeps, and every card after that costs a
+-- into targets this card module keeps, and every card after that costs a
 -- sprite draw instead of a full per-pixel procedural evaluation — the
 -- difference between the board's frame budget surviving a software
 -- rasterizer and not. Baked at double the design size so a card scaled up
@@ -456,24 +490,29 @@ end
 -- bake only starts while drawing to the screen: switching targets inside a
 -- capture would hand the rest of the capture to the wrong surface.
 function paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
-    local baked: graphics_module.RenderTarget? = surface.effects.paper_board
+    local version: i32 = card_paper_program:version(surface.graphics)
+    if version < 0 then
+        return nil
+    end
+    if version ~= paper_version then
+        release_paper_bake(surface.graphics)
+        paper_version = version
+    end
+    local baked: graphics_module.RenderTarget? = paper_board
     if press > 0.5 then
-        baked = surface.effects.paper_press
+        baked = paper_press
     end
     if baked ~= nil then
         return baked
-    end
-    if surface.effects.card_paper.shader == nil then
-        return nil
     end
     if surface.graphics.current_target ~= 0 then
         return nil
     end
     local fresh: graphics_module.RenderTarget? = bake_paper_pass(surface, press)
     if press > 0.5 then
-        surface.effects.paper_press = fresh
+        paper_press = fresh
     else
-        surface.effects.paper_board = fresh
+        paper_board = fresh
     end
     return fresh
 end

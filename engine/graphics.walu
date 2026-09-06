@@ -118,7 +118,7 @@ type CompiledShader = { ok: bool, shader: WebGLShader?, error: GraphicsError }
 -- A parameter block is an array of these opaque, compiler-typed values. Games
 -- can only construct variants through the functions exported at the bottom of
 -- this module, so a vec3 uniform cannot accidentally receive a scalar value.
-opaque type ShaderParameter = FloatParameter({
+export opaque type ShaderParameter = FloatParameter({
     name: string,
     value: f64
 }) | Vec2Parameter({

@@ -12,7 +12,26 @@
 local box = require("../ui/layout")
 local ui = require("../ui/node")
 local graphics_module = require("waluau:engine/graphics")
+local shader_program = require("../shader_program")
+local astral_sea_shader = require("../shaders/astral-sea.frag")
 local ink = require("../ink")
+
+local sea_still: graphics_module.RenderTarget? = nil
+local sea_version: i32 = -1
+
+function release_still(graphics: ui.Graphics): unit
+    local still: graphics_module.RenderTarget? = sea_still
+    if still ~= nil then
+        graphics:release_render_target(still::graphics_module.RenderTarget)
+    end
+    sea_still = nil
+end
+
+local astral_sea_program: shader_program.Program = shader_program.new(
+    astral_sea_shader,
+    "astral sea",
+    false
+)
 
 const CLEAR: string = "#09090b"
 -- What stands in for the sea until its program has compiled: the deep
@@ -23,19 +42,13 @@ const DEEP: string = "#05030e"
 const STILL_PHASE: f64 = 140.0
 
 function use_sea(surface: ui.Surface, aspect: f64, phase: f64): bool
-    local maybe_shader: graphics_module.Shader? = surface.effects.astral_sea.shader
-    if maybe_shader == nil then
-        return false
-    end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
-        shader,
+    return astral_sea_program:bind(
+        surface.graphics,
         {
             graphics_module.float_parameter("u_aspect", aspect),
             graphics_module.float_parameter("u_phase", phase)
         }
     )
-    return binding.ok
 end
 
 -- The sea at one phase over one rectangle. False while the program is still
@@ -83,20 +96,28 @@ function still_sea(surface: ui.Surface, bounds: box.Rect): graphics_module.Rende
     local graphics = surface.graphics
     local width: i32 = math.ceil(bounds.width)::i32
     local height: i32 = math.ceil(bounds.height)::i32
-    local baked: graphics_module.RenderTarget? = surface.effects.sea_still
+    local version: i32 = astral_sea_program:version(graphics)
+    if version < 0 then
+        return nil
+    end
+    if version ~= sea_version then
+        release_still(graphics)
+        sea_version = version
+    end
+    local baked: graphics_module.RenderTarget? = sea_still
     if baked ~= nil then
         local still: graphics_module.RenderTarget = baked::graphics_module.RenderTarget
         if still.width == width and still.height == height then
             return still
         end
         graphics:release_render_target(still)
-        surface.effects.sea_still = nil
+        sea_still = nil
     end
-    if surface.effects.astral_sea.shader == nil or graphics.current_target ~= 0 then
+    if graphics.current_target ~= 0 then
         return nil
     end
     local fresh: graphics_module.RenderTarget? = bake_still(surface, width, height)
-    surface.effects.sea_still = fresh
+    sea_still = fresh
     return fresh
 end
 

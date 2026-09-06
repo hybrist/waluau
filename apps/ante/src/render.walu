@@ -9,7 +9,9 @@
 -- can only ever land where a card is actually going to be.
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
-local effect_shaders = require("./effect_shaders")
+local shader_program = require("./shader_program")
+local gold_shimmer_shader = require("./shaders/gold-shimmer.frag")
+local defeat_shroud_shader = require("./shaders/defeat-shroud.frag")
 local spell_cast = require("./spell_cast")
 local spell_launch = require("./spell_launch")
 local spells = require("./spells/spell")
@@ -33,6 +35,17 @@ local hand_fan = require("./entities/hand_fan")
 local deck = require("./entities/deck")
 local action_bar = require("./entities/action_bar")
 local capsule = require("./entities/capsule")
+
+local gold_shimmer_program: shader_program.Program = shader_program.new(
+    gold_shimmer_shader,
+    "gold shimmer",
+    false
+)
+local defeat_shroud_program: shader_program.Program = shader_program.new(
+    defeat_shroud_shader,
+    "defeat shroud",
+    true
+)
 local powered_card = require("./entities/powered_card")
 local backdrop = require("./entities/backdrop")
 local modal = require("./entities/modal")
@@ -598,23 +611,17 @@ end
 -- it is drawn before all five cards, the cards mask its centre while the
 -- continuous field remains visible around them and through every gap.
 function use_result_field(surface: ui.Surface, strength: f64, aspect: f64, player_won: bool): bool
-    local effects: effect_shaders.EffectShaders = surface.effects
-    local maybe_shader: graphics_module.Shader? = effects.defeat_shroud.shader
+    local program: shader_program.Program = defeat_shroud_program
     if player_won then
-        maybe_shader = effects.gold_shimmer.shader
+        program = gold_shimmer_program
     end
-    if maybe_shader == nil then
-        return false
-    end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local binding: graphics_module.ShaderBindingResult = surface.graphics:bind_shader(
-        shader,
+    return program:bind(
+        surface.graphics,
         {
             graphics_module.float_parameter("u_strength", strength),
             graphics_module.float_parameter("u_aspect", aspect)
         }
     )
-    return binding.ok
 end
 
 function draw_result_field(
@@ -988,7 +995,6 @@ function draw_hand_disintegration(
             -(card.height * 0.5) - card.select_lift,
             progress,
             seed,
-            value.suit,
             ash
         )
         graphics:release_render_target(captured)
@@ -1050,7 +1056,6 @@ function draw_spell_launch(
     local slot: Point = slot_pos_at(viewport, SLOT_MIDDLE, target, middle_count)
     spell_launch.draw(
         surface.graphics,
-        surface.effects,
         kind,
         clock,
         slot.x + card.width * 0.5,

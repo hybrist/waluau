@@ -9,6 +9,8 @@
 -- much of the board it takes.
 local graphics_module = require("waluau:engine/graphics")
 local particles = require("waluau:engine/particles")
+local shader_program = require("../shader_program")
+local ice_freeze_shader = require("../shaders/ice-freeze.frag")
 local spells = require("../spells/spell")
 local spell_cast = require("../spell_cast")
 local burn_particles = require("../burn_particles")
@@ -18,6 +20,12 @@ local box = require("../ui/layout")
 local ui = require("../ui/node")
 local ink = require("../ink")
 local card = require("./card")
+
+local ice_freeze_program: shader_program.Program = shader_program.new(
+    ice_freeze_shader,
+    "ice",
+    false
+)
 
 -- How long a condition takes to form once its carrier has landed, and the
 -- longer clocks Fireball's burn and its trailing ash need.
@@ -67,15 +75,10 @@ end
 
 function use_ice_freeze(surface: ui.Surface, freeze: f64): bool
     local graphics = surface.graphics
-    local maybe_shader: graphics_module.Shader? = surface.effects.ice_freeze.shader
-    if maybe_shader == nil then
-        return false
-    end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
     local quad_w: f64 = card.width + FREEZE_MARGIN_X * 2.0
     local quad_h: f64 = card.height + FREEZE_MARGIN_TOP + FREEZE_MARGIN_BOTTOM
-    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(
-        shader,
+    return ice_freeze_program:bind(
+        graphics,
         {
             graphics_module.float_parameter("u_aspect", card.width / card.height),
             graphics_module.float_parameter("u_freeze", freeze),
@@ -88,7 +91,6 @@ function use_ice_freeze(surface: ui.Surface, freeze: f64): bool
             )
         }
     )
-    return binding.ok
 end
 
 function draw_ring(surface: ui.Surface, x: f64, y: f64, radius: f64): unit
@@ -169,16 +171,7 @@ function draw_fireball(
         card_burn.draw_ash(surface, ash.table_card_sheet, x, top, seed + 401)
     else
         local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-        card_burn.draw_captured(
-            surface,
-            captured,
-            x,
-            top,
-            progress,
-            seed,
-            value.card.suit,
-            ash.table_card_sheet
-        )
+        card_burn.draw_captured(surface, captured, x, top, progress, seed, ash.table_card_sheet)
         surface.graphics:release_render_target(captured)
     end
     card_burn.draw_ash(surface, ash.table_card_fall, x, top, seed + 607)
@@ -206,7 +199,7 @@ function draw_freeze(
     if value.selected then
         top -= card.select_lift
     end
-    local maybe_noise: graphics_module.Texture? = surface.effects.noise_texture
+    local maybe_noise: graphics_module.Texture? = surface.ice_noise
     if maybe_noise ~= nil then
         local noise: graphics_module.Texture = maybe_noise::graphics_module.Texture
         if use_ice_freeze(surface, ice) then

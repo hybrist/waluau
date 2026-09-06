@@ -5,7 +5,6 @@
 -- most recently painted.
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
-local effect_shaders = require("../effect_shaders")
 local ink = require("../ink")
 local layout = require("./layout")
 
@@ -13,10 +12,10 @@ export type Graphics = engine.Graphics
 
 export type Surface = {
     graphics: Graphics,
-    effects: effect_shaders.EffectShaders,
     card_back: graphics_module.Texture?,
     suit_symbols: graphics_module.Texture?,
     face_cards: graphics_module.Texture?,
+    ice_noise: graphics_module.Texture?,
     -- True when the browser reports prefers-reduced-motion: decoration that
     -- would move on its own holds still, starting with the backdrop.
     reduced_motion: bool

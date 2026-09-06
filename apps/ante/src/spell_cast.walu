@@ -3,11 +3,9 @@
 -- impact look.
 local engine = require("waluau:engine")
 local particles = require("waluau:engine/particles")
-local effect_shaders = require("./effect_shaders")
 local burn_particles = require("./burn_particles")
 
 type Graphics = engine.Graphics
-type EffectShaders = effect_shaders.EffectShaders
 export type Point = { x: f64, y: f64 }
 -- `impact` is gone with the rays it keyed. A landing is now one emission and a
 -- crowd of sparks living out their own lifetimes, so nothing reads a scalar
@@ -149,16 +147,11 @@ end
 -- spark never shows the rectangle it is drawn from. `ember` asks for its hot
 -- core, which belongs to fire and not to ice, rot, or growth. A missing
 -- optional program falls back to plain streaks rather than to nothing.
-function draw_burst(
-    graphics: Graphics,
-    effects: EffectShaders,
-    system: particles.ParticleSystem,
-    ember: bool
-): unit
+function draw_burst(graphics: Graphics, system: particles.ParticleSystem, ember: bool): unit
     if system:count() == 0 then
         return
     end
-    local shader_ok: bool = burn_particles.use(graphics, effects, BURST_SHADER_SEED, ember)
+    local shader_ok: bool = burn_particles.use(graphics, BURST_SHADER_SEED, ember)
     if not shader_ok then
         burn_particles.stop(graphics)
     end

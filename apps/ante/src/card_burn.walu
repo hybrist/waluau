@@ -74,23 +74,9 @@ function progress_over(clock: f64, start: f64, seconds: f64): f64
     return progress
 end
 
-function use_card_burn(surface: ui.Surface, progress: f64, seed: i32, suit: i32): bool
+function use_card_burn(surface: ui.Surface, progress: f64, seed: i32): bool
     local graphics = surface.graphics
-    local maybe_shader: graphics_module.Shader? = surface.effects.card_burn.shader
-    if maybe_shader == nil then
-        return false
-    end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(
-        shader,
-        {
-            graphics_module.float_parameter("u_progress", progress),
-            graphics_module.float_parameter("u_seed", seed::f64),
-            graphics_module.float_parameter("u_aspect", card.width / card.height),
-            graphics_module.float_parameter("u_particle_mode", 0.0)
-        }
-    )
-    return binding.ok
+    return burn_particles.use_sheet(graphics, progress, seed, card.width / card.height)
 end
 
 -- Where the shader's hole front stands, in card pixels from the centre. This
@@ -224,7 +210,7 @@ function draw_ash(
         return
     end
     local graphics = surface.graphics
-    local particles_ok: bool = burn_particles.use(graphics, surface.effects, seed, false)
+    local particles_ok: bool = burn_particles.use(graphics, seed, false)
     if particles_ok then
         system:set_draw_mode("square")
     else
@@ -244,11 +230,10 @@ function draw_captured(
     y: f64,
     progress: f64,
     seed: i32,
-    suit: i32,
     ash: particles.ParticleSystem
 ): unit
     local graphics = surface.graphics
-    local shader_ok: bool = use_card_burn(surface, progress, seed, suit)
+    local shader_ok: bool = use_card_burn(surface, progress, seed)
     if shader_ok then
         graphics:set_color("#ffffffff")
         graphics:draw_render_target(target, x, y, card.width, card.height)
@@ -304,7 +289,7 @@ function draw_disintegrating(
         return
     end
     local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    draw_captured(surface, captured, x, y + lift, progress, seed, value.card.suit, ash)
+    draw_captured(surface, captured, x, y + lift, progress, seed, ash)
     surface.graphics:release_render_target(captured)
 end
 
@@ -317,7 +302,7 @@ function draw_reappearing_ash(surface: ui.Surface, x: f64, y: f64, progress: f64
         return
     end
     local graphics = surface.graphics
-    local particles_ok: bool = burn_particles.use(graphics, surface.effects, seed + 809, false)
+    local particles_ok: bool = burn_particles.use(graphics, seed + 809, false)
     if not particles_ok then
         ink.stop_effect(graphics)
     end
@@ -390,7 +375,7 @@ function draw_reappearance(
         return
     end
     local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    if use_card_burn(surface, burn_progress, seed, value.suit) then
+    if use_card_burn(surface, burn_progress, seed) then
         graphics:set_color("#ffffffff")
         graphics:draw_render_target(captured, x, y, card.width, card.height)
         ink.stop_effect(graphics)

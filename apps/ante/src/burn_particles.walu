@@ -4,31 +4,38 @@
 -- the other's choreography.
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
-local effect_shaders = require("./effect_shaders")
+local shader_program = require("./shader_program")
+local card_burn_shader = require("./shaders/card-burn.frag")
 
 type Graphics = engine.Graphics
-type EffectShaders = effect_shaders.EffectShaders
+local card_burn_program: shader_program.Program = shader_program.new(
+    card_burn_shader,
+    "card burn",
+    false
+)
 
-function use(graphics: Graphics, effects: EffectShaders, seed: i32, ember: bool): bool
-    local maybe_shader: graphics_module.Shader? = effects.card_burn.shader
-    if maybe_shader == nil then
-        return false
-    end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+function bind(graphics: Graphics, progress: f64, seed: i32, aspect: f64, particle_mode: f64): bool
+    return card_burn_program:bind(
+        graphics,
+        {
+            graphics_module.float_parameter("u_progress", progress),
+            graphics_module.float_parameter("u_seed", seed::f64),
+            graphics_module.float_parameter("u_aspect", aspect),
+            graphics_module.float_parameter("u_particle_mode", particle_mode)
+        }
+    )
+end
+
+function use(graphics: Graphics, seed: i32, ember: bool): bool
     local kind: f64 = 0.0
     if ember then
         kind = 1.0
     end
-    local binding: graphics_module.ShaderBindingResult = graphics:bind_shader(
-        shader,
-        {
-            graphics_module.float_parameter("u_progress", kind),
-            graphics_module.float_parameter("u_seed", seed::f64),
-            graphics_module.float_parameter("u_aspect", 1.0),
-            graphics_module.float_parameter("u_particle_mode", 1.0)
-        }
-    )
-    return binding.ok
+    return bind(graphics, kind, seed, 1.0, 1.0)
+end
+
+function use_sheet(graphics: Graphics, progress: f64, seed: i32, aspect: f64): bool
+    return bind(graphics, progress, seed, aspect, 0.0)
 end
 
 function stop(graphics: Graphics): unit
@@ -82,4 +89,4 @@ function draw(
     graphics:pop()
 end
 
-return { use = use, stop = stop, hash = hash, alpha = alpha, draw = draw }
+return { use = use, use_sheet = use_sheet, stop = stop, hash = hash, alpha = alpha, draw = draw }
