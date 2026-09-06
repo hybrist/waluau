@@ -524,6 +524,14 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     super::module_type_display_name(&expected_name)
                 )))
             }
+            Type::Function { .. } if matches!(expected_ty.as_ref(), Type::Function { .. }) => {
+                let _ = coerce_type(actual, Some(expected_ty.as_ref().clone()))?;
+                Ok(Type::Opaque {
+                    name: expected_name,
+                    ty: expected_ty,
+                    generic_extern: expected_generic,
+                })
+            }
             Type::Opaque {
                 name: actual_name,
                 ty: actual_ty,

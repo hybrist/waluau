@@ -3945,6 +3945,64 @@ end
     }
 
     #[test]
+    fn compile_file_supports_optional_callback_fields_and_cross_module_captures() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("program.walu"),
+            r#"
+                type Changed = () -> unit
+                export opaque type Program = { changed: Changed? }
+
+                function new(changed: Changed?): Program
+                    return { changed = changed }
+                end
+
+                function Program:update(): unit
+                    local changed: Changed? = self.changed
+                    if changed ~= nil then
+                        changed()
+                    end
+                end
+
+                return { new = new }
+            "#,
+        )
+        .expect("program module should write");
+        fs::write(
+            tempdir.path().join("renderer.walu"),
+            r#"
+                local programs = require("./program")
+
+                local invalidations: i32 = 0
+                local program: programs.Program = programs.new(function(): unit
+                    invalidations += 1
+                end)
+
+                function run(): i32
+                    program:update()
+                    return invalidations
+                end
+
+                return { run = run }
+            "#,
+        )
+        .expect("renderer module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local renderer = require("./renderer")
+                assert(renderer.run() == 1)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path)
+            .expect("optional callback fields and cross-module captures should compile");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_clones_typed_aggregate_constants_at_each_use() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

@@ -7,36 +7,53 @@ local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 
 type Graphics = engine.Graphics
+type Changed = (Graphics) -> unit
 export opaque type Program = {
     label: string,
     required: bool,
     imported: extern,
     revision: i32,
     error: string,
-    current: graphics_module.Shader?
+    current: graphics_module.Shader?,
+    changed: Changed?
 }
 export type Diagnostics = { fatal_error: string, warnings: string }
 
 local programs: {Program} = {}
 
-function new(imported: extern, label: string, required: bool): Program
+local function make(imported: extern, label: string, required: bool, changed: Changed?): Program
     local program: Program = {
         label = label,
         required = required,
         imported = imported,
         revision = -1,
         error = "",
-        current = nil
+        current = nil,
+        changed = changed
     }
     table.insert(programs, program)
     return program
+end
+
+function new(imported: extern, label: string, required: bool): Program
+    return make(imported, label, required, nil)
+end
+
+function new_with_change(imported: extern, label: string, required: bool, changed: Changed): Program
+    return make(imported, label, required, changed)
 end
 
 local function update(program: Program, graphics: Graphics): unit
     local result: graphics_module.ShaderResult = graphics:compile_shader(program.imported)
     if result.ok then
         program.current = result.shader
-        program.revision = result.shader.revision
+        if result.shader.revision ~= program.revision then
+            program.revision = result.shader.revision
+            local changed: Changed? = program.changed
+            if changed ~= nil then
+                changed(graphics)
+            end
+        end
         program.error = ""
     else
         program.error = program.label .. " " .. result.error.code .. ": " .. result.error.message
@@ -53,17 +70,6 @@ function Program:bind(graphics: Graphics, parameters: {graphics_module.ShaderPar
         return false
     end
     return graphics:bind_shader(shader::graphics_module.Shader, parameters).ok
-end
-
--- Shader-derived caches compare this after resolving the shader. The token
--- advances only when the host has installed a valid replacement, so a failed
--- edit keeps both the last good program and anything baked from it.
--- TODO(waluau-ifj2): Replace this token and the card/backdrop comparisons with
--- revision-change callbacks once optional function fields and cross-module
--- captured callbacks compile correctly.
-function Program:version(graphics: Graphics): i32
-    update(self, graphics)
-    return self.revision
 end
 
 local function append_warning(warnings: string, warning: string): string
@@ -95,4 +101,4 @@ function compile(graphics: Graphics): Diagnostics
     return { fatal_error = fatal_error, warnings = warnings }
 end
 
-return { new = new, compile = compile }
+return { new = new, new_with_change = new_with_change, compile = compile }

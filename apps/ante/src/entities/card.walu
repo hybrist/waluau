@@ -23,25 +23,23 @@ local ink = require("../ink")
 
 local paper_board: graphics_module.RenderTarget? = nil
 local paper_press: graphics_module.RenderTarget? = nil
-local paper_version: i32 = -1
 
-function release_paper_bake(graphics: ui.Graphics): unit
-    local board: graphics_module.RenderTarget? = paper_board
-    if board ~= nil then
-        graphics:release_render_target(board::graphics_module.RenderTarget)
-    end
-    paper_board = nil
-    local press: graphics_module.RenderTarget? = paper_press
-    if press ~= nil then
-        graphics:release_render_target(press::graphics_module.RenderTarget)
-    end
-    paper_press = nil
-end
-
-local card_paper_program: shader_program.Program = shader_program.new(
+local card_paper_program: shader_program.Program = shader_program.new_with_change(
     card_paper_shader,
     "card paper",
-    false
+    false,
+    function(graphics: ui.Graphics): unit
+        local board: graphics_module.RenderTarget? = paper_board
+        if board ~= nil then
+            graphics:release_render_target(board::graphics_module.RenderTarget)
+        end
+        paper_board = nil
+        local press: graphics_module.RenderTarget? = paper_press
+        if press ~= nil then
+            graphics:release_render_target(press::graphics_module.RenderTarget)
+        end
+        paper_press = nil
+    end
 )
 local red_fire_program: shader_program.Program = shader_program.new(red_fire_shader, "red", false)
 local blue_caustics_program: shader_program.Program = shader_program.new(
@@ -490,14 +488,6 @@ end
 -- bake only starts while drawing to the screen: switching targets inside a
 -- capture would hand the rest of the capture to the wrong surface.
 function paper_pass(surface: ui.Surface, press: f64): graphics_module.RenderTarget?
-    local version: i32 = card_paper_program:version(surface.graphics)
-    if version < 0 then
-        return nil
-    end
-    if version ~= paper_version then
-        release_paper_bake(surface.graphics)
-        paper_version = version
-    end
     local baked: graphics_module.RenderTarget? = paper_board
     if press > 0.5 then
         baked = paper_press

@@ -2610,7 +2610,15 @@ fn rename_stmt(
             }
             available.insert(original_name);
         }
-        Stmt::Assign { value, .. } | Stmt::Expr(value) | Stmt::Return(value) => {
+        Stmt::Assign { name, value, .. } => {
+            rename_expr(value, renames, available, shadowed);
+            if available.contains(name) && !shadowed.contains(name) {
+                if let Some(renamed) = renames.get(name) {
+                    *name = renamed.clone();
+                }
+            }
+        }
+        Stmt::Expr(value) | Stmt::Return(value) => {
             rename_expr(value, renames, available, shadowed);
         }
         Stmt::IndexAssign {

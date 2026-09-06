@@ -1046,6 +1046,25 @@ fn nullable_function_values_support_locals_aliases_and_nil_narrowing() {
 }
 
 #[test]
+fn nullable_function_aliases_accept_and_call_matching_closures() {
+    let source = r#"
+        type Callback = () -> unit
+
+        function run(callback: Callback?): unit
+            if callback ~= nil then
+                callback()
+            end
+        end
+
+        run(function(): unit end)
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("matching closures should construct and call a function alias");
+}
+
+#[test]
 fn nullable_modifier_accepts_primitive_value_types() {
     let source = r#"
         function pick(a: i32?, b: u32?, c: i64?, d: u64?, e: f32?, f: f64?, g: bool?): i32

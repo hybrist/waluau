@@ -1383,6 +1383,18 @@ fn infer_expr_inner(
                     return_type,
                     ..
                 } => (params, Arc::unwrap_or_clone(return_type)),
+                Type::Opaque { ref ty, .. } => match ty.as_ref() {
+                    Type::Function {
+                        params,
+                        return_type,
+                        ..
+                    } => (params.clone(), return_type.as_ref().clone()),
+                    _ => {
+                        return Err(Diagnostic::new(format!(
+                            "attempt to call non-function value of type {callee_ty}",
+                        )));
+                    }
+                },
                 other => {
                     return Err(Diagnostic::new(format!(
                         "attempt to call non-function value of type {other}",
