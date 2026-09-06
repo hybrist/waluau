@@ -12,8 +12,9 @@ are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
 The Arch Mage can commit any valid feint without a mana balance. Winning a
-breach clears the vault; losing one costs a heart and starts another breach in
-the same vault, unless it was the run's last heart.
+breach clears a standard vault; losing one costs a heart and starts another
+breach in the same vault, unless it was the run's last heart. Boss vaults use
+the longer final-hand rule described below.
 Each breach has exactly three feint opportunities. The first follows a
 three-card community deal, then a fourth card and a fifth card are dealt before
 the second and third opportunities. Both sides propose once per opportunity;
@@ -57,17 +58,21 @@ shown greyed rather than rerolled into one it can. Every scroll costs four mana
 and the potion six, dearer because a scroll is cast for the rest of the run
 while a potion is spent the moment it is drunk. Buying an offer marks that line
 sold and nothing takes its place; reaching the next shop is what restocks them.
-Losing the last heart ends the run and everything it bought with it, so a fresh
-run sets out with its starting spell at level one again.
+Losing the last heart, or failing to win a boss's final hand, ends the run and
+everything it bought with it, so a fresh run sets out with its starting spell
+at level one again.
 
-Every third vault of a run is a boss battle: both sides hold seven relics rather
-than five, widening every feint and committed-pair choice. Spent pairs are
-replaced after each breach so the seven-card choice remains the challenge until
-the vault is cleared or the run runs out of hearts. Everything else — feints,
-wagers, and scoring — matches a standard vault. The menu's BOSS RUSH starts a
-run made of nothing else: five vaults rather than nine. Both hand rows tighten
-their pitch (and the fan its tilt and arc) so a
-seven-relic row still clears the deck and the three right-edge piles.
+Every third vault of a run is a boss battle: both sides start with seven relics
+rather than five, widening the opening feint and committed-pair choice. Spent
+pairs are not replaced. The hands shrink by two after every breach until fewer
+than two relics remain and no further hand can be played. The player has to
+survive that whole duel and win its final hand; an earlier win only earns its
+gold, while every Arch Mage win still costs a heart. A loss or tie on the final
+hand ends the run even if hearts remain. Everything else — feints, wagers, and
+scoring — matches a standard vault. The menu's BOSS RUSH starts a run made of
+nothing else: five vaults rather than nine. Both hand rows tighten their pitch
+(and the fan its tilt and arc) so a seven-relic row still clears the deck and
+the three right-edge piles.
 
 Which boss a boss vault is fought against is drawn rather than fixed, and it is
 drawn before the vault rather than at its door: a run always knows which boss is
@@ -121,7 +126,7 @@ without borrowing the mirrored portraits or suit layout of a poker deck.
 
 Cards never simply appear or vanish: every relic and ward is dealt off a
 visible face-down pile beside the board — the opening hands, each round's
-flop, turn, river, and the two replacements both sides draw after a breach — and when a
+flop, turn, river, and the two replacements both sides draw after a standard breach — and when a
 breach's continue press ends the round, the resolved formation is scooped up:
 its cards slide together into one pile, which then carries to a face-up
 spent pile at the board's right edge, mirroring the draw pile on the left.

@@ -185,7 +185,11 @@ end
 -- way — the run is won and goes on regardless. A lost run has nothing to spend
 -- and no loadout to spend it on, so its fresh first duel is dealt straight away.
 function State:advance_run(city: city_map.State): unit
-    local outcome: run_module.Outcome = self.run:settle(self.rules:is_victory(), self.rules:gold())
+    local outcome: run_module.Outcome = self.run:settle(
+        self.rules:is_finished(),
+        self.rules:is_victory(),
+        self.rules:gold()
+    )
     if run_module.outcome_walks_on(outcome) then
         self.shop:open_for(self.run)
         self.leaving_fence = false
@@ -256,7 +260,13 @@ function State:run_outcome(): run_module.Outcome
         return "none"
     end
     local run: run_module.State = self.run
-    return run_module.outcome_of(run.duel, run.rush, run.hearts, self.rules:is_victory())
+    return run_module.outcome_of(
+        run.duel,
+        run.rush,
+        run.hearts,
+        self.rules:is_finished(),
+        self.rules:is_victory()
+    )
 end
 
 -- Losing the last heart finishes the screen's live duel immediately even when

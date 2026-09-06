@@ -165,31 +165,35 @@ function State:endless(): bool
 end
 
 -- The verdict of a fought duel, read as a moment in the run. Exhausting the
--- run's hearts ends it; clearing the duel either advances or crosses the
--- finish line. This says which without applying any of them — one classifier,
--- so the screen showing a verdict and the settle that acts on it agree.
+-- run's hearts ends it; so does reaching a boss duel's end without winning its
+-- final hand. Clearing the duel either advances or crosses the finish line.
+-- This says which without applying any of them — one classifier, so the
+-- screen showing a verdict and the settle that acts on it agree.
 --
 -- "won" is a milestone rather than a stop: the last authored duel
 -- is cleared exactly the way any other is, and the run walks on into the
 -- endless city.
-export type Outcome = "none" | "lost-health" | "advance" | "won"
+export type Outcome = "none" | "lost-health" | "lost-duel" | "advance" | "won"
 
 function outcome_is_loss(outcome: Outcome): bool
-    return outcome == "lost-health"
+    return outcome == "lost-health" or outcome == "lost-duel"
 end
 
 function outcome_walks_on(outcome: Outcome): bool
     return outcome == "advance" or outcome == "won"
 end
 
-function outcome_of(duel: i32, rush: bool, hearts: i32, cleared: bool): Outcome
+function outcome_of(duel: i32, rush: bool, hearts: i32, finished: bool, cleared: bool): Outcome
     -- Health can end the run during a duel before the rules report a verdict.
     -- It therefore outranks that verdict.
     if hearts <= 0 then
         return "lost-health"
     end
-    if not cleared then
+    if not finished then
         return "none"
+    end
+    if not cleared then
+        return "lost-duel"
     end
     -- The finish line is a moment the run passes through once, not a state it
     -- stays in, so this is the final authored duel and no duel after it.
@@ -236,13 +240,13 @@ end
 
 -- The live duel has been fought to a verdict. Taking it advances the run and
 -- carries its remaining gold into the next one; losing the run to exhausted
--- hearts starts a fresh one. A duel the run already spent gold in is never
--- fought twice.
+-- hearts or a non-winning boss finale starts a fresh one. A duel the run
+-- already spent gold in is never fought twice.
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished duel decided is not this module's to decide again.
-function State:settle(cleared: bool, carried_gold: i32): Outcome
-    local outcome: Outcome = outcome_of(self.duel, self.rush, self.hearts, cleared)
+function State:settle(finished: bool, cleared: bool, carried_gold: i32): Outcome
+    local outcome: Outcome = outcome_of(self.duel, self.rush, self.hearts, finished, cleared)
     if outcome == "none" then
         return outcome
     end

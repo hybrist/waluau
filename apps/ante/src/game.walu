@@ -62,8 +62,10 @@ export type Trick = {
     swap_winner: i32,
     swap_count: i32
 }
--- `boss` selects the boss battle variant: both sides hold seven cards instead
--- of five, widening every choice of committed pair.
+-- `boss` selects the boss battle variant: both sides start with seven cards
+-- instead of five and never draw replacements. Their committed pairs spend
+-- the hands down until neither side can make another hand; only that final
+-- hand decides who cleared the duel.
 -- `spells` is the loadout the player brought into this duel, in the order
 -- they learned the spells; a cast names a slot of it. `cast_kind` is the kind
 -- of the last cast these rules charged for, which is what decides whether a
@@ -107,6 +109,7 @@ export type View = {
     history: {Trick},
     round: i32,
     player_points: i32,
+    last_winner: i32,
     swap_open: bool,
     pot: i32,
     player_wager: i32,
@@ -147,7 +150,7 @@ const BOSS_HAND_SIZE: i32 = 7
 const STARTING_GOLD: i32 = 10
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "duel-state-v11"
+const SNAPSHOT_SCHEMA: string = "duel-state-v12"
 
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
@@ -1182,17 +1185,23 @@ function State:play(first: i32, second: i32): Trick?
 
     remove_pair(self.player_hand, first, second)
     remove_pair(self.computer_hand, computer.first, computer.second)
-    -- Replenish the committed pair. Bosses keep their wider seven-card choice
-    -- without imposing a fixed number of hands.
-    for _ = 1, 2 do
-        table.insert(self.player_hand, deal_slot(self.deck))
-        table.insert(self.computer_hand, deal_slot(self.deck))
+    -- A boss duel is fought with the opening seven cards only. Standard duels
+    -- replace the spent pair so an Opponent win or tie can open another hand.
+    if not self.boss then
+        for _ = 1, 2 do
+            table.insert(self.player_hand, deal_slot(self.deck))
+            table.insert(self.computer_hand, deal_slot(self.deck))
+        end
     end
 
-    -- A player win clears the duel. Losses are paid for by the run's hearts,
-    -- outside this rules module, and ties leave the duel live as well.
-    if self.last_winner > 0 then
+    -- A standard duel clears on its first player win. A boss duel keeps going
+    -- through early wins and losses until either side has fewer than the two
+    -- cards needed for another hand. Its final winner is read by is_victory;
+    -- the run pays each earlier and final Opponent win from its hearts.
+    local exhausted: bool = #self.player_hand < 2 or #self.computer_hand < 2
+    if (not self.boss and self.last_winner > 0) or (self.boss and exhausted) then
         self.middle = {}
+        self.swap_open = false
         self.finished = true
     else
         self.round += 1
@@ -1453,6 +1462,7 @@ function State:view(): View
         history = self.history,
         round = self.round,
         player_points = self.player_points,
+        last_winner = self.last_winner,
         swap_open = self.swap_open,
         pot = self.pot,
         player_wager = self.player_wager,
@@ -1513,6 +1523,7 @@ end
 
 function State:test_clear(): unit
     self.finished = true
+    self.last_winner = 1
 end
 
 function State:test_set_swap_trace(hand_indices: {i32}, middle_indices: {i32}): unit
@@ -1531,11 +1542,11 @@ function State:is_finished(): bool
 end
 
 function State:is_victory(): bool
-    return self.finished
+    return self.finished and (not self.boss or self.last_winner > 0)
 end
 
 function View:cleared(): bool
-    return self.finished
+    return self.finished and (not self.boss or self.last_winner > 0)
 end
 
 function State:is_boss(): bool

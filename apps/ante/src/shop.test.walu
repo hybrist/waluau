@@ -19,7 +19,7 @@ type SpellScroll = scroll_.SpellScroll
 
 local function shopping_run(spell: SpellKind, gold: i32)
     local run: RunState = RunState.new(spell, false)
-    run:settle(true, gold)
+    run:settle(true, true, gold)
     return run, ShopState.new(run)
 end
 
