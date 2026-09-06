@@ -898,8 +898,8 @@ describe(
     end
 )
 
--- A forced challenge win keeps a royal pair against the fixed table-card row
--- while the Opponent holds a ladder that never beats it.
+-- Forced boss results preserve however many cards remain in the shrinking
+-- hands, so arranging a later hand cannot accidentally refill the duel.
 local function force_boss_player_win(state: game.State): unit
     local count: i32 = #state:view().player_hand
     local player: {game.Card} = {card(13, 0), card(14, 0)}
@@ -918,11 +918,57 @@ local function force_boss_player_win(state: game.State): unit
     )
 end
 
+local function force_boss_computer_win(state: game.State): unit
+    local count: i32 = #state:view().player_hand
+    local player: {game.Card} = {}
+    for rank = 2, count + 1 do
+        table.insert(player, card(rank, 2))
+    end
+    local computer: {game.Card} = {card(13, 0), card(14, 0)}
+    for rank = 2, count - 1 do
+        table.insert(computer, card(rank, 1))
+    end
+    game_fixture.arrange_breach(
+        state,
+        {card(10, 0), card(11, 0), card(12, 0), card(2, 1), card(3, 2)},
+        player,
+        computer
+    )
+end
+
+local function force_boss_stalemate(state: game.State): unit
+    local count: i32 = #state:view().player_hand
+    local player: {game.Card} = {card(13, 0), card(13, 1)}
+    local computer: {game.Card} = {card(13, 2), card(13, 3)}
+    for rank = 4, count + 1 do
+        table.insert(player, card(rank, 0))
+        table.insert(computer, card(rank, 2))
+    end
+    game_fixture.arrange_breach(
+        state,
+        {card(7, 3), card(2, 3), card(8, 2), card(10, 0), card(11, 1)},
+        player,
+        computer
+    )
+end
+
+local function play_boss_hand(state: game.State, winner: i32): unit
+    finish_swap_phase(state)
+    if winner > 0 then
+        force_boss_player_win(state)
+    elseif winner < 0 then
+        force_boss_computer_win(state)
+    else
+        force_boss_stalemate(state)
+    end
+    assert(state:play(0, 1) ~= nil)
+end
+
 describe(
     "Ante Magic boss battle",
     function()
         it(
-            "deals and replenishes a seven-card hand",
+            "spends its seven-card hands down and requires a non-losing final hand",
             function()
                 math.randomseed(50)
                 local state = game.State.new(true, starter_loadout(), game.starting_gold)
@@ -938,15 +984,58 @@ describe(
                 expect(state:view().finished):toBe(false)
                 expect(#state:view().player_hand):toBe(7)
                 expect(#state:view().computer_hand):toBe(7)
-                finish_swap_phase(state)
-                force_boss_player_win(state)
-                state:play(0, 1)
+                play_boss_hand(state, 1)
+                expect(state:view().finished):toBe(false)
+                expect(#state:view().player_hand):toBe(5)
+                expect(#state:view().computer_hand):toBe(5)
+
+                -- An early win earns gold but cannot clear the boss. The hands
+                -- keep shrinking until the third and final playable pair.
+                play_boss_hand(state, -1)
+                expect(state:view().finished):toBe(false)
+                expect(#state:view().player_hand):toBe(3)
+                expect(#state:view().computer_hand):toBe(3)
+
+                play_boss_hand(state, 1)
                 expect(state:view().finished):toBe(true)
                 expect(state:is_victory()):toBe(true)
-                expect(#state:view().player_hand):toBe(7)
-                expect(#state:view().computer_hand):toBe(7)
+                expect(state:view():cleared()):toBe(true)
+                expect(#state:view().player_hand):toBe(1)
+                expect(#state:view().computer_hand):toBe(1)
                 expect(#state:view().middle):toBe(0)
-                expect(state:view().deck_count):toBe(29)
+                expect(state:view().deck_count):toBe(23)
+            end
+        )
+
+        it(
+            "loses a depleted boss duel when the Opponent wins the final hand",
+            function()
+                math.randomseed(52)
+                local state = game.State.new(true, starter_loadout(), game.starting_gold)
+                play_boss_hand(state, 1)
+                play_boss_hand(state, 1)
+                play_boss_hand(state, -1)
+
+                expect(state:is_finished()):toBe(true)
+                expect(state:is_victory()):toBe(false)
+                expect(state:view():cleared()):toBe(false)
+                expect(state:view().history[3].winner):toBe(-1)
+            end
+        )
+
+        it(
+            "clears a depleted boss duel when the final hand is a tie",
+            function()
+                math.randomseed(53)
+                local state = game.State.new(true, starter_loadout(), game.starting_gold)
+                play_boss_hand(state, -1)
+                play_boss_hand(state, 1)
+                play_boss_hand(state, 0)
+
+                expect(state:is_finished()):toBe(true)
+                expect(state:is_victory()):toBe(true)
+                expect(state:view():cleared()):toBe(true)
+                expect(state:view().history[3].winner):toBe(0)
             end
         )
 
@@ -1221,8 +1310,9 @@ describe(
                 expect(
                     state:view().middle[3].rank == replaced_right.rank and state:view().middle[3].suit == replaced_right.suit
                 ):toBe(false)
-                -- Four replacement hand cards and two rotating table cards were drawn.
-                expect(state:view().deck_count):toBe(deck_size - 6)
+                -- Boss hands are not replenished; only the two unfrozen table
+                -- cards rotate out before the next hand.
+                expect(state:view().deck_count):toBe(deck_size - 2)
                 expect(state:is_frozen(1)):toBe(false)
             end
         )

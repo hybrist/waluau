@@ -16,7 +16,7 @@ local function settle_vault(state: run.State, gold: i32): game.State
     local rules: game.State = game.State.new(state:boss(), state.spells, state.gold)
     game_fixture.set_player_points(rules, gold)
     game_fixture.clear(rules)
-    state:settle(rules:is_victory(), rules:gold())
+    state:settle(rules:is_finished(), rules:is_victory(), rules:gold())
     return rules
 end
 
@@ -72,7 +72,7 @@ describe(
             "carries a cleared duel's gold into the next one",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                state:settle(true, 31)
+                state:settle(true, true, 31)
                 expect(state.duel):toBe(2)
                 expect(state.cleared):toBe(1)
                 expect(state.gold):toBe(31)
@@ -80,13 +80,13 @@ describe(
                 -- The duel after this one is where the cadence lands, so the board can
                 -- warn about it while this one is still being fought.
                 expect(state:next_is_boss()):toBe(true)
-                state:settle(true, 18)
+                state:settle(true, true, 18)
                 expect(state.duel):toBe(3)
                 expect(state.gold):toBe(18)
                 expect(state:boss()):toBe(true)
                 -- An empty purse still advances after a win; gold is a resource
                 -- to spend, not a second condition for surviving the run.
-                state:settle(true, 0)
+                state:settle(true, true, 0)
                 expect(state.duel):toBe(4)
                 expect(state.gold):toBe(0)
             end
@@ -99,7 +99,7 @@ describe(
                 expect(state:lose_hand()):toBe(false)
                 expect(state.hearts):toBe(run.max_hearts - 1)
 
-                state:settle(true, 31)
+                state:settle(true, true, 31)
                 expect(state.duel):toBe(2)
                 expect(state.hearts):toBe(run.max_hearts - 1)
 
@@ -153,13 +153,13 @@ describe(
             "ends the run on the last heart, gold and all",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                state:settle(true, 31)
+                state:settle(true, true, 31)
                 for _ = 1, run.max_hearts do
                     state:lose_hand()
                 end
                 -- The last heart takes the carried gold with it: what follows is the
                 -- first duel of a fresh run.
-                state:settle(false, 31)
+                state:settle(false, false, 31)
                 expect(state.duel):toBe(1)
                 expect(state.cleared):toBe(0)
                 expect(state.gold):toBe(game.starting_gold)
@@ -171,8 +171,8 @@ describe(
             "restarts a run at the first duel with a fresh pool",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                state:settle(true, 31)
-                state:settle(true, 18)
+                state:settle(true, true, 31)
+                state:settle(true, true, 18)
                 state:lose_hand()
                 state:restart(spells.SpellKind.FreezeRay, true)
                 expect(state.duel):toBe(1)
@@ -189,7 +189,7 @@ describe(
             function()
                 local state: run.State = run.State.new(spells.SpellKind.RaiseCard, true)
                 state:lose_hand()
-                state:settle(true, 27)
+                state:settle(true, true, 27)
                 local encoded: string = state:snapshot()
                 local restored: run.State? = run.State.restore(encoded)
                 expect(restored == nil):toBe(false)
@@ -232,7 +232,7 @@ describe(
             "round-trips a bought loadout and refuses an impossible one",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                state:settle(true, 30)
+                state:settle(true, true, 30)
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 3))):toBe(true)
                 local encoded: string = state:snapshot()
                 local restored: run.State? = run.State.restore(encoded)
@@ -317,10 +317,10 @@ describe(
             "carries a bought loadout between duels and drops it with the last heart",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                state:settle(true, 26)
+                state:settle(true, true, 26)
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 1))):toBe(true)
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 2))):toBe(true)
-                state:settle(true, 19)
+                state:settle(true, true, 19)
                 -- The next duel is dealt the levelled pair: the loadout belongs to the
                 -- run, not to the duel that bought it.
                 expect(state:spell_count()):toBe(2)
@@ -334,7 +334,7 @@ describe(
                 for _ = 1, run.max_hearts do
                     state:lose_hand()
                 end
-                state:settle(false, 19)
+                state:settle(false, false, 19)
                 expect(state:spell_count()):toBe(1)
                 expect(state.spells[1].kind):toBe(spells.SpellKind.Firebolt)
                 expect(state.spells[1].cost):toBe(game.spell_cost)
@@ -362,10 +362,18 @@ describe(
         it(
             "names the things a fought duel or exhausted heart pool can become",
             function()
-                expect(tostring(run.outcome_of(1, false, run.max_hearts, false))):toBe("none")
-                expect(tostring(run.outcome_of(1, false, run.max_hearts, true))):toBe("advance")
+                expect(
+                    tostring(run.outcome_of(1, false, run.max_hearts, false, false))
+                ):toBe("none")
+                expect(
+                    tostring(run.outcome_of(1, false, run.max_hearts, true, true))
+                ):toBe("advance")
                 -- The last heart can disappear before the duel has otherwise ended.
-                expect(tostring(run.outcome_of(1, false, 0, false))):toBe("lost-health")
+                expect(tostring(run.outcome_of(1, false, 0, false, false))):toBe("lost-health")
+                -- A depleted boss duel is terminal even when hearts remain.
+                expect(
+                    tostring(run.outcome_of(3, false, run.max_hearts, true, false))
+                ):toBe("lost-duel")
             end
         )
 
@@ -381,7 +389,7 @@ describe(
                 -- health while the final reveal waits to be dismissed.
                 expect(state:lose_hand()):toBe(true)
                 expect(state.hearts):toBe(0)
-                expect(tostring(state:settle(false, 99))):toBe("lost-health")
+                expect(tostring(state:settle(false, false, 99))):toBe("lost-health")
                 expect(state.duel):toBe(1)
                 expect(state.hearts):toBe(run.max_hearts)
                 expect(state.start_spell):toBe(spells.SpellKind.Clone)
@@ -389,20 +397,38 @@ describe(
         )
 
         it(
+            "loses and restarts the run after the Opponent wins a final boss hand",
+            function()
+                local state: run.State = run.State.new(spells.SpellKind.Clone, true)
+                state.hearts = run.max_hearts - 1
+
+                expect(tostring(state:settle(true, false, 99))):toBe("lost-duel")
+                expect(state.duel):toBe(1)
+                expect(state.cleared):toBe(0)
+                expect(state.hearts):toBe(run.max_hearts)
+                expect(state.gold):toBe(game.starting_gold)
+                expect(state.start_spell):toBe(spells.SpellKind.Clone)
+                expect(state.rush):toBe(true)
+            end
+        )
+
+        it(
             "passes through the finish line once and walks on",
             function()
                 local finish: i32 = run.run_length(false)
-                expect(tostring(run.outcome_of(finish, false, run.max_hearts, true))):toBe("won")
                 expect(
-                    tostring(run.outcome_of(finish - 1, false, run.max_hearts, true))
+                    tostring(run.outcome_of(finish, false, run.max_hearts, true, true))
+                ):toBe("won")
+                expect(
+                    tostring(run.outcome_of(finish - 1, false, run.max_hearts, true, true))
                 ):toBe("advance")
                 -- Not a state the run stays in: the duel after the finish is an
                 -- ordinary one again, however far past the milestone it is.
                 expect(
-                    tostring(run.outcome_of(finish + 1, false, run.max_hearts, true))
+                    tostring(run.outcome_of(finish + 1, false, run.max_hearts, true, true))
                 ):toBe("advance")
                 expect(
-                    tostring(run.outcome_of(finish + 7, false, run.max_hearts, true))
+                    tostring(run.outcome_of(finish + 7, false, run.max_hearts, true, true))
                 ):toBe("advance")
             end
         )
@@ -414,14 +440,14 @@ describe(
                 local finish: i32 = run.run_length(false)
                 state.duel = finish
                 state.cleared = finish - 1
-                expect(tostring(state:settle(true, 200))):toBe("won")
+                expect(tostring(state:settle(true, true, 200))):toBe("won")
                 -- Won, and still standing in the city: the next duel is dealt, the
                 -- purse survived, and the loadout was never reset.
                 expect(state.duel):toBe(finish + 1)
                 expect(state.cleared):toBe(finish)
                 expect(state.gold):toBe(200)
                 expect(state:endless()):toBe(true)
-                expect(tostring(state:settle(true, 200))):toBe("advance")
+                expect(tostring(state:settle(true, true, 200))):toBe("advance")
                 expect(state.duel):toBe(finish + 2)
             end
         )
@@ -566,7 +592,7 @@ describe(
         -- Walk the run to the numbered duel, clearing every duel on the way.
         local function reach_duel(state: run.State, duel: i32): unit
             while state.duel < duel do
-                state:settle(true, 500)
+                state:settle(true, true, 500)
             end
         end
 
@@ -602,7 +628,7 @@ describe(
                 -- Approaching the duel and standing in it leave the roll alone.
                 expect(state.next_boss):toBe(coming)
 
-                state:settle(true, 500)
+                state:settle(true, true, 500)
                 expect(state.duel):toBe(4)
                 expect(state:boss_kind() == nil):toBe(true)
                 -- The duel after a boss duel is fought against nobody, and the
@@ -645,7 +671,7 @@ describe(
                 for _ = 1, run.max_hearts do
                     state:lose_hand()
                 end
-                state:settle(false, 500)
+                state:settle(false, false, 500)
                 expect(state.duel):toBe(1)
                 -- A fresh run is carrying its own opening roll out of a full
                 -- roster rather than what the dead one had worked through.

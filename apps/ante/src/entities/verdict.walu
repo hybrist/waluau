@@ -1,6 +1,6 @@
 -- The verdict of the duel just fought, read as a moment in the run. Taking it
 -- is an intermission — its remaining gold is the stake the next duel opens
--- with — while losing the last heart is where the whole run stops.
+-- with — while exhausted hearts or a failed boss finale stop the whole run.
 --
 -- There are three of those moments and they are branched on the run's own
 -- classifier rather than re-decided from the board, so what this screen says
@@ -30,7 +30,7 @@ function walks_on(run: run_module.View): bool
 end
 
 function title_of(run: run_module.View): string
-    if run.outcome == "lost-health" then
+    if run_module.outcome_is_loss(run.outcome) then
         return "THE RUN ENDS"
     end
     if run.outcome == "won" then
@@ -42,6 +42,9 @@ end
 function subtitle_of(run: run_module.View): string
     if run.outcome == "lost-health" then
         return "YOUR LAST HEART WAS LOST IN DUEL " .. tostring(run.duel)
+    end
+    if run.outcome == "lost-duel" then
+        return "THE BOSS TOOK THE FINAL HAND IN DUEL " .. tostring(run.duel)
     end
     if run.outcome == "won" then
         return "ALL " .. tostring(run.run_length) .. " DUELS WON. THE CITY GOES ON PAST THEM"
@@ -70,7 +73,7 @@ end
 -- What the run walks away with. Exhausting its hearts reports how far it got;
 -- clearing a duel reports the gold carried into the shop and the next duel.
 function tally(state: game.View, run: run_module.View): ui.Node
-    if run.outcome == "lost-health" then
+    if run_module.outcome_is_loss(run.outcome) then
         return figure(
             "DUELS WON",
             HEADLINE_INK,

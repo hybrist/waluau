@@ -61,9 +61,9 @@ local function reference_swap(state: game.State): unit
     end
 end
 
--- Play until the player clears the duel or has lost as many hands as a fresh
--- run has hearts. The rules do not own health, so the harness mirrors the
--- screen's stopping condition here.
+-- Play until the duel reaches its own verdict or the player has lost as many
+-- hands as a fresh run has hearts. The rules do not own health, so the harness
+-- mirrors the screen's stopping condition here.
 local function autopilot(state: game.State, hearts: i32): unit
     local losses: i32 = 0
     for _ = 1, hearts * 2 do
@@ -231,7 +231,11 @@ local function play_run(seed: i32): RunTrial
             end
         end
         local reached: i32 = state.duel
-        local outcome: run.Outcome = state:settle(duel:is_victory(), duel:gold())
+        local outcome: run.Outcome = state:settle(
+            duel:is_finished(),
+            duel:is_victory(),
+            duel:gold()
+        )
         if run.outcome_is_loss(outcome) then
             return { duels = reached - 1, ended_by = outcome }
         end
@@ -244,22 +248,26 @@ end
 -- one or two duels' worth of play.
 const RUN_TRIALS: i32 = 150
 
--- Run sampling checks that accumulated hand losses remain the stopping
--- condition while successful runs can still reach later duels.
+-- Run sampling checks both terminal conditions: accumulated hand losses can
+-- exhaust the persistent hearts, and an Opponent-winning boss finale can end a run
+-- sooner while successful runs still reach later duels.
 describe(
     "Ante Magic run economy",
     function()
         it(
-            "ends sampled runs as their persistent hearts run out",
+            "ends sampled runs on exhausted hearts or an Opponent-winning boss finale",
             function()
-                local held: i32 = 0
+                local lost_health: i32 = 0
+                local lost_duel: i32 = 0
                 local unfinished: i32 = 0
                 local deepest: i32 = 0
                 local total: i32 = 0
                 for seed = 1::i32, RUN_TRIALS do
                     local trial: RunTrial = play_run(seed)
                     if trial.ended_by == "lost-health" then
-                        held += 1
+                        lost_health += 1
+                    elseif trial.ended_by == "lost-duel" then
+                        lost_duel += 1
                     else
                         unfinished += 1
                     end
@@ -269,15 +277,17 @@ describe(
                     end
                 end
                 expect(unfinished):toBe(0)
-                expect(held):toBe(RUN_TRIALS)
+                expect(lost_health + lost_duel):toBe(RUN_TRIALS)
+                expect(lost_health):toBeGreaterThan(0)
+                expect(lost_duel):toBeGreaterThan(0)
                 -- Runs get deep enough for later duels to be reachable even though
                 -- their margin for another lost hand keeps shrinking.
                 expect(deepest):toBeGreaterThanOrEqual(4)
-                -- A run clears about one duel on average — the coin flip compounding,
-                -- p/(1-p) at a 54 percent clear rate. Hundredths, because a mean under
-                -- two does not survive integer division.
-                expect((total * 100) / RUN_TRIALS):toBeGreaterThanOrEqual(70)
-                expect((total * 100) / RUN_TRIALS):toBeLessThan(200)
+                -- The reference policy averages about two cleared duels before
+                -- either loss condition catches it. Hundredths preserve that
+                -- small mean through integer division.
+                expect((total * 100) / RUN_TRIALS):toBeGreaterThanOrEqual(100)
+                expect((total * 100) / RUN_TRIALS):toBeLessThan(250)
             end
         )
     end
