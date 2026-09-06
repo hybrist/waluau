@@ -17,7 +17,6 @@ local astral_sea_shader = require("../shaders/astral-sea.frag")
 local ink = require("../ink")
 
 local sea_still: graphics_module.RenderTarget? = nil
-local sea_version: i32 = -1
 
 function release_still(graphics: ui.Graphics): unit
     local still: graphics_module.RenderTarget? = sea_still
@@ -27,10 +26,13 @@ function release_still(graphics: ui.Graphics): unit
     sea_still = nil
 end
 
-local astral_sea_program: shader_program.Program = shader_program.new(
+local astral_sea_program: shader_program.Program = shader_program.new_with_change(
     astral_sea_shader,
     "astral sea",
-    false
+    false,
+    function(graphics: ui.Graphics): unit
+        release_still(graphics)
+    end
 )
 
 const CLEAR: string = "#09090b"
@@ -96,14 +98,6 @@ function still_sea(surface: ui.Surface, bounds: box.Rect): graphics_module.Rende
     local graphics = surface.graphics
     local width: i32 = math.ceil(bounds.width)::i32
     local height: i32 = math.ceil(bounds.height)::i32
-    local version: i32 = astral_sea_program:version(graphics)
-    if version < 0 then
-        return nil
-    end
-    if version ~= sea_version then
-        release_still(graphics)
-        sea_version = version
-    end
     local baked: graphics_module.RenderTarget? = sea_still
     if baked ~= nil then
         local still: graphics_module.RenderTarget = baked::graphics_module.RenderTarget

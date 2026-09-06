@@ -887,6 +887,69 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_supports_optional_callback_fields_and_cross_module_captures() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local renderer = require("./renderer")
+                    assert(renderer.run() == 1)
+                "#
+                .to_string(),
+            ),
+            (
+                "/renderer.walu".to_string(),
+                r#"
+                    local programs = require("./program")
+
+                    local invalidations: i32 = 0
+                    local program: programs.Program = programs.new(function(): unit
+                        invalidations += 1
+                    end)
+
+                    function run(): i32
+                        program:update()
+                        return invalidations
+                    end
+
+                    return { run = run }
+                "#
+                .to_string(),
+            ),
+            (
+                "/program.walu".to_string(),
+                r#"
+                    type Changed = () -> unit
+                    export opaque type Program = { changed: Changed? }
+
+                    function new(changed: Changed?): Program
+                        return { changed = changed }
+                    end
+
+                    function Program:update(): unit
+                        local changed: Changed? = self.changed
+                        if changed ~= nil then
+                            changed()
+                        end
+                    end
+
+                    return { new = new }
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let result = compile_sources(&files, "/main.walu")
+            .expect("optional callback fields and cross-module captures should compile");
+        assert!(result.ir.contains("CallValue"), "{}", result.ir);
+        let (_, callback_ir) = result
+            .ir
+            .rsplit_once("fn __waluau_top_level_init$lambda0")
+            .expect("the renderer callback should be lowered");
+        assert!(callback_ir.contains("GlobalSet"), "{}", result.ir);
+    }
+
+    #[test]
     fn compile_multi_rejects_module_opaque_record_construction() {
         let files = HashMap::from([
             (

@@ -662,6 +662,57 @@ describe('browser conformance', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('calls optional function aliases that capture mutable state across modules', async () => {
+    const program = `
+      type Changed = () -> unit
+      export opaque type Program = { changed: Changed? }
+
+      function new(changed: Changed?): Program
+          return { changed = changed }
+      end
+
+      function Program:update(): unit
+          local changed: Changed? = self.changed
+          if changed ~= nil then
+              changed()
+          end
+      end
+
+      return { new = new }
+    `;
+    const renderer = `
+      local programs = require("./program")
+
+      local invalidations: i32 = 0
+      local program: programs.Program = programs.new(function(): unit
+          invalidations += 1
+      end)
+
+      function run(): i32
+          program:update()
+          return invalidations
+      end
+
+      return { run = run }
+    `;
+    const main = `
+      local renderer = require("./renderer")
+      assert(renderer.run() == 1)
+      assert(renderer.run() == 2)
+    `;
+
+    await expect(
+      compileAndInstantiate(
+        {
+          '/program.walu': program,
+          '/renderer.walu': renderer,
+          '/main.walu': main,
+        },
+        '/main.walu',
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it('passes type aliases imported across require boundaries', async () => {
     const state = `
       export type State = { score: i32 }
