@@ -268,16 +268,8 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
     await openGame(page, server.resolvedUrls.local[0]);
     // Vite can finish compiler-generated module updates immediately after the
     // first page request. Let those normal startup transactions become quiet
-    // before taking the no-replacement HMR baseline. Superseded transactions
-    // can leave an inert pending root because hot disposal intentionally
-    // suspends rather than removes the canvas; they are irrelevant to the
-    // mounted game this test observes.
+    // before taking the no-replacement HMR baseline.
     await waitForRuntimeToSettle(page);
-    await page.evaluate(() => {
-      for (const root of document.querySelectorAll('main#walua-game-pending')) {
-        root.remove();
-      }
-    });
     const mountedCanvas = page.locator('main#walua-game canvas#walua-game-canvas');
     const initialCounts = await sourceCounts(page, shaders);
     expect(initialCounts[VERTEX_NAME]).toBeGreaterThan(0);

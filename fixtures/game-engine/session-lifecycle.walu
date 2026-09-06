@@ -1,0 +1,66 @@
+-- Browser-session fixture whose exported controls let the conformance host
+-- model two independently instantiated Wasm generations in one document.
+local engine = require("waluau:engine")
+
+local session: engine.Session? = nil
+local draws: i32 = 0
+local keypresses: i32 = 0
+
+local function load(): unit
+end
+
+local function update(dt: f64, input: engine.Input): unit
+end
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+    draws += 1
+    graphics:clear("#0f172a")
+end
+
+local function keypressed(key: string): unit
+    keypresses += 1
+end
+
+session = engine.start(
+    {
+        title = "Engine session lifecycle",
+        width = 160,
+        height = 90,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#0f172a"
+    },
+    {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = nil,
+        mousepressed = nil,
+        mousereleased = nil,
+        mousemoved = nil
+    }
+)
+
+export function draw_count(): i32
+    return draws
+end
+
+export function keypress_count(): i32
+    return keypresses
+end
+
+export function suspend_game(): unit
+    local running: engine.Session? = session
+    if running ~= nil then
+        (running::engine.Session).suspend()
+    end
+end
+
+export function stop_game(): unit
+    local running: engine.Session? = session
+    if running ~= nil then
+        (running::engine.Session).stop()
+        session = nil
+    end
+end

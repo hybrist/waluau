@@ -6,6 +6,13 @@ local graphics_module = require("./graphics")
 local time_module = require("./time")
 local window = require("dom:window")
 
+local GAME_ROOT_ID <const>: string = "walua-game"
+local GAME_TITLE_ID <const>: string = "walua-game-title"
+local GAME_CANVAS_ID <const>: string = "walua-game-canvas"
+local SURFACE_HANDOFF_ATTRIBUTE <const>: string = "data-waluau-surface-handoff"
+local SURFACE_HOST_ATTRIBUTE <const>: string = "data-waluau-surface-host"
+local SURFACE_HANDOFF_VERSION <const>: string = "1"
+
 export type Config = {
     title: string,
     -- The fixed logical viewport. Left out, the engine measures the
@@ -46,8 +53,8 @@ export type Game = {
 
 -- A running browser game owns animation-frame and DOM listener registrations.
 -- Development hot replacement suspends after capturing state so the old Wasm
--- instance no longer receives input or schedules frames while its canvas stays
--- mounted for the replacement handoff.
+-- instance no longer receives input or schedules frames. The replacement
+-- adopts the marked canvas, preserving its WebGL2 context across instances.
 export type Session = {
     stop: () -> unit,
     -- Change the logical viewport of a running game. A host that keeps one
@@ -55,11 +62,13 @@ export type Session = {
     -- between stories — resizes rather than starts over, so GPU resources
     -- built against this renderer stay valid.
     resize: (u32, u32) -> unit,
-    -- Stop callbacks but leave the last rendered canvas mounted. Development
-    -- hot replacement uses this while the next instance prepares its first
-    -- frame, avoiding a black handoff between Wasm modules.
+    -- Stop callbacks and make the mounted canvas available to the next engine
+    -- instance. Development hot replacement uses this to retain the DOM canvas
+    -- and its WebGL2 context across Wasm modules.
     suspend: () -> unit
 }
+
+type Surface = { root: Element, heading: Element, canvas: HTMLCanvasElement }
 
 -- Browsers number pointer buttons 0/1/2 = left/middle/right, and a finger or
 -- pen tip reports 0 like a left click; game code sees the Love2D-style
@@ -145,6 +154,63 @@ function sync_canvas_size(
     return changed
 end
 
+-- A suspended engine instance leaves one versioned surface in the DOM. A
+-- replacement claims that exact root and canvas; anything else is an invalid
+-- lifecycle transition, which the development host handles with a page reload.
+-- Ordinary starts still create their own surface.
+function acquire_surface(document: Document, host: Element, host_key: string): Surface
+    local previous_root: Element? = document:get_element_by_id(GAME_ROOT_ID)
+    if previous_root ~= nil then
+        local retained_root: Element = previous_root::Element
+        if retained_root:get_attribute(
+            SURFACE_HANDOFF_ATTRIBUTE
+        ) ~= SURFACE_HANDOFF_VERSION or retained_root:get_attribute(
+            SURFACE_HOST_ATTRIBUTE
+        ) ~= host_key then
+            error("game engine found an active or incompatible canvas")
+        end
+
+        local retained_heading: Element? = document:query_selector(
+            "#" .. GAME_ROOT_ID .. " > #" .. GAME_TITLE_ID
+        )
+        local retained_element: Element? = document:query_selector(
+            "#" .. GAME_ROOT_ID .. " > #" .. GAME_CANVAS_ID
+        )
+        if retained_heading == nil or retained_element == nil then
+            error("game engine could not adopt the suspended canvas")
+        end
+        assert(retained_heading ~= nil)
+        assert(retained_element ~= nil)
+        local heading: Element = retained_heading::Element
+        local canvas_element: Element = retained_element::Element
+        if HTMLCanvasElement(retained_canvas) = canvas_element then
+            retained_root:remove_attribute(SURFACE_HANDOFF_ATTRIBUTE)
+            return { root = retained_root, heading = heading, canvas = retained_canvas }
+        end
+        error("game engine suspended surface does not contain a canvas")
+    end
+
+    local root: Element = document:create_element("main")
+    root.id = GAME_ROOT_ID
+    root:set_attribute(SURFACE_HOST_ATTRIBUTE, host_key)
+    host:append_child(root)
+
+    local heading: Element = document:create_element("h1")
+    heading.id = GAME_TITLE_ID
+    root:append_child(heading)
+
+    local element: Element = document:create_element("canvas")
+    element.id = GAME_CANVAS_ID
+    root:append_child(element)
+    if HTMLCanvasElement(canvas) = element then
+        return { root = root, heading = heading, canvas = canvas }
+    end
+    error("game engine could not create a WebGL2 canvas")
+    -- `error` never returns at runtime; this unreachable value keeps the
+    -- current static return checker aware that every path returns a Surface.
+    return acquire_surface(document, host, host_key)
+end
+
 function start(config: Config, game: Game): Session
     local document: Document = window.document
     local body: HTMLElement = document.body
@@ -152,9 +218,14 @@ function start(config: Config, game: Game): Session
     -- root's sizing. A named mount that has gone missing falls back to the
     -- body rather than dropping the canvas on the floor.
     local host: Element = body
+    local host_key: string = ""
     local mount_id: string? = config.mount
     if mount_id ~= nil then
-        host = document:get_element_by_id(mount_id::string) or body
+        local mounted_host: Element? = document:get_element_by_id(mount_id::string)
+        if mounted_host ~= nil then
+            host = mounted_host::Element
+            host_key = mount_id::string
+        end
     end
     local owns_page: bool = host == body
     local fluid: bool = config.canvas_sizing == true
@@ -180,14 +251,8 @@ function start(config: Config, game: Game): Session
             "margin:0;min-height:100vh;min-height:100dvh;overflow:hidden;overscroll-behavior:none;background:" .. config.background .. ";"
         )
     end
-    local previous_root: Element? = document:get_element_by_id("walua-game")
-
-    local root: Element = document:create_element("main")
-    if previous_root == nil then
-        root.id = "walua-game"
-    else
-        root.id = "walua-game-pending"
-    end
+    local surface: Surface = acquire_surface(document, host, host_key)
+    local root: Element = surface.root
     root.class_name = "flex min-h-screen w-full flex-col items-center justify-center gap-2 overflow-hidden bg-slate-950 p-2 text-slate-100"
     -- A game that owns the page paints its own backdrop around the canvas. A
     -- mounted game paints nothing outside the canvas: the host's page keeps
@@ -209,27 +274,16 @@ function start(config: Config, game: Game): Session
         "style",
         "box-sizing:border-box;display:flex;" .. root_box .. "align-items:center;justify-content:center;overflow:hidden;"
     )
-    host:append_child(root)
-
-    local heading: Element = document:create_element("h1")
+    local heading: Element = surface.heading
     heading.class_name = "sr-only"
     heading:set_attribute(
         "style",
         "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"
     )
     heading.text_content = config.title
-    root:append_child(heading)
 
-    local element: Element = document:create_element("canvas")
-    element.id = "walua-game-canvas"
-    root:append_child(element)
-
-    if HTMLCanvasElement(canvas) = element then
-        -- Give the pattern-bound handle an ordinary local before capturing it
-        -- in the animation-frame closure.
-        local game_canvas: HTMLCanvasElement = canvas
-        game_canvas.width = config_width
-        game_canvas.height = config_height
+    local game_canvas: HTMLCanvasElement = surface.canvas
+    do
         local style: CSSStyleProperties = game_canvas.style
         style:setProperty("width", tostring(config_width) .. "px")
         style:setProperty("height", tostring(config_height) .. "px")
@@ -414,17 +468,11 @@ function start(config: Config, game: Game): Session
             graphics:set_time(timestamp_ms / 1000.0)
             game.draw(graphics, clock:alpha())
             graphics:present()
-            if root.id == "walua-game-pending" then
-                local mounted_root: Element? = document:get_element_by_id("walua-game")
-                if mounted_root ~= nil then
-                    host:remove_child(mounted_root)
-                end
-                root.id = "walua-game"
-            end
             frame_handle = window:requestAnimationFrame(frame)
         end
         frame_handle = window:requestAnimationFrame(frame)
 
+        local suspended_for_handoff: bool = false
         local function stop_session(remove_root: bool): unit
             if not stopped then
                 stopped = true
@@ -435,12 +483,23 @@ function start(config: Config, game: Game): Session
                 game_canvas:remove_event_listener("pointerup", on_pointerup)
                 game_canvas:remove_event_listener("pointermove", on_pointermove)
                 game_canvas:remove_event_listener("pointercancel", on_pointercancel)
+                graphics:dispose()
             end
             if remove_root then
+                -- stop() after suspend() may run before a replacement claims
+                -- the surface, in which case this session still owns it. Once
+                -- claimed, the removed marker prevents the old session from
+                -- tearing down its successor's canvas.
+                local still_owned: bool = not suspended_for_handoff or root:get_attribute(
+                    SURFACE_HANDOFF_ATTRIBUTE
+                ) == SURFACE_HANDOFF_VERSION
                 local mounted_root: Element? = document:get_element_by_id(root.id)
-                if mounted_root == root then
+                if still_owned and mounted_root == root then
                     host:remove_child(root)
                 end
+            else
+                suspended_for_handoff = true
+                root:set_attribute(SURFACE_HANDOFF_ATTRIBUTE, SURFACE_HANDOFF_VERSION)
             end
         end
         local function resize_viewport(width: u32, height: u32): unit
@@ -466,8 +525,6 @@ function start(config: Config, game: Game): Session
             end,
             resize = resize_viewport
         }
-    else
-        error("game engine could not create a WebGL2 canvas")
     end
     error("game engine could not start")
     -- `error` never returns at runtime; this unreachable value keeps the

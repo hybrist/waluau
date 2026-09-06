@@ -15,6 +15,7 @@ import gameEngineSim from '../../../fixtures/game-engine/sim.walu?raw';
 import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
 import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignment.walu?raw';
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
+import gameEngineSessionLifecycle from '../../../fixtures/game-engine/session-lifecycle.walu?raw';
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu?raw';
 import gameEngineShaderSources from '../../../fixtures/game-engine/shader-sources.walu?raw';
@@ -1214,6 +1215,54 @@ describe('browser conformance', () => {
       }, { timeout: 10_000 }).toEqual([56, 189, 248, 255]);
     } finally {
       cleanup();
+    }
+  });
+
+  it('retains the canvas and WebGL2 context across suspended Wasm generations', async () => {
+    const files = { '/main.walu': gameEngineSessionLifecycle };
+    const first = await compileAndInstantiateWithDom(files, '/main.walu');
+
+    try {
+      const document = first.root.ownerDocument;
+      const initialRoot = first.root.querySelector('main#walua-game');
+      const initialCanvas = first.root.querySelector('#walua-game-canvas');
+      const initialContext = initialCanvas?.getContext('webgl2');
+      expect(initialRoot).not.toBeNull();
+      expect(initialCanvas).not.toBeNull();
+      expect(initialContext).not.toBeNull();
+      await expect.poll(() => first.exports.draw_count(), { timeout: 10_000 }).toBeGreaterThan(0);
+
+      first.exports.suspend_game();
+      const suspendedDrawCount = first.exports.draw_count();
+      expect(initialRoot.getAttribute('data-waluau-surface-handoff')).toBe('1');
+
+      const replacement = await compileAndInstantiateWithExports(files, '/main.walu', {
+        domOutputRoot: document,
+      });
+      const retainedRoot = first.root.querySelector('main#walua-game');
+      const retainedCanvas = first.root.querySelector('#walua-game-canvas');
+      expect(retainedRoot).toBe(initialRoot);
+      expect(retainedCanvas).toBe(initialCanvas);
+      expect(retainedCanvas.getContext('webgl2')).toBe(initialContext);
+      expect(retainedRoot.getAttribute('data-waluau-surface-handoff')).toBeNull();
+      expect(first.root.querySelectorAll('main#walua-game')).toHaveLength(1);
+      expect(first.root.querySelectorAll('#walua-game-canvas')).toHaveLength(1);
+      await expect.poll(() => replacement.draw_count(), { timeout: 10_000 }).toBeGreaterThan(0);
+      expect(first.exports.draw_count()).toBe(suspendedDrawCount);
+
+      document.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'a' }));
+      expect(first.exports.keypress_count()).toBe(0);
+      expect(replacement.keypress_count()).toBe(1);
+
+      // Once adopted, a stale reference to the suspended Session cannot tear
+      // down the surface now owned by its replacement.
+      first.exports.stop_game();
+      expect(first.root.querySelector('#walua-game-canvas')).toBe(initialCanvas);
+
+      replacement.stop_game();
+      expect(first.root.querySelector('#walua-game-canvas')).toBeNull();
+    } finally {
+      first.cleanup();
     }
   });
 
