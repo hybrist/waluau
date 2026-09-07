@@ -79,6 +79,24 @@ export function countDesignInk(canvas, rect, color, tolerance) {
   }, { rect, color, tolerance });
 }
 
+// Gold title ink in the band the menu's large "ANTE MAGIC" occupies. The
+// heist screen keeps that band free of gold, so this distinguishes the menu
+// from the game without depending on a perfectly still frame.
+export function countMenuTitleInk(canvas) {
+  return countDesignInk(
+    canvas,
+    { centerOffsetX: -300, heightRatio: 0.3533333333, yOffset: -52, width: 600, height: 120 },
+    [251, 191, 36],
+    [20, 20, 20],
+  );
+}
+
+export async function waitForMenu(canvas) {
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+}
+
 // Where a point in Ante's live logical coordinates lands on the page. The
 // anchors mirror countDesignInk's: centerOffsetX, rightOffsetX and
 // bottomOffsetY follow the board's own edges, which is where the standing
@@ -196,6 +214,7 @@ export async function openGame(page) {
 // the starting-spell list, where a second Enter takes the default FIREBOLT.
 // The first Enter press is also the user gesture that unlocks browser audio.
 export async function beginHeist(page, canvas) {
+  await waitForMenu(canvas);
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await expect

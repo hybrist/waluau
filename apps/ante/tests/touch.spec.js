@@ -10,6 +10,7 @@ import {
   openGame,
   tapDesignPoint,
   tapMenuItem,
+  waitForMenu,
 } from './game-driver.js';
 
 // This project runs on a tablet-shaped canvas with a touchscreen and no
@@ -41,6 +42,7 @@ test('reaches a live board from the menu with taps only', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
+  await waitForMenu(canvas);
 
   // NEW RUN, then FIREBOLT on the starting-spell list that replaces it. The
   // first tap is also the user gesture that unlocks browser audio.
@@ -56,6 +58,7 @@ test('arms and calls off a spell by tapping its socket', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
+  await waitForMenu(canvas);
   await tapMenuItem(page, canvas);
   await tapMenuItem(page, canvas);
   await expect
@@ -81,6 +84,7 @@ test('opens and closes the rules from the standing controls', async ({ page }) =
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
+  await waitForMenu(canvas);
   await tapMenuItem(page, canvas);
   await tapMenuItem(page, canvas);
   await expect

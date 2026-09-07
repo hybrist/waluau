@@ -44,6 +44,7 @@ function install_ante_magic(): unit
     local duel: game_screen.State = game_screen.State.new()
     local city: city_map.State = city_map.State.new(math.random(2147483646))
     local assets: presentation_resources.State = presentation_resources.State.new()
+    local presentation_started: bool = false
     local function load_assets_async(): i32
         return assets:load_async()
     end
@@ -73,10 +74,11 @@ function install_ante_magic(): unit
     end
 
     local function update(dt: f64, input: engine.Input): unit
-        -- Whichever screen is live aims the map first, and the map is advanced
-        -- once afterwards. A duel whose resources are still loading still gets
-        -- to aim, so its walk between two stops keeps time with the run rather
-        -- than with the asset loader.
+        if not presentation_started then
+            return
+        end
+        -- Once the loading gate opens, whichever screen is live aims the map
+        -- first, and the map is advanced once afterwards.
         if screen == "menu" then
             menu_state:update(city, dt)
         else
@@ -103,7 +105,8 @@ function install_ante_magic(): unit
         graphics:push()
         graphics:scale(canvas.scale, canvas.scale)
         assets:prepare(graphics)
-        if not assets:draw_failure(graphics) then
+        if not assets:draw_status(graphics) then
+            presentation_started = true
             if city.cover < 1.0 then
                 duel:draw_vault(assets:surface(graphics))
             end
@@ -123,7 +126,7 @@ function install_ante_magic(): unit
                 )
             end
             if screen == "menu" then
-                menu_state:draw(canvas, assets:surface(graphics), assets.sound_finished)
+                menu_state:draw(canvas, assets:surface(graphics))
             elseif duel:fence_open() then
                 duel:draw_fence(city, canvas, assets:surface(graphics))
             end
@@ -140,7 +143,7 @@ function install_ante_magic(): unit
     end
 
     local function keypressed(key: string): unit
-        if #assets.fatal_audio_code > 0 then
+        if not presentation_started or #assets.fatal_audio_code > 0 then
             return
         end
         if screen == "menu" then
@@ -153,7 +156,7 @@ function install_ante_magic(): unit
     end
 
     local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
-        if #assets.fatal_audio_code > 0 then
+        if not presentation_started or #assets.fatal_audio_code > 0 then
             return
         end
         x = layout.canvas_x(x)
@@ -166,7 +169,7 @@ function install_ante_magic(): unit
     end
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
-        if #assets.fatal_audio_code > 0 then
+        if not presentation_started or #assets.fatal_audio_code > 0 then
             return
         end
         x = layout.canvas_x(x)
@@ -179,7 +182,7 @@ function install_ante_magic(): unit
     end
 
     local function mousereleased(x: f64, y: f64, button: i32): unit
-        if #assets.fatal_audio_code > 0 then
+        if not presentation_started or #assets.fatal_audio_code > 0 then
             return
         end
         x = layout.canvas_x(x)
