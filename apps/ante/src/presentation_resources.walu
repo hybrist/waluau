@@ -10,6 +10,7 @@ local shader_program = require("./shader_program")
 local failure = require("./presentation/failure")
 local ui = require("./ui/node")
 local layout = require("./layout")
+local ink = require("./ink")
 
 export type State = {
     bundle: assets.Bundle?,
@@ -19,7 +20,7 @@ export type State = {
     noise_texture: graphics_module.Texture?,
     font: graphics_module.Font?,
     graphics: engine.Graphics?,
-    sound_finished: bool,
+    load_finished: bool,
     audio_unlocked: bool,
     fatal_shader_error: string,
     fatal_audio_code: string,
@@ -43,7 +44,7 @@ function State.new(): State
         noise_texture = nil,
         font = nil,
         graphics = nil,
-        sound_finished = false,
+        load_finished = false,
         audio_unlocked = false,
         fatal_shader_error = "",
         fatal_audio_code = "",
@@ -74,7 +75,7 @@ end
 function State:load_async(): i32
     local result: assets.LoadResult = assets.load()
     self.bundle = result.bundle
-    self.sound_finished = true
+    self.load_finished = true
     for _, error in result.errors do
         if error.path == SOUND_PATH then
             self:fatal_audio(error.code, error.message)
@@ -202,7 +203,7 @@ function State:play_flip(): unit
 end
 
 function State:can_update(): bool
-    return #self.fatal_audio_code == 0 and self.sound_finished and self.audio_unlocked
+    return #self.fatal_audio_code == 0 and self.load_finished and self.audio_unlocked
 end
 
 -- The surface every entity draws on: live graphics and the packaged textures
@@ -218,7 +219,23 @@ function State:surface(graphics: engine.Graphics): ui.Surface
     }
 end
 
-function State:draw_failure(graphics: engine.Graphics): bool
+local function draw_loading(graphics: engine.Graphics, viewport: layout.State): unit
+    graphics:set_color("#fbbf24")
+    graphics:fill_rectangle(viewport.center_x - 36.0, viewport.center_y - 1.0, 72.0, 2.0)
+    ink.text_centered(
+        graphics,
+        "PREPARING THE DUEL",
+        viewport.center_x,
+        viewport.center_y + 28.0,
+        11.0,
+        "#a1a1aa"
+    )
+end
+
+-- Covers the game until its first complete presentation can be drawn. Shader
+-- compilation and font upload happen in prepare immediately before this call,
+-- so clearing the gate guarantees the menu never appears in the fallback font.
+function State:draw_status(graphics: engine.Graphics): bool
     local board: ui.Surface = self:surface(graphics)
     local viewport: layout.State = layout.current()
     if #self.fatal_shader_error > 0 then
@@ -227,6 +244,10 @@ function State:draw_failure(graphics: engine.Graphics): bool
     end
     if #self.fatal_audio_code > 0 then
         failure.audio(board, viewport, SOUND_PATH, self.fatal_audio_code, self.fatal_audio_message)
+        return true
+    end
+    if not self.load_finished then
+        draw_loading(graphics, viewport)
         return true
     end
     return false

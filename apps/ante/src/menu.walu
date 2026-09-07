@@ -33,7 +33,7 @@ type Model = {
     spell_cursor: i32,
     pending_action: MenuAction
 }
-type Presentation = { model: Model, viewport: viewport_layout.State, ready: bool }
+type Presentation = { model: Model, viewport: viewport_layout.State }
 
 export type State = {
     model: Model,
@@ -294,15 +294,6 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
             10,
             "#fbbf24"
         )
-    elseif not presentation.ready then
-        ink.text_centered(
-            graphics,
-            "PREPARING THE DUEL",
-            viewport.center_x,
-            detail_y,
-            10,
-            "#8a8a92"
-        )
     end
     ink.text_centered(
         graphics,
@@ -378,11 +369,7 @@ function State.new(): State
         spell_cursor = 0,
         pending_action = "none"
     }
-    local presentation: Presentation = {
-        model = model,
-        viewport = viewport_layout.current(),
-        ready = false
-    }
+    local presentation: Presentation = { model = model, viewport = viewport_layout.current() }
     local main_rows: {ui.Node} = {
         main_row(presentation, ITEM_NEW_RUN, "NEW RUN"),
         main_row(presentation, ITEM_BOSS_RUSH, "BOSS RUSH"),
@@ -528,9 +515,8 @@ function State:selected_spell(): spells.SpellKind
     return kind::spells.SpellKind
 end
 
-function State:draw(viewport: viewport_layout.State, surface: ui.Surface, ready: bool): unit
+function State:draw(viewport: viewport_layout.State, surface: ui.Surface): unit
     self.presentation.viewport = viewport
-    self.presentation.ready = ready
     local style: ui_layout.Style = list_style(viewport)
     self.main_list:present_style(style)
     self.spell_list:present_style(style)

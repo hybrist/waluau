@@ -5,21 +5,66 @@ import {
   clickMenuItem,
   countCardBackInk,
   countDesignInk,
+  countMenuTitleInk,
   frameSignature,
   openGame,
+  waitForMenu,
 } from './game-driver.js';
 
-// Gold title ink in the band the menu's large "ANTE MAGIC" occupies. The
-// heist screen keeps that band free of gold, so this distinguishes the menu
-// from the game without depending on a perfectly still frame.
-function countMenuTitleInk(canvas) {
+function countLoadingInk(canvas) {
   return countDesignInk(
     canvas,
-    { centerOffsetX: -300, heightRatio: 0.3533333333, yOffset: -52, width: 600, height: 120 },
+    { centerOffsetX: -60, heightRatio: 0.5, yOffset: -20, width: 120, height: 60 },
     [251, 191, 36],
-    [20, 20, 20],
+    [10, 10, 10],
   );
 }
+
+test('keeps the splash up until the display font is ready', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  let releaseFont;
+  let reportFontRequest;
+  const fontReleased = new Promise((resolve) => { releaseFont = resolve; });
+  const fontRequested = new Promise((resolve) => { reportFontRequest = resolve; });
+  await page.route('**/*.ttf', async (route) => {
+    reportFontRequest();
+    await fontReleased;
+    await route.continue();
+  });
+
+  const canvas = await openGame(page);
+  try {
+    await fontRequested;
+    await expect
+      .poll(() => countLoadingInk(canvas), { timeout: GAME_READY_TIMEOUT })
+      .toBeGreaterThan(50);
+    expect(await countMenuTitleInk(canvas)).toBeLessThan(50);
+
+    // Input belongs to the screen the player can see, not the hidden menu.
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+  } finally {
+    releaseFont();
+  }
+
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+  expect(await countCardBackInk(canvas)).toBeLessThan(10);
+  expect(pageErrors).toEqual([]);
+});
+
+test('leaves the splash for the built-in fallback when the display font fails', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.route('**/*.ttf', (route) => route.fulfill({ status: 404, body: '' }));
+
+  const canvas = await openGame(page);
+  await waitForMenu(canvas);
+
+  expect(pageErrors).toEqual([]);
+});
 
 // The cyan stall and gold party marker share the stop the run is standing on.
 // Every map screen parks that stop 736 logical units in from the left and just
@@ -132,6 +177,7 @@ test('renders Ante Magic and loads its packaged card-back asset', async ({ page 
 
 test('responds to keyboard input without an iframe focus step', async ({ page }) => {
   const canvas = await openGame(page);
+  await waitForMenu(canvas);
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await expect
