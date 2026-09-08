@@ -1,0 +1,764 @@
+-- Seeded, volumetric architecture. Geometry is built only when the city changes
+-- and retained in one GPU buffer; camera motion only updates shader uniforms.
+local graphics_module = require("waluau:engine/graphics")
+local city_map = require("./city_map")
+local shaders = require("./city_scene_shaders")
+
+type Point = { x: f64, y: f64, z: f64 }
+type Builder = {
+    vertices: {f64},
+    lights: {Point},
+    x: f64,
+    y: f64,
+    cosine: f64,
+    sine: f64,
+    red: f64,
+    green: f64,
+    blue: f64,
+    material: f64
+}
+export type Scene = {
+    graphics: graphics_module.Graphics?,
+    mesh: graphics_module.Mesh3D?,
+    shader: graphics_module.Shader?,
+    overlay: graphics_module.Shader?,
+    generation: i32,
+    lights: {Point}
+}
+
+function surface(b: Builder, r: f64, g: f64, blue: f64, material: f64): unit
+    b.red = r
+    b.green = g
+    b.blue = blue
+    b.material = material
+end
+
+function vertex(b: Builder, x: f64, y: f64, z: f64, u: f64, v: f64): unit
+    table.insert(b.vertices, b.x + x * b.cosine - y * b.sine)
+    table.insert(b.vertices, b.y + x * b.sine + y * b.cosine)
+    table.insert(b.vertices, z)
+    table.insert(b.vertices, b.red)
+    table.insert(b.vertices, b.green)
+    table.insert(b.vertices, b.blue)
+    table.insert(b.vertices, b.material)
+    table.insert(b.vertices, u)
+    table.insert(b.vertices, v)
+end
+
+function quad(
+    b: Builder,
+    ax: f64,
+    ay: f64,
+    az: f64,
+    bx: f64,
+    by: f64,
+    bz: f64,
+    cx: f64,
+    cy: f64,
+    cz: f64,
+    dx: f64,
+    dy: f64,
+    dz: f64
+): unit
+    local w: f64 = math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay) + (bz - az) * (bz - az))
+    local h: f64 = math.sqrt((dx - ax) * (dx - ax) + (dy - ay) * (dy - ay) + (dz - az) * (dz - az))
+    vertex(b, ax, ay, az, 0.0, 0.0)
+    vertex(b, bx, by, bz, w, 0.0)
+    vertex(b, cx, cy, cz, w, h)
+    vertex(b, ax, ay, az, 0.0, 0.0)
+    vertex(b, cx, cy, cz, w, h)
+    vertex(b, dx, dy, dz, 0.0, h)
+end
+
+function box(b: Builder, x: f64, y: f64, z: f64, w: f64, d: f64, h: f64): unit
+    quad(b, x, y, z, x + w, y, z, x + w, y, z + h, x, y, z + h)
+    quad(b, x + w, y + d, z, x, y + d, z, x, y + d, z + h, x + w, y + d, z + h)
+    quad(b, x, y + d, z, x, y, z, x, y, z + h, x, y + d, z + h)
+    quad(b, x + w, y, z, x + w, y + d, z, x + w, y + d, z + h, x + w, y, z + h)
+    quad(b, x, y, z + h, x + w, y, z + h, x + w, y + d, z + h, x, y + d, z + h)
+end
+
+function roof(b: Builder, x: f64, y: f64, z: f64, w: f64, d: f64, rise: f64): unit
+    quad(b, x, y, z, x + w * 0.5, y, z + rise, x + w * 0.5, y + d, z + rise, x, y + d, z)
+    quad(b, x + w * 0.5, y, z + rise, x + w, y, z, x + w, y + d, z, x + w * 0.5, y + d, z + rise)
+    vertex(b, x, y, z, 0.0, 0.0)
+    vertex(b, x + w, y, z, w, 0.0)
+    vertex(b, x + w * 0.5, y, z + rise, w * 0.5, rise)
+    vertex(b, x + w, y + d, z, 0.0, 0.0)
+    vertex(b, x, y + d, z, w, 0.0)
+    vertex(b, x + w * 0.5, y + d, z + rise, w * 0.5, rise)
+end
+
+function lantern(b: Builder, x: f64, y: f64): unit
+    surface(b, 0.10, 0.10, 0.12, 6.0)
+    box(b, x - 0.2, y - 0.2, 0.0, 0.4, 0.4, 6.0)
+    surface(b, 1.0, 0.47, 0.10, 4.0)
+    box(b, x - 0.6, y - 0.6, 5.0, 1.2, 1.2, 1.3)
+    surface(b, 0.08, 0.08, 0.09, 6.0)
+    box(b, x - 0.9, y - 0.9, 6.3, 1.8, 1.8, 0.3)
+    table.insert(
+        b.lights,
+        { x = b.x + x * b.cosine - y * b.sine, y = b.y + x * b.sine + y * b.cosine, z = 5.6 }
+    )
+end
+
+function house(b: Builder, x: f64, y: f64, w: f64, d: f64, h: f64, variation: i32): unit
+    -- Stone footing, overhanging plaster storeys, and load-bearing timber.
+    surface(b, 0.40, 0.36, 0.31, 0.0)
+    box(b, x, y, 0.0, w, d, 3.0)
+    surface(b, 0.60 + (variation % 3)::f64 * 0.035, 0.49, 0.35, 1.0)
+    box(b, x - 0.5, y - 0.5, 3.0, w + 1.0, d + 1.0, h - 3.0)
+    surface(b, 0.15, 0.095, 0.065, 3.0)
+    -- Trim is a thin surface on the wall, avoiding hidden box faces in the
+    -- retained mesh while keeping the house, roof and chimney fully volumetric.
+    for level = 0::i32, 2 do
+        local z: f64 = 3.0 + (level::f64) * (h - 3.0) * 0.5
+        quad(
+            b,
+            x - 0.7,
+            y - 0.7,
+            z,
+            x + w + 0.7,
+            y - 0.7,
+            z,
+            x + w + 0.7,
+            y - 0.7,
+            z + 0.45,
+            x - 0.7,
+            y - 0.7,
+            z + 0.45
+        )
+        quad(
+            b,
+            x - 0.7,
+            y + d + 0.7,
+            z,
+            x + w + 0.7,
+            y + d + 0.7,
+            z,
+            x + w + 0.7,
+            y + d + 0.7,
+            z + 0.45,
+            x - 0.7,
+            y + d + 0.7,
+            z + 0.45
+        )
+        quad(
+            b,
+            x - 0.7,
+            y - 0.7,
+            z,
+            x - 0.7,
+            y + d + 0.7,
+            z,
+            x - 0.7,
+            y + d + 0.7,
+            z + 0.45,
+            x - 0.7,
+            y - 0.7,
+            z + 0.45
+        )
+        quad(
+            b,
+            x + w + 0.7,
+            y - 0.7,
+            z,
+            x + w + 0.7,
+            y + d + 0.7,
+            z,
+            x + w + 0.7,
+            y + d + 0.7,
+            z + 0.45,
+            x + w + 0.7,
+            y - 0.7,
+            z + 0.45
+        )
+    end
+    for post = 0::i32, 2 do
+        local px: f64 = x + (post::f64) * w * 0.5
+        quad(
+            b,
+            px - 0.25,
+            y - 0.8,
+            3.0,
+            px + 0.25,
+            y - 0.8,
+            3.0,
+            px + 0.25,
+            y - 0.8,
+            h,
+            px - 0.25,
+            y - 0.8,
+            h
+        )
+        quad(
+            b,
+            px - 0.25,
+            y + d + 0.8,
+            3.0,
+            px + 0.25,
+            y + d + 0.8,
+            3.0,
+            px + 0.25,
+            y + d + 0.8,
+            h,
+            px - 0.25,
+            y + d + 0.8,
+            h
+        )
+    end
+    -- Recessed openings on all four sides. They reveal themselves as the
+    -- perspective camera passes the building, instead of turning as a sprite.
+    for level = 0::i32, 1 do
+        local z: f64 = 5.0 + (level::f64) * (h - 4.0) * 0.5
+        for window = 0::i32, 1 do
+            local px: f64 = x + w * (0.22 + (window::f64) * 0.48)
+            surface(b, 0.075, 0.052, 0.03, 3.0)
+            quad(
+                b,
+                px - 1.5,
+                y + d + 0.81,
+                z - 0.4,
+                px + 1.5,
+                y + d + 0.81,
+                z - 0.4,
+                px + 1.5,
+                y + d + 0.81,
+                z + 3.8,
+                px - 1.5,
+                y + d + 0.81,
+                z + 3.8
+            )
+            if (variation + level + window) % 3 ~= 0 then
+                surface(b, 1.0, 0.46 + (variation % 3)::f64 * 0.05, 0.12, 4.0)
+            end
+            quad(
+                b,
+                px - 1.1,
+                y + d + 0.83,
+                z,
+                px + 1.1,
+                y + d + 0.83,
+                z,
+                px + 1.1,
+                y + d + 0.83,
+                z + 3.3,
+                px - 1.1,
+                y + d + 0.83,
+                z + 3.3
+            )
+            quad(
+                b,
+                px - 1.1,
+                y - 0.81,
+                z,
+                px + 1.1,
+                y - 0.81,
+                z,
+                px + 1.1,
+                y - 0.81,
+                z + 3.3,
+                px - 1.1,
+                y - 0.81,
+                z + 3.3
+            )
+            local py: f64 = y + d * (0.25 + (window::f64) * 0.5)
+            quad(
+                b,
+                x - 0.81,
+                py - 1.1,
+                z,
+                x - 0.81,
+                py + 1.1,
+                z,
+                x - 0.81,
+                py + 1.1,
+                z + 3.3,
+                x - 0.81,
+                py - 1.1,
+                z + 3.3
+            )
+            quad(
+                b,
+                x + w + 0.81,
+                py - 1.1,
+                z,
+                x + w + 0.81,
+                py + 1.1,
+                z,
+                x + w + 0.81,
+                py + 1.1,
+                z + 3.3,
+                x + w + 0.81,
+                py - 1.1,
+                z + 3.3
+            )
+        end
+    end
+    surface(b, 0.11, 0.065, 0.035, 3.0)
+    quad(
+        b,
+        x + w * 0.43,
+        y + d + 0.85,
+        0.0,
+        x + w * 0.59,
+        y + d + 0.85,
+        0.0,
+        x + w * 0.59,
+        y + d + 0.85,
+        5.0,
+        x + w * 0.43,
+        y + d + 0.85,
+        5.0
+    )
+    if variation % 3 == 0 then
+        surface(b, 0.32, 0.16, 0.095, 2.0)
+    else
+        surface(b, 0.17, 0.23, 0.28, 2.0)
+    end
+    roof(b, x - 1.5, y - 1.5, h, w + 3.0, d + 3.0, w * 0.50)
+    -- A projecting dormer and a capped masonry chimney break up the roof.
+    roof(b, x + w * 0.5, y + d * 0.3, h + w * 0.2, w * 0.40, 4.5, w * 0.21)
+    surface(b, 0.37, 0.29, 0.25, 0.0)
+    box(b, x + w * 0.23, y + d * 0.73, h, 2.1, 2.6, w * 0.48)
+    surface(b, 0.19, 0.17, 0.16, 0.0)
+    box(b, x + w * 0.23 - 0.4, y + d * 0.73 - 0.4, h + w * 0.48, 2.9, 3.4, 0.7)
+end
+
+function tower(b: Builder, x: f64, y: f64, radius: f64, height: f64, pointed: bool): unit
+    for side = 0::i32, 11 do
+        local a: f64 = (side::f64) * 0.523599
+        local c: f64 = ((side + 1)::f64) * 0.523599
+        local ax: f64 = x + math.cos(a) * radius
+        local ay: f64 = y + math.sin(a) * radius
+        local bx: f64 = x + math.cos(c) * radius
+        local by: f64 = y + math.sin(c) * radius
+        surface(b, 0.47, 0.43, 0.36, 0.0)
+        quad(b, ax, ay, 0.0, bx, by, 0.0, bx, by, height, ax, ay, height)
+        if side % 2 == 0 then
+            local mx: f64 = (ax + bx) * 0.5 + math.cos(a + 0.261799) * 0.12
+            local my: f64 = (ay + by) * 0.5 + math.sin(a + 0.261799) * 0.12
+            surface(b, 1.0, 0.54, 0.18, 4.0)
+            quad(
+                b,
+                mx + (ax - mx) * 0.3,
+                my + (ay - my) * 0.3,
+                height * 0.63,
+                mx + (bx - mx) * 0.3,
+                my + (by - my) * 0.3,
+                height * 0.63,
+                mx + (bx - mx) * 0.3,
+                my + (by - my) * 0.3,
+                height * 0.76,
+                mx + (ax - mx) * 0.3,
+                my + (ay - my) * 0.3,
+                height * 0.76
+            )
+        end
+        if pointed then
+            surface(b, 0.12, 0.20, 0.25, 2.0)
+            vertex(b, ax, ay, height, 0.0, 0.0)
+            vertex(b, bx, by, height, radius * 0.5, 0.0)
+            vertex(b, x, y, height + radius * 2.0, radius * 0.25, radius * 2.0)
+        else
+            surface(b, 0.49, 0.46, 0.39, 0.0)
+            box(b, ax - 1.0, ay - 1.0, height, 2.0, 2.0, 2.5)
+            vertex(b, ax, ay, height, ax, ay)
+            vertex(b, bx, by, height, bx, by)
+            vertex(b, x, y, height, x, y)
+        end
+    end
+end
+
+function quarter(b: Builder, parcel: city_map.Building): unit
+    b.x = parcel.x + parcel.width * 0.5
+    b.y = parcel.y + parcel.height * 0.5
+    local angle: f64 = math.sin(parcel.x * 0.07 + parcel.y * 0.03) * 0.16
+    local w: f64 = parcel.width
+    local d: f64 = parcel.height
+    if parcel.detail == 1 or parcel.detail == 3 then
+        angle += 1.570796
+        w = parcel.height
+        d = parcel.width
+    end
+    b.cosine = math.cos(angle)
+    b.sine = math.sin(angle)
+    if parcel.detail == 5 then
+        surface(b, 0.4, 0.38, 0.32, 0.0)
+        box(b, -w * 0.42, -d * 0.40, 0.0, w * 0.84, 3.0, 14.0)
+        box(b, -w * 0.42, d * 0.40 - 3.0, 0.0, w * 0.84, 3.0, 14.0)
+        box(b, -w * 0.42, -d * 0.40, 0.0, 3.0, d * 0.8, 14.0)
+        box(b, w * 0.42 - 3.0, -d * 0.40, 0.0, 3.0, d * 0.8, 14.0)
+        for side = 0::i32, 1 do
+            for endcap = 0::i32, 1 do
+                tower(
+                    b,
+                    -w * 0.40 + (side::f64) * w * 0.80,
+                    -d * 0.38 + (endcap::f64) * d * 0.76,
+                    6.0,
+                    24.0,
+                    false
+                )
+            end
+        end
+        house(b, -w * 0.18, -d * 0.20, w * 0.36, d * 0.4, 30.0, 2)
+    elseif parcel.detail == 6 then
+        -- Cathedral: cruciform nave, aisles, buttresses and twin west towers.
+        surface(b, 0.53, 0.48, 0.39, 0.0)
+        box(b, -w * 0.18, -d * 0.44, 0.0, w * 0.36, d * 0.88, 27.0)
+        box(b, -w * 0.42, -d * 0.12, 0.0, w * 0.84, d * 0.24, 23.0)
+        for buttress = 0::i32, 4 do
+            local y: f64 = -d * 0.35 + (buttress::f64) * d * 0.16
+            box(b, -w * 0.25, y, 0.0, 3.0, 2.0, 21.0)
+            box(b, w * 0.25 - 3.0, y, 0.0, 3.0, 2.0, 21.0)
+            surface(b, 1.0, 0.46, 0.18, 4.0)
+            quad(
+                b,
+                -w * 0.181,
+                y,
+                10.0,
+                -w * 0.181,
+                y + 3.0,
+                10.0,
+                -w * 0.181,
+                y + 3.0,
+                20.0,
+                -w * 0.181,
+                y,
+                20.0
+            )
+            quad(
+                b,
+                w * 0.181,
+                y,
+                10.0,
+                w * 0.181,
+                y + 3.0,
+                10.0,
+                w * 0.181,
+                y + 3.0,
+                20.0,
+                w * 0.181,
+                y,
+                20.0
+            )
+            surface(b, 0.53, 0.48, 0.39, 0.0)
+        end
+        surface(b, 0.14, 0.21, 0.26, 2.0)
+        roof(b, -w * 0.20, -d * 0.46, 27.0, w * 0.40, d * 0.92, 14.0)
+        tower(b, -w * 0.16, d * 0.34, 5.5, 43.0, true)
+        tower(b, w * 0.16, d * 0.34, 5.5, 43.0, true)
+    elseif parcel.detail == 7 then
+        -- Timber market hall and actual canvas roofs around an open square.
+        house(b, -w * 0.42, -d * 0.42, w * 0.84, d * 0.25, 17.0, 1)
+        for stall = 0::i32, 3 do
+            local x: f64 = -w * 0.35 + (stall::f64) * w * 0.23
+            surface(b, 0.24, 0.13, 0.08, 3.0)
+            box(b, x, 0.0, 0.0, 9.0, 6.0, 2.5)
+            surface(b, 0.50, 0.28, 0.12, 1.0)
+            roof(b, x - 1.0, -1.0, 5.0, 11.0, 8.0, 2.0)
+        end
+        tower(b, 0.0, d * 0.30, 4.0, 2.0, false)
+    elseif parcel.detail == 8 then
+        house(b, -w * 0.35, -d * 0.25, w * 0.70, d * 0.50, 21.0, 2)
+        tower(b, 0.0, -d * 0.20, 9.0, 45.0, true)
+        tower(b, -w * 0.32, d * 0.20, 5.0, 29.0, true)
+        tower(b, w * 0.32, d * 0.20, 5.0, 33.0, true)
+    else
+        local columns: i32 = math.max(2.0, math.floor(w / 25.0))::i32
+        local span: f64 = w / (columns::f64)
+        for row = 0::i32, 1 do
+            for col = 0::i32, columns - 1 do
+                local variation: i32 = parcel.tone + row + col + parcel.detail
+                local x: f64 = -w * 0.5 + (col::f64) * span + 1.0
+                local y: f64 = -d * 0.5 + (row::f64) * d * 0.51 + (variation % 3)::f64 * 1.5
+                house(b, x, y, span - 1.8, d * 0.45, 12.0 + (variation % 4)::f64 * 3.0, variation)
+            end
+        end
+    end
+    lantern(b, -w * 0.48, d * 0.49)
+end
+
+-- Decorative outskirts continue past the route's finite coordinate range.
+-- An oblique view sees farther north than the old flat camera, especially
+-- when it anchors a vendor near the edge of the playable street network.
+function outskirts(b: Builder, parcel: city_map.Building, dx: f64, dy: f64): unit
+    quarter(
+        b,
+        {
+            x = parcel.x + dx,
+            y = parcel.y + dy,
+            width = parcel.width,
+            height = parcel.height,
+            tone = parcel.tone,
+            detail = parcel.detail % 5
+        }
+    )
+end
+
+function Scene.new(): Scene
+    return { graphics = nil, mesh = nil, shader = nil, overlay = nil, generation = -1, lights = {} }
+end
+
+function Scene:dispose(): unit
+    local owner: graphics_module.Graphics? = self.graphics
+    if owner ~= nil then
+        local graphics: graphics_module.Graphics = owner::graphics_module.Graphics
+        if self.mesh ~= nil then
+            graphics:release_mesh3d(self.mesh::graphics_module.Mesh3D)
+        end
+        if self.shader ~= nil then
+            graphics:release_shader(self.shader::graphics_module.Shader)
+        end
+        if self.overlay ~= nil then
+            graphics:release_shader(self.overlay::graphics_module.Shader)
+        end
+    end
+    self.mesh = nil
+    self.shader = nil
+    self.overlay = nil
+    self.graphics = nil
+    self.generation = -1
+end
+
+function Scene:prepare(graphics: graphics_module.Graphics, state: city_map.State): unit
+    self.graphics = graphics
+    if self.shader == nil then
+        local shader: graphics_module.ShaderResult = graphics:create_shader(
+            shaders.vertex(),
+            shaders.pixel()
+        )
+        if not shader.ok then
+            error("city 3D shader: " .. shader.error.message)
+        end
+        self.shader = shader.shader
+        local overlay: graphics_module.ShaderResult = graphics:create_shader(
+            shaders.overlay_vertex(),
+            shaders.overlay_pixel()
+        )
+        if not overlay.ok then
+            error("city route shader: " .. overlay.error.message)
+        end
+        self.overlay = overlay.shader
+    end
+    if self.generation == state.generation then
+        return
+    end
+    local b: Builder = {
+        vertices = {},
+        lights = {},
+        x = 0.0,
+        y = 0.0,
+        cosine = 1.0,
+        sine = 0.0,
+        red = 0.0,
+        green = 0.0,
+        blue = 0.0,
+        material = 0.0
+    }
+    surface(b, 0.31, 0.28, 0.24, 5.0)
+    quad(
+        b,
+        -2000.0,
+        -2000.0,
+        -0.2,
+        4500.0,
+        -2000.0,
+        -0.2,
+        4500.0,
+        4000.0,
+        -0.2,
+        -2000.0,
+        4000.0,
+        -0.2
+    )
+    local canal: f64 = state.vertical_streets[math.floor(
+        (#state.vertical_streets)::f64 * 0.55
+    )::i32]
+    surface(b, 0.02, 0.04, 0.08, 7.0)
+    quad(
+        b,
+        canal - 12.0,
+        0.0,
+        0.0,
+        canal + 12.0,
+        0.0,
+        0.0,
+        canal + 12.0,
+        city_map.height,
+        0.0,
+        canal - 12.0,
+        city_map.height,
+        0.0
+    )
+    surface(b, 0.35, 0.33, 0.30, 0.0)
+    box(b, canal - 14.0, 0.0, 0.0, 2.0, city_map.height, 1.0)
+    box(b, canal + 12.0, 0.0, 0.0, 2.0, city_map.height, 1.0)
+    for crossing in state.horizontal_streets do
+        box(b, canal - 18.0, crossing - 7.0, 0.0, 36.0, 14.0, 2.0)
+        box(b, canal - 18.0, crossing - 8.0, 2.0, 36.0, 1.0, 1.5)
+        box(b, canal - 18.0, crossing + 7.0, 2.0, 36.0, 1.0, 1.5)
+    end
+    local shadow_start: i32 = #b.vertices + 1
+    for parcel in state.buildings do
+        quarter(b, parcel)
+        for distance = 1::i32, 3 do
+            local step: f64 = (distance::f64) * 110.0
+            if parcel.y < 100.0 then
+                outskirts(b, parcel, 0.0, -step)
+            end
+            if parcel.y + parcel.height > city_map.height - 100.0 then
+                outskirts(b, parcel, 0.0, step)
+            end
+            if parcel.x < 100.0 then
+                outskirts(b, parcel, -step, 0.0)
+            end
+            if parcel.x + parcel.width > city_map.width - 100.0 then
+                outskirts(b, parcel, step, 0.0)
+            end
+        end
+    end
+    -- Project the actual silhouettes onto the ground along the fixed moon
+    -- direction. These static cast shadows are baked with the city, while
+    -- lantern illumination is evaluated against them by the material shader.
+    local shadow_end: i32 = #b.vertices
+    b.x = 0.0
+    b.y = 0.0
+    b.cosine = 1.0
+    b.sine = 0.0
+    surface(b, 0.31, 0.28, 0.24, 8.0)
+    for index = shadow_start, shadow_end, 9 do
+        local z: f64 = b.vertices[index + 2]
+        local x: f64 = b.vertices[index] + z * 0.8125
+        local y: f64 = b.vertices[index + 1] + z * 0.5
+        if b.vertices[index + 6] < 2.5 then
+            vertex(b, x, y, -0.1, x, y)
+        end
+    end
+    -- Ground-facing influence quads carry every lantern's pool of light. The
+    -- depth buffer keeps the pools beneath buildings; the nearest eight lamps
+    -- additionally light vertical surfaces with their actual 3D positions.
+    surface(b, 1.0, 0.45, 0.12, 9.0)
+    for light in b.lights do
+        quad(
+            b,
+            light.x - 24.0,
+            light.y - 24.0,
+            -0.05,
+            light.x + 24.0,
+            light.y - 24.0,
+            -0.05,
+            light.x + 24.0,
+            light.y + 24.0,
+            -0.05,
+            light.x - 24.0,
+            light.y + 24.0,
+            -0.05
+        )
+    end
+    local uploaded: graphics_module.Mesh3DResult = graphics:create_mesh3d(b.vertices)
+    if not uploaded.ok then
+        error("city 3D mesh: " .. uploaded.error.message)
+    end
+    if self.mesh ~= nil then
+        graphics:release_mesh3d(self.mesh::graphics_module.Mesh3D)
+    end
+    self.mesh = uploaded.mesh
+    self.lights = b.lights
+    self.generation = state.generation
+end
+
+function parameters(state: city_map.State): {graphics_module.ShaderParameter}
+    return {
+        graphics_module.vec3_parameter(
+            "u_camera",
+            state.camera_x,
+            state.camera_y,
+            900.0 / state.zoom
+        ),
+        graphics_module.vec4_parameter(
+            "u_view",
+            state.view_width,
+            state.view_height,
+            state.anchor_x,
+            state.anchor_y
+        )
+    }
+end
+
+function Scene:draw(
+    graphics: graphics_module.Graphics,
+    state: city_map.State,
+    alpha: f64,
+    materials: graphics_module.Texture?
+): unit
+    self:prepare(graphics, state)
+    local values: {graphics_module.ShaderParameter} = parameters(state)
+    local textured: f64 = 0.0
+    if materials ~= nil then
+        local texture: graphics_module.Texture = materials::graphics_module.Texture
+        if not texture.released and graphics:bind_sprite_texture(texture.handle) then
+            textured = 1.0
+        end
+    end
+    table.insert(values, graphics_module.float_parameter("u_materials", textured))
+    table.insert(values, graphics_module.float_parameter("u_alpha", alpha))
+    local chosen: {i32} = {}
+    for lamp = 0::i32, 7 do
+        local nearest: i32 = 1
+        local best: f64 = 1.0e20
+        for index = 1::i32, #self.lights do
+            local light: Point = self.lights[index]
+            local dx: f64 = light.x - state.camera_x
+            local dy: f64 = light.y - state.camera_y
+            local distance: f64 = dx * dx + dy * dy
+            for used in chosen do
+                if used == index then
+                    distance = 1.0e20
+                end
+            end
+            if distance < best then
+                best = distance
+                nearest = index
+            end
+        end
+        table.insert(chosen, nearest)
+        local light: Point = self.lights[nearest]
+        table.insert(
+            values,
+            graphics_module.vec3_parameter("u_lamp" .. tostring(lamp), light.x, light.y, light.z)
+        )
+    end
+    local mesh: graphics_module.Mesh3D? = self.mesh
+    local shader: graphics_module.Shader? = self.shader
+    if mesh ~= nil then
+        if shader ~= nil then
+            local result: graphics_module.ShaderBindingResult = graphics:draw_mesh3d(
+                mesh::graphics_module.Mesh3D,
+                shader::graphics_module.Shader,
+                values
+            )
+            if not result.ok then
+                error("city 3D draw: " .. result.error.message)
+            end
+        end
+    end
+end
+
+function Scene:bind_overlay(graphics: graphics_module.Graphics, state: city_map.State): unit
+    local values: {graphics_module.ShaderParameter} = parameters(state)
+    table.insert(values, graphics_module.float_parameter("u_zoom", state.zoom))
+    local overlay: graphics_module.Shader? = self.overlay
+    if overlay == nil then
+        return
+    end
+    local result: graphics_module.ShaderBindingResult = graphics:bind_shader(
+        overlay::graphics_module.Shader,
+        values
+    )
+    if not result.ok then
+        error("city route draw: " .. result.error.message)
+    end
+end
+
+return { new = Scene.new }

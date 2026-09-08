@@ -18,6 +18,7 @@ import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-path
 import gameEngineSessionLifecycle from '../../../fixtures/game-engine/session-lifecycle.walu?raw';
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu?raw';
+import gameEngineGpuMesh3D from '../../../fixtures/game-engine/gpu-mesh3d.walu?raw';
 import gameEngineShaderSources from '../../../fixtures/game-engine/shader-sources.walu?raw';
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
@@ -1516,6 +1517,35 @@ describe('browser conformance', () => {
       expect(hasColorNear(pixels, 60, 80, [64, 255, 64])).toBe(true);
       expect(hasColorNear(pixels, 180, 75, [64, 128, 255])).toBe(true);
       expect(hasColorNear(pixels, 310, 182, [255, 64, 255])).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('depth-tests retained 3D meshes and restores the 2D drawing state', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom({
+      '/fixtures/game-engine/gpu-mesh3d.walu': gameEngineGpuMesh3D,
+      '/engine/browser.walu': gameEngineBrowser,
+      '/engine/graphics.walu': gameEngineGraphics,
+      '/engine/resources.walu': gameEngineResources,
+      '/engine/font.walu': gameEngineFont,
+      '/engine/input.walu': gameEngineInput,
+      '/engine/time.walu': gameEngineTime,
+    }, '/fixtures/game-engine/gpu-mesh3d.walu');
+    try {
+      const gl = root.querySelector('#walua-game-canvas').getContext('webgl2');
+      const sample = (x, y) => {
+        const pixel = new Uint8Array(4);
+        gl.readPixels(x, 99 - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return [...pixel];
+      };
+      await expect.poll(() => sample(50, 50), { timeout: 10_000 }).toEqual([0, 255, 0, 255]);
+      expect(sample(50, 70)).toEqual([255, 0, 0, 255]);
+      // Perspective expands the near triangle beyond its unprojected bounds.
+      expect(sample(4, 90)).toEqual([255, 0, 0, 255]);
+      expect(sample(5, 5)).toEqual([255, 255, 0, 255]);
+      expect(gl.isEnabled(gl.DEPTH_TEST)).toBe(false);
+      expect(gl.getError()).toBe(gl.NO_ERROR);
     } finally {
       cleanup();
     }

@@ -17,7 +17,7 @@
 -- deck shuffle.
 -- A seeded neighborhood parcel. Details 0–4 are housing, 5 a keep, 6 a
 -- cathedral, 7 a market and 8 an arcane college. Rendering subdivides housing
--- into individual roofs without adding frame-dependent random state.
+-- into volumetric architecture without adding frame-dependent random state.
 export type Building = { x: f64, y: f64, width: f64, height: f64, tone: i32, detail: i32 }
 -- One place the duel stops. `duel` tells the two kinds apart: a house with a
 -- duel in it, or the street vendor standing between two of them.
@@ -27,6 +27,7 @@ export type State = {
     vertical_streets: {f64},
     horizontal_streets: {f64},
     buildings: {Building},
+    generation: i32,
     stops: {Stop},
     walk_column: i32,
     walk_row: i32,
@@ -153,6 +154,7 @@ function fill_streets(state: State, streets: {f64}, limit: f64, low: f64, high: 
 end
 
 function generate(state: State): unit
+    state.generation += 1
     state.vertical_streets = {}
     state.horizontal_streets = {}
     state.buildings = {}
@@ -584,6 +586,7 @@ function State.new(seed: i32): State
         vertical_streets = {},
         horizontal_streets = {},
         buildings = {},
+        generation = 0,
         stops = {},
         walk_column = 1,
         walk_row = 1,

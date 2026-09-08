@@ -122,7 +122,8 @@ function install_ante_magic(): unit
                     graphics,
                     ink.color_ink(city.streak_suit),
                     city.cover,
-                    landmark
+                    landmark,
+                    assets.city_texture
                 )
             end
             if screen == "menu" then
@@ -276,6 +277,7 @@ function install_ante_magic(): unit
                     (running::engine.Session).suspend()
                     session = nil
                 end
+                city_map_render.dispose()
                 assets:dispose()
             end
         }

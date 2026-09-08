@@ -95,7 +95,9 @@ describe(
                 for present in kinds do
                     expect(present):toBe(true)
                 end
+                local previous_generation: i32 = first.generation
                 first:regenerate()
+                expect(first.generation):toBeGreaterThan(previous_generation)
                 local changed: bool = false
                 for index = 1::i32, math.min(#first.buildings, #same.buildings)::i32 do
                     if first.buildings[index].detail ~= same.buildings[index].detail then

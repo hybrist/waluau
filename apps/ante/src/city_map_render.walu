@@ -1,4 +1,4 @@
--- WebGL2 presentation for the DOM-free city map. Muted rooftops keep whatever
+-- Perspective WebGL2 presentation for the DOM-free city map. Muted rooftops keep whatever
 -- list is standing over them readable; the saturated things are the route the
 -- duel walks and the thief streak passing somewhere else in the city.
 --
@@ -15,6 +15,9 @@ local engine = require("waluau:engine")
 local ink = require("./ink")
 local plate = require("./plate")
 local city_map = require("./city_map")
+local graphics_module = require("waluau:engine/graphics")
+local city_scene = require("./city_scene")
+local scene: city_scene.Scene = city_scene.Scene.new()
 
 type Graphics = engine.Graphics
 type Point = city_map.Point
@@ -24,7 +27,7 @@ const STREAK_LENGTH: f64 = 118.0
 const NIGHT: string = "#05060a"
 const ASPHALT: string = "#303330"
 const SCRIM: string = "#05060a"
-const SCRIM_STRENGTH: f64 = 0.34
+const SCRIM_STRENGTH: f64 = 0.12
 
 -- The road already walked, and the road still to come. The walked half is the
 -- one gold thing on the map; the rest is a dashed intention.
@@ -62,248 +65,6 @@ const VAULT_INK: string = "#fbbf24"
 const VAULT_DIM: string = "#6b6f7d"
 const VENDOR_INK: string = "#67e8f9"
 const VENDOR_DIM: string = "#4a5560"
-
--- Roof palettes belong to neighborhoods: copper, terracotta, slate and plum.
-function roof_tone(tone: i32): string
-    if tone == 0 then
-        return "#65756c"
-    end
-    if tone == 1 then
-        return "#976951"
-    end
-    if tone == 2 then
-        return "#62788b"
-    end
-    return "#796477"
-end
-
--- Hipped tile roofs, with a raised ridge, stone walls, eaves and chimneys.
--- Geometry stays local so the same house can face a lane at a slight angle.
-function house(graphics: Graphics, x: f64, y: f64, w: f64, h: f64, tone: i32, alpha: f64): unit
-    graphics:set_color(ink.fade("#090e14", alpha * 0.8))
-    graphics:fill_quad(x, y + h, x + w, y + h, x + w + 9.0, y + h + 10.0, x + 9.0, y + h + 10.0)
-    graphics:set_color(ink.fade("#574c42", alpha))
-    graphics:fill_rectangle(x + 1.0, y + 5.0, w - 2.0, h)
-    graphics:set_color(ink.fade(roof_tone(tone), alpha))
-    graphics:fill_quad(x, y, x + w, y, x + w - 5.0, y + h * 0.48, x + 5.0, y + h * 0.48)
-    graphics:set_color(ink.fade("#354049", alpha))
-    graphics:fill_quad(x + 5.0, y + h * 0.48, x + w - 5.0, y + h * 0.48, x + w, y + h, x, y + h)
-    graphics:set_color(ink.fade("#4c5358", alpha))
-    graphics:emit_triangle(x, y, x + 5.0, y + h * 0.48, x, y + h)
-    graphics:emit_triangle(x + w, y, x + w, y + h, x + w - 5.0, y + h * 0.48)
-    graphics:set_line_width(0.7)
-    graphics:set_color(ink.fade("#b2a087", alpha * 0.6))
-    graphics:line(x + 5.0, y + h * 0.48, x + w - 5.0, y + h * 0.48)
-    for tile = 1::i32, 3 do
-        local ty: f64 = y + h * (tile::f64) * 0.12
-        graphics:line(x + 3.0, ty, x + w - 3.0, ty)
-    end
-    graphics:set_color(ink.fade("#b4a18a", alpha))
-    graphics:fill_rectangle(x + w * 0.7, y + 2.0, 3.0, 5.0)
-    graphics:set_color(ink.fade("#26282c", alpha))
-    graphics:fill_rectangle(x + w * 0.7, y + 2.0, 3.0, 2.0)
-    graphics:set_color(ink.fade("#d5a461", alpha * 0.85))
-    graphics:fill_rectangle(x + 5.0, y + h + 2.0, 2.0, 2.0)
-end
-
-function tower(graphics: Graphics, x: f64, y: f64, radius: f64, pointed: bool, alpha: f64): unit
-    graphics:set_color(ink.fade("#080e15", alpha * 0.8))
-    graphics:fill_circle(x + 7.0, y + 10.0, radius + 2.0)
-    graphics:set_color(ink.fade("#8c8777", alpha))
-    graphics:fill_circle(x, y + 3.0, radius + 1.5)
-    graphics:set_color(ink.fade("#424d56", alpha))
-    graphics:fill_circle(x, y, radius)
-    for side = 0::i32, 7 do
-        local angle: f64 = (side::f64) * 0.785398
-        local ax: f64 = x + math.cos(angle) * radius
-        local ay: f64 = y + math.sin(angle) * radius
-        if pointed then
-            graphics:set_color(ink.fade("#647f8d", alpha))
-            if side > 3 then
-                graphics:set_color(ink.fade("#354455", alpha))
-            end
-            graphics:emit_triangle(
-                x - 2.0,
-                y - 5.0,
-                ax,
-                ay,
-                x + math.cos(angle + 0.785398) * radius,
-                y + math.sin(angle + 0.785398) * radius
-            )
-        else
-            graphics:set_color(ink.fade("#b1a38a", alpha))
-            graphics:fill_rectangle(ax - 1.5, ay - 1.5, 3.0, 3.0)
-        end
-    end
-    if pointed then
-        graphics:set_color(ink.fade("#dfbb79", alpha))
-        graphics:fill_circle(x - 2.0, y - 5.0, 1.5)
-    end
-end
-
-function tree(graphics: Graphics, x: f64, y: f64, radius: f64, alpha: f64): unit
-    graphics:set_color(ink.fade("#0d1718", alpha))
-    graphics:fill_circle(x + 3.0, y + 4.0, radius)
-    graphics:set_color(ink.fade("#354f43", alpha))
-    graphics:fill_circle(x, y, radius)
-    graphics:set_color(ink.fade("#536a50", alpha))
-    graphics:fill_circle(x - 2.0, y - 2.0, radius * 0.65)
-end
-
--- Each generated parcel is a small district, not one oversized house. The
--- footprint and seed choose its architecture; no randomness runs per frame.
-function draw_rooftop(graphics: Graphics, building: city_map.Building, alpha: f64): unit
-    graphics:push()
-    graphics:translate(building.x + building.width * 0.5, building.y + building.height * 0.5)
-    graphics:rotate(math.sin(building.x * 0.13 + building.y * 0.07) * 0.16)
-    local w: f64 = building.width
-    local h: f64 = building.height
-    if building.detail == 1 or building.detail == 3 then
-        graphics:rotate(1.570796)
-        w = building.height
-        h = building.width
-    end
-    local x: f64 = -w * 0.5
-    local y: f64 = -h * 0.5
-    local kind: i32 = building.detail
-    if kind == 5 then
-        -- Walled keep: an open bailey, four crenellated towers and a great hall.
-        plate.border(
-            graphics,
-            x + 9.0,
-            y + 8.0,
-            w - 18.0,
-            h - 16.0,
-            ink.fade("#8a8270", alpha),
-            4.0
-        )
-        house(graphics, x + w * 0.29, y + h * 0.27, w * 0.42, h * 0.42, 2, alpha)
-        tower(graphics, x + 10.0, y + 9.0, 8.0, false, alpha)
-        tower(graphics, -x - 10.0, y + 9.0, 8.0, false, alpha)
-        tower(graphics, x + 10.0, -y - 9.0, 8.0, false, alpha)
-        tower(graphics, -x - 10.0, -y - 9.0, 8.0, false, alpha)
-    elseif kind == 6 then
-        -- Cruciform cathedral, buttresses, apse and a tall crossing spire.
-        for buttress = 1::i32, 4 do
-            graphics:set_color(ink.fade("#a29983", alpha))
-            graphics:fill_rectangle(-w * 0.23, y + (buttress::f64) * h * 0.16, w * 0.46, 3.0)
-        end
-        tower(graphics, 0.0, y + 12.0, w * 0.17, false, alpha)
-        house(graphics, x + 7.0, -h * 0.13, w - 14.0, h * 0.26, 2, alpha)
-        house(graphics, -w * 0.17, y + 8.0, w * 0.34, h - 16.0, 2, alpha)
-        tower(graphics, 0.0, -3.0, 10.0, true, alpha)
-    elseif kind == 7 then
-        -- Market square: striped canvas, crates and a stone fountain.
-        for row = 0::i32, 1 do
-            for stall = 0::i32, 3 do
-                local sx: f64 = x + 5.0 + (stall::f64) * (w - 14.0) / 4.0
-                local sy: f64 = y + 4.0 + (row::f64) * (h - 20.0)
-                house(graphics, sx, sy, 16.0, 11.0, building.tone, alpha)
-                graphics:set_color(ink.fade("#d3bb8c", alpha))
-                for stripe = 0::i32, 2 do
-                    graphics:fill_rectangle(sx + (stripe::f64) * 6.0, sy, 2.5, 10.0)
-                end
-            end
-        end
-        graphics:set_color(ink.fade("#a19a82", alpha))
-        graphics:fill_circle(0.0, 0.0, 10.0)
-        graphics:set_color(ink.fade("#416575", alpha))
-        graphics:fill_circle(0.0, 0.0, 7.0)
-        graphics:set_color(ink.fade("#b0b6a7", alpha))
-        graphics:fill_circle(-1.0, -2.0, 3.0)
-    elseif kind == 8 then
-        -- An arcane college in a wooded close, with satellite turrets.
-        house(graphics, -w * 0.3, -h * 0.2, w * 0.6, h * 0.4, 3, alpha)
-        tower(graphics, 0.0, -4.0, 15.0, true, alpha)
-        tower(graphics, -w * 0.3, h * 0.13, 7.0, true, alpha)
-        tower(graphics, w * 0.3, h * 0.13, 7.0, true, alpha)
-        for index = 0::i32, 3 do
-            tree(graphics, x + 8.0 + (index::f64) * (w - 16.0) / 3.0, -y - 5.0, 6.0, alpha)
-        end
-    else
-        -- Narrow houses face a crooked internal lane. Alternating setbacks,
-        -- wings and gardens give each block a broken, inhabited silhouette.
-        local count: i32 = math.max(2.0, math.floor(w / 25.0))::i32
-        local span: f64 = w / (count::f64)
-        for row = 0::i32, 1 do
-            for index = 0::i32, count - 1 do
-                local sx: f64 = x + (index::f64) * span + 2.0
-                local sy: f64 = y + (row::f64) * h * 0.57 + ((index + kind) % 3)::f64 * 2.0
-                local rh: f64 = h * 0.34 + ((index + kind) % 2)::f64 * 4.0
-                house(graphics, sx, sy, span - 3.0, rh, (building.tone + index % 2) % 4, alpha)
-                if (index + kind) % 3 == 0 then
-                    house(graphics, sx + 2.0, sy + rh - 3.0, span * 0.45, 9.0, building.tone, alpha)
-                end
-            end
-        end
-        tree(graphics, x + w * 0.7, y + h * 0.5, 4.0, alpha)
-    end
-    graphics:pop()
-end
-
--- Worn cobble seams, drawn only where they can be seen. `across` bounds pick the
--- streets on the screen and `along` bounds the stretch of each one that is on
--- it, which is what keeps a city several screens wide costing one screen.
-function draw_street_marks(
-    graphics: Graphics,
-    streets: {f64},
-    vertical: bool,
-    limit: i32,
-    across_low: f64,
-    across_high: f64,
-    along_low: f64,
-    along_high: f64,
-    alpha: f64
-): unit
-    local first: i32 = math.floor(along_low / 28.0)::i32 * 28
-    if first < 8 then
-        first = 8
-    end
-    local last: i32 = math.floor(along_high)::i32 + 28
-    if last > limit - 8 then
-        last = limit - 8
-    end
-    graphics:set_color(ink.fade("#777360", alpha * 0.35))
-    graphics:set_line_width(1.0)
-    for street in streets do
-        if street >= across_low and street <= across_high then
-            for mark = first, last, 28 do
-                if vertical then
-                    graphics:line(street - 4.0, mark::f64, street + 3.0, (mark + 1)::f64)
-                else
-                    graphics:line(mark::f64, street - 4.0, (mark + 1)::f64, street + 3.0)
-                end
-            end
-        end
-    end
-end
-
--- The canal follows one generated avenue. Stone bridges at every crossing
--- keep the route connected, including cities whose route uses the towpath.
-function draw_canal(state: city_map.State, graphics: Graphics, alpha: f64): unit
-    local index: i32 = math.floor((#state.vertical_streets)::f64 * 0.55)::i32
-    local x: f64 = state.vertical_streets[index]
-    graphics:set_color(ink.fade("#686a5d", alpha))
-    graphics:fill_rectangle(x - 14.0, 0.0, 28.0, city_map.height)
-    graphics:set_color(ink.fade("#253f49", alpha))
-    graphics:fill_rectangle(x - 11.0, 0.0, 22.0, city_map.height)
-    graphics:set_line_width(0.7)
-    graphics:set_color(ink.fade("#799698", alpha * 0.35))
-    for ripple = 0::i32, 140 do
-        local y: f64 = (ripple::f64) * 13.0
-        local offset: f64 = math.sin(y * 0.3) * 5.0
-        graphics:line(x - 4.0 + offset, y, x + 2.0 + offset, y - 2.0)
-    end
-    for crossing in state.horizontal_streets do
-        graphics:set_color(ink.fade("#101d24", alpha * 0.8))
-        graphics:fill_rectangle(x - 14.0, crossing + 5.0, 33.0, 8.0)
-        graphics:set_color(ink.fade("#777569", alpha))
-        graphics:fill_rectangle(x - 19.0, crossing - 8.0, 38.0, 16.0)
-        graphics:set_color(ink.fade("#b4a68a", alpha))
-        graphics:fill_rectangle(x - 19.0, crossing - 9.0, 38.0, 2.0)
-        graphics:fill_rectangle(x - 19.0, crossing + 7.0, 38.0, 2.0)
-    end
-end
 
 function clamp(value: f64, low: f64, high: f64): f64
     if value < low then
@@ -556,10 +317,6 @@ end
 function draw_stops(
     state: city_map.State,
     graphics: Graphics,
-    left: f64,
-    right: f64,
-    top: f64,
-    bottom: f64,
     alpha: f64,
     furniture: f64,
     landmark: i32
@@ -568,33 +325,31 @@ function draw_stops(
     local entered: i32 = entered_stop(state)
     for index = 0::i32, last do
         local stop: city_map.Stop = state.stops[index + 1]
-        if stop.x >= left and stop.x <= right and stop.y >= top and stop.y <= bottom then
-            local reached: bool = (index::f64) <= state.travel + 0.001
-            local final: bool = index == landmark
-            if index == entered then
+        local reached: bool = (index::f64) <= state.travel + 0.001
+        local final: bool = index == landmark
+        if index == entered then
+            draw_duel_stop(
+                graphics,
+                stop,
+                tostring(city_map.stop_duel(index)),
+                reached,
+                final,
+                alpha,
+                furniture
+            )
+        elseif furniture > 0.0 then
+            if stop.duel then
                 draw_duel_stop(
                     graphics,
                     stop,
                     tostring(city_map.stop_duel(index)),
                     reached,
                     final,
-                    alpha,
+                    furniture,
                     furniture
                 )
-            elseif furniture > 0.0 then
-                if stop.duel then
-                    draw_duel_stop(
-                        graphics,
-                        stop,
-                        tostring(city_map.stop_duel(index)),
-                        reached,
-                        final,
-                        furniture,
-                        furniture
-                    )
-                else
-                    draw_vendor_stop(graphics, stop, reached, furniture)
-                end
+            else
+                draw_vendor_stop(graphics, stop, reached, furniture)
             end
         end
     end
@@ -631,7 +386,8 @@ function draw(
     graphics: Graphics,
     streak_color: string,
     alpha: f64,
-    landmark: i32
+    landmark: i32,
+    materials: graphics_module.Texture?
 ): unit
     if alpha <= 0.0 then
         return
@@ -651,43 +407,8 @@ function draw(
     local furniture: f64 = alpha * (1.0 - ramp(state.dive, 0.0, 0.30))
     local city_ink: f64 = alpha * (1.0 - ramp(state.dive, 0.16, 0.62))
 
-    local left: f64 = state.camera_x - (state.anchor_x / state.zoom + 60.0)
-    local right: f64 = state.camera_x + ((state.view_width - state.anchor_x) / state.zoom + 60.0)
-    local top: f64 = state.camera_y - (state.anchor_y / state.zoom + 60.0)
-    local bottom: f64 = state.camera_y + ((state.view_height - state.anchor_y) / state.zoom + 60.0)
-
     if city_ink > 0.0 then
-        apply_camera(state, graphics)
-        draw_canal(state, graphics, city_ink)
-        for building in state.buildings do
-            if building.x + building.width >= left and building.x <= right and building.y + building.height >= top and building.y <= bottom then
-                draw_rooftop(graphics, building, city_ink)
-            end
-        end
-        draw_street_marks(
-            graphics,
-            state.vertical_streets,
-            true,
-            city_map.height::i32,
-            left,
-            right,
-            top,
-            bottom,
-            city_ink
-        )
-        draw_street_marks(
-            graphics,
-            state.horizontal_streets,
-            false,
-            city_map.width::i32,
-            top,
-            bottom,
-            left,
-            right,
-            city_ink
-        )
-        draw_streak(state, graphics, streak_color, city_ink)
-        graphics:pop()
+        scene:draw(graphics, state, city_ink, materials)
     end
 
     -- The rooftops go under a scrim so a list of options reads over them; the
@@ -695,16 +416,25 @@ function draw(
     graphics:set_color(ink.fade(SCRIM, SCRIM_STRENGTH * city_ink))
     graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)
 
+    scene:bind_overlay(graphics, state)
     apply_camera(state, graphics)
+    if city_ink > 0.0 then
+        draw_streak(state, graphics, streak_color, city_ink)
+    end
     if furniture > 0.0 then
         draw_route_ahead(state, graphics, furniture)
         draw_route_done(state, graphics, furniture)
     end
-    draw_stops(state, graphics, left, right, top, bottom, alpha, furniture, landmark)
+    draw_stops(state, graphics, alpha, furniture, landmark)
     if furniture > 0.0 then
         draw_party(state, graphics, furniture)
     end
     graphics:pop()
+    graphics:use_default_shader()
 end
 
-return { draw = draw }
+function dispose(): unit
+    scene:dispose()
+end
+
+return { draw = draw, dispose = dispose }

@@ -110,7 +110,7 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.7.0`)
+- `VERSION`: the semantic API version (`1.8.0`)
 - `start`: the browser lifecycle entry point
 - `prefers_reduced_motion`: whether the browser's `prefers-reduced-motion` media
   query matches, for decoration that would otherwise move on its own
@@ -225,6 +225,29 @@ generation's renderer resources while leaving its canvas marked for adoption.
 The replacement reuses that exact canvas and WebGL2 context. An active or
 incompatible surface makes replacement fail, and the development host reloads
 the page.
+
+## Retained 3D scenes
+
+`Graphics:create_mesh3d(vertices)` uploads a static triangle list to a WebGL2
+buffer and returns `{ ok, mesh, error }`. Each vertex contains nine floats:
+XYZ position, RGBA color, and UV. A mesh must contain complete triangles.
+`Graphics:draw_mesh3d(mesh, shader, parameters)` draws that retained buffer with
+`a_position: vec3`, `a_color: vec4`, and `a_uv: vec2`; the game-provided vertex
+shader owns the perspective projection. Color and UV may carry material data.
+
+A draw is one scene pass on the screen depth buffer, cleared with `LESS` depth
+testing and depth writes enabled. It preserves screen color, flushes preceding
+2D work, then restores the 2D vertex stream, shader and disabled depth testing.
+Following text and sprites draw over the scene normally. The mesh pass uses the
+shader's clip coordinates directly, so it does not apply the 2D transform stack.
+Current render targets have no depth attachment and reject 3D scene passes with
+`unsupported_target`.
+
+Call `Graphics:release_mesh3d(mesh)` when replacing a scene or disposing its
+owner. Release is idempotent; drawing a released or foreign mesh returns a
+structured error. Ante's city retains a seeded architectural mesh across camera
+movement and replaces it only when the city regenerates. Its shaders provide
+perspective, material detail, evening light and local lantern illumination.
 
 ## Particle systems
 
