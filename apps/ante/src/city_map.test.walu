@@ -69,6 +69,44 @@ describe(
         )
 
         it(
+            "reproduces architecture from a seed and varies it on regeneration",
+            function()
+                local first: city_map.State = city_map.State.new(41)
+                local same: city_map.State = city_map.State.new(41)
+                local kinds: {bool} = {
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+                }
+                for index = 1::i32, #first.buildings do
+                    local building: city_map.Building = first.buildings[index]
+                    expect(building.detail):toBe(same.buildings[index].detail)
+                    expect(building.tone):toBe(same.buildings[index].tone)
+                    expect(building.width):toBeGreaterThan(0.0)
+                    expect(building.height):toBeGreaterThan(0.0)
+                    kinds[building.detail + 1] = true
+                end
+                for present in kinds do
+                    expect(present):toBe(true)
+                end
+                first:regenerate()
+                local changed: bool = false
+                for index = 1::i32, math.min(#first.buildings, #same.buildings)::i32 do
+                    if first.buildings[index].detail ~= same.buildings[index].detail then
+                        changed = true
+                    end
+                end
+                expect(changed):toBe(true)
+            end
+        )
+
+        it(
             "alternates vendors and duels along streets it generated",
             function()
                 local city: city_map.State = city_map.State.new(17)
