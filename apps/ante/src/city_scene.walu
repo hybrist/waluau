@@ -557,21 +557,15 @@ function Scene:prepare(graphics: graphics_module.Graphics, state: city_map.State
         material = 0.0
     }
     surface(b, 0.31, 0.28, 0.24, 5.0)
-    quad(
-        b,
-        -2000.0,
-        -2000.0,
-        -0.2,
-        4500.0,
-        -2000.0,
-        -0.2,
-        4500.0,
-        4000.0,
-        -0.2,
-        -2000.0,
-        4000.0,
-        -0.2
-    )
+    -- Keep ground triangles local: a single city-sized triangle crosses the
+    -- camera's clipping planes and loses depth precision during rasterization.
+    for row = 0::i32, 23 do
+        for column = 0::i32, 25 do
+            local x: f64 = -2000.0 + (column::f64) * 250.0
+            local y: f64 = -2000.0 + (row::f64) * 250.0
+            quad(b, x, y, -0.2, x + 250.0, y, -0.2, x + 250.0, y + 250.0, -0.2, x, y + 250.0, -0.2)
+        end
+    end
     local canal: f64 = state.vertical_streets[math.floor(
         (#state.vertical_streets)::f64 * 0.55
     )::i32]

@@ -17,8 +17,12 @@ void main() {
     float depth = u_camera.z - p.y * 0.55 - p.z * 0.835165;
     vec2 screen = vec2(p.x, -p.y * 0.835165 + p.z * 0.55) * 900.0;
     vec2 center = vec2(u_view.z / u_view.x * 2.0 - 1.0, 1.0 - u_view.w / u_view.y * 2.0);
+    // Preserve separation between paving, shadows, and facade details, while
+    // bringing the near plane closer as the camera dives into the city.
+    float near = min(64.0, u_camera.z * 0.1);
+    float far = 4000.0;
     gl_Position = vec4(screen / u_view.xy * 2.0 + center * depth,
-        1.0005 * depth - 2.0005, depth);
+        ((far + near) * depth - 2.0 * far * near) / (far - near), depth);
     v_world = a_position;
     v_surface = a_color;
     v_uv = a_uv;
