@@ -13,6 +13,10 @@ const previewCommand = `pnpm preview --host=127.0.0.1 --strictPort --port=${serv
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
+  // CI renders the 3D city in software. Concurrent canvases compete for the
+  // same CPU, and multi-step journeys need more than the default 30 seconds.
+  workers: process.env.CI ? 1 : undefined,
+  timeout: process.env.CI ? 90_000 : 30_000,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: 'list',
