@@ -10,7 +10,7 @@ import {
   waitForCanvasMenu,
   waitForCanvasBoard,
   openGame,
-  settleBoard,
+  waitForBoardReady,
   showTextControls,
   waitForMenu,
 } from './game-driver.js';
@@ -92,7 +92,7 @@ test('starts a boss rush with seven cards from its menu option', async ({ page }
   await page.getByRole('button', { name: 'Boss rush', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Firebolt', exact: true }).click();
-  await settleBoard(canvas);
+  await waitForBoardReady(canvas);
   await expect(page.getByRole('group', { name: 'Your hand', exact: true }).getByRole('button')).toHaveCount(7);
 });
 

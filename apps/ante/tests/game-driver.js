@@ -20,22 +20,9 @@ export async function waitForCanvasBoard(page) {
   await expect(feedback.getByRole('status')).toContainText('Board ready.', { timeout: GAME_READY_TIMEOUT });
 }
 
-export function frameSignature(canvas) {
-  return canvas.evaluate((node) => {
-    const gl = node.getContext('webgl2');
-    const data = new Uint8Array(node.width * node.height * 4);
-    gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
-    let hash = 0;
-    for (let index = 0; index < data.length; index += 32) {
-      hash = (hash * 33 + data[index] + data[index + 1] * 3 + data[index + 2] * 7) >>> 0;
-    }
-    return hash;
-  });
-}
-
 // Readiness comes from the same enabled controls a player uses. Animation
 // continues normally; a moving card is never mistaken for a ready board.
-export async function settleBoard(canvas) {
+export async function waitForBoardReady(canvas) {
   const page = canvas.page();
   await showTextControls(page);
   await expect(page.getByRole('heading', { name: 'Duel', exact: true })).toBeVisible({ timeout: GAME_READY_TIMEOUT });
@@ -48,65 +35,6 @@ export async function showTextControls(page) {
   if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
 }
 
-// Read a rectangle expressed in Ante's live logical coordinates. Anchors let
-// assertions follow semantic regions as added width or height moves them.
-//
-// The scale and band formulas mirror layout.walu: the unit scale is the
-// largest card size at which the packed board — 700 units across, 600 units
-// down, both sums of the board's own content — fits the canvas, and any
-// height beyond the packed board is shared between the bands.
-export function countDesignInk(canvas, rect, color, tolerance) {
-  return canvas.evaluate((node, sample) => {
-    const gl = node.getContext('webgl2');
-    const cssScale = Math.min(node.clientWidth / 700, node.clientHeight / 600);
-    const logicalWidth = node.clientWidth / cssScale;
-    const logicalHeight = node.clientHeight / cssScale;
-    const extra = Math.max(0, logicalHeight - 600);
-    const computerY = 116 + extra * 0.3;
-    const playerY = logicalHeight - 91 - extra * 0.2;
-    const wardY = ((computerY + 64 + playerY) * 0.5 + 12) - 64;
-    const actionY = wardY + 120;
-    const densityX = node.width / node.clientWidth;
-    const densityY = node.height / node.clientHeight;
-    let x = sample.rect.x ?? 0;
-    let y = sample.rect.y ?? 0;
-    if (sample.rect.centerOffsetX !== undefined) x = logicalWidth * 0.5 + sample.rect.centerOffsetX;
-    if (sample.rect.rightOffsetX !== undefined) x = logicalWidth + sample.rect.rightOffsetX;
-    if (sample.rect.heightRatio !== undefined) y = logicalHeight * sample.rect.heightRatio + (sample.rect.yOffset ?? 0);
-    if (sample.rect.wardOffsetY !== undefined) y = wardY + sample.rect.wardOffsetY;
-    if (sample.rect.actionOffsetY !== undefined) y = actionY + sample.rect.actionOffsetY;
-    if (sample.rect.bottomOffsetY !== undefined) y = logicalHeight + sample.rect.bottomOffsetY;
-    const left = Math.round(x * cssScale * densityX);
-    const top = Math.round(y * cssScale * densityY);
-    const width = Math.max(1, Math.round(sample.rect.width * cssScale * densityX));
-    const height = Math.max(1, Math.round(sample.rect.height * cssScale * densityY));
-    const bottom = node.height - top - height;
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    let count = 0;
-    for (let index = 0; index < pixels.length; index += 4) {
-      if (
-        Math.abs(pixels[index] - sample.color[0]) <= sample.tolerance[0]
-        && Math.abs(pixels[index + 1] - sample.color[1]) <= sample.tolerance[1]
-        && Math.abs(pixels[index + 2] - sample.color[2]) <= sample.tolerance[2]
-      ) count += 1;
-    }
-    return count;
-  }, { rect, color, tolerance });
-}
-
-// Gold title ink in the band the menu's large "ANTE MAGIC" occupies. The
-// heist screen keeps that band free of gold, so this distinguishes the menu
-// from the game without depending on a perfectly still frame.
-export function countMenuTitleInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { centerOffsetX: -300, heightRatio: 0.3533333333, yOffset: -52, width: 600, height: 120 },
-    [251, 191, 36],
-    [20, 20, 20],
-  );
-}
-
 export async function waitForMenu(canvas) {
   const page = canvas.page();
   await showTextControls(page);
@@ -116,7 +44,7 @@ export async function waitForMenu(canvas) {
 }
 
 // Where a point in Ante's live logical coordinates lands on the page. The
-// anchors mirror countDesignInk's: centerOffsetX, rightOffsetX and
+// anchors centerOffsetX, rightOffsetX and
 // bottomOffsetY follow the board's own edges, which is where the standing
 // controls and the ability sockets sit.
 export function designPoint(canvas, spec) {
@@ -177,43 +105,6 @@ export const RESTART_CONTROL = { rightOffsetX: -52, y: 64 };
 // with, so this socket is always occupied.
 export const FIRST_SOCKET = { rightOffsetX: -79, bottomOffsetY: -32 };
 
-// Card-back ink on the draw pile: only the heist screen draws the deck, so a
-// positive count both proves the packaged asset decoded and that the menu has
-// handed over to the game screen.
-export function countCardBackInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { x: 56, wardOffsetY: 0, width: 92, height: 128 },
-    [232, 223, 189],
-    [35, 35, 35],
-  );
-}
-
-// The aim prompt that replaces the phase prompt above the table cards while a
-// spell is targeting, written in that spell's own colour. Firebolt's is red,
-// and the amber prompt it replaces is far enough away in green and blue to
-// tell the two apart inside this tolerance.
-export function countAimPromptInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { centerOffsetX: -160, wardOffsetY: -51, width: 320, height: 16 },
-    [239, 68, 68],
-    [30, 30, 30],
-  );
-}
-
-// The gold heading of whichever modal is up, in the panel's top-left corner.
-// The board underneath writes no gold into that band: the live round's amber
-// orb ring is centred, well right of it.
-export function countModalHeadingInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { centerOffsetX: -300, y: 30, width: 180, height: 40 },
-    [251, 191, 36],
-    [20, 20, 20],
-  );
-}
-
 export async function openGame(page) {
   await page.goto('/');
   await expect(page.locator('h1')).toHaveText('Ante Magic', { timeout: GAME_READY_TIMEOUT });
@@ -225,6 +116,6 @@ export async function beginHeist(page, canvas) {
   await page.getByRole('button', { name: 'New run', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Firebolt', exact: true }).click();
-  await settleBoard(canvas);
+  await waitForBoardReady(canvas);
   await canvas.focus();
 }
