@@ -1269,6 +1269,75 @@ describe('browser conformance', () => {
     }
   });
 
+  it('preserves native text controls, modal focus, and unchanged announcements', async () => {
+    const game = await compileAndInstantiateWithDom(
+      { '/main.walu': gameEngineSessionLifecycle }, '/main.walu'
+    );
+    try {
+      const document = game.root.ownerDocument;
+      document.defaultView.frameElement.style.display = 'block';
+      const toggle = game.root.querySelector('[aria-controls="walua-text-controls"]');
+      const panel = game.root.querySelector('#walua-text-controls');
+      const card = game.root.querySelector('[data-game-control="card"]');
+      const status = game.root.querySelector('[role="status"]');
+      expect(panel.hidden).toBe(true);
+      toggle.click();
+      expect(panel.hidden).toBe(false);
+      card.focus();
+      expect(document.activeElement).toBe(card);
+      expect(game.exports.focused_key()).toBe('card');
+      card.click();
+      await expect.poll(() => card.getAttribute('aria-pressed')).toBe('true');
+      expect(game.root.querySelector('[data-game-control="card"]')).toBe(card);
+      expect(document.activeElement).toBe(card);
+      expect(game.exports.activation_count()).toBe(1);
+      game.root.querySelector('[data-game-control="unavailable"]').click();
+      expect(game.exports.activation_count()).toBe(1);
+
+      let announcements = 0;
+      const observer = new MutationObserver(() => announcements++);
+      observer.observe(status, { childList: true, characterData: true, subtree: true });
+      observer.observe(card, { attributes: true });
+      const before = game.exports.draw_count();
+      await expect.poll(() => game.exports.draw_count()).toBeGreaterThan(before + 2);
+      expect(announcements).toBe(0);
+      observer.disconnect();
+
+      const open = game.root.querySelector('[data-game-control="open"]');
+      open.focus();
+      open.click();
+      await expect.poll(() => game.root.querySelector('[role="dialog"]')).not.toBeNull();
+      const title = game.root.querySelector('#walua-text-controls-title');
+      expect(document.activeElement).toBe(title);
+      expect(game.root.querySelector('#walua-game-canvas').inert).toBe(true);
+      expect(game.root.querySelector('[data-game-control="card"]')).toBeNull();
+      const close = game.root.querySelector('[data-game-control="close"]');
+      close.focus();
+      close.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', {
+        key: 'Tab', bubbles: true, cancelable: true,
+      }));
+      expect(document.activeElement).toBe(toggle);
+      toggle.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', {
+        key: 'Escape', bubbles: true, cancelable: true,
+      }));
+      await expect.poll(() => game.root.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(game.root.querySelector('[data-game-control="open"]'));
+      expect(game.root.querySelector('#walua-game-canvas').inert).toBe(false);
+      expect(game.exports.keypress_count()).toBe(0);
+      toggle.click();
+      expect(panel.hidden).toBe(true);
+      expect(document.activeElement).toBe(toggle);
+      const canvas = game.root.querySelector('#walua-game-canvas');
+      canvas.dispatchEvent(new document.defaultView.PointerEvent('pointerdown', { bubbles: true }));
+      expect(document.activeElement).toBe(canvas);
+      canvas.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+      expect(game.exports.keypress_count()).toBe(1);
+    } finally {
+      game.exports.stop_game();
+      game.cleanup();
+    }
+  });
+
   it('retains the canvas and WebGL2 context across suspended Wasm generations', async () => {
     const files = { '/main.walu': gameEngineSessionLifecycle };
     const first = await compileAndInstantiateWithDom(files, '/main.walu');
@@ -1285,7 +1354,11 @@ describe('browser conformance', () => {
       expect(first.exports.bind_render_target()).toBe(1);
       expect(initialContext.getParameter(initialContext.FRAMEBUFFER_BINDING)).not.toBeNull();
 
+      const staleCard = first.root.querySelector('[data-game-control="card"]');
       first.exports.suspend_game();
+      expect(first.root.querySelector('#walua-text-controls')).toBeNull();
+      staleCard.click();
+      expect(first.exports.activation_count()).toBe(0);
       const suspendedDrawCount = first.exports.draw_count();
       expect(initialRoot.getAttribute('data-waluau-surface-handoff')).toBe('1');
       expect(initialContext.getParameter(initialContext.FRAMEBUFFER_BINDING)).toBeNull();
@@ -1303,6 +1376,10 @@ describe('browser conformance', () => {
       expect(first.root.querySelectorAll('#walua-game-canvas')).toHaveLength(1);
       await expect.poll(() => replacement.draw_count(), { timeout: 10_000 }).toBeGreaterThan(0);
       expect(first.exports.draw_count()).toBe(suspendedDrawCount);
+      expect(first.root.querySelectorAll('#walua-text-controls')).toHaveLength(1);
+      first.root.querySelector('[data-game-control="card"]').click();
+      expect(replacement.activation_count()).toBe(1);
+      expect(first.exports.activation_count()).toBe(0);
 
       document.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'a' }));
       expect(first.exports.keypress_count()).toBe(0);

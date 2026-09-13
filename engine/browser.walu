@@ -37,6 +37,27 @@ export type Config = {
     mount: string?
 }
 
+-- A player-visible snapshot of the active screen. Groups precede their children;
+-- keys identify controls across frames. A dialog snapshot contains only that
+-- dialog's content. Omit selected for ordinary buttons, set it for toggles.
+export type AccessibleItem = {
+    key: string,
+    kind: "button" | "group" | "text",
+    parent: string?,
+    label: string,
+    description: string?,
+    disabled: bool?,
+    selected: bool?
+}
+
+export type AccessibleState = {
+    heading: string,
+    status: string,
+    items: {AccessibleItem},
+    dialog: string?,
+    dismiss: string?
+}
+
 export type Game = {
     load: () -> unit,
     update: (f64, input_module.Input) -> unit,
@@ -50,7 +71,12 @@ export type Game = {
     -- the same space.
     mousepressed: ((f64, f64, i32) -> unit)?,
     mousereleased: ((f64, f64, i32) -> unit)?,
-    mousemoved: ((f64, f64, f64, f64) -> unit)?
+    mousemoved: ((f64, f64, f64, f64) -> unit)?,
+    -- The browser renders these as native controls. Activation must validate
+    -- current game state; a snapshot can be older than an input event.
+    accessibility: (() -> AccessibleState)?,
+    accessibility_activate: ((string) -> unit)?,
+    accessibility_focus: ((string) -> unit)?
 }
 
 -- A running browser game owns animation-frame and DOM listener registrations.
@@ -230,6 +256,477 @@ function acquire_surface(document: Document, host: Element, host_key: string): S
     return acquire_surface(document, host, host_key)
 end
 
+type AccessibleNode = {
+    key: string,
+    kind: "button" | "group" | "text",
+    element: Element,
+    label: Element?,
+    click: (Event) -> unit,
+    focus: (Event) -> unit
+}
+
+type AccessiblePanel = { refresh: () -> unit, dispose: () -> unit }
+
+function focus_element(element: Element): unit
+    if HTMLElement(html) = element then
+        html:focus_element()
+    end
+end
+
+function element_within(element: Element?, ancestor: Element): bool
+    if element ~= nil then
+        local current: Element = element::Element
+        if current == ancestor then
+            return true
+        end
+        return element_within(current.parentElement, ancestor)
+    end
+    return false
+end
+
+type InertElement = { element: Element, value: string? }
+
+function inert_siblings(sibling: Node?, branch: Element, saved: {InertElement}): unit
+    if sibling ~= nil then
+        local child: Node = sibling::Node
+        if Element(element) = child then
+            if element ~= branch then
+                table.insert(saved, { element = element, value = element:get_attribute("inert") })
+                element:set_attribute("inert", "")
+            end
+        end
+        inert_siblings(child.nextSibling, branch, saved)
+    end
+end
+
+function inert_outside(branch: Element, body: Element, saved: {InertElement}): unit
+    local parent: Element? = branch.parentElement
+    if parent ~= nil then
+        local container: Element = parent::Element
+        inert_siblings(container.firstChild, branch, saved)
+        if container ~= body then
+            inert_outside(container, body, saved)
+        end
+    end
+end
+
+function accessible_attribute(element: Element, name: string, value: string): unit
+    if element:get_attribute(name) ~= value then
+        element:set_attribute(name, value)
+    end
+end
+
+function remove_accessible_attribute(element: Element, name: string): unit
+    if element:get_attribute(name) ~= nil then
+        element:remove_attribute(name)
+    end
+end
+
+-- Keep DOM identities across animation frames: replacing buttons would discard
+-- keyboard focus and a screen reader's place. Only changed text is announced.
+function accessible_panel(
+    document: Document,
+    root: Element,
+    canvas: HTMLCanvasElement,
+    game: Game
+): AccessiblePanel
+    local read_state = game.accessibility
+    if read_state == nil then
+        return {
+            refresh = function(): unit
+            end,
+            dispose = function(): unit
+            end
+        }
+    end
+    local snapshot: () -> AccessibleState = read_state::(() -> AccessibleState)
+    local wrapper: Element = document:create_element("section")
+    accessible_attribute(wrapper, "aria-label", "Game text controls")
+    accessible_attribute(
+        wrapper,
+        "style",
+        "position:fixed;z-index:20;left:8px;top:8px;max-width:calc(100vw - 16px);width:max-content;max-height:calc(100dvh - 16px);overflow:auto;border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:8px;box-sizing:border-box;font:16px/1.5 system-ui;"
+    )
+    root:append_child(wrapper)
+    local toggle: Element = document:create_element("button")
+    toggle.text_content = "Text controls"
+    accessible_attribute(toggle, "type", "button")
+    accessible_attribute(toggle, "aria-expanded", "false")
+    accessible_attribute(toggle, "aria-controls", "walua-text-controls")
+    accessible_attribute(toggle, "style", "font:inherit;min-height:44px;padding:8px 12px;")
+    wrapper:append_child(toggle)
+    local panel: Element = document:create_element("div")
+    panel.id = "walua-text-controls"
+    panel:set_attribute("hidden", "")
+    wrapper:append_child(panel)
+    local title: Element = document:create_element("h2")
+    title.id = "walua-text-controls-title"
+    title:set_attribute("tabindex", "-1")
+    panel:append_child(title)
+    local status: Element = document:create_element("p")
+    status:set_attribute("role", "status")
+    status:set_attribute("aria-atomic", "true")
+    panel:append_child(status)
+    local content: Element = document:create_element("div")
+    panel:append_child(content)
+    local nodes: {AccessibleNode} = {}
+    local state: AccessibleState = snapshot()
+    local expanded: bool = false
+    local disposed: bool = false
+    local previous_dialog: string = ""
+    local inert_elements: {InertElement} = {}
+    local modal_active: bool = false
+    local focus_history: {{ scope: string, key: string }} = {}
+
+    local function find_node(key: string): Element?
+        for _, node in nodes do
+            if node.key == key then
+                return node.element
+            end
+        end
+        return nil
+    end
+    local function set_modal(): unit
+        local modal: bool = expanded and state.dialog ~= nil
+        if modal ~= modal_active then
+            if modal then
+                inert_outside(wrapper, document.body, inert_elements)
+            else
+                for _, saved in inert_elements do
+                    if saved.value ~= nil then
+                        accessible_attribute(saved.element, "inert", saved.value::string)
+                    else
+                        remove_accessible_attribute(saved.element, "inert")
+                    end
+                end
+                inert_elements = {}
+            end
+            modal_active = modal
+        end
+        if modal then
+            accessible_attribute(wrapper, "role", "dialog")
+            accessible_attribute(wrapper, "aria-modal", "true")
+            accessible_attribute(wrapper, "aria-labelledby", title.id)
+        else
+            remove_accessible_attribute(wrapper, "role")
+            remove_accessible_attribute(wrapper, "aria-modal")
+            remove_accessible_attribute(wrapper, "aria-labelledby")
+        end
+    end
+    local function set_expanded(value: bool): unit
+        expanded = value
+        if expanded then
+            accessible_attribute(
+                wrapper,
+                "style",
+                "position:fixed;z-index:20;left:8px;top:8px;width:360px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:8px;box-sizing:border-box;font:16px/1.5 system-ui;"
+            )
+            panel:remove_attribute("hidden")
+            accessible_attribute(toggle, "aria-expanded", "true")
+        else
+            accessible_attribute(
+                wrapper,
+                "style",
+                "position:fixed;z-index:20;left:8px;top:8px;width:max-content;max-width:calc(100vw - 16px);border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:4px;font:16px/1.5 system-ui;"
+            )
+            panel:set_attribute("hidden", "")
+            accessible_attribute(toggle, "aria-expanded", "false")
+            focus_element(toggle)
+        end
+        set_modal()
+    end
+    local function on_toggle(event: Event): unit
+        set_expanded(not expanded)
+    end
+    toggle:add_event_listener("click", on_toggle)
+
+    local function new_node(item: AccessibleItem): AccessibleNode
+        local tag: string = "p"
+        if item.kind == "button" then
+            tag = "button"
+        end
+        if item.kind == "group" then
+            tag = "div"
+        end
+        local element: Element = document:create_element(tag)
+        local key: string = item.key
+        local label: Element? = nil
+        accessible_attribute(element, "data-game-control", key)
+        if item.kind == "button" then
+            accessible_attribute(element, "type", "button")
+            accessible_attribute(
+                element,
+                "style",
+                "font:inherit;display:block;min-height:44px;width:100%;margin:6px 0;padding:8px;text-align:left;white-space:normal;"
+            )
+        elseif item.kind == "group" then
+            local heading: Element = document:create_element("h3")
+            element:append_child(heading)
+            label = heading
+            accessible_attribute(element, "role", "group")
+            accessible_attribute(
+                element,
+                "style",
+                "border-top:1px solid #64748b;margin-top:12px;padding-top:8px;"
+            )
+        end
+        local function on_click(event: Event): unit
+            event:stopPropagation()
+            local activate = game.accessibility_activate
+            if disposed then
+                return
+            end
+            if activate ~= nil then
+                activate(key)
+            end
+        end
+        local function on_focus(event: Event): unit
+            local focus = game.accessibility_focus
+            if disposed then
+                return
+            end
+            if focus ~= nil then
+                focus(key)
+            end
+        end
+        element:add_event_listener("click", on_click)
+        element:add_event_listener("focus", on_focus)
+        return {
+            key = key,
+            kind = item.kind,
+            element = element,
+            label = label,
+            click = on_click,
+            focus = on_focus
+        }
+    end
+    local function retain_node(item: AccessibleItem): AccessibleNode
+        for _, node in nodes do
+            if node.key == item.key and node.kind == item.kind then
+                return node
+            end
+        end
+        return new_node(item)
+    end
+    local function remove_node(node: AccessibleNode): unit
+        node.element:remove_event_listener("click", node.click)
+        node.element:remove_event_listener("focus", node.focus)
+        local parent = node.element.parentElement
+        if parent ~= nil then
+            parent:remove_child(node.element)
+        end
+    end
+    local function refresh(): unit
+        if disposed then
+            return
+        end
+        state = snapshot()
+        local dialog: string = state.dialog or ""
+        local focused: Element? = document.activeElement
+        local was_inside: bool = element_within(focused, panel)
+        if dialog ~= previous_dialog and was_inside then
+            local focused_key: string = ""
+            for _, node in nodes do
+                if node.element == focused then
+                    focused_key = node.key
+                end
+            end
+            local saved: bool = false
+            for _, entry in focus_history do
+                if entry.scope == previous_dialog then
+                    entry.key = focused_key
+                    saved = true
+                end
+            end
+            if not saved then
+                table.insert(focus_history, { scope = previous_dialog, key = focused_key })
+            end
+        end
+        if title.text_content ~= state.heading then
+            title.text_content = state.heading
+        end
+        if status.text_content ~= state.status then
+            status.text_content = state.status
+        end
+        local next_nodes: {AccessibleNode} = {}
+        for _, item in state.items do
+            local node: AccessibleNode = retain_node(item)
+            local element: Element = node.element
+            local description: string = item.description or ""
+            if item.kind == "group" then
+                accessible_attribute(element, "aria-label", item.label)
+                local heading: Element? = node.label
+                if heading ~= nil then
+                    if heading.text_content ~= item.label then
+                        heading.text_content = item.label
+                    end
+                end
+            else
+                local text: string = item.label
+                if description ~= "" then
+                    text = text .. " — " .. description
+                end
+                if element.text_content ~= text then
+                    element.text_content = text
+                end
+                if item.kind == "button" then
+                    accessible_attribute(element, "aria-label", item.label)
+                end
+            end
+            if item.disabled == true then
+                accessible_attribute(element, "disabled", "")
+            else
+                remove_accessible_attribute(element, "disabled")
+            end
+            if item.kind == "button" then
+                local colors: string = "background:#f8fafc;color:#0f172a;border:2px solid #cbd5e1;"
+                if item.selected == true then
+                    colors = "background:#164e63;color:#fff;border:2px solid #22d3ee;"
+                end
+                if item.disabled == true then
+                    colors = "background:#334155;color:#cbd5e1;border:2px solid #64748b;"
+                end
+                accessible_attribute(
+                    element,
+                    "style",
+                    "font:inherit;display:block;min-height:44px;width:100%;margin:6px 0;padding:8px;text-align:left;white-space:normal;" .. colors
+                )
+            end
+            if item.selected ~= nil then
+                accessible_attribute(element, "aria-pressed", tostring(item.selected::bool))
+            else
+                remove_accessible_attribute(element, "aria-pressed")
+            end
+            if description ~= "" then
+                accessible_attribute(element, "aria-description", description)
+            else
+                remove_accessible_attribute(element, "aria-description")
+            end
+            local parent: Element = content
+            if item.parent ~= nil then
+                for _, earlier in next_nodes do
+                    if earlier.key == item.parent then
+                        parent = earlier.element
+                    end
+                end
+            end
+            -- Move only controls whose relative order changed. Appending each
+            -- frame would discard native focus even for unchanged controls.
+            local preceding: Element? = nil
+            for _, earlier in next_nodes do
+                if earlier.element.parentElement == parent then
+                    preceding = earlier.element
+                end
+            end
+            local insertion: Node? = parent.firstChild
+            if parent ~= content then
+                for _, earlier in next_nodes do
+                    if earlier.element == parent then
+                        local group_heading: Element? = earlier.label
+                        if group_heading ~= nil then
+                            insertion = group_heading.nextSibling
+                        end
+                    end
+                end
+            end
+            if preceding ~= nil then
+                insertion = (preceding::Element).nextSibling
+            end
+            if insertion ~= element then
+                parent:insertBefore(element, insertion)
+            end
+            table.insert(next_nodes, node)
+        end
+        for _, node in nodes do
+            local keep: bool = false
+            for _, next_node in next_nodes do
+                if next_node.element == node.element then
+                    keep = true
+                end
+            end
+            if not keep then
+                remove_node(node)
+            end
+        end
+        nodes = next_nodes
+        set_modal()
+        if expanded and dialog ~= previous_dialog then
+            local restore_key: string = ""
+            for _, entry in focus_history do
+                if entry.scope == dialog then
+                    restore_key = entry.key
+                end
+            end
+            local restore: Element? = find_node(restore_key)
+            if restore ~= nil then
+                focus_element(restore::Element)
+            else
+                focus_element(title)
+            end
+        elseif expanded and was_inside then
+            if focused ~= nil then
+                if not focused.isConnected or focused:get_attribute("disabled") ~= nil then
+                    focus_element(title)
+                elseif document.activeElement ~= focused then
+                    focus_element(focused)
+                end
+            end
+        end
+        previous_dialog = dialog
+    end
+    local function on_key(event: Event): unit
+        if KeyboardEvent(key) = event then
+            if key.key == "Escape" and expanded then
+                event:preventDefault()
+                local activate = game.accessibility_activate
+                local dismiss: string? = state.dismiss
+                if dismiss ~= nil then
+                    if activate ~= nil then
+                        activate(dismiss)
+                    end
+                else
+                    set_expanded(false)
+                end
+            elseif key.key == "Tab" and expanded and state.dialog ~= nil then
+                local buttons: {Element} = {toggle}
+                for _, node in nodes do
+                    if node.kind == "button" and node.element:get_attribute("disabled") == nil then
+                        table.insert(buttons, node.element)
+                    end
+                end
+                local active: Element? = document.activeElement
+                if key.shiftKey and (active == buttons[1] or active == title) then
+                    event:preventDefault()
+                    focus_element(buttons[#buttons])
+                elseif not key.shiftKey and active == buttons[#buttons] then
+                    event:preventDefault()
+                    focus_element(buttons[1])
+                end
+            end
+            event:stopPropagation()
+        end
+    end
+    wrapper:add_event_listener("keydown", on_key)
+    refresh()
+    return {
+        refresh = refresh,
+        dispose = function(): unit
+            if disposed then
+                return
+            end
+            disposed = true
+            expanded = false
+            set_modal()
+            toggle:remove_event_listener("click", on_toggle)
+            wrapper:remove_event_listener("keydown", on_key)
+            for _, node in nodes do
+                remove_node(node)
+            end
+            root:remove_child(wrapper)
+        end
+    }
+end
+
 function start(config: Config, game: Game): Session
     local document: Document = window.document
     local body: HTMLElement = document.body
@@ -302,6 +799,8 @@ function start(config: Config, game: Game): Session
     heading.text_content = config.title
 
     local game_canvas: HTMLCanvasElement = surface.canvas
+    game_canvas:set_attribute("tabindex", "0")
+    game_canvas:set_attribute("aria-label", config.title .. " canvas")
     do
         local style: CSSStyleProperties = game_canvas.style
         style:setProperty("width", tostring(config_width) .. "px")
@@ -353,6 +852,12 @@ function start(config: Config, game: Game): Session
         local clock: time_module.Clock = time_module.new(config.update_hz, config.max_frame_seconds)
 
         local function on_keydown(event: Event): unit
+            -- Native controls own their keyboard behavior. Page-level canvas
+            -- shortcuts apply only with the canvas or empty document focused.
+            local active: Element? = document.activeElement
+            if active ~= nil and active ~= body and active ~= game_canvas then
+                return
+            end
             if KeyboardEvent(key_event) = event then
                 local was_down: bool = input:is_down(key_event.key)
                 input:set_key(key_event.key, true)
@@ -399,6 +904,7 @@ function start(config: Config, game: Game): Session
         end
 
         local function on_pointerdown(event: Event): unit
+            game_canvas:focus_element()
             if MouseEvent(pointer_event) = event then
                 local x: f64 = mouse_logical_x(pointer_event)
                 local y: f64 = mouse_logical_y(pointer_event)
@@ -454,6 +960,7 @@ function start(config: Config, game: Game): Session
         game_canvas:add_event_listener("pointercancel", on_pointercancel)
 
         game.load()
+        local accessibility: AccessiblePanel = accessible_panel(document, root, game_canvas, game)
         local stopped: bool = false
         local frame_handle: u32 = 0
         local function frame(timestamp_ms: f64): unit
@@ -487,6 +994,7 @@ function start(config: Config, game: Game): Session
             graphics:set_time(timestamp_ms / 1000.0)
             game.draw(graphics, clock:alpha())
             graphics:present()
+            accessibility.refresh()
             frame_handle = window:requestAnimationFrame(frame)
         end
         frame_handle = window:requestAnimationFrame(frame)
@@ -502,6 +1010,7 @@ function start(config: Config, game: Game): Session
                 game_canvas:remove_event_listener("pointerup", on_pointerup)
                 game_canvas:remove_event_listener("pointermove", on_pointermove)
                 game_canvas:remove_event_listener("pointercancel", on_pointercancel)
+                accessibility.dispose()
                 graphics:dispose()
             end
             if remove_root then
