@@ -94,8 +94,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
+      - name: Build Storybook
+        run: pnpm --filter ante build-storybook
       - name: Run independent Storybook visual suite
         run: pnpm --filter ante test:visual
+        env:
+          PLAYWRIGHT_SKIP_BUILD: '1'
       - name: Upload expected, actual, diff and trace artifacts
         if: failure()
         uses: actions/upload-artifact@v4
