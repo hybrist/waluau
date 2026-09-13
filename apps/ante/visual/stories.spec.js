@@ -58,6 +58,9 @@ const scenes = [
   ['firebolt-burning', 'screens--firebolt', '', 1600],
   ['loading', 'screens--loading', '', 0],
   ['fatal-audio', 'screens--fatal-audio', '', 0],
+  // The scrying lens some way into the spell, so the rings have run in and
+  // the turn is off its first breath.
+  ['city-scrying', 'city-scrying--start-node', '', 400],
 ];
 for (const [name, id, args, time] of scenes) {
   test(name, async ({ page }) => {
