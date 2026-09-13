@@ -10,6 +10,11 @@ local lens = require("./shaders/city-scrying.frag")
 local zoom = storybook.range("zoom percent", 240, 100, 600, 10)
 local seed = storybook.range("seed", 41, 1, 999, 1)
 local strength = storybook.range("spell intensity", 100, 0, 150, 5)
+local static_circle = storybook.select(
+    "static circle",
+    1,
+    {storybook.choice("On", 1), storybook.choice("Off", 0)}
+)
 local motion = storybook.range("motion", 1, 0, 1, 1)
 -- Non-overlapping ranges guarantee time to peak is less than total travel.
 local peak = storybook.range("ring peak speed ms", 300, 50, 2000, 50)
@@ -91,6 +96,7 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
                 {
                     gpu.float_parameter("u_clock", view.time + (phase.value()::f64) * 0.1),
                     gpu.float_parameter("u_strength", (strength.value()::f64) / 100.0),
+                    gpu.float_parameter("u_static_circle", storybook.selected(static_circle)::f64),
                     gpu.float_parameter("u_peak_time", (peak.value()::f64) / 1000.0),
                     gpu.float_parameter("u_travel_time", (travel.value()::f64) / 1000.0)
                 }
@@ -121,6 +127,7 @@ storybook.publish(
                 zoom.declaration,
                 seed.declaration,
                 strength.declaration,
+                static_circle.declaration,
                 motion.declaration,
                 phase.declaration,
                 peak.declaration,

@@ -3,6 +3,7 @@ varying vec2 v_uv;
 uniform sampler2D u_texture;
 uniform float u_clock;
 uniform float u_strength;
+uniform float u_static_circle;
 uniform float u_peak_time;
 uniform float u_travel_time;
 
@@ -74,7 +75,7 @@ void main() {
     vec3 color = mix(outside, city, aperture);
     float ring = exp(-abs(radial - lip) * 150.0);
     float halo = exp(-abs(radial - lip) * 28.0);
-    color += u_strength * breath * (teal * ring * 0.8 + violet * halo * 0.35);
+    color += u_static_circle * u_strength * breath * (teal * ring * 0.8 + violet * halo * 0.35);
     // Soft pulses travel out from the lip and fade before wrapping. Each
     // concentric ring inherits precisely the same lobes as the inner circle.
     float duration = max(u_travel_time, 0.1);
