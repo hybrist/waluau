@@ -64,7 +64,12 @@ for (const [name, id, args, time] of scenes) {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     const canvas = await openStory(page, id, args, time);
-    await expect(canvas).toHaveScreenshot(`${name}.png`, { animations: 'allow' });
+    // The fixture clock is already frozen at the authored instant. A locator
+    // screenshot waits for rAF-driven element stability, which can stall when
+    // the application owns that clock; clip the canvas without moving it.
+    const clip = await canvas.boundingBox();
+    expect(clip).not.toBeNull();
+    expect(await page.screenshot({ clip, animations: 'allow' })).toMatchSnapshot(`${name}.png`);
     expect(errors).toEqual([]);
   });
 }

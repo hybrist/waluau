@@ -54,7 +54,10 @@ are ready, it advances explicit 60 Hz steps to the named presentation instant.
 The card flight uses the story's scrub control at 45%; shader time is 250 ms.
 The whole-board Firebolt advances 96 explicit simulation frames to 1600 ms;
 other screen fixtures capture at zero after selecting their authored state.
-No screenshot equality or elapsed sleep determines scene readiness.
+No screenshot equality or elapsed sleep determines scene readiness. Capture
+uses a page screenshot clipped to the canvas bounds and compares that buffer;
+it never asks a locator screenshot to wait for rAF-driven element stability
+while the fixture clock is paused.
 
 ## Baseline review and updates
 
@@ -81,12 +84,16 @@ review baselines. Change the image and Playwright lockfile together when upgradi
 Inspect every changed PNG in `visual/baselines/`, confirm each intentional
 appearance change, and include those PNGs in the implementation PR. Run the
 comparison twice without updating to confirm reproducibility. Zero pixels may
-exceed the 0.004 perceptual color threshold. This narrow threshold covers measured
-1/255 channel rounding at 16–99 text-edge pixels between native CI amd64 and
-amd64 emulation on Apple Silicon. The largest measured normalized YIQ distance
-was 0.003788, so 0.004 is the smallest sufficient threshold rounded to three
-decimal places. This is Playwright’s perceptual color distance, not a raw
-channel tolerance; geometry and shader captures otherwise matched.
+exceed the 0.0053 perceptual color threshold. The original entity scenes measured
+1/255 channel rounding between native CI amd64 and amd64 emulation on Apple
+Silicon. Full-screen text adds at most 2/255 channel differences: the CI capture
+of main menu, starting vendor, help and fatal audio had 429, 350, 583 and 342
+raw differing pixels respectively, all at text edges. Only 1, 7, 1 and 4 pixels
+exceeded the earlier 0.004 threshold after Playwright's antialias handling.
+The largest measured normalized YIQ distance was 0.005241463806366468 at fatal
+panel text; 0.0053 rounds that measured bound upward. The pixel allowance stays
+zero. This is Playwright's perceptual color distance, not a raw channel
+tolerance; geometry and shader captures otherwise matched.
 Never increase a threshold merely to make an unexplained diff pass.
 
 Failures retain Playwright traces and expected/actual/diff PNGs in
