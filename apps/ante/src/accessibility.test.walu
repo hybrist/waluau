@@ -34,6 +34,54 @@ describe(
     "Accessible Ante presentation",
     function(): unit
         it(
+            "reports targeting cancellation completed spells and public resources",
+            function(): unit
+                local screen: screen_module.State = screen_module.State.new()
+                local city: city_map.State = city_map.State.new(94)
+                screen.presentation:skip()
+                local before: i32 = screen.rules:gold()
+                screen:arm_spell(0)
+                expect(
+                    string.find(
+                        accessibility.duel_state(screen).status,
+                        "Firebolt targeting",
+                        1,
+                        true
+                    ) ~= nil
+                ):toBe(true)
+                screen:cancel_cast()
+                expect(screen.rules:gold()):toBe(before)
+                expect(
+                    item(accessibility.duel_state(screen), "spell-feedback").label
+                ):toBe("Spell cancelled. No gold spent.")
+                screen:arm_spell(0)
+                screen:confirm_cast(0, 0)
+                expect(screen.rules:gold()):toBe(before - 5)
+                expect(
+                    item(accessibility.duel_state(screen), "spell-feedback").label
+                ):toBe("Firebolt resolving. Burning the table card.")
+                screen:update(city, 10.0)
+                screen:update(city, 10.0)
+                screen.presentation:skip()
+                expect(
+                    item(accessibility.duel_state(screen), "spell-feedback").label
+                ):toBe("Firebolt completed on table card 1.")
+                expect(
+                    item(accessibility.duel_state(screen), "readiness").label
+                ):toBe("Board ready.")
+                screen:reset(city, true, screen.run.start_spell)
+                expect(
+                    string.find(
+                        accessibility.duel_state(screen).status,
+                        "Boss rush. Boss duel: Arch Mage.",
+                        1,
+                        true
+                    ) ~= nil
+                ):toBe(true)
+            end
+        )
+
+        it(
             "routes a menu choice once and rejects a stale stage action",
             function(): unit
                 local screen: menu.State = menu.State.new()

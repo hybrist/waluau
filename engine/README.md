@@ -509,6 +509,12 @@ Set `dialog` to a stable dialog identifier and include only that dialog's items
 in its snapshot. The expanded panel isolates outside content, contains keyboard
 focus, and restores the originating control when the dialog closes. `dismiss`
 is the activation key for Escape; without it Escape collapses the panel.
+The passive `Game feedback` region retains the heading, the single live status,
+and text items when Text controls is collapsed. It is visually clipped in that
+state and has no actionable controls; reading it never moves focus or activates
+a modal. Expanded controls share that same heading and live status. Text items
+should describe public resources, selection, readiness and completed actions
+that canvas players also need to observe.
 Snapshots are read after drawing; unchanged status text is not reannounced.
 Stopping or suspending a session removes controls and listeners and restores
 outside content before a replacement instance adopts the canvas.

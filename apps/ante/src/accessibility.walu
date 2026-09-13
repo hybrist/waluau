@@ -215,7 +215,18 @@ end
 function duel_state(screen: game_screen.State): State
     local items: {Item} = {}
     local view: game.View = screen.rules:view()
-    local resources: string = "Duel " .. tostring(
+    local context: string = "Standard run. Standard duel."
+    if screen.run.rush then
+        context = "Boss rush."
+    end
+    if screen.run:boss() then
+        context = "Standard run."
+        if screen.run.rush then
+            context = "Boss rush."
+        end
+        context = context .. " Boss duel: " .. screen.run.next_boss:__tostring() .. "."
+    end
+    local resources: string = context .. " Duel " .. tostring(
         screen.run.duel
     ) .. ". Health " .. tostring(
         screen.run.hearts
@@ -265,6 +276,9 @@ function duel_state(screen: game_screen.State): State
         local outcome: string = "Duel cleared."
         if screen:run_outcome() == "lost-health" or screen:run_outcome() == "lost-duel" then
             outcome = "Run ended."
+        end
+        if screen:run_outcome() == "won" then
+            outcome = "Run won. Continue into the endless city."
         end
         local advance_label: string = "Continue run"
         if outcome == "Run ended." then
@@ -318,6 +332,66 @@ function duel_state(screen: game_screen.State): State
     if not ready then
         phase = "Cards are moving. Controls will be ready when the animation finishes."
     end
+    local readiness: string = "Board ready."
+    if not ready then
+        readiness = "Board busy."
+    end
+    local feedback: string = screen.spell_feedback
+    if casting then
+        local kind = screen.rules:spell_kind(screen.ui.cast_slot or 0)
+        if kind ~= nil then
+            feedback = (kind::spells.SpellKind):__tostring() .. " targeting. Choose a table card."
+        end
+    elseif screen.presentation:firebolt_pending() then
+        feedback = "Firebolt resolving. Burning the table card."
+    end
+    if casting and ready then
+        local target: i32 = screen.board:focused_table()
+        if target >= 0 and target < #view.middle then
+            feedback = feedback .. " Target: " .. card_name(view.middle[target + 1]) .. "."
+        end
+    end
+    if ready then
+        local selected_hand: {string} = {}
+        local selected_table: {string} = {}
+        for index, slot in view.player_hand do
+            if (view.swap_open and contains(
+                screen.ui.swap_hand,
+                index - 1
+            )) or (not view.swap_open and contains(screen.ui.play_picks, index - 1)) then
+                table.insert(selected_hand, card_name(slot.card))
+            end
+        end
+        for index, card in view.middle do
+            if contains(screen.ui.swap_table_cards, index - 1) then
+                table.insert(selected_table, card_name(card))
+            end
+            if view.frozen_middle[index] then
+                text(
+                    items,
+                    "frozen-" .. tostring(index),
+                    "Table card " .. tostring(index) .. ": " .. card_name(card) .. ", frozen.",
+                    nil
+                )
+            end
+        end
+        text(
+            items,
+            "selection",
+            "Selected hand cards: " .. tostring(
+                #selected_hand
+            ) .. ". " .. table.concat(
+                selected_hand,
+                ", "
+            ) .. ". Selected table cards: " .. tostring(
+                #selected_table
+            ) .. ". " .. table.concat(selected_table, ", ") .. ".",
+            nil
+        )
+    end
+    text(items, "readiness", readiness, nil)
+    text(items, "spell-feedback", feedback, nil)
+    text(items, "deck", "Deck: " .. tostring(view.deck_count) .. " cards remaining.", nil)
     group(items, "hand", "Your hand")
     for index, slot in view.player_hand do
         local selected: bool = contains(screen.ui.play_picks, index - 1)
@@ -432,7 +506,11 @@ function duel_state(screen: game_screen.State): State
     )
     button(items, "restart", "Restart run", false)
     button(items, "menu", "Main menu", false)
-    return { heading = "Duel", status = resources .. " " .. phase, items = items }
+    return {
+        heading = "Duel",
+        status = resources .. " " .. phase .. " " .. readiness .. " " .. feedback,
+        items = items
+    }
 end
 
 function duel_focus(screen: game_screen.State, key: string): unit
@@ -501,7 +579,7 @@ function duel_activate(screen: game_screen.State, city: city_map.State, key: str
     elseif key == "restart" then
         screen:consume_gate(city, "restart")
     elseif key == "cancel-cast" then
-        screen.ui.cast_slot = nil
+        screen:cancel_cast()
         screen.board:focus_hand(0)
     elseif key == "skip" then
         screen.ui:clear_picks()
