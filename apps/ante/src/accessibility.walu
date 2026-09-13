@@ -492,18 +492,8 @@ function duel_state(screen: game_screen.State): State
     if casting then
         button(items, "cancel-cast", "Cancel spell", not ready)
     end
-    button(
-        items,
-        "history",
-        "Open ledger",
-        screen.intervention.active or screen.presentation:firebolt_pending()
-    )
-    button(
-        items,
-        "help",
-        "How to play",
-        screen.intervention.active or screen.presentation:firebolt_pending()
-    )
+    button(items, "history", "Open ledger", not screen:information_ready())
+    button(items, "help", "How to play", not screen:information_ready())
     button(items, "restart", "Restart run", false)
     button(items, "menu", "Main menu", false)
     return {

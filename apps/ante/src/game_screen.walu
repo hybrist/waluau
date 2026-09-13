@@ -571,7 +571,16 @@ function State:perform_board_action(city: city_map.State, action: render.BoardAc
     return "none"
 end
 
+-- Information controls must not interrupt an effect that still owns the board.
+-- Both native control readiness and every canvas route use this decision.
+function State:information_ready(): bool
+    return not self.intervention.active and not self.presentation:firebolt_pending()
+end
+
 function State:consume_gate(city: city_map.State, command: flow.Command): bool
+    if (command == "help" or command == "history") and not self:information_ready() then
+        return true
+    end
     local result: flow.GateResult = self.ui:gate(
         self:vault_finished(),
         self.presentation:is_animating(),
