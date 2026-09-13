@@ -47,9 +47,14 @@ review baselines. Change the image and Playwright lockfile together when upgradi
 
 Inspect every changed PNG in `visual/baselines/`, confirm each intentional
 appearance change, and include those PNGs in the implementation PR. Run the
-comparison twice without updating to confirm reproducibility. Zero changed
-pixels are accepted: the renderer/environment are pinned. Never increase a
-threshold merely to make an unexplained diff pass.
+comparison twice without updating to confirm reproducibility. Zero pixels may
+exceed the 0.004 perceptual color threshold. This narrow threshold covers measured
+1/255 channel rounding at 16–99 text-edge pixels between native CI amd64 and
+amd64 emulation on Apple Silicon. The largest measured normalized YIQ distance
+was 0.003788, so 0.004 is the smallest sufficient threshold rounded to three
+decimal places. This is Playwright’s perceptual color distance, not a raw
+channel tolerance; geometry and shader captures otherwise matched.
+Never increase a threshold merely to make an unexplained diff pass.
 
 Failures retain Playwright traces and expected/actual/diff PNGs in
 `visual-results/` and a browsable HTML report in `visual-report/`; CI uploads both

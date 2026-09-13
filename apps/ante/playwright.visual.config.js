@@ -11,7 +11,9 @@ export default defineConfig({
   retries: 0,
   forbidOnly: !!process.env.CI,
   reporter: [['list'], ['html', { outputFolder: 'visual-report', open: 'never' }]],
-  expect: { toHaveScreenshot: { threshold: 0, maxDiffPixels: 0 } },
+  // Native amd64 and amd64 emulation differ by 1/255 at a few font edges.
+  // Permit that color rounding, but no pixels beyond the narrow threshold.
+  expect: { toHaveScreenshot: { threshold: 0.004, maxDiffPixels: 0 } },
   use: {
     browserName: 'chromium',
     viewport: { width: 1200, height: 800 },
