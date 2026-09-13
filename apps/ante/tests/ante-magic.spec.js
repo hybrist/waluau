@@ -3,22 +3,11 @@ import {
   GAME_READY_TIMEOUT,
   beginHeist,
   clickMenuItem,
-  countCardBackInk,
-  countDesignInk,
-  countMenuTitleInk,
-  frameSignature,
   openGame,
+  settleBoard,
+  showTextControls,
   waitForMenu,
 } from './game-driver.js';
-
-function countLoadingInk(canvas) {
-  return countDesignInk(
-    canvas,
-    { centerOffsetX: -60, heightRatio: 0.5, yOffset: -20, width: 120, height: 60 },
-    [251, 191, 36],
-    [10, 10, 10],
-  );
-}
 
 test('keeps the splash up until the display font is ready', async ({ page }) => {
   const pageErrors = [];
@@ -32,26 +21,21 @@ test('keeps the splash up until the display font is ready', async ({ page }) => 
     await fontReleased;
     await route.continue();
   });
-
   const canvas = await openGame(page);
   try {
     await fontRequested;
-    await expect
-      .poll(() => countLoadingInk(canvas), { timeout: GAME_READY_TIMEOUT })
-      .toBeGreaterThan(50);
-    expect(await countMenuTitleInk(canvas)).toBeLessThan(50);
-
-    // Input belongs to the screen the player can see, not the hidden menu.
+    await showTextControls(page);
+    await expect(page.getByRole('heading', { name: 'Loading Ante Magic', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New run', exact: true })).toHaveCount(0);
+    // Canvas input while loading must not activate the menu behind the splash.
+    await canvas.focus();
     await page.keyboard.press('Enter');
     await page.keyboard.press('Enter');
   } finally {
     releaseFont();
   }
-
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
-  expect(await countCardBackInk(canvas)).toBeLessThan(10);
+  await waitForMenu(canvas);
+  await expect(page.getByRole('heading', { name: 'Duel', exact: true })).toHaveCount(0);
   expect(pageErrors).toEqual([]);
 });
 
@@ -59,130 +43,69 @@ test('leaves the splash for the built-in fallback when the display font fails', 
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.route('**/*.ttf', (route) => route.fulfill({ status: 404, body: '' }));
-
   const canvas = await openGame(page);
   await waitForMenu(canvas);
-
   expect(pageErrors).toEqual([]);
 });
 
-// The cyan stall and gold party marker share the stop the run is standing on.
-// Every map screen parks that stop 736 logical units in from the left and just
-// past half the height (a height-driven canvas is always 600 units tall, so
-// 306). The breathing party mote can cover the stall completely at one point
-// in its cycle, so either layer proves the anchored stop is under the screen.
-async function countMapStopInk(canvas) {
-  const rect = { x: 710, y: 288, width: 56, height: 34 };
-  const stall = await countDesignInk(canvas, rect, [103, 232, 249], [45, 45, 45]);
-  const party = await countDesignInk(canvas, rect, [253, 230, 138], [35, 35, 35]);
-  return stall + party;
-}
-
-test('boots to a menu with new run, boss rush, and how to play options', async ({ page }) => {
-  const pageErrors = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
+test('opens help and returns to the menu before starting a run', async ({ page }) => {
   const canvas = await openGame(page);
-
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
-
-  // HOW TO PLAY (below NEW RUN and BOSS RUSH) opens the shared help modal,
-  // which covers the title band; Escape returns to the option list.
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeLessThan(50);
-  await page.keyboard.press('Escape');
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
-
-  // Clicking the NEW RUN option opens the starting-spell list; the same
-  // top-row spot now names FIREBOLT, and clicking it starts the run. M
-  // returns to the menu.
-  await clickMenuItem(page, canvas);
-  await clickMenuItem(page, canvas);
-  await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(40);
-  await page.keyboard.press('m');
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
-  expect(pageErrors).toEqual([]);
+  await waitForMenu(canvas);
+  for (const name of ['New run', 'Boss rush', 'How to play']) {
+    await expect(page.getByRole('button', { name, exact: true })).toBeEnabled();
+  }
+  await page.getByRole('button', { name: 'How to play', exact: true }).click();
+  const help = page.getByRole('dialog', { name: 'How to play', exact: true });
+  await expect(help).toBeVisible();
+  await expect(help).toContainText('Swap: select equal numbers');
+  await help.getByRole('button', { name: 'Close help', exact: true }).click();
+  await waitForMenu(canvas);
+  await beginHeist(page, canvas);
+  await page.getByRole('button', { name: 'Main menu', exact: true }).click();
+  await waitForMenu(canvas);
 });
 
-test('picks the starting spell at a vendor on the city map, then dives into the first vault', async ({ page }) => {
-  const pageErrors = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
+test('chooses a starting spell at the vendor and enters the first duel', async ({ page }) => {
   const canvas = await openGame(page);
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
-
-  // The title drifts over the city with no route being walked, so the stop
-  // anchor holds nothing yet. Opening the spell list pans to the vendor the run
-  // sets out from and parks it beside the options, where it stays put.
-  await page.keyboard.press('Enter');
-  await expect
-    .poll(() => countMapStopInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(30);
-
-  // Taking the spell walks off that vendor and into the first vault: the deck
-  // comes up and the map is no longer on the screen to be measured.
-  await page.keyboard.press('Enter');
-  await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(40);
-  expect(await countMapStopInk(canvas)).toBeLessThan(10);
-  expect(pageErrors).toEqual([]);
+  await waitForMenu(canvas);
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
+  for (const name of ['Firebolt', 'Freeze Ray', 'Raise Card', 'Clone']) {
+    await expect(page.getByRole('button', { name, exact: true })).toBeEnabled();
+  }
+  await page.getByRole('button', { name: 'Back to menu', exact: true }).click();
+  await waitForMenu(canvas);
+  await beginHeist(page, canvas);
+  await expect(page.getByRole('status')).toContainText('Duel 1.');
+  await expect(page.getByRole('button', { name: /Firebolt/ })).toBeEnabled();
 });
 
-test('starts a boss rush from its menu option', async ({ page }) => {
-  const pageErrors = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
+test('starts a boss rush with seven cards from its menu option', async ({ page }) => {
   const canvas = await openGame(page);
-
-  // The page element exists before the menu does, and a key pressed at a
-  // screen that is not up yet is a key nobody hears. Every other test that
-  // drives the menu waits for its title first; this one was the exception.
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
-
-  // BOSS RUSH sits directly under NEW RUN; Enter on it opens the spell list,
-  // and a second Enter deals the first vault as the seven-card variant,
-  // whose board still shows the sealed draw pile.
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await page.keyboard.press('Enter');
-  await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(40);
-  expect(pageErrors).toEqual([]);
+  await waitForMenu(canvas);
+  await page.getByRole('button', { name: 'Boss rush', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Firebolt', exact: true }).click();
+  await settleBoard(canvas);
+  await expect(page.getByRole('group', { name: 'Your hand', exact: true }).getByRole('button')).toHaveCount(7);
 });
 
-test('renders Ante Magic and loads its packaged card-back asset', async ({ page }) => {
+test('boots the canvas and completes asset loading before a playable duel', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
-
   await expect(canvas).toBeVisible();
   await beginHeist(page, canvas);
   expect(pageErrors).toEqual([]);
 });
 
-test('responds to keyboard input without an iframe focus step', async ({ page }) => {
+test('responds to canvas keyboard input without an iframe focus step', async ({ page }) => {
   const canvas = await openGame(page);
   await waitForMenu(canvas);
   await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
   await page.keyboard.press('Enter');
-  await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(40);
+  await settleBoard(canvas);
 });
 
 test.describe('on high-DPI displays', () => {
@@ -222,33 +145,19 @@ test.describe('on high-DPI displays', () => {
   });
 });
 
-test('reflows semantic layout and pointer targets through wide and tall canvases', async ({ page }) => {
+test('routes pointer targets through wide and tall canvases', async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 600 });
   const canvas = await openGame(page);
-  await expect.poll(() => canvas.evaluate((node) => ({
-    width: node.clientWidth,
-    height: node.clientHeight,
-  }))).toEqual({ width: 1200, height: 600 });
-
-  // The title and option list are centered in the added width, and the first
-  // option's live hit target advances to the spell stage.
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
+  await waitForMenu(canvas);
+  await expect.poll(() => canvas.evaluate((node) => ({ width: node.clientWidth, height: node.clientHeight })))
+    .toEqual({ width: 1200, height: 600 });
   await clickMenuItem(page, canvas);
+  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 600, height: 800 });
-  await expect.poll(() => canvas.evaluate((node) => ({
-    width: node.clientWidth,
-    height: node.clientHeight,
-  }))).toEqual({ width: 600, height: 800 });
-
-  // Tall space separates the heading, list, board rows, and footer. Clicking
-  // the relocated first row starts the run; the deck then appears on the live
-  // ward band rather than at a fixed 600-high board coordinate.
+  await expect.poll(() => canvas.evaluate((node) => ({ width: node.clientWidth, height: node.clientHeight })))
+    .toEqual({ width: 600, height: 800 });
   await clickMenuItem(page, canvas);
-  await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(40);
+  await settleBoard(canvas);
 });
 
 // Moved from the conformance runner: exercising Ante Magic's packaged asset
@@ -294,11 +203,11 @@ test('plays card flips through the packaged audio manifest only after the begin 
     .poll(async () => (await probe()).starts, { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(0);
 
-  // The sound and font were served through their hashed manifest URLs. The
-  // card back is small enough that the bundler inlines it — beginHeist's deck
-  // ink poll already proves it decoded.
+  // Assets were served through their hashed manifest URLs. Readiness covers
+  // loading; the visual suite checks the rendered card back.
   expect(assetRequests.some((url) => /card-flip\..+\.wav$/.test(url))).toBe(true);
   expect(assetRequests.some((url) => /Cinzel-Bold\..+\.ttf$/.test(url))).toBe(true);
+  expect(assetRequests.some((url) => /card-back\..+\.png$/.test(url))).toBe(true);
   expect(pageErrors).toEqual([]);
 });
 
@@ -306,25 +215,8 @@ test('plays card flips through the packaged audio manifest only after the begin 
 // its fatal audio diagnostic panel instead of playing on silently.
 test('stops on the fatal audio diagnostic when the flip sound cannot load', async ({ page }) => {
   await page.route('**/*.wav', (route) => route.fulfill({ status: 404, body: '' }));
-  const canvas = await openGame(page);
-  const countFatalPanelInk = () => canvas.evaluate((node) => {
-    const gl = node.getContext('webgl2');
-    const data = new Uint8Array(node.width * node.height * 4);
-    gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
-    let count = 0;
-    for (let index = 0; index < data.length; index += 4) {
-      if (
-        Math.abs(data[index] - 38) <= 6
-        && Math.abs(data[index + 1] - 11) <= 6
-        && Math.abs(data[index + 2] - 8) <= 6
-      ) count += 1;
-    }
-    return count;
-  });
-  await expect
-    .poll(countFatalPanelInk, { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(5000);
-  await page.getByRole('button', { name: 'Text controls', exact: true }).click();
+  await openGame(page);
+  await showTextControls(page);
   await expect(page.getByRole('heading', { name: 'Audio could not load', exact: true })).toBeVisible();
   await expect(page.getByRole('status')).toContainText('Ante Magic cannot continue:');
 });

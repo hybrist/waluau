@@ -13,6 +13,11 @@ import {
   waitForMenu,
 } from './game-driver.js';
 
+// Temporary visual baselines until waluau-c0yh.4 migrates these assertions.
+test.beforeEach(async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+});
+
 // This project runs on a tablet-shaped canvas with a touchscreen and no
 // keyboard, so every gesture here is a finger. What it is really checking is
 // that a run can be played that way at all: the engine hands touch contacts to

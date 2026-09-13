@@ -15,21 +15,19 @@ export function frameSignature(canvas) {
   });
 }
 
-// Two consecutive identical frames: the board has finished whatever it was
-// animating and the next press will mean what it says rather than being spent
-// skipping ahead. Only the board settles this way — the city map behind the
-// menu and the shop pans for as long as it is up, and a reveal left standing
-// burns its lost cards forever.
+// Readiness comes from the same enabled controls a player uses. Animation
+// continues normally; a moving card is never mistaken for a ready board.
 export async function settleBoard(canvas) {
-  let previous = -1;
-  await expect
-    .poll(async () => {
-      const current = await frameSignature(canvas);
-      const stable = current === previous;
-      previous = current;
-      return stable;
-    }, { timeout: GAME_READY_TIMEOUT })
-    .toBe(true);
+  const page = canvas.page();
+  await showTextControls(page);
+  await expect(page.getByRole('heading', { name: 'Duel', exact: true })).toBeVisible({ timeout: GAME_READY_TIMEOUT });
+  await expect(page.getByRole('group', { name: 'Your hand', exact: true }).getByRole('button').first())
+    .toBeEnabled({ timeout: GAME_READY_TIMEOUT });
+}
+
+export async function showTextControls(page) {
+  const toggle = page.getByRole('button', { name: 'Text controls', exact: true });
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
 }
 
 // Read a rectangle expressed in Ante's live logical coordinates. Anchors let
@@ -92,9 +90,11 @@ export function countMenuTitleInk(canvas) {
 }
 
 export async function waitForMenu(canvas) {
-  await expect
-    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(300);
+  const page = canvas.page();
+  await showTextControls(page);
+  await expect(page.getByRole('heading', { name: 'Main menu', exact: true })).toBeVisible({ timeout: GAME_READY_TIMEOUT });
+  await expect(page.getByRole('button', { name: 'New run', exact: true })).toBeEnabled();
+  await canvas.focus();
 }
 
 // Where a point in Ante's live logical coordinates lands on the page. The
@@ -196,28 +196,17 @@ export function countModalHeadingInk(canvas) {
   );
 }
 
-// The board's astral sea drifts on its own, and this suite reads a board as
-// settled when two consecutive frames match. Asking for reduced motion holds
-// the sea still, the same way it does for a player who has asked their
-// browser for it, so a settled board is a still frame again. Asked of the
-// page rather than in the config's `use`: the page fixture's context did not
-// pick the option up from there, while the emulation below persists across
-// every navigation the page makes.
 export async function openGame(page) {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await expect(page.locator('h1')).toHaveText('Ante Magic', { timeout: GAME_READY_TIMEOUT });
   return page.locator('canvas#walua-game-canvas');
 }
 
-// NEW GAME is the menu's default selection, so Enter activates it and opens
-// the starting-spell list, where a second Enter takes the default FIREBOLT.
-// The first Enter press is also the user gesture that unlocks browser audio.
 export async function beginHeist(page, canvas) {
   await waitForMenu(canvas);
-  await page.keyboard.press('Enter');
-  await page.keyboard.press('Enter');
-  await expect
-    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
-    .toBeGreaterThan(40);
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Firebolt', exact: true }).click();
+  await settleBoard(canvas);
+  await canvas.focus();
 }
