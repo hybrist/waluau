@@ -6,6 +6,11 @@ separately with `test:gameplay`; it does not use these images or their readiness
 These are appearance baselines for this environment, not cross-driver graphics
 conformance assertions.
 
+The city scrying captures cover the Old Market at 240% and 400% zoom, with
+motion paused at spell phase 25. This procedural scene has no asynchronous
+assets: its capture waits for the focal pixel to show the city through the lens,
+rather than the retained stories’ packaged-asset barrier.
+
 ## Coverage and migrated assertions
 
 The shared `src/screens.stories.walu` fixture draws production menu, city,

@@ -1,0 +1,124 @@
+-- A spell looking down into the Old Market. Controls live in Storybook;
+-- the vision itself has no route furniture, debug overlays or HUD.
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+local gpu = require("waluau:engine/graphics")
+local generator = require("./city_generator")
+local city_render = require("./city_generator_render")
+local lens = require("./shaders/city-scrying.frag")
+
+local zoom = storybook.range("zoom percent", 240, 100, 600, 10)
+local seed = storybook.range("seed", 41, 1, 999, 1)
+local strength = storybook.range("spell intensity", 100, 0, 150, 5)
+local motion = storybook.range("motion", 1, 0, 1, 1)
+local phase = storybook.range("spell phase", 0, 0, 100, 1)
+
+type View = {
+    city: generator.City?,
+    heights: {f64},
+    target: gpu.RenderTarget?,
+    owner: engine.Graphics?,
+    time: f64
+}
+local view: View = { city = nil, heights = {}, target = nil, owner = nil, time = 0.0 }
+
+local function load(): unit
+    local city: generator.City = generator.generate(
+        { seed = seed.value(), bridges = 1, river = true, relief = 1.0, size = 90, density = 85 }
+    )
+    view.city = city
+    view.time = 0.0
+    view.heights = {}
+    for y = 0::i32, 47::i32 do
+        for x = 0::i32, 71::i32 do
+            table.insert(
+                view.heights,
+                generator.elevation(
+                    city,
+                    { x = (x::f64) * city.width / 72.0, y = (y::f64) * city.height / 48.0 }
+                )
+            )
+        end
+    end
+end
+
+local function update(dt: f64, _input: engine.Input): unit
+    if motion.value() > 0 then
+        view.time += dt
+    end
+end
+
+local function draw(graphics: engine.Graphics, _alpha: f64): unit
+    -- Storybook can mount this module into a fresh renderer after teardown.
+    -- A target belongs to the renderer that allocated it.
+    local owner: engine.Graphics? = view.owner
+    if owner ~= nil then
+        if (owner::engine.Graphics).disposed then
+            view.target = nil
+        end
+    end
+    if view.target == nil then
+        local created: gpu.RenderTargetResult = graphics:create_render_target(960, 640)
+        if not created.ok then
+            error("Scrying target: " .. created.error.message)
+        end
+        view.target = created.target
+        view.owner = graphics
+    end
+    local maybe_target: gpu.RenderTarget? = view.target
+    local maybe_city: generator.City? = view.city
+    if maybe_target ~= nil then
+        if maybe_city ~= nil then
+            local target: gpu.RenderTarget = maybe_target::gpu.RenderTarget
+            local city: generator.City = maybe_city::generator.City
+            if not graphics:set_render_target(target) then
+                error("Cannot bind scrying target")
+            end
+            graphics:clear("#cdd1b0")
+            graphics:push()
+            graphics:translate(480.0, 320.0)
+            local scale: f64 = (zoom.value()::f64) / 100.0
+            graphics:scale(scale, scale)
+            graphics:translate(-city.nodes[1].x, -city.nodes[1].y)
+            city_render.draw(graphics, city, view.heights, true, false)
+            graphics:pop()
+            graphics:set_screen_target()
+            local bound: gpu.ShaderBindingResult = graphics:bind_imported_shader(
+                lens,
+                {
+                    gpu.float_parameter("u_clock", view.time + (phase.value()::f64) * 0.1),
+                    gpu.float_parameter("u_strength", (strength.value()::f64) / 100.0)
+                }
+            )
+            if not bound.ok then
+                error("Scrying lens: " .. bound.error.message)
+            end
+            graphics:set_color("#ffffff")
+            graphics:draw_render_target(target, 0.0, 0.0, 960.0, 640.0)
+            graphics:use_default_shader()
+        end
+    end
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Start node",
+            {
+                load = load,
+                update = update,
+                draw = draw,
+                width = 960,
+                height = 640,
+                background = "#080514"
+            },
+            {
+                zoom.declaration,
+                seed.declaration,
+                strength.declaration,
+                motion.declaration,
+                phase.declaration
+            }
+        )
+    }
+)

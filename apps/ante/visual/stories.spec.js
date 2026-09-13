@@ -24,10 +24,20 @@ async function openStory(page, id, args, milliseconds) {
   await page.goto(`/iframe.html?id=${id}&viewMode=story&args=${encodeURIComponent(args)}`);
   const canvas = page.locator('canvas');
   await expect(canvas).toBeVisible();
-  await expect.poll(() => page.evaluate(() => {
+  await expect.poll(() => page.evaluate((procedural) => {
     window.anteVisualFrame(0);
+    if (procedural) {
+      // This scene has no asynchronous assets. Its opaque green market at
+      // the focal point proves the offscreen city and lens have both drawn;
+      // the initial dark clear alone cannot satisfy this readiness check.
+      const gl = document.querySelector('canvas').getContext('webgl2');
+      const pixel = new Uint8Array(4);
+      gl.readPixels(gl.drawingBufferWidth / 2, gl.drawingBufferHeight / 2,
+        1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      return pixel[1] > 50 && pixel[2] > 50 && pixel[3] === 255 ? 'true' : 'false';
+    }
     return document.body.getAttribute('data-ante-story-ready');
-  })).toBe('true');
+  }, id === 'city-scrying--start-node')).toBe('true');
   await page.evaluate(async (time) => {
     await document.fonts.ready;
     // The initial draw uploads all packaged textures/fonts. Every subsequent
@@ -43,6 +53,8 @@ async function openStory(page, id, args, milliseconds) {
 }
 
 const scenes = [
+  ['city-scrying', 'city-scrying--start-node', 'motion:0;spell phase:25', 0],
+  ['city-scrying-close', 'city-scrying--start-node', 'motion:0;spell phase:25;zoom percent:400', 0],
   ['card-back', 'card--face-down', '', 0],
   ['court-atlas', 'card--every-court', '', 0],
   ['suit-shaders', 'card--every-color', '', 250],
