@@ -48,6 +48,8 @@ test('reaches a live board from the menu with taps only', async ({ page }) => {
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
   await waitForMenu(canvas);
+  // Keep the native panel from intercepting the canvas gestures below.
+  await page.getByRole('button', { name: 'Text controls', exact: true }).tap();
 
   // NEW RUN, then FIREBOLT on the starting-spell list that replaces it. The
   // first tap is also the user gesture that unlocks browser audio.
@@ -64,6 +66,8 @@ test('arms and calls off a spell by tapping its socket', async ({ page }) => {
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
   await waitForMenu(canvas);
+  // Keep the native panel from intercepting the canvas gestures below.
+  await page.getByRole('button', { name: 'Text controls', exact: true }).tap();
   await tapMenuItem(page, canvas);
   await tapMenuItem(page, canvas);
   await expect
@@ -90,6 +94,8 @@ test('opens and closes the rules from the standing controls', async ({ page }) =
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
   await waitForMenu(canvas);
+  // Keep the native panel from intercepting the canvas gestures below.
+  await page.getByRole('button', { name: 'Text controls', exact: true }).tap();
   await tapMenuItem(page, canvas);
   await tapMenuItem(page, canvas);
   await expect
