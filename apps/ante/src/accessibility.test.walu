@@ -1,0 +1,165 @@
+require("waluau:vitest")
+local engine = require("waluau:engine")
+local accessibility = require("./accessibility")
+local menu = require("./menu")
+local screen_module = require("./game_screen")
+local city_map = require("./city_map")
+local fixture = require("../test/game_fixture")
+local game = require("./game")
+
+function item(state: engine.AccessibleState, key: string): engine.AccessibleItem
+    for entry in state.items do
+        if entry.key == key then
+            return entry
+        end
+    end
+    assert(false, "Missing accessible item " .. key)
+    return { key = key, kind = "text", label = "" }
+end
+
+function labels(state: engine.AccessibleState): string
+    local values: {string} = {state.heading, state.status}
+    for entry in state.items do
+        table.insert(values, entry.label)
+        table.insert(values, entry.description or "")
+    end
+    return table.concat(values, " ")
+end
+
+function card(rank: i32, suit: i32): game.Card
+    return { rank = rank, suit = suit }
+end
+
+describe(
+    "Accessible Ante presentation",
+    function(): unit
+        it(
+            "routes a menu choice once and rejects a stale stage action",
+            function(): unit
+                local screen: menu.State = menu.State.new()
+                expect(tostring(accessibility.menu_activate(screen, "new-run"))):toBe("none")
+                expect(accessibility.menu_state(screen).heading):toBe("Starting vendor")
+                expect(tostring(accessibility.menu_activate(screen, "new-run"))):toBe("none")
+                expect(accessibility.menu_state(screen).heading):toBe("Starting vendor")
+                expect(tostring(accessibility.menu_activate(screen, "start-spell-1"))):toBe("start")
+            end
+        )
+
+        it(
+            "conceals opponent identities and moving cards",
+            function(): unit
+                local screen: screen_module.State = screen_module.State.new()
+                local city: city_map.State = city_map.State.new(91)
+                fixture.arrange_breach(
+                    screen.rules,
+                    {card(2, 0), card(3, 0), card(4, 0), card(5, 0), card(6, 0)},
+                    {card(7, 1), card(8, 1), card(9, 1), card(10, 1), card(11, 1)},
+                    {card(12, 2), card(13, 2), card(14, 2), card(12, 3), card(13, 3)}
+                )
+                screen.presentation:skip()
+                local readable: string = labels(accessibility.duel_state(screen))
+                expect(string.find(readable, "King of green", 1, true) == nil):toBe(true)
+                expect(string.find(readable, "Ace of black", 1, true) == nil):toBe(true)
+                expect(
+                    item(accessibility.duel_state(screen), "opponent").label
+                ):toBe("Opponent: 5 concealed cards.")
+                screen.presentation:opening_deal(screen.rules:view())
+                local moving: engine.AccessibleState = accessibility.duel_state(screen)
+                expect(item(moving, "hand-1").disabled == true):toBe(true)
+                expect(string.find(labels(moving), "2 of red", 1, true) == nil):toBe(true)
+                accessibility.duel_activate(screen, city, "hand-1")
+                expect(#screen.ui.play_picks + #screen.ui.swap_hand):toBe(0)
+                screen:perform_board_action(city, { kind = "hand", index = 0 })
+                expect(#screen.ui.play_picks + #screen.ui.swap_hand):toBe(0)
+            end
+        )
+
+        it(
+            "the ledger contains only the opponent's revealed pair",
+            function(): unit
+                local screen: screen_module.State = screen_module.State.new()
+                local city: city_map.State = city_map.State.new(93)
+                while screen.rules:swap_open() do
+                    screen.rules:resolve_swap({}, {})
+                end
+                fixture.arrange_breach(
+                    screen.rules,
+                    {card(2, 0), card(3, 0), card(4, 0), card(5, 0), card(6, 0)},
+                    {card(7, 1), card(8, 1), card(9, 1), card(10, 1), card(11, 1)},
+                    {card(12, 2), card(13, 2), card(14, 2), card(12, 3), card(13, 3)}
+                )
+                screen.presentation:skip()
+                accessibility.duel_activate(screen, city, "hand-1")
+                accessibility.duel_activate(screen, city, "hand-2")
+                accessibility.duel_activate(screen, city, "play")
+                accessibility.duel_activate(screen, city, "finish-reveal")
+                accessibility.duel_activate(screen, city, "continue")
+                screen.presentation:skip()
+                accessibility.duel_activate(screen, city, "history")
+                local ledger: engine.AccessibleState = accessibility.duel_state(screen)
+                expect(ledger.heading):toBe("Ledger")
+                local maybe_trick: game.Trick? = screen.rules:last_trick()
+                assert(maybe_trick ~= nil)
+                local trick: game.Trick = maybe_trick::game.Trick
+                for index, slot in trick.computer_hand do
+                    if index - 1 ~= trick.computer_first and index - 1 ~= trick.computer_second then
+                        expect(
+                            string.find(
+                                labels(ledger),
+                                accessibility.card_name(slot.card),
+                                1,
+                                true
+                            ) == nil
+                        ):toBe(true)
+                    end
+                end
+            end
+        )
+
+        it(
+            "exposes pressed state and rejects a stale play during reveal",
+            function(): unit
+                local screen: screen_module.State = screen_module.State.new()
+                local city: city_map.State = city_map.State.new(92)
+                while screen.rules:swap_open() do
+                    screen.rules:resolve_swap({}, {})
+                end
+                screen.presentation:skip()
+                accessibility.duel_activate(screen, city, "play")
+                expect(screen.ui.revealing):toBe(false)
+                accessibility.duel_activate(screen, city, "hand-1")
+                expect(item(accessibility.duel_state(screen), "hand-1").selected == true):toBe(true)
+                accessibility.duel_activate(screen, city, "hand-2")
+                expect(item(accessibility.duel_state(screen), "play").disabled == true):toBe(false)
+                local view: game.View = screen.rules:view()
+                local preview: string = game.category_name(
+                    game.value_for_pair(game.hand_cards(view.player_hand), view.middle, 0, 1)
+                )
+                expect(
+                    string.find(
+                        accessibility.duel_state(screen).status,
+                        "Selected hand: " .. preview,
+                        1,
+                        true
+                    ) ~= nil
+                ):toBe(true)
+                accessibility.duel_activate(screen, city, "play")
+                expect(screen.ui.revealing):toBe(true)
+                local rounds: i32 = #screen.rules:view().history
+                accessibility.duel_activate(screen, city, "play")
+                accessibility.duel_activate(screen, city, "continue")
+                expect(#screen.rules:view().history):toBe(rounds)
+                expect(screen.ui.revealing):toBe(true)
+                expect(
+                    item(accessibility.duel_state(screen), "continue").disabled == true
+                ):toBe(true)
+                accessibility.duel_activate(screen, city, "finish-reveal")
+                expect(
+                    item(accessibility.duel_state(screen), "continue").disabled == true
+                ):toBe(false)
+                accessibility.duel_activate(screen, city, "continue")
+                expect(screen.ui.revealing):toBe(false)
+            end
+        )
+    end
+)
