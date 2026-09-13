@@ -415,6 +415,29 @@ license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
 pnpm --filter ante storybook
 ```
 
+The **city_generator / Medieval layout** story is an isolated procedural layout
+experiment. Its seed, river toggle, bridge budget (0–2), relief, settlement size,
+and frontage occupancy controls regenerate the city. Junction and building-access
+overlays expose the routing data; select start/end node IDs to draw a shortest
+road route. Nodes 1 and 2 are the two market anchors. With a river and no bridges,
+they deliberately have no connecting route. The existing gameplay map is unchanged.
+
+`src/city_generator.walu` generates a meandering river and compatible low valley,
+then joins settlement points using distance, slope, road clearance, and explicit
+crossing constraints. It adds local connections when they shorten a substantial
+detour. Bridges are chosen before street growth. Frontage buildings use skewed
+quadrilaterals and concave extensions, with conservative clearance bounds and an
+access point on a particular road edge. All road indices are 1-based; each edge
+contains its endpoints, width, length, and bridge flag. Consecutive edges form the
+bends of a route.
+
+This first experiment uses two fixed market anchors, broad knolls, a constant-width
+river, and frontage slots rather than subdividing entire blocks into parcel
+polygons. Settlement size is a target node count: clearance constraints can stop
+growth earlier. Relief is shown in tenths (10 means 1.0); it changes road connection
+costs and excludes steep building sites. Generation is DOM-free, allowing its
+determinism, geometry, and routing to be tested in the browser without a canvas.
+
 The deployed game carries its storybook with it, at `/storybook`:
 `pnpm --filter ante build-storybook` builds it into `dist/storybook`, and the
 Vercel build runs it after the game's own `vite build` so one deployment serves

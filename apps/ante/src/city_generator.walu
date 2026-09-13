@@ -1,0 +1,558 @@
+-- DOM-free layout laboratory. A seeded landscape guides a planar street graph;
+-- frontage parcels follow its edges. Every visible crossing is an explicit
+-- shared node, and water can only be crossed by the budgeted bridge edges.
+export type Point = { x: f64, y: f64 }
+export type Options = { seed: i32, bridges: i32, river: bool, relief: f64, size: i32, density: i32 }
+export type Edge = { a: i32, b: i32, width: f64, length: f64, bridge: bool }
+export type Building = { footprint: {Point}, access: Point, edge: i32, x: f64, y: f64, radius: f64 }
+export type City = {
+    nodes: {Point},
+    edges: {Edge},
+    buildings: {Building},
+    river: {Point},
+    options: Options
+}
+type Random = { state: f64 }
+const WIDTH: f64 = 960.0
+const HEIGHT: f64 = 640.0
+const RIVER_WIDTH: f64 = 25.0
+
+function random(stream: Random): f64
+    stream.state = (stream.state * 16807.0) % 2147483647.0
+    return stream.state / 2147483647.0
+end
+
+function distance(a: Point, b: Point): f64
+    local dx: f64 = a.x - b.x
+    local dy: f64 = a.y - b.y
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+function clamp(value: f64, low: f64, high: f64): f64
+    return math.max(low, math.min(high, value))
+end
+
+function projection(p: Point, a: Point, b: Point): Point
+    local dx: f64 = b.x - a.x
+    local dy: f64 = b.y - a.y
+    local squared: f64 = dx * dx + dy * dy
+    if squared < 0.000001 then
+        return { x = a.x, y = a.y }
+    end
+    local t: f64 = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / squared, 0.0, 1.0)
+    return { x = a.x + dx * t, y = a.y + dy * t }
+end
+
+function segment_distance(p: Point, a: Point, b: Point): f64
+    return distance(p, projection(p, a, b))
+end
+
+function cross(a: Point, b: Point, c: Point): f64
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+end
+
+function intersects(a: Point, b: Point, c: Point, d: Point): bool
+    return cross(
+        a,
+        b,
+        c
+    ) * cross(
+        a,
+        b,
+        d
+    ) <= 0.0 and cross(
+        c,
+        d,
+        a
+    ) * cross(
+        c,
+        d,
+        b
+    ) <= 0.0 and math.max(
+        math.min(a.x, b.x),
+        math.min(c.x, d.x)
+    ) <= math.min(
+        math.max(a.x, b.x),
+        math.max(c.x, d.x)
+    ) and math.max(
+        math.min(a.y, b.y),
+        math.min(c.y, d.y)
+    ) <= math.min(math.max(a.y, b.y), math.max(c.y, d.y))
+end
+
+function segments_distance(a: Point, b: Point, c: Point, d: Point): f64
+    if intersects(a, b, c, d) then
+        return 0.0
+    end
+    return math.min(
+        math.min(segment_distance(a, c, d), segment_distance(b, c, d)),
+        math.min(segment_distance(c, a, b), segment_distance(d, a, b))
+    )
+end
+
+-- Two broad knolls and a gentle regional slope; values are modest map units.
+-- Roads pay for climbing this surface; unsuitable steep frontage stays open.
+function elevation(city: City, p: Point): f64
+    local first: f64 = math.max(0.0, 1.0 - distance(p, { x = 265.0, y = 190.0 }) / 190.0)
+    local second: f64 = math.max(0.0, 1.0 - distance(p, { x = 715.0, y = 450.0 }) / 155.0)
+    -- Carve the knolls down into the river valley. The bed itself retains
+    -- only the regional downstream fall, rather than climbing a hill shoulder.
+    local valley: f64 = clamp(water_distance(city, p) / 90.0, 0.0, 1.0)
+    return city.options.relief * ((first * first * 30.0 + second * second * 20.0) * valley + (640.0 - p.y) * 0.008)
+end
+
+function river_x(seed: i32, y: f64): f64
+    local phase: f64 = ((seed % 97)::f64) * 0.047
+    return 485.0 + 51.0 * math.sin(y / 123.0 + phase) + 19.0 * math.sin(y / 61.0 + phase * 0.7)
+end
+
+function water_distance(city: City, p: Point): f64
+    local best: f64 = 1000000.0
+    for index = 2::i32, #city.river do
+        best = math.min(best, segment_distance(p, city.river[index - 1], city.river[index]))
+    end
+    return best - RIVER_WIDTH * 0.5
+end
+
+function add_edge(city: City, a: i32, b: i32, width: f64, bridge: bool): unit
+    table.insert(
+        city.edges,
+        {
+            a = a,
+            b = b,
+            width = width,
+            length = distance(city.nodes[a], city.nodes[b]),
+            bridge = bridge
+        }
+    )
+end
+
+function degree(city: City, node: i32): i32
+    local count: i32 = 0
+    for edge in city.edges do
+        if edge.a == node or edge.b == node then
+            count += 1
+        end
+    end
+    return count
+end
+
+-- Edges join existing nodes, never merely cross them. Reject nearby parallel
+-- streets and shallow forks as well as crossings, leaving buildable frontage.
+function can_connect(city: City, a: i32, b: i32, width: f64): bool
+    local start: Point = city.nodes[a]
+    local finish: Point = city.nodes[b]
+    for index = 2::i32, #city.river do
+        if segments_distance(
+            start,
+            finish,
+            city.river[index - 1],
+            city.river[index]
+        ) < RIVER_WIDTH * 0.5 + width * 0.5 + 2.0 then
+            return false
+        end
+    end
+    for edge in city.edges do
+        if (edge.a == a and edge.b == b) or (edge.b == a and edge.a == b) then
+            return false
+        end
+        local shared: i32 = 0
+        local other: i32 = 0
+        local candidate: i32 = 0
+        if edge.a == a or edge.b == a then
+            shared = a
+            candidate = b
+        elseif edge.a == b or edge.b == b then
+            shared = b
+            candidate = a
+        end
+        if shared > 0 then
+            other = edge.a
+            if other == shared then
+                other = edge.b
+            end
+            local origin: Point = city.nodes[shared]
+            local left: Point = city.nodes[other]
+            local right: Point = city.nodes[candidate]
+            local cosine: f64 = ((left.x - origin.x) * (right.x - origin.x) + (left.y - origin.y) * (right.y - origin.y)) / (distance(
+                origin,
+                left
+            ) * distance(origin, right))
+            if cosine > 0.87 then
+                return false
+            end
+        elseif segments_distance(
+            start,
+            finish,
+            city.nodes[edge.a],
+            city.nodes[edge.b]
+        ) < (width + edge.width) * 0.5 + 4.0 then
+            return false
+        end
+    end
+    -- A new road may not silently pass through an isolated landmark either.
+    for index = 1::i32, #city.nodes do
+        if index ~= a and index ~= b and segment_distance(
+            city.nodes[index],
+            start,
+            finish
+        ) < 13.0 then
+            return false
+        end
+    end
+    return true
+end
+
+-- Dijkstra on the same edges the story draws. Empty means disconnected (for
+-- example opposite riverbanks with a zero bridge budget), including bad IDs.
+function shortest_path(city: City, start: i32, finish: i32): {i32}
+    local result: {i32} = {}
+    if start < 1 or finish < 1 or start > #city.nodes or finish > #city.nodes then
+        return result
+    end
+    local costs: {f64} = {}
+    local previous: {i32} = {}
+    local visited: {bool} = {}
+    for index = 1::i32, #city.nodes do
+        table.insert(costs, 1000000.0)
+        table.insert(previous, 0)
+        table.insert(visited, false)
+    end
+    costs[start] = 0.0
+    for _ = 1::i32, #city.nodes do
+        local current: i32 = 0
+        local best: f64 = 1000000.0
+        for index = 1::i32, #city.nodes do
+            if not visited[index] and costs[index] < best then
+                current = index
+                best = costs[index]
+            end
+        end
+        if current == 0 then
+            break
+        end
+        if current == finish then
+            break
+        end
+        visited[current] = true
+        for edge in city.edges do
+            local next_node: i32 = 0
+            if edge.a == current then
+                next_node = edge.b
+            elseif edge.b == current then
+                next_node = edge.a
+            end
+            if next_node > 0 and costs[current] + edge.length < costs[next_node] then
+                costs[next_node] = costs[current] + edge.length
+                previous[next_node] = current
+            end
+        end
+    end
+    if costs[finish] >= 1000000.0 then
+        return result
+    end
+    local reverse: {i32} = {}
+    local current: i32 = finish
+    while current > 0 do
+        table.insert(reverse, current)
+        current = previous[current]
+    end
+    for index = #reverse, 1::i32, -1::i32 do
+        table.insert(result, reverse[index])
+    end
+    return result
+end
+
+function route_length(city: City, route: {i32}): f64
+    local length: f64 = 0.0
+    for index = 2::i32, #route do
+        length += distance(city.nodes[route[index - 1]], city.nodes[route[index]])
+    end
+    return length
+end
+
+function connection_cost(city: City, a: i32, b: i32): f64
+    local start: Point = city.nodes[a]
+    local finish: Point = city.nodes[b]
+    local mid: Point = { x = (start.x + finish.x) * 0.5, y = (start.y + finish.y) * 0.5 }
+    return distance(
+        start,
+        finish
+    ) + 7.0 * (math.abs(
+        elevation(city, start) - elevation(city, mid)
+    ) + math.abs(elevation(city, mid) - elevation(city, finish)))
+end
+
+function attach(city: City, node: i32, maximum: f64, width: f64): bool
+    local best: i32 = 0
+    local cost: f64 = 1000000.0
+    for index = 1::i32, node - 1 do
+        if distance(city.nodes[node], city.nodes[index]) < maximum then
+            local candidate: f64 = connection_cost(city, node, index)
+            if candidate < cost and can_connect(city, node, index, width) then
+                cost = candidate
+                best = index
+            end
+        end
+    end
+    if best > 0 then
+        add_edge(city, node, best, width, false)
+        return true
+    end
+    return false
+end
+
+function footprint_point(center: Point, dx: f64, dy: f64, x: f64, y: f64): Point
+    return { x = center.x + dx * x - dy * y, y = center.y + dy * x + dx * y }
+end
+
+function populate(city: City, stream: Random): unit
+    for edge_index = 1::i32, #city.edges do
+        local edge: Edge = city.edges[edge_index]
+        if edge.bridge then
+            continue
+        end
+        local a: Point = city.nodes[edge.a]
+        local b: Point = city.nodes[edge.b]
+        local dx: f64 = (b.x - a.x) / edge.length
+        local dy: f64 = (b.y - a.y) / edge.length
+        local along: f64 = 17.0
+        while along < edge.length - 15.0 do
+            local frontage: f64 = 8.0 + random(stream) * 8.0
+            local depth: f64 = 8.0 + random(stream) * 11.0
+            local radius: f64 = math.sqrt(frontage * frontage + depth * depth) * 0.5 + 1.0
+            for side = -1::i32, 1::i32, 2::i32 do
+                local offset: f64 = edge.width * 0.5 + radius + 2.5
+                local access: Point = { x = a.x + dx * along, y = a.y + dy * along }
+                local center: Point = {
+                    x = access.x - dy * offset * (side::f64),
+                    y = access.y + dx * offset * (side::f64)
+                }
+                local good: bool = random(stream) * 100.0 < (city.options.density::f64)
+                if center.x < radius + 15.0 or center.x > WIDTH - radius - 15.0 or center.y < radius + 35.0 or center.y > HEIGHT - radius - 25.0 then
+                    good = false
+                end
+                -- Test local grade, not absolute altitude: a high flat plot
+                -- remains useful, while steep low ground is left unbuilt.
+                local grade_x: f64 = math.abs(
+                    elevation(
+                        city,
+                        { x = center.x + radius, y = center.y }
+                    ) - elevation(city, { x = center.x - radius, y = center.y })
+                ) / (radius * 2.0)
+                local grade_y: f64 = math.abs(
+                    elevation(
+                        city,
+                        { x = center.x, y = center.y + radius }
+                    ) - elevation(city, { x = center.x, y = center.y - radius })
+                ) / (radius * 2.0)
+                if water_distance(
+                    city,
+                    center
+                ) < radius + 4.0 or math.sqrt(grade_x * grade_x + grade_y * grade_y) > 0.24 then
+                    good = false
+                end
+                for index = 2::i32, #city.river do
+                    if segments_distance(
+                        center,
+                        access,
+                        city.river[index - 1],
+                        city.river[index]
+                    ) < RIVER_WIDTH * 0.5 + 1.0 then
+                        good = false
+                    end
+                end
+                for road in city.edges do
+                    if segment_distance(
+                        center,
+                        city.nodes[road.a],
+                        city.nodes[road.b]
+                    ) < radius + road.width * 0.5 + 2.0 then
+                        good = false
+                    end
+                    if road.a ~= edge.a or road.b ~= edge.b then
+                        if segments_distance(
+                            center,
+                            access,
+                            city.nodes[road.a],
+                            city.nodes[road.b]
+                        ) < road.width * 0.5 + 1.0 then
+                            good = false
+                        end
+                    end
+                end
+                for house in city.buildings do
+                    if distance(
+                        center,
+                        { x = house.x, y = house.y }
+                    ) < radius + house.radius + 2.0 or segment_distance(
+                        { x = house.x, y = house.y },
+                        center,
+                        access
+                    ) < house.radius + 1.0 or segment_distance(
+                        center,
+                        { x = house.x, y = house.y },
+                        house.access
+                    ) < radius + 1.0 then
+                        good = false
+                    end
+                end
+                if good then
+                    local half: f64 = frontage * 0.5
+                    local back: f64 = depth * 0.5
+                    -- Mix simple skew plots with a notched rear extension.
+                    -- Local street axes keep walls plausible without a city grid.
+                    local notch: f64 = 0.15 + random(stream) * 0.5
+                    local footprint: {Point} = {}
+                    if random(stream) < 0.55 then
+                        footprint = {
+                            footprint_point(center, dx, dy, -half, -back),
+                            footprint_point(center, dx, dy, half, -back * 0.85),
+                            footprint_point(center, dx, dy, half * (0.75 + notch * 0.3), back),
+                            footprint_point(center, dx, dy, -half, back * 0.85)
+                        }
+                    else
+                        footprint = {
+                            footprint_point(center, dx, dy, -half, -back),
+                            footprint_point(center, dx, dy, half, -back * 0.86),
+                            footprint_point(center, dx, dy, half, back * notch),
+                            footprint_point(center, dx, dy, half * 0.15, back * notch),
+                            footprint_point(center, dx, dy, half * 0.15, back),
+                            footprint_point(center, dx, dy, -half, back)
+                        }
+                    end
+                    table.insert(
+                        city.buildings,
+                        {
+                            footprint = footprint,
+                            access = access,
+                            edge = edge_index,
+                            x = center.x,
+                            y = center.y,
+                            radius = radius
+                        }
+                    )
+                end
+            end
+            along += radius * 2.0 + 2.5 + random(stream) * 3.0
+        end
+    end
+end
+
+function generate(options: Options): City
+    local normalized: Options = {
+        seed = options.seed,
+        bridges = clamp(options.bridges::f64, 0.0, 2.0)::i32,
+        river = options.river,
+        relief = clamp(options.relief, 0.0, 2.0),
+        size = clamp(options.size::f64, 30.0, 180.0)::i32,
+        density = clamp(options.density::f64, 0.0, 100.0)::i32
+    }
+    local city: City = { nodes = {}, edges = {}, buildings = {}, river = {}, options = normalized }
+    local stream: Random = { state = (math.abs(options.seed::f64) % 2147483646.0) + 1.0 }
+    if normalized.river then
+        for index = -1::i32, 65::i32 do
+            local y: f64 = (index::f64) * 10.0
+            table.insert(city.river, { x = river_x(options.seed, y), y = y })
+        end
+    end
+    -- The two markets anchor opposite neighbourhoods. Their IDs stay stable
+    -- across seeds and bridge budgets, making an honest cross-river route demo.
+    table.insert(city.nodes, { x = 290.0, y = 325.0 })
+    table.insert(city.nodes, { x = 685.0, y = 295.0 })
+    if not normalized.river then
+        add_edge(city, 1, 2, 10.0, false)
+    end
+    if normalized.river then
+        for index = 1::i32, normalized.bridges do
+            local y: f64 = 305.0
+            if index == 2 then
+                y = 490.0
+            end
+            -- Choose a locally straight, short crossing from several nearby
+            -- sites rather than allowing street growth to manufacture bridges.
+            local score: f64 = 1000000.0
+            local chosen: f64 = y
+            for offset = -3::i32, 3::i32 do
+                local trial: f64 = y + (offset::f64) * 12.0
+                local slope: f64 = math.abs(
+                    river_x(options.seed, trial + 10.0) - river_x(options.seed, trial - 10.0)
+                )
+                local candidate: f64 = slope + math.abs(trial - y) * 0.08
+                if candidate < score then
+                    score = candidate
+                    chosen = trial
+                end
+            end
+            local x: f64 = river_x(options.seed, chosen)
+            table.insert(city.nodes, { x = x - 35.0, y = chosen })
+            local left: i32 = #city.nodes
+            table.insert(city.nodes, { x = x + 35.0, y = chosen })
+            local right: i32 = #city.nodes
+            add_edge(city, left, right, 9.0, true)
+            attach(city, left, 600.0, 10.0)
+            attach(city, right, 600.0, 10.0)
+        end
+    end
+    -- Incremental settlement: wide core connections first, finer lanes later.
+    -- The slope penalty can select a longer, flatter connection around a knoll.
+    for attempt = 1::i32, normalized.size * 8 do
+        if #city.nodes >= normalized.size then
+            break
+        end
+        local p: Point = { x = 65.0 + random(stream) * 830.0, y = 80.0 + random(stream) * 490.0 }
+        -- A soft, uneven settlement perimeter avoids the sampling rectangle
+        -- becoming the city boundary. Market-centred growth still controls
+        -- which of these sites can actually join the existing settlement.
+        local nx: f64 = (p.x - 480.0) / 420.0
+        local ny: f64 = (p.y - 325.0) / 250.0
+        local envelope: f64 = 0.94 + 0.10 * math.sin(
+            p.y / 74.0 + (normalized.seed::f64)
+        ) + 0.05 * math.sin(p.x / 83.0)
+        local good: bool = water_distance(city, p) > 25.0 and nx * nx + ny * ny < envelope
+        for node in city.nodes do
+            if distance(p, node) < 43.0 then
+                good = false
+            end
+        end
+        if good then
+            table.insert(city.nodes, p)
+            local width: f64 = 6.0
+            if #city.nodes < 18 then
+                width = 9.0
+            end
+            if not attach(city, #city.nodes, 180.0, width) then
+                table.remove(city.nodes, #city.nodes)
+            end
+        end
+    end
+    -- Close useful detours, not every geometric triangle. This preserves
+    -- dead ends and courts while giving the route meaningful alternatives.
+    for a = 1::i32, #city.nodes do
+        for b = a + 1, #city.nodes do
+            local length: f64 = distance(city.nodes[a], city.nodes[b])
+            if length < 120.0 and degree(
+                city,
+                a
+            ) < 4 and degree(city, b) < 4 and can_connect(city, a, b, 6.0) then
+                local route: {i32} = shortest_path(city, a, b)
+                if #route == 0 or route_length(city, route) > length * 2.1 then
+                    add_edge(city, a, b, 6.0, false)
+                end
+            end
+        end
+    end
+    populate(city, stream)
+    return city
+end
+
+return {
+    generate = generate,
+    shortest_path = shortest_path,
+    route_length = route_length,
+    elevation = elevation,
+    water_distance = water_distance,
+    width = WIDTH,
+    height = HEIGHT,
+    river_width = RIVER_WIDTH
+}
