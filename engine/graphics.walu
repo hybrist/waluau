@@ -84,6 +84,14 @@ local GL_SRC_ALPHA <const>: u32 = 0x0302
 local GL_ONE_MINUS_SRC_ALPHA <const>: u32 = 0x0303
 local GL_DST_COLOR <const>: u32 = 0x0306
 
+local GL_ELEMENT_ARRAY_BUFFER <const>: u32 = 0x8893
+local GL_STATIC_DRAW <const>: u32 = 0x88E4
+local GL_UNSIGNED_INT <const>: u32 = 0x1405
+local GL_SCISSOR_TEST <const>: u32 = 0x0C11
+local GL_DEPTH_TEST <const>: u32 = 0x0B71
+local GL_DEPTH_BUFFER_BIT <const>: u32 = 0x00000100
+local GL_LEQUAL <const>: u32 = 0x0203
+
 -- Interleaved floats per vertex: clip x/y, color, UV, textured flag.
 local VERTEX_FLOATS <const>: i32 = 9
 -- Vertices per batch before an implicit flush inserts an extra draw call.
@@ -197,7 +205,38 @@ export type Graphics = {
     current_texture: i32,
     current_target: i32,
     blend_mode: string,
-    disposed: bool
+    disposed: bool,
+    static_meshes: {StaticMesh},
+    static_mesh_shader: Shader?
+}
+
+-- Static opaque geometry: interleaved position, normal and linear RGB (nine
+-- floats), plus zero-based triangle indices. The owning Graphics releases it.
+export type StaticMesh = {
+    gl: WebGL2RenderingContext,
+    vertices: WebGLBuffer?,
+    indices: WebGLBuffer?,
+    vertex_count: i32,
+    triangle_count: i32,
+    released: bool
+}
+
+-- An independent orthographic preview in logical screen pixels. World units
+-- are meters, Y is up, angles are radians, and span is the vertical extent.
+-- Each draw clears depth in this rectangle; meshes in separate calls do not
+-- occlude each other. This screen-only operation ignores the 2D transform.
+export type MeshView = {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    yaw: f64,
+    pitch: f64,
+    span: f64,
+    center_x: f64,
+    center_y: f64,
+    center_z: f64,
+    depth: f64
 }
 
 -- `flip_v` marks storage whose first row is the logical bottom, which is how
@@ -507,7 +546,9 @@ void main() {
         current_texture = 0,
         current_target = 0,
         blend_mode = "alpha",
-        disposed = false
+        disposed = false,
+        static_meshes = {},
+        static_mesh_shader = nil
     }
 end
 
@@ -612,6 +653,11 @@ function Graphics:dispose(): unit
     game_gpu_texture_unbind(self.gl)
     self.gl:useProgram(nil)
     self.gl:bindBuffer(GL_ARRAY_BUFFER, nil)
+    self.gl:bindBuffer(GL_ELEMENT_ARRAY_BUFFER, nil)
+    for index = 1, #self.static_meshes do
+        self:release_static_mesh(self.static_meshes[index])
+    end
+    self.static_meshes = {}
     for index = 1, #self.shaders do
         local shader: Shader = self.shaders[index]
         disable_shader_attributes(self.gl, shader)
@@ -2285,6 +2331,158 @@ end
 
 function ivec4_parameter(name: string, x: i32, y: i32, z: i32, w: i32): ShaderParameter
     return IVec4Parameter({ name = name, x = x, y = y, z = z, w = w })
+end
+
+-- Static mesh previews use WebGL2's depth buffer and their own indexed stream.
+-- The surrounding UI keeps its normal batching and shader contract.
+function Graphics:create_static_mesh(vertices: Float32Array, indices: Uint32Array): StaticMesh
+    assert(not self.disposed)
+    assert(#vertices > 0 and #vertices % 9 == 0)
+    assert(#indices > 0 and #indices % 3 == 0)
+    local count: i32 = #vertices // 9
+    for index = 0, #vertices - 1 do
+        local value: f64 = vertices[index]
+        assert(value == value and math.abs(value) <= 3.4028235e38)
+    end
+    for index = 0, #indices - 1 do
+        assert(indices[index] < count::u32)
+    end
+    if self.static_mesh_shader == nil then
+        local compiled: ShaderResult = self:create_shader(
+            [[#version 300 es
+layout(location=0) in vec3 a_position;
+layout(location=1) in vec3 a_normal;
+layout(location=2) in vec3 a_color;
+uniform vec3 u_right;
+uniform vec3 u_up;
+uniform vec3 u_eye;
+uniform vec3 u_center;
+uniform vec3 u_scale;
+out vec3 v_color;
+void main() {
+    vec3 p = a_position - u_center;
+    gl_Position = vec4(dot(p,u_right)*u_scale.x, dot(p,u_up)*u_scale.y,
+                       -dot(p,u_eye)*u_scale.z, 1.0);
+    float diffuse = max(dot(normalize(a_normal), normalize(vec3(-0.5,0.85,0.65))),0.0);
+    // Authored material colors are linear; display the lit result in sRGB.
+    v_color = pow(max(a_color * (0.35 + 0.65*diffuse),vec3(0.0)),vec3(1.0/2.2));
+}
+]],
+            [[#version 300 es
+precision highp float;
+in vec3 v_color;
+out vec4 out_color;
+void main() { out_color = vec4(v_color,1.0); }
+]]
+        )
+        if not compiled.ok then
+            error("static mesh shader: " .. compiled.error.message)
+        end
+        self.static_mesh_shader = compiled.shader
+    end
+    self:flush()
+    local gl: WebGL2RenderingContext = self.gl
+    local vertex_buffer: WebGLBuffer = gl:createBuffer()
+    local index_buffer: WebGLBuffer = gl:createBuffer()
+    gl:bindBuffer(GL_ARRAY_BUFFER, vertex_buffer)
+    gl:bufferData(GL_ARRAY_BUFFER, dom_float32_array_view(vertices), GL_STATIC_DRAW)
+    gl:bindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer)
+    gl:bufferData(GL_ELEMENT_ARRAY_BUFFER, dom_uint32_array_view(indices), GL_STATIC_DRAW)
+    gl:bindBuffer(GL_ELEMENT_ARRAY_BUFFER, nil)
+    gl:bindBuffer(GL_ARRAY_BUFFER, self.buffer)
+    local mesh: StaticMesh = {
+        gl = gl,
+        vertices = vertex_buffer,
+        indices = index_buffer,
+        vertex_count = count,
+        triangle_count = #indices // 3,
+        released = false
+    }
+    table.insert(self.static_meshes, mesh)
+    return mesh
+end
+
+function Graphics:release_static_mesh(mesh: StaticMesh): unit
+    assert(mesh.gl == self.gl)
+    if not mesh.released then
+        self.gl:deleteBuffer(mesh.vertices)
+        self.gl:deleteBuffer(mesh.indices)
+        mesh.vertices = nil
+        mesh.indices = nil
+        mesh.released = true
+    end
+end
+
+function Graphics:draw_static_mesh(mesh: StaticMesh, view: MeshView): unit
+    assert(not self.disposed and not mesh.released and mesh.gl == self.gl)
+    assert(self.current_target == 0)
+    assert(view.width > 0.0 and view.height > 0.0 and view.span > 0.0 and view.depth > 0.0)
+    self:flush()
+    local maybe_shader: Shader? = self.static_mesh_shader
+    assert(maybe_shader ~= nil)
+    local shader: Shader = maybe_shader::Shader
+    local maybe_program: WebGLProgram? = shader.program
+    assert(maybe_program ~= nil)
+    local program: WebGLProgram = maybe_program::WebGLProgram
+    local gl: WebGL2RenderingContext = self.gl
+    local sx: f64 = (gl.drawingBufferWidth::f64) / self.width
+    local sy: f64 = (gl.drawingBufferHeight::f64) / self.height
+    local x: i32 = (view.x * sx)::i32
+    local y: i32 = ((self.height - view.y - view.height) * sy)::i32
+    local width: i32 = (view.width * sx)::i32
+    local height: i32 = (view.height * sy)::i32
+    gl:viewport(x, y, width, height)
+    gl:enable(GL_SCISSOR_TEST) -- SCISSOR_TEST: independent depth for comparison cells.
+    gl:scissor(x, y, width, height)
+    gl:depthMask(true)
+    gl:clearDepth(1.0)
+    gl:clear(GL_DEPTH_BUFFER_BIT)
+    gl:enable(GL_DEPTH_TEST) -- DEPTH_TEST
+    gl:depthFunc(GL_LEQUAL) -- LEQUAL preserves the authored coplanar overlays.
+    gl:disable(GL_BLEND)
+    disable_shader_attributes(gl, self.active_shader)
+    gl:useProgram(shader.program)
+    gl:bindBuffer(GL_ARRAY_BUFFER, mesh.vertices)
+    gl:bindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.indices)
+    for index = 0::i32, 2::i32 do
+        gl:enableVertexAttribArray(index::u32)
+        gl:vertexAttribPointer(index::u32, 3, GL_FLOAT, false, 36, index * 12)
+    end
+    local cy: f64 = math.cos(view.yaw)
+    local syaw: f64 = math.sin(view.yaw)
+    local cp: f64 = math.cos(view.pitch)
+    local sp: f64 = math.sin(view.pitch)
+    gl:uniform3f(gl:getUniformLocation(program, "u_right"), cy::f32, 0.0, (-syaw)::f32)
+    gl:uniform3f(
+        gl:getUniformLocation(program, "u_up"),
+        (-syaw * sp)::f32,
+        cp::f32,
+        (-cy * sp)::f32
+    )
+    gl:uniform3f(gl:getUniformLocation(program, "u_eye"), (syaw * cp)::f32, sp::f32, (cy * cp)::f32)
+    gl:uniform3f(
+        gl:getUniformLocation(program, "u_center"),
+        view.center_x::f32,
+        view.center_y::f32,
+        view.center_z::f32
+    )
+    gl:uniform3f(
+        gl:getUniformLocation(program, "u_scale"),
+        (2.0 / view.span * view.height / view.width)::f32,
+        (2.0 / view.span)::f32,
+        (2.0 / view.depth)::f32
+    )
+    gl:drawElements(GL_TRIANGLES, mesh.triangle_count * 3, GL_UNSIGNED_INT, 0)
+    for index = 0::i32, 2::i32 do
+        gl:disableVertexAttribArray(index::u32)
+    end
+    gl:bindBuffer(GL_ELEMENT_ARRAY_BUFFER, nil)
+    gl:bindBuffer(GL_ARRAY_BUFFER, self.buffer)
+    gl:disable(GL_DEPTH_TEST)
+    gl:disable(GL_SCISSOR_TEST)
+    gl:enable(GL_BLEND)
+    gl:viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
+    bind_shader(gl, self.active_shader, sx, sy, self.time)
 end
 
 return {

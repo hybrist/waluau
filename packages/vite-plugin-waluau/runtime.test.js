@@ -251,3 +251,23 @@ test('falls back to the raw error when no module error tag is available', () => 
 
   assert.throws(() => runtime.pm_find('a', '(.', 1, 0), /unfinished capture/);
 });
+
+test('uploads uint32 index views without copying or truncating wide indices', () => {
+  const runtime = buildWaluauImports(null, undefined, {
+    requiredImports: [
+      { module: WALUAU_IMPORT_MODULE, name: 'dom_uint32_array_view', kind: 'function' },
+      { module: WALUAU_IMPORT_MODULE, name: 'memory', kind: 'memory' },
+    ],
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE];
+  const pointer = 32;
+  new DataView(runtime.memory.buffer).setUint32(pointer - 8, 3, true);
+  new Uint32Array(runtime.memory.buffer, pointer, 3).set([0, 70000, 0xffffffff]);
+  const view = runtime.dom_uint32_array_view(pointer);
+  assert(view instanceof Uint32Array);
+  assert.deepEqual([...view], [0, 70000, 0xffffffff]);
+  view[1] = 42;
+  assert.equal(new DataView(runtime.memory.buffer).getUint32(pointer + 4, true), 42);
+  runtime.memory.grow(1);
+  assert.deepEqual([...runtime.dom_uint32_array_view(pointer)], [0, 42, 0xffffffff]);
+});

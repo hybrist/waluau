@@ -1,0 +1,186 @@
+local storybook = require("waluau:engine/storybook")
+local graphics_module = require("waluau:engine/graphics")
+local lod0 = require("./church/lod0")
+local lod1 = require("./church/lod1")
+local lod2 = require("./church/lod2")
+local lod3 = require("./church/lod3")
+local reference = require("./church/reference")
+
+type Graphics = graphics_module.Graphics
+type Mesh = graphics_module.StaticMesh
+
+local yaw = storybook.range("rotation", 35, 0, 360, 5)
+local pitch = storybook.range("elevation", 40, 5, 90, 5)
+local zoom = storybook.range("zoom", 100, 25, 200, 5)
+local fidelity = storybook.range("lod", 0, 0, 3, 1)
+local meshes: {Mesh} = {}
+local labels: {string} = {
+    "LOD 0 / ORIGINAL",
+    "LOD 1 / REDUCED",
+    "LOD 2 / MAP DETAIL",
+    "LOD 3 / SILHOUETTE"
+}
+
+local function prepare(graphics: Graphics): unit
+    if #meshes == 0 then
+        table.insert(meshes, lod0.create(graphics))
+        table.insert(meshes, lod1.create(graphics))
+        table.insert(meshes, lod2.create(graphics))
+        table.insert(meshes, lod3.create(graphics))
+        table.insert(meshes, reference.create(graphics))
+    elseif meshes[1].released then
+        -- Story remount and HMR may create a fresh renderer.
+        meshes = {}
+        prepare(graphics)
+    end
+end
+
+local function cell(
+    graphics: Graphics,
+    level: i32,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    elevation: f64,
+    span: f64
+): unit
+    local mesh: Mesh = meshes[level + 1]
+    graphics:set_color("#172029")
+    graphics:fill_rectangle(x, y, width, height)
+    graphics:draw_static_mesh(
+        mesh,
+        {
+            x = x,
+            y = y + 50.0,
+            width = width,
+            height = height - 95.0,
+            yaw = (yaw.value()::f64) * math.pi / 180.0,
+            pitch = elevation * math.pi / 180.0,
+            span = span * 100.0 / (zoom.value()::f64),
+            center_x = 0.0,
+            center_y = 6.0,
+            center_z = -1.3,
+            depth = 100.0
+        }
+    )
+    graphics:set_font("14px")
+    graphics:set_color("#ead7b6")
+    graphics:print(labels[level + 1], x + 18.0, y + 16.0)
+    graphics:set_color("#b6c9d6")
+    graphics:print(
+        tostring(
+            mesh.vertex_count
+        ) .. " GPU VERTICES / " .. tostring(mesh.triangle_count) .. " TRIANGLES",
+        x + 18.0,
+        y + height - 38.0
+    )
+    local kib: i32 = (mesh.vertex_count * 36 + mesh.triangle_count * 12) // 1024
+    graphics:print(tostring(kib) .. " KiB GEOMETRY", x + 18.0, y + height - 19.0)
+end
+
+local function comparison(graphics: Graphics, alpha: f64): unit
+    prepare(graphics)
+    graphics:set_color("#ead7b6")
+    graphics:set_font("20px")
+    graphics:print("MEDIEVAL CHURCH / FIDELITY LAB", 24.0, 18.0)
+    graphics:set_font("14px")
+    graphics:set_color("#b6c9d6")
+    graphics:print("SAME CAMERA, LIGHTING AND SCALE / 17.45 m TOWER", 24.0, 48.0)
+    for level = 0::i32, 3::i32 do
+        cell(
+            graphics,
+            level,
+            24.0 + ((level % 2)::f64) * 552.0,
+            82.0 + ((level // 2)::f64) * 344.0,
+            532.0,
+            324.0,
+            pitch.value()::f64,
+            37.0
+        )
+    end
+end
+
+local function overhead(graphics: Graphics, alpha: f64): unit
+    prepare(graphics)
+    for level = 0::i32, 3::i32 do
+        cell(
+            graphics,
+            level,
+            24.0 + ((level % 2)::f64) * 552.0,
+            24.0 + ((level // 2)::f64) * 364.0,
+            532.0,
+            344.0,
+            90.0,
+            37.0
+        )
+    end
+end
+
+local function inspect(graphics: Graphics, alpha: f64): unit
+    prepare(graphics)
+    cell(graphics, fidelity.value(), 24.0, 24.0, 800.0, 724.0, pitch.value()::f64, 35.0)
+    graphics:draw_static_mesh(
+        meshes[5],
+        {
+            x = 834.0,
+            y = 74.0,
+            width = 274.0,
+            height = 629.0,
+            yaw = (yaw.value()::f64) * math.pi / 180.0,
+            pitch = (pitch.value()::f64) * math.pi / 180.0,
+            span = 35.0 * 100.0 / (zoom.value()::f64),
+            center_x = 0.0,
+            center_y = 6.0,
+            center_z = 0.0,
+            depth = 100.0
+        }
+    )
+    graphics:set_color("#b6c9d6")
+    graphics:print("TWO-STORY REFERENCE", 840.0, 42.0)
+    graphics:print("6 m WALLS / 7.5 m RIDGE", 840.0, 715.0)
+end
+
+local function map_scale(graphics: Graphics, alpha: f64): unit
+    prepare(graphics)
+    graphics:set_color("#ead7b6")
+    graphics:set_font("20px")
+    graphics:print("MAP SCALE / SMALL PREVIEWS AT MATCHED SCALE", 24.0, 20.0)
+    for level = 0::i32, 3::i32 do
+        cell(
+            graphics,
+            level,
+            24.0 + ((level % 2)::f64) * 552.0,
+            90.0 + ((level // 2)::f64) * 260.0,
+            532.0,
+            220.0,
+            pitch.value()::f64,
+            37.0
+        )
+    end
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Compare LoDs",
+            { draw = comparison, width = 1132, height = 774, background = "#0d131a" },
+            {yaw.declaration, pitch.declaration, zoom.declaration}
+        ),
+        storybook.story(
+            "Overhead footprint",
+            { draw = overhead, width = 1132, height = 774, background = "#0d131a" },
+            {yaw.declaration, zoom.declaration}
+        ),
+        storybook.story(
+            "Inspect one LoD",
+            { draw = inspect, width = 1132, height = 774, background = "#0d131a" },
+            {fidelity.declaration, yaw.declaration, pitch.declaration, zoom.declaration}
+        ),
+        storybook.story(
+            "Map scale",
+            { draw = map_scale, width = 1132, height = 640, background = "#0d131a" },
+            {yaw.declaration, pitch.declaration, zoom.declaration}
+        )
+    }
+)

@@ -1,0 +1,121 @@
+-- Front green triangle is deliberately submitted before a red triangle behind
+-- it. The later 2D square must still cover both. Also exercises two previews,
+-- resource release, validation and repeated disposal on one WebGL2 context.
+local window = require("dom:window")
+local graphics_module = require("../../engine/graphics")
+local element: Element = window.document:create_element("canvas")
+element.id = "static-mesh-test"
+window.document.body:append_child(element)
+if HTMLCanvasElement(canvas) = element then
+    canvas.width = 160
+    canvas.height = 80
+    local maybe_gl: WebGL2RenderingContext? = canvas:get_context_webgl2()
+    assert(maybe_gl ~= nil)
+    local gl: WebGL2RenderingContext = maybe_gl::WebGL2RenderingContext
+    local graphics: graphics_module.Graphics = graphics_module.Graphics.new(gl, 160.0, 80.0)
+    local vertices = {
+        -1.0,
+        -1.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        -1.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        -1.0,
+        -1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        -1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0
+    }::Float32Array
+    local mesh: graphics_module.StaticMesh = graphics:create_static_mesh(
+        vertices,
+        {0, 1, 2, 3, 4, 5}::Uint32Array
+    )
+    assert(mesh.vertex_count == 6 and mesh.triangle_count == 2)
+    local invalid = pcall(
+        function(): unit
+            graphics:create_static_mesh(vertices, {0, 1, 9}::Uint32Array)
+        end
+    )
+    assert(not invalid)
+    local automatic: graphics_module.StaticMesh = graphics:create_static_mesh(
+        vertices,
+        {0, 1, 2}::Uint32Array
+    )
+
+    graphics:clear("#0000ff")
+    graphics:set_color("#ffff00")
+    graphics:fill_rectangle(0.0, 0.0, 8.0, 8.0)
+    for column = 0::i32, 1::i32 do
+        graphics:draw_static_mesh(
+            mesh,
+            {
+                x = (column::f64) * 80.0,
+                y = 0.0,
+                width = 80.0,
+                height = 80.0,
+                yaw = 0.0,
+                pitch = 0.0,
+                span = 3.0,
+                center_x = 0.0,
+                center_y = 0.0,
+                center_z = 0.0,
+                depth = 10.0
+            }
+        )
+    end
+    graphics:set_color("#ff00ff")
+    graphics:fill_rectangle(35.0, 35.0, 10.0, 10.0)
+    graphics:present()
+    graphics:release_static_mesh(mesh)
+    graphics:release_static_mesh(mesh)
+    assert(mesh.released and mesh.vertices == nil and mesh.indices == nil)
+    assert(gl:getError() == 0)
+    graphics:dispose()
+    assert(automatic.released)
+    graphics:dispose()
+else
+    assert(false)
+end
