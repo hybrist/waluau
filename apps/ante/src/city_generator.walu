@@ -3,10 +3,20 @@
 -- shared node, and water can only be crossed by the budgeted bridge edges.
 export type Point = { x: f64, y: f64 }
 export type Options = { seed: i32, bridges: i32, river: bool, relief: f64, size: i32, density: i32 }
-export type Edge = { a: i32, b: i32, width: f64, length: f64, bridge: bool }
-export type Building = { footprint: {Point}, access: Point, edge: i32, x: f64, y: f64, radius: f64 }
+export type Edge = { a: i32, b: i32, width: f64, length: f64, bridge: bool, passage: bool }
+export type Building = {
+    footprint: {Point},
+    access: Point,
+    edge: i32,
+    x: f64,
+    y: f64,
+    radius: f64,
+    group: i32
+}
 export type Landmark = { kind: string, name: string, center: Point, radius: f64, node: i32 }
+export type Courtyard = { footprint: {Point}, group: i32, node: i32 }
 export type City = {
+    courtyards: {Courtyard},
     width: f64,
     height: f64,
     landmarks: {Landmark},
@@ -172,7 +182,8 @@ function add_edge(city: City, a: i32, b: i32, width: f64, bridge: bool): unit
             b = b,
             width = width,
             length = distance(city.nodes[a], city.nodes[b]),
-            bridge = bridge
+            bridge = bridge,
+            passage = false
         }
     )
 end
@@ -369,13 +380,340 @@ function footprint_point(center: Point, dx: f64, dy: f64, x: f64, y: f64): Point
     return { x = center.x + dx * x - dy * y, y = center.y + dy * x + dx * y }
 end
 
-function populate(city: City, stream: Random): unit
+-- Compounds reserve the whole frontage and yard before detached homes are
+-- placed. A single density threshold keeps each attached row intact.
+type Reservation = { footprint: {Point}, group: i32, threshold: f64 }
+
+function polygon_contains(polygon: {Point}, point: Point): bool
+    local positive: bool = false
+    local negative: bool = false
+    for index = 1::i32, #polygon do
+        local next_index: i32 = index % #polygon + 1
+        local side: f64 = cross(polygon[index], polygon[next_index], point)
+        positive = positive or side > 0.00001
+        negative = negative or side < -0.00001
+    end
+    return not (positive and negative)
+end
+
+function polygon_point_distance(polygon: {Point}, point: Point): f64
+    if polygon_contains(polygon, point) then
+        return 0.0
+    end
+    local best: f64 = 1000000.0
+    for index = 1::i32, #polygon do
+        best = math.min(
+            best,
+            segment_distance(point, polygon[index], polygon[index % #polygon + 1])
+        )
+    end
+    return best
+end
+
+function polygon_segment_distance(polygon: {Point}, a: Point, b: Point): f64
+    if polygon_contains(polygon, a) or polygon_contains(polygon, b) then
+        return 0.0
+    end
+    local best: f64 = 1000000.0
+    for index = 1::i32, #polygon do
+        best = math.min(
+            best,
+            segments_distance(a, b, polygon[index], polygon[index % #polygon + 1])
+        )
+    end
+    return best
+end
+
+function compound_clear(
+    city: City,
+    reservations: {Reservation},
+    footprint: {Point},
+    street: i32,
+    junction: Point,
+    end_point: Point
+): bool
+    for point in footprint do
+        if point.x < 12.0 or point.x > city.width - 12.0 or point.y < 35.0 or point.y > city.height - 25.0 then
+            return false
+        end
+    end
+    local grade_x: f64 = math.abs(
+        elevation(
+            city,
+            { x = end_point.x + 12.0, y = end_point.y }
+        ) - elevation(city, { x = end_point.x - 12.0, y = end_point.y })
+    ) / 24.0
+    local grade_y: f64 = math.abs(
+        elevation(
+            city,
+            { x = end_point.x, y = end_point.y + 12.0 }
+        ) - elevation(city, { x = end_point.x, y = end_point.y - 12.0 })
+    ) / 24.0
+    if math.sqrt(grade_x * grade_x + grade_y * grade_y) > 0.24 then
+        return false
+    end
+    for landmark in city.landmarks do
+        if polygon_point_distance(
+            footprint,
+            landmark.center
+        ) < landmark.radius + 2.0 or segment_distance(
+            landmark.center,
+            junction,
+            end_point
+        ) < landmark.radius + 2.0 then
+            return false
+        end
+    end
+    for index = 2::i32, #city.river do
+        if polygon_segment_distance(
+            footprint,
+            city.river[index - 1],
+            city.river[index]
+        ) < RIVER_WIDTH * 0.5 + 2.0 or segments_near(
+            junction,
+            end_point,
+            city.river[index - 1],
+            city.river[index],
+            RIVER_WIDTH * 0.5 + 3.0
+        ) then
+            return false
+        end
+    end
+    for index = 1::i32, #city.edges do
+        if index ~= street then
+            local edge: Edge = city.edges[index]
+            if polygon_segment_distance(
+                footprint,
+                city.nodes[edge.a],
+                city.nodes[edge.b]
+            ) < edge.width * 0.5 + 2.0 or segments_near(
+                junction,
+                end_point,
+                city.nodes[edge.a],
+                city.nodes[edge.b],
+                edge.width * 0.5 + 3.0
+            ) then
+                return false
+            end
+        end
+    end
+    for reservation in reservations do
+        for index = 1::i32, #footprint do
+            if polygon_segment_distance(
+                reservation.footprint,
+                footprint[index],
+                footprint[index % #footprint + 1]
+            ) < 2.0 then
+                return false
+            end
+        end
+        if polygon_contains(footprint, reservation.footprint[1]) then
+            return false
+        end
+    end
+    return true
+end
+
+function attached_row(
+    city: City,
+    stream: Random,
+    origin: Point,
+    dx: f64,
+    dy: f64,
+    side: f64,
+    low: f64,
+    high: f64,
+    front: f64,
+    group: i32,
+    edge: i32
+): unit
+    -- Neighbours reuse the exact two boundary points, rather than overlapping
+    -- rectangles or nearly coincident walls. Rear depths vary along the row.
+    local middle: f64 = low + (high - low) * (0.43 + random(stream) * 0.14)
+    local boundaries: {f64} = {low, middle, high}
+    local fronts: {Point} = {}
+    local backs: {Point} = {}
+    for boundary in boundaries do
+        table.insert(fronts, footprint_point(origin, dx, dy, boundary, front * side))
+        table.insert(
+            backs,
+            footprint_point(origin, dx, dy, boundary, (front + 15.0 + random(stream) * 5.0) * side)
+        )
+    end
+    for index = 1::i32, 2::i32 do
+        local footprint: {Point} = {
+            fronts[index],
+            fronts[index + 1],
+            backs[index + 1],
+            backs[index]
+        }
+        local center: Point = { x = 0.0, y = 0.0 }
+        for point in footprint do
+            center.x += point.x * 0.25
+            center.y += point.y * 0.25
+        end
+        local radius: f64 = 0.0
+        for point in footprint do
+            radius = math.max(radius, distance(center, point))
+        end
+        local access: Point = footprint_point(
+            origin,
+            dx,
+            dy,
+            (boundaries[index] + boundaries[index + 1]) * 0.5,
+            0.0
+        )
+        table.insert(
+            city.buildings,
+            {
+                footprint = footprint,
+                access = access,
+                edge = edge,
+                x = center.x,
+                y = center.y,
+                radius = radius,
+                group = group
+            }
+        )
+    end
+end
+
+function plan_oldtown(city: City, stream: Random): {Reservation}
+    local reservations: {Reservation} = {}
+    local original_count: i32 = #city.edges
+    local scale: f64 = city.width / WIDTH
+    for original = 1::i32, original_count do
+        local street: i32 = original
+        local along: f64 = 40.0
+        while #city.nodes + 2 <= city.options.size do
+            local edge: Edge = city.edges[street]
+            if edge.bridge or edge.passage or along > edge.length - 35.0 then
+                break
+            end
+            local a: Point = city.nodes[edge.a]
+            local b: Point = city.nodes[edge.b]
+            local dx: f64 = (b.x - a.x) / edge.length
+            local dy: f64 = (b.y - a.y) / edge.length
+            local origin: Point = { x = a.x + dx * along, y = a.y + dy * along }
+            local market_distance: f64 = math.min(
+                distance(origin, city.nodes[1]),
+                distance(origin, city.nodes[2])
+            )
+            local desirable: bool = market_distance < 180.0 * scale or (edge.width >= 9.0 and market_distance < 270.0 * scale)
+            local chosen_side: f64 = 0.0
+            local half: f64 = 26.0 + random(stream) * 4.0
+            local front: f64 = edge.width * 0.5 + 2.0
+            local footprint: {Point} = {}
+            local end_point: Point = origin
+            if desirable then
+                for side = -1::i32, 1::i32, 2::i32 do
+                    local direction: f64 = side::f64
+                    local candidate: {Point} = {
+                        footprint_point(origin, dx, dy, -half, front * direction),
+                        footprint_point(origin, dx, dy, half, front * direction),
+                        footprint_point(origin, dx, dy, half, (front + 34.0) * direction),
+                        footprint_point(origin, dx, dy, -half, (front + 34.0) * direction)
+                    }
+                    local destination: Point = footprint_point(
+                        origin,
+                        dx,
+                        dy,
+                        0.0,
+                        (front + 28.0) * direction
+                    )
+                    if compound_clear(
+                        city,
+                        reservations,
+                        candidate,
+                        street,
+                        origin,
+                        destination
+                    ) then
+                        chosen_side = direction
+                        footprint = candidate
+                        end_point = destination
+                        break
+                    end
+                end
+            end
+            if chosen_side == 0.0 then
+                along += 16.0
+                continue
+            end
+            -- Splitting changes no road geometry. The passage branches at an
+            -- actual shared node and ends at a routable courtyard destination.
+            table.insert(city.nodes, origin)
+            local junction: i32 = #city.nodes
+            table.insert(city.nodes, end_point)
+            local court_node: i32 = #city.nodes
+            local old_end: i32 = edge.b
+            edge.b = junction
+            edge.length = distance(a, origin)
+            add_edge(city, junction, old_end, edge.width, false)
+            local continuation: i32 = #city.edges
+            add_edge(city, junction, court_node, 3.0, false)
+            city.edges[#city.edges].passage = true
+            local group: i32 = #reservations + 1
+            table.insert(
+                reservations,
+                { footprint = footprint, group = group, threshold = random(stream) * 100.0 }
+            )
+            table.insert(
+                city.courtyards,
+                {
+                    footprint = {
+                        footprint_point(origin, dx, dy, -half, (front + 22.0) * chosen_side),
+                        footprint_point(origin, dx, dy, half, (front + 22.0) * chosen_side),
+                        footprint_point(origin, dx, dy, half, (front + 34.0) * chosen_side),
+                        footprint_point(origin, dx, dy, -half, (front + 34.0) * chosen_side)
+                    },
+                    group = group,
+                    node = court_node
+                }
+            )
+            attached_row(
+                city,
+                stream,
+                origin,
+                dx,
+                dy,
+                chosen_side,
+                -half,
+                -2.5,
+                front,
+                group,
+                street
+            )
+            attached_row(
+                city,
+                stream,
+                origin,
+                dx,
+                dy,
+                chosen_side,
+                2.5,
+                half,
+                front,
+                group,
+                continuation
+            )
+            street = continuation
+            along = 70.0
+        end
+    end
+    return reservations
+end
+
+function populate(city: City, stream: Random, reservations: {Reservation}): unit
     -- Reserve the entire collision-safe plan before occupancy is sampled.
     -- Empty lots at low density cannot change a later house's shape or access.
     local occupancy: {f64} = {}
+    for house in city.buildings do
+        table.insert(occupancy, reservations[house.group].threshold)
+    end
     for edge_index = 1::i32, #city.edges do
         local edge: Edge = city.edges[edge_index]
-        if edge.bridge then
+        if edge.bridge or edge.passage then
             continue
         end
         local a: Point = city.nodes[edge.a]
@@ -471,6 +809,18 @@ function populate(city: City, stream: Random): unit
                         end
                     end
                 end
+                for reservation in reservations do
+                    if polygon_point_distance(
+                        reservation.footprint,
+                        center
+                    ) < radius + 2.0 or polygon_segment_distance(
+                        reservation.footprint,
+                        center,
+                        access
+                    ) < 1.0 then
+                        good = false
+                    end
+                end
                 for house in city.buildings do
                     if math.abs(
                         center.x - house.x
@@ -525,7 +875,8 @@ function populate(city: City, stream: Random): unit
                             edge = edge_index,
                             x = center.x,
                             y = center.y,
-                            radius = radius
+                            radius = radius,
+                            group = 0
                         }
                     )
                 end
@@ -627,6 +978,7 @@ function generate(options: Options): City
     }
     local scale: f64 = math.sqrt(math.max(90.0, normalized.size::f64) / 90.0)
     local city: City = {
+        courtyards = {},
         width = WIDTH * scale,
         height = HEIGHT * scale,
         landmarks = {},
@@ -696,8 +1048,9 @@ function generate(options: Options): City
     reserve_church(city)
     -- Incremental settlement: wide core connections first, finer lanes later.
     -- The slope penalty can select a longer, flatter connection around a knoll.
+    local street_budget: i32 = math.floor((normalized.size::f64) * 0.8)::i32
     for attempt = 1::i32, normalized.size * 20 do
-        if #city.nodes >= normalized.size then
+        if #city.nodes >= street_budget then
             break
         end
         local p: Point = {
@@ -765,7 +1118,8 @@ function generate(options: Options): City
             end
         end
     end
-    populate(city, stream)
+    local reservations: {Reservation} = plan_oldtown(city, stream)
+    populate(city, stream, reservations)
     return city
 end
 

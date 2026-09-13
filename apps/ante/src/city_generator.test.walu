@@ -49,9 +49,203 @@ function connected(city: generator.City, a: i32, b: i32): bool
     return false
 end
 
+-- Shared boundaries are allowed; interior overlap is not. Check the polygon
+-- geometry instead of enforcing a detached-house clearance circle on a row.
+function strictly_inside(point: generator.Point, polygon: {generator.Point}): bool
+    local inside: bool = false
+    for index = 1::i32, #polygon do
+        local a: generator.Point = polygon[index]
+        local b: generator.Point = polygon[index % #polygon + 1]
+        if segment_distance(point, a, b) < 0.00001 then
+            return false
+        end
+        if (a.y > point.y) ~= (b.y > point.y) then
+            if point.x < a.x + (point.y - a.y) * (b.x - a.x) / (b.y - a.y) then
+                inside = not inside
+            end
+        end
+    end
+    return inside
+end
+
+-- The supported footprints are convex quads or the six-vertex rear-notch
+-- shape. Test positive triangle intersection area using separating axes;
+-- vertex-only containment would miss aligned rectangles overlapping at ends.
+function triangle_overlap(first: {generator.Point}, second: {generator.Point}): bool
+    for side = 1::i32, 2::i32 do
+        local polygon: {generator.Point} = first
+        if side == 2 then
+            polygon = second
+        end
+        for index = 1::i32, 3::i32 do
+            local a: generator.Point = polygon[index]
+            local b: generator.Point = polygon[index % 3 + 1]
+            local dx: f64 = a.y - b.y
+            local dy: f64 = b.x - a.x
+            local low_a: f64 = 1000000000.0
+            local high_a: f64 = -1000000000.0
+            local low_b: f64 = 1000000000.0
+            local high_b: f64 = -1000000000.0
+            for point in first do
+                local value: f64 = point.x * dx + point.y * dy
+                low_a = math.min(low_a, value)
+                high_a = math.max(high_a, value)
+            end
+            for point in second do
+                local value: f64 = point.x * dx + point.y * dy
+                low_b = math.min(low_b, value)
+                high_b = math.max(high_b, value)
+            end
+            if math.min(high_a, high_b) - math.max(low_a, low_b) < 0.00001 then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+function triangles(polygon: {generator.Point}): {i32}
+    if #polygon == 4 then
+        return {1, 2, 3, 1, 3, 4}
+    end
+    return {1, 2, 3, 1, 3, 4, 1, 4, 6, 4, 5, 6}
+end
+
+function footprints_overlap(first: {generator.Point}, second: {generator.Point}): bool
+    local a: {i32} = triangles(first)
+    local b: {i32} = triangles(second)
+    for i = 1::i32, #a, 3::i32 do
+        for j = 1::i32, #b, 3::i32 do
+            if triangle_overlap(
+                {first[a[i]], first[a[i + 1]], first[a[i + 2]]},
+                {second[b[j]], second[b[j + 1]], second[b[j + 2]]}
+            ) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function shared_wall(first: {generator.Point}, second: {generator.Point}): bool
+    for index = 1::i32, #first do
+        local a: generator.Point = first[index]
+        local b: generator.Point = first[index % #first + 1]
+        for other = 1::i32, #second do
+            local c: generator.Point = second[other]
+            local d: generator.Point = second[other % #second + 1]
+            if distance(a, d) < 0.0001 and distance(b, c) < 0.0001 and distance(a, b) > 3.0 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 describe(
     "medieval city generator",
     function()
+        it(
+            "distinguishes overlapping footprints from an allowed shared wall",
+            function()
+                local first: {generator.Point} = {
+                    { x = 0.0, y = 0.0 },
+                    { x = 10.0, y = 0.0 },
+                    { x = 10.0, y = 2.0 },
+                    { x = 0.0, y = 2.0 }
+                }
+                local overlap: {generator.Point} = {
+                    { x = 9.0, y = 0.0 },
+                    { x = 19.0, y = 0.0 },
+                    { x = 19.0, y = 2.0 },
+                    { x = 9.0, y = 2.0 }
+                }
+                local touching: {generator.Point} = {
+                    { x = 10.0, y = 0.0 },
+                    { x = 20.0, y = 0.0 },
+                    { x = 20.0, y = 2.0 },
+                    { x = 10.0, y = 2.0 }
+                }
+                expect(footprints_overlap(first, overlap)):toBe(true)
+                expect(footprints_overlap(first, first)):toBe(true)
+                expect(footprints_overlap(first, touching)):toBe(false)
+            end
+        )
+
+        it(
+            "builds attached old-town rows with reachable narrow passages and clear courtyards",
+            function()
+                local config: generator.Options = options(41, 1, true)
+                config.size = 180
+                config.density = 100
+                local city: generator.City = generator.generate(config)
+                expect(#city.nodes):toBeLessThanOrEqual(config.size)
+                expect(#city.courtyards):toBeGreaterThan(2)
+                local attached: i32 = 0
+                local detached: i32 = 0
+                local attached_distance: f64 = 0.0
+                local detached_distance: f64 = 0.0
+                local shared: i32 = 0
+                for index = 1::i32, #city.buildings do
+                    local house: generator.Building = city.buildings[index]
+                    local center: generator.Point = { x = house.x, y = house.y }
+                    local market_distance: f64 = math.min(
+                        distance(center, city.nodes[1]),
+                        distance(center, city.nodes[2])
+                    )
+                    if house.group > 0 then
+                        attached += 1
+                        attached_distance += market_distance
+                        for other_index = index + 1, #city.buildings do
+                            local other: generator.Building = city.buildings[other_index]
+                            if other.group == house.group then
+                                expect(
+                                    footprints_overlap(house.footprint, other.footprint)
+                                ):toBe(false)
+                                if shared_wall(house.footprint, other.footprint) then
+                                    shared += 1
+                                end
+                            end
+                        end
+                    else
+                        detached += 1
+                        detached_distance += market_distance
+                    end
+                end
+                expect(attached):toBeGreaterThan(12)
+                expect(detached):toBeGreaterThan(0)
+                expect(shared):toBeGreaterThan(5)
+                expect(
+                    attached_distance / (attached::f64)
+                ):toBeLessThan(detached_distance / (detached::f64))
+                for court in city.courtyards do
+                    expect(#court.footprint):toBeGreaterThanOrEqual(4)
+                    expect(#generator.shortest_path(city, 1, court.node)):toBeGreaterThan(1)
+                    local passage: bool = false
+                    for edge in city.edges do
+                        if edge.passage and (edge.a == court.node or edge.b == court.node) then
+                            passage = true
+                            expect(edge.width):toBeGreaterThan(1.0)
+                            expect(edge.width):toBeLessThan(4.0)
+                            expect(edge.bridge):toBe(false)
+                        end
+                    end
+                    expect(passage):toBe(true)
+                    for house in city.buildings do
+                        expect(footprints_overlap(court.footprint, house.footprint)):toBe(false)
+                    end
+                end
+                config.river = false
+                config.bridges = 0
+                config.size = 90
+                local dry: generator.City = generator.generate(config)
+                expect(#dry.courtyards):toBeGreaterThan(0)
+                for court in dry.courtyards do
+                    expect(#generator.shortest_path(dry, 1, court.node)):toBeGreaterThan(1)
+                end
+            end
+        )
+
         it(
             "expands the world and road network at the fivefold slider maximum",
             function()
@@ -120,9 +314,16 @@ describe(
                     ):toBeGreaterThan(place.radius)
                     expect(#generator.shortest_path(large, 1, place.node)):toBeGreaterThan(0)
                     for house in large.buildings do
-                        expect(
-                            distance(place.center, { x = house.x, y = house.y })
-                        ):toBeGreaterThan(place.radius + house.radius)
+                        expect(strictly_inside(place.center, house.footprint)):toBe(false)
+                        for index = 1::i32, #house.footprint do
+                            expect(
+                                segment_distance(
+                                    place.center,
+                                    house.footprint[index],
+                                    house.footprint[index % #house.footprint + 1]
+                                )
+                            ):toBeGreaterThan(place.radius)
+                        end
                     end
                 end
             end
@@ -152,6 +353,21 @@ describe(
                     expect(empty.edges[index].b):toBe(full.edges[index].b)
                 end
                 for house in sparse.buildings do
+                    if house.group > 0 then
+                        local sparse_members: i32 = 0
+                        local full_members: i32 = 0
+                        for member in sparse.buildings do
+                            if member.group == house.group then
+                                sparse_members += 1
+                            end
+                        end
+                        for member in full.buildings do
+                            if member.group == house.group then
+                                full_members += 1
+                            end
+                        end
+                        expect(sparse_members):toBe(full_members)
+                    end
                     local found: bool = false
                     for other in full.buildings do
                         if house.x == other.x and house.y == other.y then
@@ -190,9 +406,16 @@ describe(
                     ):toBeGreaterThan(place.radius)
                     expect(#generator.shortest_path(city, 1, place.node)):toBeGreaterThan(0)
                     for house in city.buildings do
-                        expect(
-                            distance(place.center, { x = house.x, y = house.y })
-                        ):toBeGreaterThan(place.radius + house.radius)
+                        expect(strictly_inside(place.center, house.footprint)):toBe(false)
+                        for index = 1::i32, #house.footprint do
+                            expect(
+                                segment_distance(
+                                    place.center,
+                                    house.footprint[index],
+                                    house.footprint[index % #house.footprint + 1]
+                                )
+                            ):toBeGreaterThan(place.radius)
+                        end
                         expect(
                             segment_distance(
                                 place.center,
@@ -226,6 +449,7 @@ describe(
                     width = 960.0,
                     height = 640.0,
                     landmarks = {},
+                    courtyards = {},
                     river = {},
                     buildings = {},
                     nodes = {
@@ -236,10 +460,31 @@ describe(
                         { x = 20.0, y = 20.0 }
                     },
                     edges = {
-                        { a = 1, b = 3, length = 4.0, width = 4.0, bridge = false },
-                        { a = 3, b = 4, length = math.sqrt(52.0), width = 4.0, bridge = false },
-                        { a = 1, b = 2, length = 3.0, width = 4.0, bridge = false },
-                        { a = 2, b = 4, length = 3.0, width = 4.0, bridge = false }
+                        {
+                            a = 1,
+                            b = 3,
+                            length = 4.0,
+                            width = 4.0,
+                            bridge = false,
+                            passage = false
+                        },
+                        {
+                            a = 3,
+                            b = 4,
+                            length = math.sqrt(52.0),
+                            width = 4.0,
+                            bridge = false,
+                            passage = false
+                        },
+                        {
+                            a = 1,
+                            b = 2,
+                            length = 3.0,
+                            width = 4.0,
+                            bridge = false,
+                            passage = false
+                        },
+                        { a = 2, b = 4, length = 3.0, width = 4.0, bridge = false, passage = false }
                     }
                 }
                 local route: {i32} = generator.shortest_path(city, 1, 4)
@@ -456,9 +701,14 @@ describe(
                         local first: generator.Building = city.buildings[index]
                         for other_index = index + 1, #city.buildings do
                             local other: generator.Building = city.buildings[other_index]
-                            expect(
-                                distance({ x = first.x, y = first.y }, { x = other.x, y = other.y })
-                            ):toBeGreaterThan(first.radius + other.radius)
+                            if distance(
+                                { x = first.x, y = first.y },
+                                { x = other.x, y = other.y }
+                            ) < first.radius + other.radius then
+                                expect(
+                                    footprints_overlap(first.footprint, other.footprint)
+                                ):toBe(false)
+                            end
                         end
                     end
                     expect(irregular):toBeGreaterThan(0)
