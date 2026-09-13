@@ -6,6 +6,7 @@ local screen_module = require("./game_screen")
 local city_map = require("./city_map")
 local fixture = require("../test/game_fixture")
 local game = require("./game")
+local spells = require("./spells/spell")
 
 function item(state: engine.AccessibleState, key: string): engine.AccessibleItem
     for entry in state.items do
@@ -60,6 +61,14 @@ describe(
                 expect(
                     item(accessibility.duel_state(screen), "spell-feedback").label
                 ):toBe("Firebolt resolving. Burning the table card.")
+                -- Controls retained before the cast cannot charge or select
+                -- again while Firebolt still owns its target.
+                accessibility.duel_activate(screen, city, "spell-1")
+                accessibility.duel_activate(screen, city, "table-2")
+                accessibility.duel_activate(screen, city, "skip")
+                expect(screen.rules:gold()):toBe(before - 5)
+                expect(screen.ui.cast_slot == nil):toBe(true)
+                expect(#screen.ui.swap_table_cards):toBe(0)
                 screen:update(city, 10.0)
                 screen:update(city, 10.0)
                 screen.presentation:skip()
@@ -78,6 +87,32 @@ describe(
                         true
                     ) ~= nil
                 ):toBe(true)
+            end
+        )
+
+        it(
+            "rejects a retained spell action after it becomes unaffordable",
+            function(): unit
+                local screen: screen_module.State = screen_module.State.new()
+                local city: city_map.State = city_map.State.new(95)
+                screen.rules = game.State.new(
+                    false,
+                    {spells.Spell.new(spells.SpellKind.Clone, 1)},
+                    5
+                )
+                screen.presentation:skip()
+                expect(
+                    item(accessibility.duel_state(screen), "spell-1").disabled == true
+                ):toBe(false)
+                accessibility.duel_activate(screen, city, "spell-1")
+                accessibility.duel_activate(screen, city, "table-1")
+                expect(screen.rules:gold()):toBe(0)
+                expect(
+                    item(accessibility.duel_state(screen), "spell-1").disabled == true
+                ):toBe(true)
+                accessibility.duel_activate(screen, city, "spell-1")
+                expect(screen.ui.cast_slot == nil):toBe(true)
+                expect(screen.rules:gold()):toBe(0)
             end
         )
 
