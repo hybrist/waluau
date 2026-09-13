@@ -15,7 +15,8 @@ packaged resources and Storybook resource barrier serve every scene. Wide and
 tall scenes use the production `layout.update` calculation. Loading and fatal
 scenes call `presentation_resources.draw_status`; the loading flag/error belong
 to a separate diagnostic instance, so loading the story's real assets still
-completes normally. No production failure or layout drawing is copied here.
+completes normally. Loading uses the built-in font, as the live gate does before
+the display font arrives. No production failure or layout drawing is copied here.
 
 | Former gameplay measurement | Appearance replacement | Semantic coverage that remains |
 | --- | --- | --- |
@@ -43,7 +44,8 @@ WebGL2 shaders; viewport is 1200×800, DPR is 1, locale en-US, timezone UTC.
 The canvas alone is captured, avoiding Storybook chrome and host system fonts.
 The font, atlases, textures and audio are the game's checked-in asset bundle.
 The Storybook-only resource barrier fails on asset/shader errors and requires
-font/texture upload before capture. A seeded host RNG is fixed at 12345; the whole-screen fixtures also reset Waluau math.randomseed to 12345 and
+font/texture upload before capture. A seeded host RNG is fixed at 12345; the
+whole-screen fixtures also reset Waluau math.randomseed to 12345 and
 construct the city with seed 41.
 
 The harness owns requestAnimationFrame before navigation. Asset loading uses
