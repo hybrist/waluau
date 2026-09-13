@@ -415,6 +415,55 @@ license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
 pnpm --filter ante storybook
 ```
 
+The **city_generator / Medieval layout** story is an isolated procedural layout
+experiment. Its seed, river toggle, bridge budget (0–2), relief, settlement size,
+and housing density controls regenerate the city. Junction and building-access
+overlays expose the routing data; select start/end node IDs to draw a shortest
+road route. Nodes 1 and 2 are the two market squares. A separately reserved
+churchyard has its own road access node. With a river and no bridges, the markets
+deliberately have no connecting route. The existing gameplay map is unchanged.
+
+`src/city_generator.walu` generates a meandering river and compatible low valley,
+then joins settlement points using distance, slope, road clearance, and explicit
+crossing constraints. It adds local connections when they shorten a substantial
+detour. Bridges are chosen before street growth. Frontage buildings use skewed
+quadrilaterals and concave extensions, with conservative clearance bounds and an
+access point on a particular road edge. Market squares and the churchyard reserve
+space before houses are placed; their centres, clearance radii, kinds, names, and
+access nodes are exposed in `landmarks`. All road indices are 1-based; each edge
+contains its endpoints, width, length, and bridge/passage flags. Consecutive edges form the
+bends of a route.
+
+Settlement size ranges from 30 to 900 target road nodes. Above 90, the world
+area grows in proportion to that target while street and house dimensions stay
+constant. The 900 maximum therefore covers five times the area of 180. The story
+fits the world into its viewport and keeps landmark labels readable. Clearance
+constraints can stop growth before the requested node count. `City.width` and
+`City.height` describe the generated world bounds.
+
+The old town concentrates attached housing around the market centres and major
+streets. Groups share exact party-wall boundaries, with narrow openings leading
+to reserved rear courtyards. Passage entrances split the frontage street at an
+explicit junction; each three-unit-wide passage is a routable edge to a courtyard
+node. These nodes fit within the settlement's overall node budget. Ordinary
+houses stay clear of the entire compound, including its passage and courtyard,
+while the outskirts retain detached, irregular footprints.
+
+`Building.group` identifies attached compounds (zero means detached), and
+`City.courtyards` exposes each courtyard's polygon, compound ID, and access node.
+Houses in a compound are occupied together, preserving continuous rows as density
+changes. Tests permit shared polygon boundaries but reject overlapping interiors.
+
+Housing density is a 0–100 occupancy percentage over a deterministic set of safe
+frontage sites. Zero removes all ordinary houses; 100 occupies every accepted
+site. Lower-density layouts are subsets of higher-density layouts for the same
+seed and other generation options. Streets and public places stay fixed.
+
+This experiment uses two market anchors, broad knolls, a constant-width river,
+and frontage compounds rather than subdividing entire blocks into parcel polygons.
+Relief is shown in tenths (10 means 1.0); it changes road connection costs and excludes steep building sites. Generation is DOM-free, allowing its
+determinism, geometry, and routing to be tested in the browser without a canvas.
+
 The deployed game carries its storybook with it, at `/storybook`:
 `pnpm --filter ante build-storybook` builds it into `dist/storybook`, and the
 Vercel build runs it after the game's own `vite build` so one deployment serves

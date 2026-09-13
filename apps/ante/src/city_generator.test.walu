@@ -1,0 +1,719 @@
+require("waluau:vitest")
+local generator = require("./city_generator")
+
+function options(seed: i32, bridges: i32, river: bool): generator.Options
+    return { seed = seed, bridges = bridges, river = river, relief = 0.6, size = 140, density = 65 }
+end
+
+function distance(a: generator.Point, b: generator.Point): f64
+    local dx: f64 = a.x - b.x
+    local dy: f64 = a.y - b.y
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+function segment_distance(p: generator.Point, a: generator.Point, b: generator.Point): f64
+    local dx: f64 = b.x - a.x
+    local dy: f64 = b.y - a.y
+    local t: f64 = math.max(
+        0.0,
+        math.min(1.0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy))
+    )
+    return distance(p, { x = a.x + t * dx, y = a.y + t * dy })
+end
+
+function cross(a: generator.Point, b: generator.Point, c: generator.Point): f64
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+end
+
+function segments_distance(
+    a: generator.Point,
+    b: generator.Point,
+    c: generator.Point,
+    d: generator.Point
+): f64
+    if cross(a, b, c) * cross(a, b, d) < 0.0 and cross(c, d, a) * cross(c, d, b) < 0.0 then
+        return 0.0
+    end
+    return math.min(
+        math.min(segment_distance(a, c, d), segment_distance(b, c, d)),
+        math.min(segment_distance(c, a, b), segment_distance(d, a, b))
+    )
+end
+
+function connected(city: generator.City, a: i32, b: i32): bool
+    for edge in city.edges do
+        if (edge.a == a and edge.b == b) or (edge.a == b and edge.b == a) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Shared boundaries are allowed; interior overlap is not. Check the polygon
+-- geometry instead of enforcing a detached-house clearance circle on a row.
+function strictly_inside(point: generator.Point, polygon: {generator.Point}): bool
+    local inside: bool = false
+    for index = 1::i32, #polygon do
+        local a: generator.Point = polygon[index]
+        local b: generator.Point = polygon[index % #polygon + 1]
+        if segment_distance(point, a, b) < 0.00001 then
+            return false
+        end
+        if (a.y > point.y) ~= (b.y > point.y) then
+            if point.x < a.x + (point.y - a.y) * (b.x - a.x) / (b.y - a.y) then
+                inside = not inside
+            end
+        end
+    end
+    return inside
+end
+
+-- The supported footprints are convex quads or the six-vertex rear-notch
+-- shape. Test positive triangle intersection area using separating axes;
+-- vertex-only containment would miss aligned rectangles overlapping at ends.
+function triangle_overlap(first: {generator.Point}, second: {generator.Point}): bool
+    for side = 1::i32, 2::i32 do
+        local polygon: {generator.Point} = first
+        if side == 2 then
+            polygon = second
+        end
+        for index = 1::i32, 3::i32 do
+            local a: generator.Point = polygon[index]
+            local b: generator.Point = polygon[index % 3 + 1]
+            local dx: f64 = a.y - b.y
+            local dy: f64 = b.x - a.x
+            local low_a: f64 = 1000000000.0
+            local high_a: f64 = -1000000000.0
+            local low_b: f64 = 1000000000.0
+            local high_b: f64 = -1000000000.0
+            for point in first do
+                local value: f64 = point.x * dx + point.y * dy
+                low_a = math.min(low_a, value)
+                high_a = math.max(high_a, value)
+            end
+            for point in second do
+                local value: f64 = point.x * dx + point.y * dy
+                low_b = math.min(low_b, value)
+                high_b = math.max(high_b, value)
+            end
+            if math.min(high_a, high_b) - math.max(low_a, low_b) < 0.00001 then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+function triangles(polygon: {generator.Point}): {i32}
+    if #polygon == 4 then
+        return {1, 2, 3, 1, 3, 4}
+    end
+    return {1, 2, 3, 1, 3, 4, 1, 4, 6, 4, 5, 6}
+end
+
+function footprints_overlap(first: {generator.Point}, second: {generator.Point}): bool
+    local a: {i32} = triangles(first)
+    local b: {i32} = triangles(second)
+    for i = 1::i32, #a, 3::i32 do
+        for j = 1::i32, #b, 3::i32 do
+            if triangle_overlap(
+                {first[a[i]], first[a[i + 1]], first[a[i + 2]]},
+                {second[b[j]], second[b[j + 1]], second[b[j + 2]]}
+            ) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function shared_wall(first: {generator.Point}, second: {generator.Point}): bool
+    for index = 1::i32, #first do
+        local a: generator.Point = first[index]
+        local b: generator.Point = first[index % #first + 1]
+        for other = 1::i32, #second do
+            local c: generator.Point = second[other]
+            local d: generator.Point = second[other % #second + 1]
+            if distance(a, d) < 0.0001 and distance(b, c) < 0.0001 and distance(a, b) > 3.0 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+describe(
+    "medieval city generator",
+    function()
+        it(
+            "distinguishes overlapping footprints from an allowed shared wall",
+            function()
+                local first: {generator.Point} = {
+                    { x = 0.0, y = 0.0 },
+                    { x = 10.0, y = 0.0 },
+                    { x = 10.0, y = 2.0 },
+                    { x = 0.0, y = 2.0 }
+                }
+                local overlap: {generator.Point} = {
+                    { x = 9.0, y = 0.0 },
+                    { x = 19.0, y = 0.0 },
+                    { x = 19.0, y = 2.0 },
+                    { x = 9.0, y = 2.0 }
+                }
+                local touching: {generator.Point} = {
+                    { x = 10.0, y = 0.0 },
+                    { x = 20.0, y = 0.0 },
+                    { x = 20.0, y = 2.0 },
+                    { x = 10.0, y = 2.0 }
+                }
+                expect(footprints_overlap(first, overlap)):toBe(true)
+                expect(footprints_overlap(first, first)):toBe(true)
+                expect(footprints_overlap(first, touching)):toBe(false)
+            end
+        )
+
+        it(
+            "builds attached old-town rows with reachable narrow passages and clear courtyards",
+            function()
+                local config: generator.Options = options(41, 1, true)
+                config.size = 180
+                config.density = 100
+                local city: generator.City = generator.generate(config)
+                expect(#city.nodes):toBeLessThanOrEqual(config.size)
+                expect(#city.courtyards):toBeGreaterThan(2)
+                local attached: i32 = 0
+                local detached: i32 = 0
+                local attached_distance: f64 = 0.0
+                local detached_distance: f64 = 0.0
+                local shared: i32 = 0
+                for index = 1::i32, #city.buildings do
+                    local house: generator.Building = city.buildings[index]
+                    local center: generator.Point = { x = house.x, y = house.y }
+                    local market_distance: f64 = math.min(
+                        distance(center, city.nodes[1]),
+                        distance(center, city.nodes[2])
+                    )
+                    if house.group > 0 then
+                        attached += 1
+                        attached_distance += market_distance
+                        for other_index = index + 1, #city.buildings do
+                            local other: generator.Building = city.buildings[other_index]
+                            if other.group == house.group then
+                                expect(
+                                    footprints_overlap(house.footprint, other.footprint)
+                                ):toBe(false)
+                                if shared_wall(house.footprint, other.footprint) then
+                                    shared += 1
+                                end
+                            end
+                        end
+                    else
+                        detached += 1
+                        detached_distance += market_distance
+                    end
+                end
+                expect(attached):toBeGreaterThan(12)
+                expect(detached):toBeGreaterThan(0)
+                expect(shared):toBeGreaterThan(5)
+                expect(
+                    attached_distance / (attached::f64)
+                ):toBeLessThan(detached_distance / (detached::f64))
+                for court in city.courtyards do
+                    expect(#court.footprint):toBeGreaterThanOrEqual(4)
+                    expect(#generator.shortest_path(city, 1, court.node)):toBeGreaterThan(1)
+                    local passage: bool = false
+                    for edge in city.edges do
+                        if edge.passage and (edge.a == court.node or edge.b == court.node) then
+                            passage = true
+                            expect(edge.width):toBeGreaterThan(1.0)
+                            expect(edge.width):toBeLessThan(4.0)
+                            expect(edge.bridge):toBe(false)
+                        end
+                    end
+                    expect(passage):toBe(true)
+                    for house in city.buildings do
+                        expect(footprints_overlap(court.footprint, house.footprint)):toBe(false)
+                    end
+                end
+                config.river = false
+                config.bridges = 0
+                config.size = 90
+                local dry: generator.City = generator.generate(config)
+                expect(#dry.courtyards):toBeGreaterThan(0)
+                for court in dry.courtyards do
+                    expect(#generator.shortest_path(dry, 1, court.node)):toBeGreaterThan(1)
+                end
+            end
+        )
+
+        it(
+            "expands the world and road network at the fivefold slider maximum",
+            function()
+                local small_options: generator.Options = options(41, 1, true)
+                small_options.size = 180
+                local small: generator.City = generator.generate(small_options)
+                local large_options: generator.Options = options(41, 1, true)
+                large_options.size = 900
+                local large: generator.City = generator.generate(large_options)
+                expect(large.options.size):toBe(900)
+                expect(
+                    math.abs(large.width * large.height / (small.width * small.height) - 5.0)
+                ):toBeLessThan(0.001)
+                expect(#large.nodes):toBeGreaterThan(#small.nodes * 3)
+                expect(#large.buildings):toBeGreaterThan(#small.buildings * 3)
+                expect(#generator.shortest_path(large, 1, 2)):toBeGreaterThan(1)
+                -- Sample the expanded world too: distant-geometry pruning must
+                -- preserve exactly the same water and crossing constraints.
+                for index = 1::i32, #large.edges, 47::i32 do
+                    local road: generator.Edge = large.edges[index]
+                    local a: generator.Point = large.nodes[road.a]
+                    local b: generator.Point = large.nodes[road.b]
+                    if not road.bridge then
+                        for river_index = 2::i32, #large.river do
+                            expect(
+                                segments_distance(
+                                    a,
+                                    b,
+                                    large.river[river_index - 1],
+                                    large.river[river_index]
+                                )
+                            ):toBeGreaterThan(generator.river_width * 0.5 + road.width * 0.5)
+                        end
+                    end
+                    for other in large.edges do
+                        if road.a ~= other.a and road.a ~= other.b and road.b ~= other.a and road.b ~= other.b then
+                            local c: generator.Point = large.nodes[other.a]
+                            local d: generator.Point = large.nodes[other.b]
+                            expect(
+                                cross(
+                                    a,
+                                    b,
+                                    c
+                                ) * cross(
+                                    a,
+                                    b,
+                                    d
+                                ) < -0.0001 and cross(c, d, a) * cross(c, d, b) < -0.0001
+                            ):toBe(false)
+                        end
+                    end
+                end
+                for index = 1::i32, #large.buildings, 97::i32 do
+                    local house: generator.Building = large.buildings[index]
+                    for vertex in house.footprint do
+                        for road in large.edges do
+                            expect(
+                                segment_distance(vertex, large.nodes[road.a], large.nodes[road.b])
+                            ):toBeGreaterThan(road.width * 0.5)
+                        end
+                    end
+                end
+                for place in large.landmarks do
+                    expect(
+                        generator.water_distance(large, place.center)
+                    ):toBeGreaterThan(place.radius)
+                    expect(#generator.shortest_path(large, 1, place.node)):toBeGreaterThan(0)
+                    for house in large.buildings do
+                        expect(strictly_inside(place.center, house.footprint)):toBe(false)
+                        for index = 1::i32, #house.footprint do
+                            expect(
+                                segment_distance(
+                                    place.center,
+                                    house.footprint[index],
+                                    house.footprint[index % #house.footprint + 1]
+                                )
+                            ):toBeGreaterThan(place.radius)
+                        end
+                    end
+                end
+            end
+        )
+
+        it(
+            "changes housing density without changing streets or reshuffling occupied plots",
+            function()
+                local sparse_options: generator.Options = options(41, 1, true)
+                sparse_options.density = 30
+                local sparse: generator.City = generator.generate(sparse_options)
+                local full_options: generator.Options = options(41, 1, true)
+                full_options.density = 100
+                local full: generator.City = generator.generate(full_options)
+                local empty_options: generator.Options = options(41, 1, true)
+                empty_options.density = 0
+                local empty: generator.City = generator.generate(empty_options)
+                expect(#empty.buildings):toBe(0)
+                expect(#sparse.buildings):toBeGreaterThan(0)
+                expect(#full.buildings):toBeGreaterThan(#sparse.buildings * 2)
+                expect(#sparse.edges):toBe(#full.edges)
+                expect(#empty.edges):toBe(#full.edges)
+                for index = 1::i32, #full.edges do
+                    expect(sparse.edges[index].a):toBe(full.edges[index].a)
+                    expect(sparse.edges[index].b):toBe(full.edges[index].b)
+                    expect(empty.edges[index].a):toBe(full.edges[index].a)
+                    expect(empty.edges[index].b):toBe(full.edges[index].b)
+                end
+                for house in sparse.buildings do
+                    if house.group > 0 then
+                        local sparse_members: i32 = 0
+                        local full_members: i32 = 0
+                        for member in sparse.buildings do
+                            if member.group == house.group then
+                                sparse_members += 1
+                            end
+                        end
+                        for member in full.buildings do
+                            if member.group == house.group then
+                                full_members += 1
+                            end
+                        end
+                        expect(sparse_members):toBe(full_members)
+                    end
+                    local found: bool = false
+                    for other in full.buildings do
+                        if house.x == other.x and house.y == other.y then
+                            found = true
+                            expect(#house.footprint):toBe(#other.footprint)
+                            for vertex = 1::i32, #house.footprint do
+                                expect(house.footprint[vertex].x):toBe(other.footprint[vertex].x)
+                                expect(house.footprint[vertex].y):toBe(other.footprint[vertex].y)
+                            end
+                        end
+                    end
+                    expect(found):toBe(true)
+                end
+            end
+        )
+
+        it(
+            "reserves two accessible markets and a churchyard outside roads and houses",
+            function()
+                local city: generator.City = generator.generate(options(73, 1, true))
+                expect(#city.landmarks):toBe(3)
+                local markets: i32 = 0
+                local churches: i32 = 0
+                for place in city.landmarks do
+                    if place.kind == "market" then
+                        markets += 1
+                    end
+                    if place.kind == "church" then
+                        churches += 1
+                    end
+                    expect(place.radius):toBeGreaterThan(20.0)
+                    expect(place.node):toBeGreaterThanOrEqual(1)
+                    expect(place.node):toBeLessThanOrEqual(#city.nodes)
+                    expect(
+                        generator.water_distance(city, place.center)
+                    ):toBeGreaterThan(place.radius)
+                    expect(#generator.shortest_path(city, 1, place.node)):toBeGreaterThan(0)
+                    for house in city.buildings do
+                        expect(strictly_inside(place.center, house.footprint)):toBe(false)
+                        for index = 1::i32, #house.footprint do
+                            expect(
+                                segment_distance(
+                                    place.center,
+                                    house.footprint[index],
+                                    house.footprint[index % #house.footprint + 1]
+                                )
+                            ):toBeGreaterThan(place.radius)
+                        end
+                        expect(
+                            segment_distance(
+                                place.center,
+                                { x = house.x, y = house.y },
+                                house.access
+                            )
+                        ):toBeGreaterThan(place.radius)
+                    end
+                    if place.kind == "church" then
+                        for road in city.edges do
+                            expect(
+                                segment_distance(
+                                    place.center,
+                                    city.nodes[road.a],
+                                    city.nodes[road.b]
+                                )
+                            ):toBeGreaterThanOrEqual(place.radius + road.width * 0.5 - 0.001)
+                        end
+                    end
+                end
+                expect(markets):toBe(2)
+                expect(churches):toBe(1)
+            end
+        )
+
+        it(
+            "chooses the shorter road route and reports disconnected destinations",
+            function()
+                local city: generator.City = {
+                    options = options(1, 0, false),
+                    width = 960.0,
+                    height = 640.0,
+                    landmarks = {},
+                    courtyards = {},
+                    river = {},
+                    buildings = {},
+                    nodes = {
+                        { x = 0.0, y = 0.0 },
+                        { x = 3.0, y = 0.0 },
+                        { x = 0.0, y = 4.0 },
+                        { x = 6.0, y = 0.0 },
+                        { x = 20.0, y = 20.0 }
+                    },
+                    edges = {
+                        {
+                            a = 1,
+                            b = 3,
+                            length = 4.0,
+                            width = 4.0,
+                            bridge = false,
+                            passage = false
+                        },
+                        {
+                            a = 3,
+                            b = 4,
+                            length = math.sqrt(52.0),
+                            width = 4.0,
+                            bridge = false,
+                            passage = false
+                        },
+                        {
+                            a = 1,
+                            b = 2,
+                            length = 3.0,
+                            width = 4.0,
+                            bridge = false,
+                            passage = false
+                        },
+                        { a = 2, b = 4, length = 3.0, width = 4.0, bridge = false, passage = false }
+                    }
+                }
+                local route: {i32} = generator.shortest_path(city, 1, 4)
+                expect(#route):toBe(3)
+                expect(route[1]):toBe(1)
+                expect(route[2]):toBe(2)
+                expect(route[3]):toBe(4)
+                expect(#generator.shortest_path(city, 1, 5)):toBe(0)
+                local reverse: {i32} = generator.shortest_path(city, 4, 1)
+                expect(reverse[2]):toBe(2)
+                expect(#generator.shortest_path(city, 2, 2)):toBe(1)
+            end
+        )
+
+        it(
+            "repeats a seed without consuming gameplay randomness",
+            function()
+                math.randomseed(913)
+                local expected: i32 = math.random(1000000)
+                math.randomseed(913)
+                local first: generator.City = generator.generate(options(41, 1, true))
+                local second: generator.City = generator.generate(options(41, 1, true))
+                expect(math.random(1000000)):toBe(expected)
+                expect(#first.nodes):toBeGreaterThan(20)
+                expect(#first.buildings):toBeGreaterThan(20)
+                expect(#second.nodes):toBe(#first.nodes)
+                expect(#second.edges):toBe(#first.edges)
+                expect(#second.buildings):toBe(#first.buildings)
+                for index = 1::i32, #first.nodes do
+                    expect(second.nodes[index].x):toBe(first.nodes[index].x)
+                    expect(second.nodes[index].y):toBe(first.nodes[index].y)
+                end
+                for index = 1::i32, #first.buildings do
+                    expect(
+                        #second.buildings[index].footprint
+                    ):toBe(#first.buildings[index].footprint)
+                    for vertex = 1::i32, #first.buildings[index].footprint do
+                        expect(
+                            second.buildings[index].footprint[vertex].x
+                        ):toBe(first.buildings[index].footprint[vertex].x)
+                        expect(
+                            second.buildings[index].footprint[vertex].y
+                        ):toBe(first.buildings[index].footprint[vertex].y)
+                    end
+                end
+                local other: generator.City = generator.generate(options(42, 1, true))
+                local changed: bool = #other.nodes ~= #first.nodes
+                for index = 1::i32, math.min(#other.nodes, #first.nodes) do
+                    if other.nodes[index].x ~= first.nodes[index].x or other.nodes[index].y ~= first.nodes[index].y then
+                        changed = true
+                    end
+                end
+                expect(changed):toBe(true)
+            end
+        )
+
+        it(
+            "keeps a planar road graph and routes along real edges across multiple seeds",
+            function()
+                for seed = 1::i32, 6::i32 do
+                    local city: generator.City = generator.generate(options(seed * 37, 2, true))
+                    local reached: {bool} = {}
+                    for index = 1::i32, #city.nodes do
+                        table.insert(reached, index == 1)
+                    end
+                    for _ = 1::i32, #city.nodes do
+                        local changed: bool = false
+                        for edge in city.edges do
+                            if reached[edge.a] ~= reached[edge.b] then
+                                reached[edge.a] = true
+                                reached[edge.b] = true
+                                changed = true
+                            end
+                        end
+                        if not changed then
+                            break
+                        end
+                    end
+                    for reachable in reached do
+                        expect(reachable):toBe(true)
+                    end
+                    for index = 1::i32, #city.edges do
+                        local edge: generator.Edge = city.edges[index]
+                        expect(edge.a):toBeGreaterThanOrEqual(1)
+                        expect(edge.b):toBeGreaterThanOrEqual(1)
+                        expect(edge.a):toBeLessThanOrEqual(#city.nodes)
+                        expect(edge.b):toBeLessThanOrEqual(#city.nodes)
+                        expect(edge.a == edge.b):toBe(false)
+                        expect(edge.length):toBeGreaterThan(0.0)
+                        local a: generator.Point = city.nodes[edge.a]
+                        local b: generator.Point = city.nodes[edge.b]
+                        if not edge.bridge then
+                            for river_index = 2::i32, #city.river do
+                                expect(
+                                    segments_distance(
+                                        a,
+                                        b,
+                                        city.river[river_index - 1],
+                                        city.river[river_index]
+                                    )
+                                ):toBeGreaterThan(generator.river_width * 0.5 + edge.width * 0.5)
+                            end
+                        end
+                        expect(math.abs(edge.length - distance(a, b))):toBeLessThan(0.001)
+                        for other_index = index + 1, #city.edges do
+                            local other: generator.Edge = city.edges[other_index]
+                            if edge.a ~= other.a and edge.a ~= other.b and edge.b ~= other.a and edge.b ~= other.b then
+                                local c: generator.Point = city.nodes[other.a]
+                                local d: generator.Point = city.nodes[other.b]
+                                expect(
+                                    cross(
+                                        a,
+                                        b,
+                                        c
+                                    ) * cross(
+                                        a,
+                                        b,
+                                        d
+                                    ) < -0.0001 and cross(c, d, a) * cross(c, d, b) < -0.0001
+                                ):toBe(false)
+                            end
+                        end
+                    end
+                    local route: {i32} = generator.shortest_path(city, 1, #city.nodes)
+                    expect(#route):toBeGreaterThan(1)
+                    expect(route[1]):toBe(1)
+                    expect(route[#route]):toBe(#city.nodes)
+                    for step = 1::i32, #route - 1 do
+                        expect(connected(city, route[step], route[step + 1])):toBe(true)
+                    end
+                end
+            end
+        )
+
+        it(
+            "honours bridge budgets and produces a bending river",
+            function()
+                for budget = 0::i32, 2::i32 do
+                    local city: generator.City = generator.generate(options(19, budget, true))
+                    local bridges: i32 = 0
+                    for edge in city.edges do
+                        if edge.bridge then
+                            bridges += 1
+                        end
+                    end
+                    expect(bridges):toBe(budget)
+                    if budget == 0 then
+                        expect(#generator.shortest_path(city, 1, 2)):toBe(0)
+                    else
+                        expect(#generator.shortest_path(city, 1, 2)):toBeGreaterThan(1)
+                    end
+                    expect(#city.river):toBeGreaterThan(4)
+                    local bend: f64 = 0.0
+                    for point in city.river do
+                        bend = math.max(
+                            bend,
+                            segment_distance(point, city.river[1], city.river[#city.river])
+                        )
+                    end
+                    expect(bend):toBeGreaterThan(20.0)
+                end
+                local dry: generator.City = generator.generate(options(19, 2, false))
+                expect(#dry.river):toBe(0)
+                for edge in dry.edges do
+                    expect(edge.bridge):toBe(false)
+                end
+            end
+        )
+
+        it(
+            "gives buildings street access and clear footprints",
+            function()
+                for seed = 1::i32, 4::i32 do
+                    local city: generator.City = generator.generate(options(seed * 73, 1, true))
+                    local irregular: i32 = 0
+                    for building in city.buildings do
+                        expect(#building.footprint):toBeGreaterThanOrEqual(4)
+                        if #building.footprint > 4 then
+                            irregular += 1
+                        end
+                        expect(building.edge):toBeGreaterThanOrEqual(1)
+                        expect(building.edge):toBeLessThanOrEqual(#city.edges)
+                        local access_edge: generator.Edge = city.edges[building.edge]
+                        expect(access_edge.bridge):toBe(false)
+                        expect(
+                            segment_distance(
+                                building.access,
+                                city.nodes[access_edge.a],
+                                city.nodes[access_edge.b]
+                            )
+                        ):toBeLessThan(0.001)
+                        for point in building.footprint do
+                            expect(point.x):toBeGreaterThanOrEqual(0.0)
+                            expect(point.x):toBeLessThanOrEqual(city.width)
+                            expect(point.y):toBeGreaterThanOrEqual(0.0)
+                            expect(point.y):toBeLessThanOrEqual(city.height)
+                            for river_index = 2::i32, #city.river do
+                                expect(
+                                    segment_distance(
+                                        point,
+                                        city.river[river_index - 1],
+                                        city.river[river_index]
+                                    )
+                                ):toBeGreaterThan(generator.river_width * 0.5)
+                            end
+                            for edge in city.edges do
+                                expect(
+                                    segment_distance(point, city.nodes[edge.a], city.nodes[edge.b])
+                                ):toBeGreaterThan(edge.width * 0.5)
+                            end
+                        end
+                    end
+                    for index = 1::i32, #city.buildings do
+                        local first: generator.Building = city.buildings[index]
+                        for other_index = index + 1, #city.buildings do
+                            local other: generator.Building = city.buildings[other_index]
+                            if distance(
+                                { x = first.x, y = first.y },
+                                { x = other.x, y = other.y }
+                            ) < first.radius + other.radius then
+                                expect(
+                                    footprints_overlap(first.footprint, other.footprint)
+                                ):toBe(false)
+                            end
+                        end
+                    end
+                    expect(irregular):toBeGreaterThan(0)
+                end
+            end
+        )
+    end
+)

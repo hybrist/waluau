@@ -1,0 +1,348 @@
+-- Isolated city laboratory: the gameplay map deliberately does not import it.
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+local generator = require("./city_generator")
+
+local seed = storybook.range("seed", 41, 1, 999, 1)
+local bridges = storybook.range("bridges", 1, 0, 2, 1)
+local relief = storybook.range("relief", 10, 0, 20, 1)
+local size = storybook.range("settlement size", 90, 30, 900, 10)
+local density = storybook.range("housing density", 85, 0, 100, 5)
+local water = storybook.range("river", 1, 0, 1, 1)
+local graph = storybook.range("junction overlay", 0, 0, 1, 1)
+local parcels = storybook.range("access overlay", 0, 0, 1, 1)
+local terrain = storybook.range("terrain overlay", 1, 0, 1, 1)
+local route_start = storybook.range("route start node", 1, 1, 900, 1)
+local route_end = storybook.range("route end node", 2, 1, 900, 1)
+
+type View = { city: generator.City, route: {i32}, heights: {f64} }
+local view: View = {
+    city = generator.generate(
+        { seed = 41, bridges = 1, river = true, relief = 1.0, size = 90, density = 85 }
+    ),
+    route = {},
+    heights = {}
+}
+
+local function load(): unit
+    view.city = generator.generate(
+        {
+            seed = seed.value(),
+            bridges = bridges.value(),
+            river = water.value() > 0,
+            relief = (relief.value()::f64) / 10.0,
+            size = size.value(),
+            density = density.value()
+        }
+    )
+    view.route = generator.shortest_path(view.city, route_start.value(), route_end.value())
+    -- Sample terrain once per generation, not thousands of river-distance
+    -- queries every animation frame when viewing a large settlement.
+    view.heights = {}
+    for y = 0::i32, 47::i32 do
+        for x = 0::i32, 71::i32 do
+            table.insert(
+                view.heights,
+                generator.elevation(
+                    view.city,
+                    {
+                        x = (x::f64) * view.city.width / 72.0,
+                        y = (y::f64) * view.city.height / 48.0
+                    }
+                )
+            )
+        end
+    end
+end
+
+local function draw(graphics: engine.Graphics, _alpha: f64): unit
+    graphics:use_builtin_font()
+    graphics:set_font("12px")
+    local city: generator.City = view.city
+    local scale: f64 = math.min(936.0 / city.width, 560.0 / city.height)
+    local origin_x: f64 = (960.0 - city.width * scale) * 0.5
+    local origin_y: f64 = 49.0
+    graphics:push()
+    graphics:translate(origin_x, origin_y)
+    graphics:scale(scale, scale)
+    if terrain.value() > 0 then
+        for y = 0::i32, 47::i32 do
+            for x = 0::i32, 71::i32 do
+                local height: f64 = view.heights[y * 72 + x + 1]
+                local band: f64 = math.floor(height / 4.0)
+                graphics:set_color_rgba(
+                    0.80 - band * 0.021,
+                    0.82 - band * 0.028,
+                    0.69 - band * 0.02,
+                    1.0
+                )
+                graphics:fill_rectangle(
+                    (x::f64) * city.width / 72.0,
+                    (y::f64) * city.height / 48.0,
+                    city.width / 72.0 + 0.2,
+                    city.height / 48.0 + 0.2
+                )
+            end
+        end
+    end
+    graphics:set_color("#9aa893")
+    graphics:set_line_width(generator.river_width + 12.0)
+    for index = 2::i32, #city.river do
+        graphics:line(
+            city.river[index - 1].x,
+            city.river[index - 1].y,
+            city.river[index].x,
+            city.river[index].y
+        )
+    end
+    graphics:set_color("#779ea9")
+    graphics:set_line_width(generator.river_width)
+    for index = 2::i32, #city.river do
+        graphics:line(
+            city.river[index - 1].x,
+            city.river[index - 1].y,
+            city.river[index].x,
+            city.river[index].y
+        )
+        graphics:fill_circle(city.river[index].x, city.river[index].y, generator.river_width * 0.5)
+    end
+    for place in city.landmarks do
+        graphics:set_color("#918264")
+        graphics:fill_circle(place.center.x, place.center.y, place.radius)
+        graphics:set_color("#ded0a9")
+        if place.kind == "church" then
+            graphics:set_color("#b2bc93")
+        end
+        graphics:fill_circle(place.center.x, place.center.y, place.radius - 1.5)
+        if place.kind == "church" then
+            local access: generator.Point = city.nodes[place.node]
+            graphics:set_color("#ece1c5")
+            graphics:set_line_width(4.0)
+            graphics:line(place.center.x, place.center.y, access.x, access.y)
+            -- Cruciform footprint identifies the church even without labels;
+            -- its surrounding reservation is the churchyard.
+            graphics:set_color("#76617f")
+            graphics:fill_rectangle(place.center.x - 7.0, place.center.y - 20.0, 14.0, 40.0)
+            graphics:fill_rectangle(place.center.x - 17.0, place.center.y - 9.0, 34.0, 12.0)
+        end
+    end
+    for court in city.courtyards do
+        local points: {generator.Point} = court.footprint
+        graphics:set_color("#c3ba99")
+        graphics:emit_triangle(
+            points[1].x,
+            points[1].y,
+            points[2].x,
+            points[2].y,
+            points[3].x,
+            points[3].y
+        )
+        graphics:emit_triangle(
+            points[1].x,
+            points[1].y,
+            points[3].x,
+            points[3].y,
+            points[4].x,
+            points[4].y
+        )
+    end
+    for edge in city.edges do
+        local a: generator.Point = city.nodes[edge.a]
+        local b: generator.Point = city.nodes[edge.b]
+        graphics:set_color("#aba28c")
+        if edge.bridge then
+            graphics:set_color("#63574d")
+        end
+        local border: f64 = 3.0
+        if edge.passage then
+            border = 0.7
+        end
+        graphics:set_line_width(edge.width + border)
+        graphics:line(a.x, a.y, b.x, b.y)
+        graphics:set_color("#ece1c5")
+        if edge.bridge then
+            graphics:set_color("#c3a77b")
+        end
+        graphics:set_line_width(edge.width)
+        graphics:line(a.x, a.y, b.x, b.y)
+    end
+    for node in city.nodes do
+        graphics:set_color("#ece1c5")
+        graphics:fill_circle(node.x, node.y, 3.0)
+    end
+    for house in city.buildings do
+        local points: {generator.Point} = house.footprint
+        graphics:set_color("#8b7563")
+        if house.group > 0 then
+            graphics:set_color("#806655")
+            if (math.floor(house.x + house.y)::i32) % 2 == 0 then
+                graphics:set_color("#97795d")
+            end
+        end
+        if #points == 4 then
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[2].x,
+                points[2].y,
+                points[3].x,
+                points[3].y
+            )
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[3].x,
+                points[3].y,
+                points[4].x,
+                points[4].y
+            )
+        else
+            -- Fixed notch vertex order: preserve the concavity.
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[2].x,
+                points[2].y,
+                points[3].x,
+                points[3].y
+            )
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[3].x,
+                points[3].y,
+                points[4].x,
+                points[4].y
+            )
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[4].x,
+                points[4].y,
+                points[6].x,
+                points[6].y
+            )
+            graphics:emit_triangle(
+                points[4].x,
+                points[4].y,
+                points[5].x,
+                points[5].y,
+                points[6].x,
+                points[6].y
+            )
+        end
+        if house.group > 0 then
+            -- Party walls are real shared polygon edges, made legible by a
+            -- fine roof boundary rather than a gap between attached houses.
+            graphics:set_color("#5e5145")
+            graphics:set_line_width(0.55)
+            for index = 1::i32, #points do
+                local next: i32 = index % #points + 1
+                graphics:line(points[index].x, points[index].y, points[next].x, points[next].y)
+            end
+        end
+        if parcels.value() > 0 then
+            graphics:set_color("#66846b")
+            graphics:set_line_width(1.0)
+            graphics:line(house.x, house.y, house.access.x, house.access.y)
+            graphics:fill_circle(house.access.x, house.access.y, 1.8)
+        end
+    end
+    if graph.value() > 0 then
+        for index = 1::i32, #city.nodes do
+            local node: generator.Point = city.nodes[index]
+            graphics:set_color("#4c6861")
+            graphics:fill_circle(node.x, node.y, 3.0)
+            graphics:print(tostring(index), node.x + 4.0, node.y - 4.0)
+        end
+    end
+    graphics:set_color("#b84c36")
+    graphics:set_line_width(3.0)
+    for index = 2::i32, #view.route do
+        local a: generator.Point = city.nodes[view.route[index - 1]]
+        local b: generator.Point = city.nodes[view.route[index]]
+        graphics:line(a.x, a.y, b.x, b.y)
+    end
+    if #view.route > 0 then
+        local start: generator.Point = city.nodes[view.route[1]]
+        local finish: generator.Point = city.nodes[view.route[#view.route]]
+        graphics:fill_circle(start.x, start.y, 6.0)
+        graphics:fill_circle(finish.x, finish.y, 6.0)
+        graphics:set_color("#fff1cb")
+        graphics:fill_circle(start.x, start.y, 2.0)
+    end
+    graphics:pop()
+    -- Labels stay readable at the largest map size instead of shrinking with
+    -- individual houses. Place coordinates remain available in generated data.
+    for place in city.landmarks do
+        local x: f64 = origin_x + place.center.x * scale
+        -- The church sits near the old market; label it to the other side so
+        -- their captions remain separate when the largest city is fit to view.
+        if place.kind == "church" then
+            x -= 94.0
+        end
+        local y: f64 = origin_y + (place.center.y - place.radius) * scale - 6.0
+        graphics:set_font("11px")
+        graphics:set_color("#f0e8d6")
+        graphics:fill_rectangle(x - 2.0, y - 11.0, 94.0, 14.0)
+        graphics:set_color("#493e34")
+        graphics:print(place.name, x, y)
+    end
+    graphics:set_font("12px")
+    graphics:set_color("#f0e8d6")
+    graphics:fill_rectangle(0.0, 0.0, 960.0, 43.0)
+    graphics:fill_rectangle(0.0, 618.0, 960.0, 22.0)
+    graphics:set_color("#493e34")
+    graphics:print("CITY LAYOUT LAB / SEED " .. tostring(seed.value()), 18.0, 18.0)
+    graphics:print(
+        tostring(
+            #city.nodes
+        ) .. " junctions / " .. tostring(
+            #city.edges
+        ) .. " streets / " .. tostring(#city.buildings) .. " houses",
+        18.0,
+        34.0
+    )
+    if #view.route == 0 then
+        graphics:print("NO ROUTE BETWEEN SELECTED NODES", 458.0, 26.0)
+    else
+        graphics:print(
+            "ROUTE " .. tostring(
+                route_start.value()
+            ) .. " > " .. tostring(
+                route_end.value()
+            ) .. " / " .. tostring(
+                math.floor(generator.route_length(city, view.route))::i32
+            ) .. " units",
+            560.0,
+            26.0
+        )
+    end
+    graphics:print(
+        "Old town: shared walls / narrow passages / courtyards    Outskirts: detached houses",
+        18.0,
+        633.0
+    )
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Medieval layout",
+            { load = load, draw = draw, width = 960, height = 640, background = "#cdd1b0" },
+            {
+                seed.declaration,
+                bridges.declaration,
+                relief.declaration,
+                size.declaration,
+                density.declaration,
+                water.declaration,
+                graph.declaration,
+                parcels.declaration,
+                terrain.declaration,
+                route_start.declaration,
+                route_end.declaration
+            }
+        )
+    }
+)
