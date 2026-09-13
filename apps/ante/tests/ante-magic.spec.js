@@ -3,6 +3,12 @@ import {
   GAME_READY_TIMEOUT,
   beginHeist,
   clickMenuItem,
+  gameFeedback,
+  designPoint,
+  FIRST_SOCKET,
+  HELP_CONTROL,
+  waitForCanvasMenu,
+  waitForCanvasBoard,
   openGame,
   settleBoard,
   showTextControls,
@@ -99,13 +105,37 @@ test('boots the canvas and completes asset loading before a playable duel', asyn
   expect(pageErrors).toEqual([]);
 });
 
-test('responds to canvas keyboard input without an iframe focus step', async ({ page }) => {
+test('routes canvas keyboard selection, targeting, cancellation and help', async ({ page }) => {
   const canvas = await openGame(page);
-  await waitForMenu(canvas);
+  const feedback = gameFeedback(page);
+  const status = feedback.getByRole('status');
+  await waitForCanvasMenu(page);
+  await canvas.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
+  await expect(feedback.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeAttached();
   await page.keyboard.press('Enter');
-  await settleBoard(canvas);
+  await waitForCanvasBoard(page);
+  await page.keyboard.press('Space');
+  await expect(feedback).toContainText('Selected hand cards: 1.');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Space');
+  await expect(feedback).toContainText('Selected hand cards: 2.');
+  await page.keyboard.press('Space');
+  await expect(feedback).toContainText('Selected hand cards: 1.');
+  await page.keyboard.press('1');
+  await expect(status).toContainText('Firebolt targeting.');
+  const target = (await status.textContent()).match(/Target: (.+?)\./)[1];
+  await page.keyboard.press('ArrowRight');
+  await expect(status).toContainText('Firebolt targeting. Choose a table card. Target:');
+  await expect(status).not.toContainText(`Target: ${target}.`);
+  await page.keyboard.press('Escape');
+  await expect(status).toContainText('Spell cancelled. No gold spent.');
+  await page.keyboard.press('?');
+  await expect(feedback.getByRole('heading', { name: 'How to play', exact: true })).toBeAttached();
+  await page.keyboard.press('Escape');
+  await waitForCanvasBoard(page);
+  await expect(canvas).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Text controls', exact: true })).toHaveAttribute('aria-expanded', 'false');
 });
 
 test.describe('on high-DPI displays', () => {
@@ -148,16 +178,33 @@ test.describe('on high-DPI displays', () => {
 test('routes pointer targets through wide and tall canvases', async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 600 });
   const canvas = await openGame(page);
-  await waitForMenu(canvas);
+  await waitForCanvasMenu(page);
   await expect.poll(() => canvas.evaluate((node) => ({ width: node.clientWidth, height: node.clientHeight })))
     .toEqual({ width: 1200, height: 600 });
   await clickMenuItem(page, canvas);
-  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
+  await expect(gameFeedback(page).getByRole('heading', { name: 'Starting vendor', exact: true })).toBeAttached();
   await page.setViewportSize({ width: 600, height: 800 });
   await expect.poll(() => canvas.evaluate((node) => ({ width: node.clientWidth, height: node.clientHeight })))
     .toEqual({ width: 600, height: 800 });
   await clickMenuItem(page, canvas);
-  await settleBoard(canvas);
+  await waitForCanvasBoard(page);
+  for (const viewport of [{ width: 600, height: 800 }, { width: 1200, height: 600 }]) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => canvas.evaluate((node) => ({ width: node.clientWidth, height: node.clientHeight })))
+      .toEqual(viewport);
+    const socket = await designPoint(canvas, FIRST_SOCKET);
+    await page.mouse.click(socket.x, socket.y);
+    await expect(gameFeedback(page).getByRole('status')).toContainText('Firebolt targeting.');
+    await page.mouse.click(socket.x, socket.y);
+    await expect(gameFeedback(page).getByRole('status')).toContainText('Spell cancelled. No gold spent.');
+    const help = await designPoint(canvas, HELP_CONTROL);
+    await page.mouse.click(help.x, help.y);
+    await expect(gameFeedback(page).getByRole('heading', { name: 'How to play', exact: true })).toBeAttached();
+    const center = await designPoint(canvas, { centerOffsetX: 0, y: 300 });
+    await page.mouse.click(center.x, center.y);
+    await waitForCanvasBoard(page);
+  }
+  await expect(page.getByRole('button', { name: 'Text controls', exact: true })).toHaveAttribute('aria-expanded', 'false');
 });
 
 // Moved from the conformance runner: exercising Ante Magic's packaged asset
@@ -282,7 +329,7 @@ test('plays a duel through accessible controls, verdict, ledger, and restart', a
 });
 
 test('native keyboard activation keeps focus and selects each card once', async ({ page }) => {
-  await openGame(page);
+  const canvas = await openGame(page);
   const toggle = page.getByRole('button', { name: 'Text controls', exact: true });
   await toggle.focus();
   await page.keyboard.press('Enter');
@@ -305,4 +352,15 @@ test('native keyboard activation keeps focus and selects each card once', async 
   await page.keyboard.press('Space');
   await expect(first).toHaveAttribute('aria-pressed', 'false');
   await expect(first).toBeFocused();
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // A click in the canvas margin resumes canvas input without selecting a card.
+  await canvas.click({ position: { x: 5, y: 100 } });
+  await expect(canvas).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(gameFeedback(page)).toContainText('Selected hand cards: 1.');
+  await page.keyboard.press('Space');
+  await expect(gameFeedback(page)).toContainText('Selected hand cards: 0.');
+  await expect(canvas).toBeFocused();
 });
