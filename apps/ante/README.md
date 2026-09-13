@@ -537,3 +537,33 @@ Focused graphics and touch tests still cover canvas rendering and pointer input.
 DOM-free presentation tests check concealed information and stale actions. This
 is an initial accessible play path; manual screen-reader testing remains necessary
 before claiming comprehensive accessibility support.
+
+## Browser test ownership
+
+Ante has three independent browser commands:
+
+| Command | Sources | Contract |
+| --- | --- | --- |
+| `pnpm --filter ante test:gameplay` | `tests/` | Player-facing state, costs, outcomes, readiness, and real keyboard/pointer/touch routing. |
+| `pnpm --filter ante test:renderer` | `renderer/` | Ante's imported shader ownership, compilation, HMR resource lifetime, and error/recovery rendering. |
+| `pnpm --filter ante test:visual` | `visual/` | Deterministic Storybook screenshots of screens, entities, effects, and layouts. See [visual coverage](visual/README.md). |
+
+`test:e2e` remains the compatibility command for gameplay followed by renderer
+integration. Visual comparisons run separately in their pinned browser image.
+CI runs each suite independently; `ante-browser` is the gameplay job and
+`ante-renderer` owns shader integration. Set `PLAYWRIGHT_SKIP_BUILD=1` when a
+matching production build already exists (or a Storybook build for visuals).
+
+Gameplay observes production accessible controls and the passive `Game feedback`
+region. Use `waitForBoardReady` for native controls or `waitForCanvasBoard` for
+canvas input without opening Text controls. Neither infers readiness from
+identical frames. Canvas CSS/backing-buffer dimensions and audio/network probes
+remain gameplay host contracts; they do not inspect appearance.
+
+`check:gameplay` scans all JavaScript specs and helpers under `tests/` for raw
+pixel reads, screenshot assertions, obsolete visual readiness helpers and fixed
+timing waits. `test:gameplay` runs that check and its mutation tests before
+Playwright. It is a focused regression guard, not a JavaScript security analyzer.
+Rendering probes and screenshots belong in their explicit sibling suites.
+Low-level WebGL2/compiler guarantees remain in browser conformance; the renderer
+suite here retains the app-specific shader import and HMR integration checks.
