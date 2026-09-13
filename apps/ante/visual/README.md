@@ -2,7 +2,7 @@
 
 `pnpm --filter ante test:visual` builds Storybook and compares isolated
 WebGL2 entities, complete screens, and explicit effect moments. Gameplay runs
-separately with `test:e2e`; it does not use these images or their readiness flag.
+separately with `test:gameplay`; it does not use these images or their readiness flag.
 These are appearance baselines for this environment, not cross-driver graphics
 conformance assertions.
 
