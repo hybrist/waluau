@@ -1091,6 +1091,14 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
       const length = new DataView(memory.buffer).getUint32(pointer - 8, true);
       return new Float32Array(memory.buffer, pointer, length);
     },
+    dom_uint32_array_view: (pointer) => {
+      const memory = getWasmMemory();
+      if (!(memory instanceof WebAssembly.Memory)) {
+        throw new Error('dom_uint32_array_view requires the waluau memory import');
+      }
+      const length = new DataView(memory.buffer).getUint32(pointer - 8, true);
+      return new Uint32Array(memory.buffer, pointer, length);
+    },
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
     'EventTarget.removeEventListener': (target, type, callback) => removeDomEventListener(target, String(type), callback),
     'Window.requestAnimationFrame': requestAnimationFrame,

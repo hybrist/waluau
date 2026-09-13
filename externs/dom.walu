@@ -1819,3 +1819,4 @@ declare function WebGL2RenderingContext:readPixels(
 declare function dom_window(): Window
 declare function fetch(input: string): Promise<Response>
 declare function dom_float32_array_view(data: Float32Array): BufferSource
+declare function dom_uint32_array_view(data: Uint32Array): BufferSource

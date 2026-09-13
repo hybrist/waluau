@@ -10442,6 +10442,13 @@
         "data: Float32Array"
       ],
       "returnType": "BufferSource"
+    },
+    {
+      "name": "dom_uint32_array_view",
+      "params": [
+        "data: Uint32Array"
+      ],
+      "returnType": "BufferSource"
     }
   ],
   "skippedMembers": [

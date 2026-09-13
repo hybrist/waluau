@@ -172,6 +172,21 @@ selected. Binding a render target unbinds the sampler texture first: a
 framebuffer whose own texture is still readable is a feedback loop, and WebGL
 drops those draws.
 
+Static opaque meshes can be inspected with `create_static_mesh(vertices, indices)`
+and `draw_static_mesh(mesh, view)`. Vertices interleave XYZ position, XYZ normal,
+and linear RGB in a `Float32Array`; zero-based triangle indices are a
+`Uint32Array`. Creation validates and uploads once. `release_static_mesh` is
+idempotent, and renderer disposal releases any remaining meshes.
+
+`MeshView` specifies a rectangle in logical screen pixels, an orthographic
+vertical span in world units, a center, yaw/elevation in radians, and a depth
+extent centered on that target. Y is up. Each call clears depth within its own
+rectangle, draws one opaque indexed mesh, and restores the normal 2D shader,
+buffer, blending and viewport. It draws only to the screen, ignores the 2D
+transform stack, and separate calls do not share occlusion. Ante's
+[church fidelity study](../apps/ante/assets/church/README.md) exercises this
+interface with four LoDs and a two-story size reference.
+
 Custom shaders consume any subset of the renderer's standard vertex attributes:
 `a_position`, `a_color`, `a_uv`, and `a_textured`. The engine supplies
 `u_texture`, live frame time in `u_time`, and logical-pixel scaling in

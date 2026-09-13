@@ -1,0 +1,46 @@
+[
+  {
+    "level": 0,
+    "label": "Original",
+    "blenderVertices": 5976,
+    "triangles": 11081,
+    "dimensionsMeters": [
+      19.39000129699707,
+      28.120372772216797,
+      17.450000762939453
+    ]
+  },
+  {
+    "level": 1,
+    "label": "Reduced",
+    "blenderVertices": 3205,
+    "triangles": 5539,
+    "dimensionsMeters": [
+      19.39000129699707,
+      28.120372772216797,
+      17.446693420410156
+    ]
+  },
+  {
+    "level": 2,
+    "label": "Map detail",
+    "blenderVertices": 2175,
+    "triangles": 3663,
+    "dimensionsMeters": [
+      19.206188201904297,
+      28.103466033935547,
+      17.433094024658203
+    ]
+  },
+  {
+    "level": 3,
+    "label": "Silhouette",
+    "blenderVertices": 523,
+    "triangles": 882,
+    "dimensionsMeters": [
+      19.100000381469727,
+      26.588464736938477,
+      17.433094024658203
+    ]
+  }
+]

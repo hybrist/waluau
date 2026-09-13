@@ -2132,6 +2132,16 @@
           "idlType": "Float32Array"
         }
       ]
+    },
+    {
+      "name": "dom_uint32_array_view",
+      "returnType": "BufferSource",
+      "params": [
+        {
+          "name": "data",
+          "idlType": "Uint32Array"
+        }
+      ]
     }
   ],
   "typeMap": {
@@ -2184,7 +2194,8 @@
     "GLfloat": "f32",
     "GLclampf": "f32",
     "AllowSharedBufferSource": "BufferSource",
-    "Float32Array": "Float32Array"
+    "Float32Array": "Float32Array",
+    "Uint32Array": "Uint32Array"
   },
   "unionTypeMap": {
     "(DOMString or CanvasGradient or CanvasPattern)": "string"
