@@ -54,6 +54,9 @@ async function playHand(page, names, preview, result) {
 }
 
 test('exchanges three real cards and charges their wager once', async ({ page }) => {
+  // CI's software WebGL renderer can take 3–4 times the local elapsed time.
+  // Keep each semantic readiness timeout bounded; budget the whole journey.
+  test.setTimeout(90_000);
   await start(page);
   const outgoing = ['8 of red', '2 of blue', 'Ace of black'];
   const incoming = ['10 of blue', 'Jack of blue', '10 of red'];
@@ -83,7 +86,7 @@ test('exchanges three real cards and charges their wager once', async ({ page })
 });
 
 test('buys a spell between duels, carries resources, then loses and starts a fresh run', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   await start(page);
   await playHand(page, ['8 of red', '2 of blue'], 'three of a kind', 'Hand 1: Opponent wins.');
   await ready(page);
@@ -124,7 +127,7 @@ test('buys a spell between duels, carries resources, then loses and starts a fre
 });
 
 test('plays all three boss hands before advancing to the next boss duel', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   await start(page, 2, 'Boss rush');
   const context = 'Boss rush. Boss duel: Arch Mage.';
   await expect(status(page)).toContainText(`${context} Duel 1. Health 3. Gold 10.`);
