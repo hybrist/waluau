@@ -1,10 +1,10 @@
 local storybook = require("waluau:engine/storybook")
 local graphics_module = require("waluau:engine/graphics")
-local lod0 = require("./church/lod0")
-local lod1 = require("./church/lod1")
-local lod2 = require("./church/lod2")
-local lod3 = require("./church/lod3")
-local reference = require("./church/reference")
+local lod0 = require("../church/lod0")
+local lod1 = require("../church/lod1")
+local lod2 = require("../church/lod2")
+local lod3 = require("../church/lod3")
+local reference = require("../church/reference")
 
 type Graphics = graphics_module.Graphics
 type Mesh = graphics_module.StaticMesh

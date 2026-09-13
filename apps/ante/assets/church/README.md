@@ -1,6 +1,6 @@
 # Medieval church fidelity study
 
-Open Ante Storybook with `pnpm storybook:ante`, then select **church**.
+Open Ante Storybook with `pnpm storybook:ante`, then select **models / church**.
 The four stories compare identical camera/light settings, inspect the overhead
 footprint, switch a single LoD beside a two-story reference, and show small
 map previews. Rotation, elevation, and zoom are manual controls; this study
