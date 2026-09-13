@@ -89,6 +89,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Install native compiler build tools
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
