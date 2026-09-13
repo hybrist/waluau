@@ -5,7 +5,7 @@ local engine = require("waluau:engine")
 local gpu = require("waluau:engine/graphics")
 local generator = require("./city_generator")
 local city_render = require("./city_generator_render")
-local lens = require("./shaders/city-scrying.frag")
+local lens = require("./city_scrying.frag")
 
 local zoom = storybook.range("zoom percent", 240, 100, 600, 10)
 local seed = storybook.range("seed", 41, 1, 999, 1)
