@@ -1,0 +1,183 @@
+-- Real perspective over world-space XYZ geometry; +Y runs south, +Z is up.
+-- The UI route uses the same projection with elevation zero.
+const VERTEX: string = [[
+#version 300 es
+precision highp float;
+in vec3 a_position;
+in vec4 a_color;
+in vec2 a_uv;
+uniform vec3 u_camera;
+uniform vec4 u_view;
+out vec3 v_world;
+out vec4 v_surface;
+out vec2 v_uv;
+out float v_depth;
+void main() {
+    vec3 p = a_position - vec3(u_camera.xy, 0.0);
+    float depth = u_camera.z - p.y * 0.55 - p.z * 0.835165;
+    vec2 screen = vec2(p.x, -p.y * 0.835165 + p.z * 0.55) * 900.0;
+    vec2 center = vec2(u_view.z / u_view.x * 2.0 - 1.0, 1.0 - u_view.w / u_view.y * 2.0);
+    // Preserve separation between paving, shadows, and facade details, while
+    // bringing the near plane closer as the camera dives into the city.
+    float near = min(64.0, u_camera.z * 0.1);
+    float far = 4000.0;
+    gl_Position = vec4(screen / u_view.xy * 2.0 + center * depth,
+        ((far + near) * depth - 2.0 * far * near) / (far - near), depth);
+    v_world = a_position;
+    v_surface = a_color;
+    v_uv = a_uv;
+    v_depth = depth;
+}
+]]
+
+const PIXEL: string = [[
+#version 300 es
+precision highp float;
+in vec3 v_world;
+in vec4 v_surface;
+in vec2 v_uv;
+in float v_depth;
+uniform vec3 u_camera;
+uniform float u_alpha;
+uniform float u_materials;
+uniform sampler2D u_texture;
+uniform vec3 u_lamp0;
+uniform vec3 u_lamp1;
+uniform vec3 u_lamp2;
+uniform vec3 u_lamp3;
+uniform vec3 u_lamp4;
+uniform vec3 u_lamp5;
+uniform vec3 u_lamp6;
+uniform vec3 u_lamp7;
+out vec4 out_color;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+}
+vec3 lamp(vec3 p, vec3 n, vec3 position) {
+    vec3 delta = position - p;
+    float d2 = dot(delta, delta);
+    return vec3(1.0, 0.44, 0.12) * max(dot(n, normalize(delta)), 0.0) * 70.0 / (d2 + 14.0);
+}
+void main() {
+    vec3 eye = vec3(u_camera.xy + vec2(0.0, u_camera.z * 0.55), u_camera.z * 0.835165);
+    vec3 n = normalize(cross(dFdx(v_world), dFdy(v_world)));
+    if (dot(n, eye - v_world) < 0.0) n = -n;
+    float material = v_surface.a;
+    if (material > 8.5) {
+        float d2 = dot(v_uv-vec2(24.0),v_uv-vec2(24.0));
+        float intensity = 5.6*70.0 / pow(d2+31.36,1.5);
+        float edge = 1.0-smoothstep(18.0,24.0,sqrt(d2));
+        out_color = vec4(0.95,0.40,0.10,min(0.48,intensity)*edge*u_alpha);
+        return;
+    }
+    vec3 albedo = v_surface.rgb;
+    vec2 uv = v_uv;
+    if (material > 4.5) uv = v_world.xy;
+    float grain = noise(uv * 5.0);
+    albedo *= 0.85 + grain * 0.25;
+    if (material < 0.5 || (material > 4.5 && material < 5.5) || material > 7.5) {
+        // Uneven stone courses / paving, staggered joints, weathered mortar.
+        float row = floor(uv.y / 1.7);
+        vec2 cell = vec2(uv.x / 3.2 + mod(row, 2.0) * 0.5, uv.y / 1.7);
+        vec2 f = fract(cell);
+        float edge = min(min(f.x,1.0-f.x),min(f.y,1.0-f.y));
+        albedo *= mix(0.48, 0.8 + 0.4 * hash(floor(cell)), smoothstep(0.015,0.075,edge));
+    } else if (material > 1.5 && material < 2.5) {
+        // Small overlapping roof slates, with irregular edges and tile tone.
+        float row = floor(uv.y / 1.3);
+        vec2 cell = vec2(uv.x / 1.0 + mod(row,2.0)*0.5, uv.y / 1.3);
+        vec2 f = fract(cell);
+        float seam = smoothstep(0.01,0.08,min(f.x,1.0-f.x));
+        albedo *= (0.65 + 0.4 * hash(floor(cell))) * mix(0.55,1.0,seam) * (0.65 + 0.35*f.y);
+    } else if (material > 2.5 && material < 3.5) {
+        albedo *= 0.65 + 0.35 * noise(vec2(uv.x * 4.0,uv.y * 0.15));
+    }
+    if (u_materials > 0.5 && (material < 3.5 || (material > 4.5 && material < 5.5) || material > 7.5)) {
+        vec2 quadrant = vec2(0.0,0.5);
+        float scale = 0.035;
+        if (material > 0.5 && material < 1.5) { quadrant=vec2(0.5,0.0); scale=0.02; }
+        if (material > 1.5 && material < 2.5) { quadrant=vec2(0.0); scale=0.028; }
+        if (material > 2.5 && material < 3.5) { quadrant=vec2(0.5); scale=0.04; }
+        vec2 sample_uv=quadrant+vec2(0.001)+fract(uv*scale)*0.498;
+        vec3 texel=texture(u_texture,sample_uv).rgb;
+        // Retain each building's slate/terracotta tint and plaster variation.
+        albedo=v_surface.rgb * (0.35+texel*1.25);
+    }
+    vec3 moon = normalize(vec3(-0.65,-0.4,0.8));
+    vec3 light = vec3(0.11,0.16,0.25) + vec3(0.42,0.47,0.59) * max(dot(n,moon),0.0);
+    if (material > 7.5) light = vec3(0.11,0.16,0.25);
+    light += lamp(v_world,n,u_lamp0) + lamp(v_world,n,u_lamp1) + lamp(v_world,n,u_lamp2) + lamp(v_world,n,u_lamp3);
+    light += lamp(v_world,n,u_lamp4) + lamp(v_world,n,u_lamp5) + lamp(v_world,n,u_lamp6) + lamp(v_world,n,u_lamp7);
+    // Corners and the foot of walls retain contact shade under cool skylight.
+    float contact = mix(0.58, 1.0, smoothstep(0.0, 6.0, v_world.z));
+    if (material > 4.5) contact = 1.0;
+    vec3 color = albedo * light * contact;
+    if (material > 3.5 && material < 4.5) {
+        // Actual recessed window and lantern geometry is emissive.
+        vec2 pane = fract(uv * vec2(0.9,0.65));
+        float bars = step(0.1,pane.x)*step(0.1,pane.y);
+        color = albedo * mix(0.12, 1.6, bars);
+    }
+    if (material > 6.5 && material < 7.5) {
+        float shimmer = noise(v_world.xy * vec2(0.5,2.0));
+        color = mix(vec3(0.015,0.035,0.06), vec3(0.12,0.19,0.26), shimmer) + light * 0.05;
+    }
+    float fog = smoothstep(700.0,1700.0,v_depth)*0.6;
+    color = mix(color,vec3(0.035,0.045,0.085),fog);
+    color = color / (vec3(0.6) + color);
+    out_color = vec4(pow(color,vec3(0.82)), u_alpha);
+}
+]]
+
+const OVERLAY_VERTEX: string = [[
+attribute vec2 a_position;
+attribute vec4 a_color;
+attribute vec2 a_uv;
+attribute float a_textured;
+uniform vec3 u_camera;
+uniform vec4 u_view;
+uniform float u_zoom;
+varying vec4 v_color;
+varying vec2 v_uv;
+varying float v_textured;
+void main() {
+    vec2 pixel = vec2((a_position.x+1.0)*0.5*u_view.x,(1.0-a_position.y)*0.5*u_view.y);
+    vec2 p = (pixel-u_view.zw)/u_zoom;
+    float depth = u_camera.z-p.y*0.55;
+    vec2 screen = vec2(p.x,-p.y*0.835165)*900.0;
+    vec2 center = vec2(u_view.z/u_view.x*2.0-1.0,1.0-u_view.w/u_view.y*2.0);
+    gl_Position = vec4(screen/u_view.xy*2.0+center*depth,0.0,depth);
+    v_color=a_color; v_uv=a_uv; v_textured=a_textured;
+}
+]]
+const OVERLAY_PIXEL: string = [[
+precision mediump float;
+varying vec4 v_color;
+varying vec2 v_uv;
+varying float v_textured;
+uniform sampler2D u_texture;
+void main() {
+    gl_FragColor=v_color;
+    if(v_textured>0.5) gl_FragColor*=texture2D(u_texture,v_uv);
+}
+]]
+function vertex(): string
+    return VERTEX
+end
+function pixel(): string
+    return PIXEL
+end
+function overlay_vertex(): string
+    return OVERLAY_VERTEX
+end
+function overlay_pixel(): string
+    return OVERLAY_PIXEL
+end
+return {
+    vertex = vertex,
+    pixel = pixel,
+    overlay_vertex = overlay_vertex,
+    overlay_pixel = overlay_pixel
+}

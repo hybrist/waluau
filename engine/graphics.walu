@@ -160,6 +160,11 @@ export opaque type ShaderParameter = FloatParameter({
 export type ShaderBindingResult = { ok: bool, error: GraphicsError }
 type UniformResult = { ok: bool, location: WebGLUniformLocation?, actual_kind: u32 }
 
+-- A retained WebGL2 triangle buffer. Each vertex is position XYZ, color RGBA,
+-- and UV (nine floats). The 3D shader owns projection and material meaning.
+export type Mesh3D = { buffer: WebGLBuffer?, count: i32, released: bool }
+export type Mesh3DResult = { ok: bool, mesh: Mesh3D, error: GraphicsError }
+
 export type Graphics = {
     gl: WebGL2RenderingContext,
     buffer: WebGLBuffer?,
@@ -1725,6 +1730,108 @@ function Graphics:draw_sprite_mesh(
         end
     end
     return true
+end
+
+-- Upload once, draw repeatedly without copying static geometry every frame.
+function Graphics:create_mesh3d(vertices: {f64}): Mesh3DResult
+    local mesh: Mesh3D = { buffer = nil, count = 0, released = true }
+    if #vertices == 0 or #vertices % 27 ~= 0 then
+        return {
+            ok = false,
+            mesh = mesh,
+            error = {
+                code = "invalid_mesh",
+                message = "3D meshes require complete nine-float triangle vertices"
+            }
+        }
+    end
+    self:flush()
+    local data: Float32Array = Float32Array.create(#vertices)
+    for index = 1::i32, #vertices do
+        data[index - 1] = vertices[index]::f32
+    end
+    local buffer: WebGLBuffer = self.gl:createBuffer()
+    self.gl:bindBuffer(GL_ARRAY_BUFFER, buffer)
+    self.gl:bufferData(GL_ARRAY_BUFFER, dom_float32_array_view(data), 0x88E4)
+    self.gl:bindBuffer(GL_ARRAY_BUFFER, self.buffer)
+    mesh.buffer = buffer
+    mesh.count = #vertices // 9
+    mesh.released = false
+    return { ok = true, mesh = mesh, error = { code = "", message = "" } }
+end
+
+-- One opaque 3D scene pass on the screen's depth buffer. The current 2D batch
+-- is flushed first; the buffer, attributes, program and depth state are restored
+-- afterwards, so text and sprites can immediately draw over the scene.
+-- Render targets currently have no depth attachment and cannot host this pass.
+function Graphics:draw_mesh3d(
+    mesh: Mesh3D,
+    shader: Shader,
+    parameters: {ShaderParameter}
+): ShaderBindingResult
+    if mesh.released or not self.gl:isBuffer(mesh.buffer) then
+        return {
+            ok = false,
+            error = {
+                code = "released",
+                message = "3D mesh is released or belongs to another WebGL2 context"
+            }
+        }
+    end
+    if self.current_target ~= 0 then
+        return {
+            ok = false,
+            error = {
+                code = "unsupported_target",
+                message = "3D scene passes require the screen depth buffer"
+            }
+        }
+    end
+    local previous: Shader = self.active_shader
+    local bound: ShaderBindingResult = self:bind_shader(shader, parameters)
+    if not bound.ok then
+        return bound
+    end
+    self:flush()
+    local gl: WebGL2RenderingContext = self.gl
+    gl:bindBuffer(GL_ARRAY_BUFFER, mesh.buffer)
+    if shader.position_location >= 0 then
+        gl:vertexAttribPointer(shader.position_location::u32, 3, GL_FLOAT, false, 36, 0)
+    end
+    if shader.color_location >= 0 then
+        gl:vertexAttribPointer(shader.color_location::u32, 4, GL_FLOAT, false, 36, 12)
+    end
+    if shader.uv_location >= 0 then
+        gl:vertexAttribPointer(shader.uv_location::u32, 2, GL_FLOAT, false, 36, 28)
+    end
+    gl:enable(0x0B71)
+    gl:depthFunc(0x0201)
+    gl:depthMask(true)
+    gl:clearDepth(1.0)
+    gl:clear(0x00000100)
+    gl:drawArrays(GL_TRIANGLES, 0, mesh.count)
+    gl:disable(0x0B71)
+    disable_shader_attributes(gl, shader)
+    gl:bindBuffer(GL_ARRAY_BUFFER, self.buffer)
+    self.active_shader = previous
+    bind_shader(
+        gl,
+        previous,
+        (gl.drawingBufferWidth::f64) / self.width,
+        (gl.drawingBufferHeight::f64) / self.height,
+        self.time
+    )
+    return { ok = true, error = { code = "", message = "" } }
+end
+
+function Graphics:release_mesh3d(mesh: Mesh3D): unit
+    if mesh.released then
+        return
+    end
+    self.gl:deleteBuffer(mesh.buffer)
+    mesh.buffer = nil
+    mesh.count = 0
+    mesh.released = true
 end
 
 function Graphics:draw_image(texture: Texture, x: f64, y: f64): bool

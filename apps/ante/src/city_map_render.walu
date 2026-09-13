@@ -1,4 +1,4 @@
--- WebGL2 presentation for the DOM-free city map. Muted rooftops keep whatever
+-- Perspective WebGL2 presentation for the DOM-free city map. Muted rooftops keep whatever
 -- list is standing over them readable; the saturated things are the route the
 -- duel walks and the thief streak passing somewhere else in the city.
 --
@@ -15,6 +15,9 @@ local engine = require("waluau:engine")
 local ink = require("./ink")
 local plate = require("./plate")
 local city_map = require("./city_map")
+local graphics_module = require("waluau:engine/graphics")
+local city_scene = require("./city_scene")
+local scene: city_scene.Scene = city_scene.Scene.new()
 
 type Graphics = engine.Graphics
 type Point = city_map.Point
@@ -22,10 +25,9 @@ type Point = city_map.Point
 const STREAK_LENGTH: f64 = 118.0
 
 const NIGHT: string = "#05060a"
-const ASPHALT: string = "#090b11"
-const BLOCK: string = "#22242d"
+const ASPHALT: string = "#303330"
 const SCRIM: string = "#05060a"
-const SCRIM_STRENGTH: f64 = 0.62
+const SCRIM_STRENGTH: f64 = 0.12
 
 -- The road already walked, and the road still to come. The walked half is the
 -- one gold thing on the map; the rest is a dashed intention.
@@ -63,156 +65,6 @@ const VAULT_INK: string = "#fbbf24"
 const VAULT_DIM: string = "#6b6f7d"
 const VENDOR_INK: string = "#67e8f9"
 const VENDOR_DIM: string = "#4a5560"
-
-function roof_tone(tone: i32): string
-    if tone == 0 then
-        return "#151620"
-    end
-    if tone == 1 then
-        return "#191821"
-    end
-    if tone == 2 then
-        return "#131922"
-    end
-    return "#1b1720"
-end
-
--- How far the shadow a building throws reaches past it, and how black it is
--- where it starts. Drawn as two veils fading outward rather than as an offset
--- copy of the roof: from above, a block's shadow has an edge that dies out,
--- and a hard rectangle behind every roof made the city read as a diagram.
-const SHADOW_REACH: f64 = 7.0
-const SHADOW_DEPTH: f64 = 0.62
--- The parapet catches the moon on the sides facing it and shades the others,
--- which is the whole difference between a roof and an outlined rectangle.
-const PARAPET: string = "#2c2f3b"
--- Roofs are darker at their own edges, where the parapet keeps the light off.
-const ROOF_MIDDLE: f64 = 1.10
-const ROOF_EDGE: f64 = 0.80
-
-function draw_roof_shadow(graphics: Graphics, building: city_map.Building, alpha: f64): unit
-    graphics:set_color(ink.fade("#04050a", alpha))
-    local depth: f64 = SHADOW_DEPTH * alpha
-    plate.veil_rectangle(
-        graphics,
-        building.x + building.width,
-        building.y + 5.0,
-        SHADOW_REACH,
-        building.height,
-        depth,
-        0.0,
-        0.0,
-        depth
-    )
-    plate.veil_rectangle(
-        graphics,
-        building.x + 4.0,
-        building.y + building.height,
-        building.width + SHADOW_REACH,
-        SHADOW_REACH,
-        depth,
-        0.0,
-        0.0,
-        0.0
-    )
-end
-
-function draw_rooftop(graphics: Graphics, building: city_map.Building, alpha: f64): unit
-    draw_roof_shadow(graphics, building, alpha)
-
-    -- The roof face falls off toward its own edges. Two bands rather than one
-    -- quad, because the falloff has to come back up in the middle and a quad
-    -- only interpolates between its corners.
-    graphics:set_color(ink.fade(roof_tone(building.tone), alpha))
-    local half: f64 = building.height * 0.5
-    plate.shaded_rectangle(
-        graphics,
-        building.x,
-        building.y,
-        building.width,
-        half,
-        ROOF_EDGE,
-        ROOF_EDGE,
-        ROOF_MIDDLE,
-        ROOF_MIDDLE
-    )
-    plate.shaded_rectangle(
-        graphics,
-        building.x,
-        building.y + half,
-        building.width,
-        building.height - half,
-        ROOF_MIDDLE,
-        ROOF_MIDDLE,
-        ROOF_EDGE,
-        ROOF_EDGE
-    )
-    plate.border(
-        graphics,
-        building.x,
-        building.y,
-        building.width,
-        building.height,
-        ink.fade(PARAPET, alpha),
-        1.0
-    )
-
-    local unit_x: f64 = building.x + building.width * 0.5 - 7.0
-    local unit_y: f64 = building.y + building.height * 0.5 - 5.0
-    if building.detail == 1 then
-        unit_x = building.x + 9.0
-    end
-    if building.detail == 2 then
-        unit_y = building.y + 9.0
-    end
-    plate.draw(
-        graphics,
-        unit_x,
-        unit_y,
-        14.0,
-        10.0,
-        ink.fade("#0d0f16", alpha),
-        ink.fade("#30323d", alpha),
-        1.0
-    )
-end
-
--- Centre lines, drawn only where they can be seen. `across` bounds pick the
--- streets on the screen and `along` bounds the stretch of each one that is on
--- it, which is what keeps a city several screens wide costing one screen.
-function draw_street_marks(
-    graphics: Graphics,
-    streets: {f64},
-    vertical: bool,
-    limit: i32,
-    across_low: f64,
-    across_high: f64,
-    along_low: f64,
-    along_high: f64,
-    alpha: f64
-): unit
-    local first: i32 = math.floor(along_low / 28.0)::i32 * 28
-    if first < 8 then
-        first = 8
-    end
-    local last: i32 = math.floor(along_high)::i32 + 28
-    if last > limit - 8 then
-        last = limit - 8
-    end
-    graphics:set_color(ink.fade("#252833", alpha))
-    graphics:set_line_width(1.0)
-    for street in streets do
-        if street >= across_low and street <= across_high then
-            for mark = first, last, 28 do
-                if vertical then
-                    graphics:line(street, mark::f64, street, (mark + 10)::f64)
-                else
-                    graphics:line(mark::f64, street, (mark + 10)::f64, street)
-                end
-            end
-        end
-    end
-end
 
 function clamp(value: f64, low: f64, high: f64): f64
     if value < low then
@@ -465,10 +317,6 @@ end
 function draw_stops(
     state: city_map.State,
     graphics: Graphics,
-    left: f64,
-    right: f64,
-    top: f64,
-    bottom: f64,
     alpha: f64,
     furniture: f64,
     landmark: i32
@@ -477,33 +325,31 @@ function draw_stops(
     local entered: i32 = entered_stop(state)
     for index = 0::i32, last do
         local stop: city_map.Stop = state.stops[index + 1]
-        if stop.x >= left and stop.x <= right and stop.y >= top and stop.y <= bottom then
-            local reached: bool = (index::f64) <= state.travel + 0.001
-            local final: bool = index == landmark
-            if index == entered then
+        local reached: bool = (index::f64) <= state.travel + 0.001
+        local final: bool = index == landmark
+        if index == entered then
+            draw_duel_stop(
+                graphics,
+                stop,
+                tostring(city_map.stop_duel(index)),
+                reached,
+                final,
+                alpha,
+                furniture
+            )
+        elseif furniture > 0.0 then
+            if stop.duel then
                 draw_duel_stop(
                     graphics,
                     stop,
                     tostring(city_map.stop_duel(index)),
                     reached,
                     final,
-                    alpha,
+                    furniture,
                     furniture
                 )
-            elseif furniture > 0.0 then
-                if stop.duel then
-                    draw_duel_stop(
-                        graphics,
-                        stop,
-                        tostring(city_map.stop_duel(index)),
-                        reached,
-                        final,
-                        furniture,
-                        furniture
-                    )
-                else
-                    draw_vendor_stop(graphics, stop, reached, furniture)
-                end
+            else
+                draw_vendor_stop(graphics, stop, reached, furniture)
             end
         end
     end
@@ -540,7 +386,8 @@ function draw(
     graphics: Graphics,
     streak_color: string,
     alpha: f64,
-    landmark: i32
+    landmark: i32,
+    materials: graphics_module.Texture?
 ): unit
     if alpha <= 0.0 then
         return
@@ -560,53 +407,8 @@ function draw(
     local furniture: f64 = alpha * (1.0 - ramp(state.dive, 0.0, 0.30))
     local city_ink: f64 = alpha * (1.0 - ramp(state.dive, 0.16, 0.62))
 
-    local left: f64 = state.camera_x - (state.anchor_x / state.zoom + 60.0)
-    local right: f64 = state.camera_x + ((state.view_width - state.anchor_x) / state.zoom + 60.0)
-    local top: f64 = state.camera_y - (state.anchor_y / state.zoom + 60.0)
-    local bottom: f64 = state.camera_y + ((state.view_height - state.anchor_y) / state.zoom + 60.0)
-
     if city_ink > 0.0 then
-        apply_camera(state, graphics)
-        graphics:set_color(ink.fade(BLOCK, city_ink))
-        for building in state.buildings do
-            if building.x + building.width >= left and building.x <= right and building.y + building.height >= top and building.y <= bottom then
-                graphics:fill_rectangle(
-                    building.x - 5.0,
-                    building.y - 5.0,
-                    building.width + 10.0,
-                    building.height + 10.0
-                )
-            end
-        end
-        for building in state.buildings do
-            if building.x + building.width >= left and building.x <= right and building.y + building.height >= top and building.y <= bottom then
-                draw_rooftop(graphics, building, city_ink)
-            end
-        end
-        draw_street_marks(
-            graphics,
-            state.vertical_streets,
-            true,
-            city_map.height::i32,
-            left,
-            right,
-            top,
-            bottom,
-            city_ink
-        )
-        draw_street_marks(
-            graphics,
-            state.horizontal_streets,
-            false,
-            city_map.width::i32,
-            top,
-            bottom,
-            left,
-            right,
-            city_ink
-        )
-        draw_streak(state, graphics, streak_color, city_ink)
-        graphics:pop()
+        scene:draw(graphics, state, city_ink, materials)
     end
 
     -- The rooftops go under a scrim so a list of options reads over them; the
@@ -614,16 +416,25 @@ function draw(
     graphics:set_color(ink.fade(SCRIM, SCRIM_STRENGTH * city_ink))
     graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)
 
+    scene:bind_overlay(graphics, state)
     apply_camera(state, graphics)
+    if city_ink > 0.0 then
+        draw_streak(state, graphics, streak_color, city_ink)
+    end
     if furniture > 0.0 then
         draw_route_ahead(state, graphics, furniture)
         draw_route_done(state, graphics, furniture)
     end
-    draw_stops(state, graphics, left, right, top, bottom, alpha, furniture, landmark)
+    draw_stops(state, graphics, alpha, furniture, landmark)
     if furniture > 0.0 then
         draw_party(state, graphics, furniture)
     end
     graphics:pop()
+    graphics:use_default_shader()
 end
 
-return { draw = draw }
+function dispose(): unit
+    scene:dispose()
+end
+
+return { draw = draw, dispose = dispose }

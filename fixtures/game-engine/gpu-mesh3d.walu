@@ -1,0 +1,141 @@
+-- A near triangle submitted BEFORE a far triangle must remain in front.
+-- The following 2D rectangle must cover both, proving depth and stream state
+-- were restored. Geometry is uploaded once and reused for a second pass.
+local engine = require("../../engine/browser")
+local graphics_module = require("../../engine/graphics")
+local input_module = require("../../engine/input")
+const VERTEX: string = [[
+attribute vec3 a_position;
+attribute vec4 a_color;
+varying vec4 v_color;
+void main() { gl_Position = vec4(a_position, 1.0 + a_position.z * 0.5); v_color = a_color; }
+]]
+const PIXEL: string = [[
+precision mediump float;
+varying vec4 v_color;
+void main() { gl_FragColor = v_color; }
+]]
+function run(): unit
+    local drew: bool = false
+    local function load(): unit
+    end
+    local function update(dt: f64, input: input_module.Input): unit
+    end
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        if drew then
+            return
+        end
+        drew = true
+        graphics:clear("#ffff00")
+        local invalid: graphics_module.Mesh3DResult = graphics:create_mesh3d({1.0, 2.0})
+        assert(not invalid.ok and invalid.error.code == "invalid_mesh")
+        local mesh: graphics_module.Mesh3DResult = graphics:create_mesh3d(
+            {
+                -0.8,
+                -0.8,
+                -0.5,
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.8,
+                -0.8,
+                -0.5,
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.8,
+                -0.5,
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.5,
+                1.0,
+                -0.8,
+                -0.8,
+                0.5,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.8,
+                -0.8,
+                0.5,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.8,
+                0.5,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.5,
+                1.0
+            }
+        )
+        assert(mesh.ok)
+        local shader: graphics_module.ShaderResult = graphics:create_shader(VERTEX, PIXEL)
+        assert(shader.ok)
+        local target: graphics_module.RenderTargetResult = graphics:create_render_target(32, 32)
+        assert(target.ok and graphics:set_render_target(target.target))
+        local rejected: graphics_module.ShaderBindingResult = graphics:draw_mesh3d(
+            mesh.mesh,
+            shader.shader,
+            {}
+        )
+        assert(not rejected.ok and rejected.error.code == "unsupported_target")
+        graphics:set_screen_target()
+        graphics:release_render_target(target.target)
+        assert(graphics:draw_mesh3d(mesh.mesh, shader.shader, {}).ok)
+        assert(graphics:draw_mesh3d(mesh.mesh, shader.shader, {}).ok)
+        graphics:set_color("#00ff00")
+        graphics:fill_rectangle(45.0, 45.0, 10.0, 10.0)
+        graphics:release_mesh3d(mesh.mesh)
+        graphics:release_mesh3d(mesh.mesh)
+        local released: graphics_module.ShaderBindingResult = graphics:draw_mesh3d(
+            mesh.mesh,
+            shader.shader,
+            {}
+        )
+        assert(not released.ok and released.error.code == "released")
+        graphics:release_shader(shader.shader)
+        graphics:present()
+    end
+    local function key(key: string): unit
+    end
+    engine.start(
+        {
+            title = "3D mesh test",
+            width = 100,
+            height = 100,
+            update_hz = 60.0,
+            max_frame_seconds = 0.25,
+            background = "#000000"
+        },
+        {
+            load = load,
+            update = update,
+            draw = draw,
+            keypressed = key,
+            keyreleased = key,
+            mousepressed = nil,
+            mousereleased = nil,
+            mousemoved = nil
+        }
+    )
+end
+run()
