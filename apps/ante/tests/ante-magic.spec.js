@@ -8,6 +8,7 @@ import {
   countMenuTitleInk,
   frameSignature,
   openGame,
+  settleBoard,
   waitForMenu,
 } from './game-driver.js';
 
@@ -326,37 +327,88 @@ test('stops on the fatal audio diagnostic when the flip sound cannot load', asyn
     .toBeGreaterThan(5000);
 });
 
-test('plays a complete Ante Magic game through the 2D engine', async ({ page }) => {
+// Sample only the phase prompts, not the animated cards or background. These
+// baselines are the visible SWAP, PLAY and CONTINUE prompts in render.walu.
+function phaseInk(canvas, phase) {
+  const rect = phase === 'swap'
+    ? { centerOffsetX: -290, wardOffsetY: -51, width: 580, height: 13 }
+    : phase === 'play'
+      ? { centerOffsetX: -180, actionOffsetY: 6, width: 360, height: 12 }
+      : { centerOffsetX: -95, actionOffsetY: 18, width: 25, height: 12 };
+  // The left end of CONTINUE sits outside the PLAY HAND button. Its small
+  // antialiased letters need a wider tolerance over the reveal effects.
+  return countDesignInk(canvas, rect, [251, 191, 36], phase === 'continue' ? [80, 85, 25] : [20, 20, 20]);
+}
+
+function verdictHeadingInk(canvas) {
+  return countDesignInk(canvas,
+    { centerOffsetX: -350, heightRatio: 0.5, yOffset: -220, width: 300, height: 50 },
+    [251, 191, 36], [20, 20, 20]);
+}
+
+// A key changes the domain synchronously, but its retained controls and pixels
+// follow on the next frame. Read the presentation only after it has drawn.
+async function playKey(page, key) {
+  await page.keyboard.press(key);
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+}
+
+test('plays a duel through its verdict, ledger, and run restart', async ({ page }) => {
   test.slow();
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
+  // Stabilize the runtime's initial PRNG seed, while still playing through the
+  // production input handlers and AI rather than arranging a private game state.
+  await page.addInitScript(() => { Math.random = () => 0.5; });
   const canvas = await openGame(page);
-
   await beginHeist(page, canvas);
-  const playSignature = await frameSignature(canvas);
-  await page.keyboard.press('h');
-  await expect.poll(() => frameSignature(canvas)).not.toBe(playSignature);
-  const historySignature = await frameSignature(canvas);
-  await page.keyboard.press('h');
-  await expect.poll(() => frameSignature(canvas)).not.toBe(historySignature);
+  await settleBoard(canvas);
 
-  for (let round = 1; round <= 6; round += 1) {
-    await page.keyboard.press('p');
-    await page.keyboard.press('Space');
-    await page.keyboard.press('ArrowRight');
-    await page.keyboard.press('Space');
-    const beforeReveal = await frameSignature(canvas);
-    await page.keyboard.press('Enter');
-    await page.keyboard.press('Enter');
-    await expect.poll(() => frameSignature(canvas)).not.toBe(beforeReveal);
-    await page.keyboard.press('Enter');
+  let handsPlayed = 0;
+  while (await verdictHeadingInk(canvas) < 50 && handsPlayed < 8) {
+    // More than one exchange can be needed to fill the five-card table.
+    let swaps = 0;
+    while (await phaseInk(canvas, 'swap') > 20 && swaps < 5) {
+      await playKey(page, 'p');
+      await settleBoard(canvas);
+      swaps += 1;
+    }
+    await expect.poll(() => phaseInk(canvas, 'play')).toBeGreaterThan(20);
+    await playKey(page, 'Space');
+    await playKey(page, 'ArrowRight');
+    await playKey(page, 'Space');
+    await expect.poll(() => countDesignInk(canvas,
+      { centerOffsetX: -180, wardOffsetY: -51, width: 360, height: 13 },
+      [212, 212, 216], [20, 20, 20])).toBeGreaterThan(20);
+    await playKey(page, 'Enter');
+    await expect.poll(() => phaseInk(canvas, 'continue')).toBeGreaterThan(20);
+
+    // Enter first finishes an unfinished reveal, then dismisses it. If the
+    // animation has already finished, only the dismissal press is needed.
+    // Stop when CONTINUE disappears so we never advance past the verdict.
+    for (let presses = 0; presses < 2 && await phaseInk(canvas, 'continue') > 20; presses++) {
+      await playKey(page, 'Enter');
+    }
+    await expect.poll(() => phaseInk(canvas, 'continue')).toBeLessThan(5);
+    handsPlayed += 1;
+    await settleBoard(canvas);
   }
-
-  const finalSignature = await frameSignature(canvas);
-  await page.keyboard.press('h');
-  await expect.poll(() => frameSignature(canvas)).not.toBe(finalSignature);
-  await page.keyboard.press('h');
-  await page.keyboard.press('r');
-  await expect.poll(() => frameSignature(canvas)).not.toBe(finalSignature);
+  expect(handsPlayed).toBeGreaterThan(0);
+  await expect.poll(() => verdictHeadingInk(canvas)).toBeGreaterThan(50);
+  const verdict = await frameSignature(canvas);
+  await playKey(page, 'h');
+  await expect.poll(() => frameSignature(canvas)).not.toBe(verdict);
+  await playKey(page, 'h');
+  // Closing the ledger returns to the verdict, not a dead finished board.
+  await expect.poll(() => frameSignature(canvas)).toBe(verdict);
+  await playKey(page, 'r');
+  // Restart visits the starting vendor; Enter takes its default spell again.
+  await expect.poll(() => verdictHeadingInk(canvas)).toBeLessThan(5);
+  await playKey(page, 'Enter');
+  await expect.poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT }).toBeGreaterThan(40);
+  await settleBoard(canvas);
+  await expect.poll(() => phaseInk(canvas, 'swap')).toBeGreaterThan(20);
   expect(pageErrors).toEqual([]);
 });
