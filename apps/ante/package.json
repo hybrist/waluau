@@ -13,7 +13,8 @@
     "test:e2e": "playwright test",
     "storybook": "node tools/build-church-meshes.mjs && storybook dev -p 6006 --no-open",
     "build-storybook": "node tools/build-church-meshes.mjs && storybook build -o dist/storybook",
-    "meshes:church": "node tools/build-church-meshes.mjs"
+    "meshes:church": "node tools/build-church-meshes.mjs",
+    "test:visual": "playwright test -c playwright.visual.config.js"
   },
   "dependencies": {
     "@waluau/vite-plugin": "workspace:*"

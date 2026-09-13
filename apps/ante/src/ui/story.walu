@@ -3,6 +3,7 @@
 -- The stage authors no size for its child. It gives the node the whole
 -- logical canvas as available space and lets the node's intrinsic
 -- measurement plus grow/shrink factors decide the rectangle it receives.
+local window = require("dom:window")
 local engine = require("waluau:engine")
 local storybook = require("waluau:engine/storybook")
 local ui = require("./node")
@@ -59,6 +60,7 @@ function Book:scene(spec: Scene): storybook.Scene
     assert(spec.width > 0.0 and spec.height > 0.0 and spec.scale > 0.0)
 
     local function load(): unit
+        window.document.body:set_attribute("data-ante-story-ready", "false")
         self:prepare()
         local hook: (() -> unit)? = spec.load
         if hook ~= nil then
@@ -72,6 +74,15 @@ function Book:scene(spec: Scene): storybook.Scene
 
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         self.assets:prepare(graphics)
+        -- Only the Storybook capture harness reads this resource barrier. The
+        -- game never imports this module or waits for a visual completion flag.
+        if self.assets.load_finished then
+            assert(#self.assets.warnings == 0)
+            assert(#self.assets.fatal_shader_error == 0)
+            assert(#self.assets.fatal_audio_code == 0)
+            assert(self.assets.font ~= nil and self.assets.texture ~= nil)
+            window.document.body:set_attribute("data-ante-story-ready", "true")
+        end
         local present: (() -> unit)? = spec.present
         if present ~= nil then
             present()
