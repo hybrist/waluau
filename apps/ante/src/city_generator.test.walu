@@ -53,10 +53,179 @@ describe(
     "medieval city generator",
     function()
         it(
+            "expands the world and road network at the fivefold slider maximum",
+            function()
+                local small_options: generator.Options = options(41, 1, true)
+                small_options.size = 180
+                local small: generator.City = generator.generate(small_options)
+                local large_options: generator.Options = options(41, 1, true)
+                large_options.size = 900
+                local large: generator.City = generator.generate(large_options)
+                expect(large.options.size):toBe(900)
+                expect(
+                    math.abs(large.width * large.height / (small.width * small.height) - 5.0)
+                ):toBeLessThan(0.001)
+                expect(#large.nodes):toBeGreaterThan(#small.nodes * 3)
+                expect(#large.buildings):toBeGreaterThan(#small.buildings * 3)
+                expect(#generator.shortest_path(large, 1, 2)):toBeGreaterThan(1)
+                -- Sample the expanded world too: distant-geometry pruning must
+                -- preserve exactly the same water and crossing constraints.
+                for index = 1::i32, #large.edges, 47::i32 do
+                    local road: generator.Edge = large.edges[index]
+                    local a: generator.Point = large.nodes[road.a]
+                    local b: generator.Point = large.nodes[road.b]
+                    if not road.bridge then
+                        for river_index = 2::i32, #large.river do
+                            expect(
+                                segments_distance(
+                                    a,
+                                    b,
+                                    large.river[river_index - 1],
+                                    large.river[river_index]
+                                )
+                            ):toBeGreaterThan(generator.river_width * 0.5 + road.width * 0.5)
+                        end
+                    end
+                    for other in large.edges do
+                        if road.a ~= other.a and road.a ~= other.b and road.b ~= other.a and road.b ~= other.b then
+                            local c: generator.Point = large.nodes[other.a]
+                            local d: generator.Point = large.nodes[other.b]
+                            expect(
+                                cross(
+                                    a,
+                                    b,
+                                    c
+                                ) * cross(
+                                    a,
+                                    b,
+                                    d
+                                ) < -0.0001 and cross(c, d, a) * cross(c, d, b) < -0.0001
+                            ):toBe(false)
+                        end
+                    end
+                end
+                for index = 1::i32, #large.buildings, 97::i32 do
+                    local house: generator.Building = large.buildings[index]
+                    for vertex in house.footprint do
+                        for road in large.edges do
+                            expect(
+                                segment_distance(vertex, large.nodes[road.a], large.nodes[road.b])
+                            ):toBeGreaterThan(road.width * 0.5)
+                        end
+                    end
+                end
+                for place in large.landmarks do
+                    expect(
+                        generator.water_distance(large, place.center)
+                    ):toBeGreaterThan(place.radius)
+                    expect(#generator.shortest_path(large, 1, place.node)):toBeGreaterThan(0)
+                    for house in large.buildings do
+                        expect(
+                            distance(place.center, { x = house.x, y = house.y })
+                        ):toBeGreaterThan(place.radius + house.radius)
+                    end
+                end
+            end
+        )
+
+        it(
+            "changes housing density without changing streets or reshuffling occupied plots",
+            function()
+                local sparse_options: generator.Options = options(41, 1, true)
+                sparse_options.density = 30
+                local sparse: generator.City = generator.generate(sparse_options)
+                local full_options: generator.Options = options(41, 1, true)
+                full_options.density = 100
+                local full: generator.City = generator.generate(full_options)
+                local empty_options: generator.Options = options(41, 1, true)
+                empty_options.density = 0
+                local empty: generator.City = generator.generate(empty_options)
+                expect(#empty.buildings):toBe(0)
+                expect(#sparse.buildings):toBeGreaterThan(0)
+                expect(#full.buildings):toBeGreaterThan(#sparse.buildings * 2)
+                expect(#sparse.edges):toBe(#full.edges)
+                expect(#empty.edges):toBe(#full.edges)
+                for index = 1::i32, #full.edges do
+                    expect(sparse.edges[index].a):toBe(full.edges[index].a)
+                    expect(sparse.edges[index].b):toBe(full.edges[index].b)
+                    expect(empty.edges[index].a):toBe(full.edges[index].a)
+                    expect(empty.edges[index].b):toBe(full.edges[index].b)
+                end
+                for house in sparse.buildings do
+                    local found: bool = false
+                    for other in full.buildings do
+                        if house.x == other.x and house.y == other.y then
+                            found = true
+                            expect(#house.footprint):toBe(#other.footprint)
+                            for vertex = 1::i32, #house.footprint do
+                                expect(house.footprint[vertex].x):toBe(other.footprint[vertex].x)
+                                expect(house.footprint[vertex].y):toBe(other.footprint[vertex].y)
+                            end
+                        end
+                    end
+                    expect(found):toBe(true)
+                end
+            end
+        )
+
+        it(
+            "reserves two accessible markets and a churchyard outside roads and houses",
+            function()
+                local city: generator.City = generator.generate(options(73, 1, true))
+                expect(#city.landmarks):toBe(3)
+                local markets: i32 = 0
+                local churches: i32 = 0
+                for place in city.landmarks do
+                    if place.kind == "market" then
+                        markets += 1
+                    end
+                    if place.kind == "church" then
+                        churches += 1
+                    end
+                    expect(place.radius):toBeGreaterThan(20.0)
+                    expect(place.node):toBeGreaterThanOrEqual(1)
+                    expect(place.node):toBeLessThanOrEqual(#city.nodes)
+                    expect(
+                        generator.water_distance(city, place.center)
+                    ):toBeGreaterThan(place.radius)
+                    expect(#generator.shortest_path(city, 1, place.node)):toBeGreaterThan(0)
+                    for house in city.buildings do
+                        expect(
+                            distance(place.center, { x = house.x, y = house.y })
+                        ):toBeGreaterThan(place.radius + house.radius)
+                        expect(
+                            segment_distance(
+                                place.center,
+                                { x = house.x, y = house.y },
+                                house.access
+                            )
+                        ):toBeGreaterThan(place.radius)
+                    end
+                    if place.kind == "church" then
+                        for road in city.edges do
+                            expect(
+                                segment_distance(
+                                    place.center,
+                                    city.nodes[road.a],
+                                    city.nodes[road.b]
+                                )
+                            ):toBeGreaterThanOrEqual(place.radius + road.width * 0.5 - 0.001)
+                        end
+                    end
+                end
+                expect(markets):toBe(2)
+                expect(churches):toBe(1)
+            end
+        )
+
+        it(
             "chooses the shorter road route and reports disconnected destinations",
             function()
                 local city: generator.City = {
                     options = options(1, 0, false),
+                    width = 960.0,
+                    height = 640.0,
+                    landmarks = {},
                     river = {},
                     buildings = {},
                     nodes = {
@@ -264,9 +433,9 @@ describe(
                         ):toBeLessThan(0.001)
                         for point in building.footprint do
                             expect(point.x):toBeGreaterThanOrEqual(0.0)
-                            expect(point.x):toBeLessThanOrEqual(generator.width)
+                            expect(point.x):toBeLessThanOrEqual(city.width)
                             expect(point.y):toBeGreaterThanOrEqual(0.0)
-                            expect(point.y):toBeLessThanOrEqual(generator.height)
+                            expect(point.y):toBeLessThanOrEqual(city.height)
                             for river_index = 2::i32, #city.river do
                                 expect(
                                     segment_distance(

@@ -6,21 +6,22 @@ local generator = require("./city_generator")
 local seed = storybook.range("seed", 41, 1, 999, 1)
 local bridges = storybook.range("bridges", 1, 0, 2, 1)
 local relief = storybook.range("relief", 10, 0, 20, 1)
-local size = storybook.range("settlement size", 90, 30, 180, 10)
-local density = storybook.range("frontage occupancy", 85, 0, 100, 5)
+local size = storybook.range("settlement size", 90, 30, 900, 10)
+local density = storybook.range("housing density", 85, 0, 100, 5)
 local water = storybook.range("river", 1, 0, 1, 1)
 local graph = storybook.range("junction overlay", 0, 0, 1, 1)
 local parcels = storybook.range("access overlay", 0, 0, 1, 1)
 local terrain = storybook.range("terrain overlay", 1, 0, 1, 1)
-local route_start = storybook.range("route start node", 1, 1, 180, 1)
-local route_end = storybook.range("route end node", 2, 1, 180, 1)
+local route_start = storybook.range("route start node", 1, 1, 900, 1)
+local route_end = storybook.range("route end node", 2, 1, 900, 1)
 
-type View = { city: generator.City, route: {i32} }
+type View = { city: generator.City, route: {i32}, heights: {f64} }
 local view: View = {
     city = generator.generate(
         { seed = 41, bridges = 1, river = true, relief = 1.0, size = 90, density = 85 }
     ),
-    route = {}
+    route = {},
+    heights = {}
 }
 
 local function load(): unit
@@ -35,16 +36,39 @@ local function load(): unit
         }
     )
     view.route = generator.shortest_path(view.city, route_start.value(), route_end.value())
+    -- Sample terrain once per generation, not thousands of river-distance
+    -- queries every animation frame when viewing a large settlement.
+    view.heights = {}
+    for y = 0::i32, 47::i32 do
+        for x = 0::i32, 71::i32 do
+            table.insert(
+                view.heights,
+                generator.elevation(
+                    view.city,
+                    {
+                        x = (x::f64) * view.city.width / 72.0,
+                        y = (y::f64) * view.city.height / 48.0
+                    }
+                )
+            )
+        end
+    end
 end
 
 local function draw(graphics: engine.Graphics, _alpha: f64): unit
     graphics:use_builtin_font()
     graphics:set_font("12px")
     local city: generator.City = view.city
+    local scale: f64 = math.min(936.0 / city.width, 560.0 / city.height)
+    local origin_x: f64 = (960.0 - city.width * scale) * 0.5
+    local origin_y: f64 = 49.0
+    graphics:push()
+    graphics:translate(origin_x, origin_y)
+    graphics:scale(scale, scale)
     if terrain.value() > 0 then
-        for y = 48::i32, 616::i32, 12::i32 do
-            for x = 12::i32, 936::i32, 12::i32 do
-                local height: f64 = generator.elevation(city, { x = x::f64, y = y::f64 })
+        for y = 0::i32, 47::i32 do
+            for x = 0::i32, 71::i32 do
+                local height: f64 = view.heights[y * 72 + x + 1]
                 local band: f64 = math.floor(height / 4.0)
                 graphics:set_color_rgba(
                     0.80 - band * 0.021,
@@ -52,7 +76,12 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
                     0.69 - band * 0.02,
                     1.0
                 )
-                graphics:fill_rectangle(x::f64, y::f64, 12.0, 12.0)
+                graphics:fill_rectangle(
+                    (x::f64) * city.width / 72.0,
+                    (y::f64) * city.height / 48.0,
+                    city.width / 72.0 + 0.2,
+                    city.height / 48.0 + 0.2
+                )
             end
         end
     end
@@ -76,6 +105,26 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
             city.river[index].y
         )
         graphics:fill_circle(city.river[index].x, city.river[index].y, generator.river_width * 0.5)
+    end
+    for place in city.landmarks do
+        graphics:set_color("#918264")
+        graphics:fill_circle(place.center.x, place.center.y, place.radius)
+        graphics:set_color("#ded0a9")
+        if place.kind == "church" then
+            graphics:set_color("#b2bc93")
+        end
+        graphics:fill_circle(place.center.x, place.center.y, place.radius - 1.5)
+        if place.kind == "church" then
+            local access: generator.Point = city.nodes[place.node]
+            graphics:set_color("#ece1c5")
+            graphics:set_line_width(4.0)
+            graphics:line(place.center.x, place.center.y, access.x, access.y)
+            -- Cruciform footprint identifies the church even without labels;
+            -- its surrounding reservation is the churchyard.
+            graphics:set_color("#76617f")
+            graphics:fill_rectangle(place.center.x - 7.0, place.center.y - 20.0, 14.0, 40.0)
+            graphics:fill_rectangle(place.center.x - 17.0, place.center.y - 9.0, 34.0, 12.0)
+        end
     end
     for edge in city.edges do
         local a: generator.Point = city.nodes[edge.a]
@@ -182,6 +231,24 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
         graphics:set_color("#fff1cb")
         graphics:fill_circle(start.x, start.y, 2.0)
     end
+    graphics:pop()
+    -- Labels stay readable at the largest map size instead of shrinking with
+    -- individual houses. Place coordinates remain available in generated data.
+    for place in city.landmarks do
+        local x: f64 = origin_x + place.center.x * scale
+        -- The church sits near the old market; label it to the other side so
+        -- their captions remain separate when the largest city is fit to view.
+        if place.kind == "church" then
+            x -= 94.0
+        end
+        local y: f64 = origin_y + (place.center.y - place.radius) * scale - 6.0
+        graphics:set_font("11px")
+        graphics:set_color("#f0e8d6")
+        graphics:fill_rectangle(x - 2.0, y - 11.0, 94.0, 14.0)
+        graphics:set_color("#493e34")
+        graphics:print(place.name, x, y)
+    end
+    graphics:set_font("12px")
     graphics:set_color("#f0e8d6")
     graphics:fill_rectangle(0.0, 0.0, 960.0, 43.0)
     graphics:fill_rectangle(0.0, 618.0, 960.0, 22.0)
@@ -212,7 +279,7 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
         )
     end
     graphics:print(
-        "Seed / river / bridges / relief / size / occupancy / overlays / route endpoints",
+        "Seed / river / bridges / relief / size / housing density / overlays / route endpoints",
         18.0,
         633.0
     )
