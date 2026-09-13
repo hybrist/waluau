@@ -359,14 +359,26 @@ function accessible_panel(
     panel.id = "walua-text-controls"
     panel:set_attribute("hidden", "")
     wrapper:append_child(panel)
+    -- One passive reading surface stays in the accessibility tree while the
+    -- action panel is closed. It never takes focus or opens a modal.
+    local feedback: Element = document:create_element("section")
+    feedback:set_attribute("aria-label", "Game feedback")
+    wrapper:append_child(feedback)
     local title: Element = document:create_element("h2")
     title.id = "walua-text-controls-title"
     title:set_attribute("tabindex", "-1")
-    panel:append_child(title)
+    feedback:append_child(title)
     local status: Element = document:create_element("p")
     status:set_attribute("role", "status")
     status:set_attribute("aria-atomic", "true")
-    panel:append_child(status)
+    feedback:append_child(status)
+    local observations: Element = document:create_element("div")
+    feedback:append_child(observations)
+    accessible_attribute(
+        feedback,
+        "style",
+        "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;"
+    )
     local content: Element = document:create_element("div")
     panel:append_child(content)
     local nodes: {AccessibleNode} = {}
@@ -416,6 +428,9 @@ function accessible_panel(
     local function set_expanded(value: bool): unit
         expanded = value
         if expanded then
+            panel:insertBefore(feedback, content)
+            remove_accessible_attribute(feedback, "style")
+            accessible_attribute(observations, "hidden", "")
             accessible_attribute(
                 wrapper,
                 "style",
@@ -424,6 +439,13 @@ function accessible_panel(
             panel:remove_attribute("hidden")
             accessible_attribute(toggle, "aria-expanded", "true")
         else
+            wrapper:append_child(feedback)
+            remove_accessible_attribute(observations, "hidden")
+            accessible_attribute(
+                feedback,
+                "style",
+                "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;"
+            )
             accessible_attribute(
                 wrapper,
                 "style",
@@ -547,6 +569,16 @@ function accessible_panel(
         end
         if status.text_content ~= state.status then
             status.text_content = state.status
+        end
+        local reading: {string} = {}
+        for _, item in state.items do
+            if item.kind == "text" then
+                table.insert(reading, item.label)
+            end
+        end
+        local reading_text: string = table.concat(reading, " ")
+        if observations.text_content ~= reading_text then
+            observations.text_content = reading_text
         end
         local next_nodes: {AccessibleNode} = {}
         for _, item in state.items do

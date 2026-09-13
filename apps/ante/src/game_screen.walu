@@ -40,6 +40,7 @@ export type State = {
     shop: shop.State,
     shop_ui: shop_entity.Stateful,
     intervention: divine_intervention.State,
+    spell_feedback: string,
     leaving_fence: bool
 }
 
@@ -126,6 +127,7 @@ function State.new(): State
         shop = intermission,
         shop_ui = shop_entity.Stateful.new(intermission, run),
         intervention = divine_intervention.State.new(),
+        spell_feedback = "No spell cast.",
         leaving_fence = false
     }
 end
@@ -140,6 +142,7 @@ end
 -- run's to say, so nothing outside this screen decides what the next duel is
 -- dealt as.
 function State:deal_vault(): unit
+    self.spell_feedback = "No spell cast."
     local run: run_module.State = self.run
     self.rules:reset(run:boss(), run.spells, run.gold)
     self.ui:reset()
@@ -169,6 +172,7 @@ end
 -- starting spell every duel of it is fought with; the entry module passes the
 -- menu's choices, and an in-game restart replays the same pair from duel one.
 function State:reset(city: city_map.State, rush: bool, spell: spells.SpellKind): unit
+    self.spell_feedback = "No spell cast."
     self.run:restart(spell, rush)
     self:close_fence()
     open_route(city)
@@ -430,10 +434,18 @@ end
 -- Pay for and launch the spell in the aimed loadout slot at the given table_card. The
 -- rules charge the gold only when they accept the cast, so a cancelled or
 -- unaffordable attempt costs nothing; targeting mode ends either way.
+function State:cancel_cast(): unit
+    self.ui.cast_slot = nil
+    self.spell_feedback = "Spell cancelled. No gold spent."
+end
+
 function State:confirm_cast(slot: i32, table_card: i32): unit
     if self.rules:cast_spell(slot, table_card) then
         local kind: spells.SpellKind? = self.rules:spell_kind(slot)
         if kind ~= nil then
+            self.spell_feedback = (kind::spells.SpellKind):__tostring() .. " completed on table card " .. tostring(
+                table_card + 1
+            ) .. "."
             self.presentation:apply_power(kind::spells.SpellKind, table_card)
         end
     end
@@ -470,7 +482,7 @@ function State:arm_spell(slot: i32): unit
         return
     end
     if ui.cast_slot == slot then
-        ui.cast_slot = nil
+        self:cancel_cast()
         return
     end
     if not self.rules:can_cast(slot) then
@@ -650,7 +662,7 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     if aimed_slot ~= nil then
         match control do
         case Key.cancel then
-            ui.cast_slot = nil
+            self:cancel_cast()
             self.board:focus_hand(0)
         case Key.left then
             self.board:navigate("left")
@@ -858,6 +870,7 @@ function State.restore(
         -- snapshot lands on one side of it: an open shop comes back standing,
         -- and `place_city` puts the map and the offers where that leaves the
         -- run.
+        spell_feedback = "No spell cast.",
         leaving_fence = false
     }
 end
