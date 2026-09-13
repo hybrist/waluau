@@ -49,6 +49,15 @@ const scenes = [
   ['card-draw-mid-flight', 'card--drawn-from-the-deck', 'playback:1;phase:45', 250],
   ['hand-focused', 'hand--fan', 'focused:3;selected:1', 0],
   ['shop', 'entities-shop--open-visit', '', 0],
+  ['main-menu', 'screens--main-menu', '', 0],
+  ['starting-vendor', 'screens--starting-vendor', '', 0],
+  ['help', 'screens--help', '', 0],
+  ['wide-duel', 'screens--wide-duel', '', 0],
+  ['tall-duel', 'screens--tall-duel', '', 0],
+  ['targeting', 'screens--targeting', '', 0],
+  ['firebolt-burning', 'screens--firebolt', '', 1600],
+  ['loading', 'screens--loading', '', 0],
+  ['fatal-audio', 'screens--fatal-audio', '', 0],
 ];
 for (const [name, id, args, time] of scenes) {
   test(name, async ({ page }) => {
