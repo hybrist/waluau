@@ -9,7 +9,7 @@ const testsRoot = fileURLToPath(new URL('../tests/', import.meta.url));
 const rules = [
   ['pixel or screenshot observation', /\b(?:readPixels|getImageData|toDataURL|toBlob|screenshot|toHaveScreenshot|toMatchSnapshot)\s*\(/g],
   ['computed pixel or screenshot observation', /\[\s*['"](?:readPixels|getImageData|toDataURL|toBlob|screenshot|toHaveScreenshot|toMatchSnapshot)['"]\s*\]\s*\(/g],
-  ['fixed timing wait', /\b(?:waitForTimeout|setTimeout|sleep)\s*\(/g],
+  ['fixed timing wait', /\b(?:waitForTimeout|sleep)\s*\(|(?<![\w$.])setTimeout\s*\(|\b(?:window|globalThis)\s*\.\s*setTimeout\s*\(/g],
   ['obsolete visual readiness helper', /\b(?:frameSignature|count\w*Ink|settleBoard)\b/g],
   ['visual or renderer dependency', /\b(?:from\s*|import\s*\()\s*['"][^'"]*(?:\/renderer\/|\/visual\/)[^'"]*['"]/g],
 ];

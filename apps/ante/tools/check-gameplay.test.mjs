@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { checkGameplaySource, checkGameplayTree } from './check-gameplay.mjs';
 
 const semanticTest = `
+test.setTimeout(240_000);
+page.setDefaultTimeout(20_000);
 await canvas.focus();
 await page.keyboard.press('Enter');
 await expect(page.getByRole('status')).toContainText('Board ready.');
@@ -26,6 +28,8 @@ for (const mutation of [
   'await expect(frame).toMatchSnapshot();',
   'await page.waitForTimeout(100);',
   'await new Promise(resolve => setTimeout(resolve, 100));',
+  'await new Promise(resolve => window.setTimeout(resolve, 100));',
+  'await new Promise(resolve => globalThis.setTimeout(resolve, 100));',
   "import { frameSignature } from './old-driver.js';",
   "import { countAimPromptInk } from './old-driver.js';",
   "import { paint } from '../visual/fixtures.js';",

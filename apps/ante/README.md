@@ -562,7 +562,7 @@ remain gameplay host contracts; they do not inspect appearance.
 
 `check:gameplay` scans all JavaScript specs and helpers under `tests/` for raw
 pixel reads, screenshot assertions, obsolete visual readiness helpers and fixed
-timing waits. `test:gameplay` runs that check and its mutation tests before
+timing waits. Test timeout budgets remain allowed. `test:gameplay` runs that check and its mutation tests before
 Playwright. It is a focused regression guard, not a JavaScript security analyzer.
 Rendering probes and screenshots belong in their explicit sibling suites.
 Low-level WebGL2/compiler guarantees remain in browser conformance; the renderer
