@@ -4,6 +4,8 @@ import { beginHeist, frameSignature, openGame, settleBoard } from './game-driver
 test('casts the chosen spell at a targeted ward for mana', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
+  // Temporary visual baseline until waluau-c0yh.3 migrates this legacy test.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const canvas = await openGame(page);
 
   // The default spell pick is FIREBOLT; the board settles to a still frame
