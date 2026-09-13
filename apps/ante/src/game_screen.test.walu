@@ -249,3 +249,37 @@ describe(
         )
     end
 )
+
+describe(
+    "Information controls during spell resolution",
+    function(): unit
+        it(
+            "blocks retained help and ledger actions but preserves restart",
+            function(): unit
+                local screen: game_screen.State = game_screen.State.new()
+                local city: city_map.State = city_map.State.new(181)
+                screen.presentation:skip()
+                screen:confirm_cast(0, 0)
+                expect(screen:information_ready()):toBe(false)
+                screen:perform_board_action(city, { kind = "help", index = 0 })
+                expect(tostring(screen.ui.modal)):toBe("none")
+                screen:perform_board_action(city, { kind = "history", index = 0 })
+                expect(tostring(screen.ui.modal)):toBe("none")
+                screen:keypressed(city, "?")
+                screen:keypressed(city, "h")
+                expect(tostring(screen.ui.modal)):toBe("none")
+                expect(screen.presentation:firebolt_pending()):toBe(true)
+                screen:perform_board_action(city, { kind = "restart", index = 0 })
+                expect(screen.presentation:firebolt_pending()):toBe(false)
+                expect(screen.spell_feedback):toBe("No spell cast.")
+                screen.presentation:skip()
+                expect(screen:information_ready()):toBe(true)
+                screen:perform_board_action(city, { kind = "help", index = 0 })
+                expect(tostring(screen.ui.modal)):toBe("help")
+                screen:consume_gate(city, "advance")
+                screen:perform_board_action(city, { kind = "history", index = 0 })
+                expect(tostring(screen.ui.modal)):toBe("history")
+            end
+        )
+    end
+)
