@@ -2,6 +2,24 @@ import { expect } from '@playwright/test';
 
 export const GAME_READY_TIMEOUT = 20_000;
 
+// Passive feedback observes real canvas input without opening native controls
+// or changing focus. It remains accessible while visually clipped.
+export function gameFeedback(page) {
+  return page.getByRole('region', { name: 'Game feedback', exact: true });
+}
+
+export async function waitForCanvasMenu(page) {
+  await expect(gameFeedback(page).getByRole('heading', { name: 'Main menu', exact: true }))
+    .toBeAttached({ timeout: GAME_READY_TIMEOUT });
+}
+
+export async function waitForCanvasBoard(page) {
+  const feedback = gameFeedback(page);
+  await expect(feedback.getByRole('heading', { name: 'Duel', exact: true }))
+    .toBeAttached({ timeout: GAME_READY_TIMEOUT });
+  await expect(feedback.getByRole('status')).toContainText('Board ready.', { timeout: GAME_READY_TIMEOUT });
+}
+
 export function frameSignature(canvas) {
   return canvas.evaluate((node) => {
     const gl = node.getContext('webgl2');
