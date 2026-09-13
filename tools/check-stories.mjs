@@ -23,7 +23,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const skipped = new Set(['node_modules', 'target', 'dist', '.git', 'storybook-static']);
+const skipped = new Set(['node_modules', 'target', 'dist', '.git', 'storybook-static', '.waluau']);
 
 function findStories(directory) {
   const found = [];

@@ -33,6 +33,9 @@ the display font arrives. No production failure or layout drawing is copied here
 
 The earlier six entity captures remain: packaged card back, court atlas, four
 suit shaders, card draw at 45%, focused/selected hand layout, and the shop.
+`city-scrying.png` captures the procedural city's scrying view 400 ms into the
+spell: the start node at the centre of a linear-filtered capture drawn through
+the scrying lens shader, with its default swirl, blur, ripple and aperture.
 High-DPI backing-buffer sizes remain host contract assertions in browser tests.
 Imported shader compilation/HMR/program lifetime tests remain app renderer
 integration; raw WebGL2 graphics conformance belongs to the conformance runner.

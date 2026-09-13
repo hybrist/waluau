@@ -235,6 +235,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
 | `city_map.walu` | DOM-free city generation, the alternating vendor/vault route, and the camera pans and dissolves that carry it between screens. |
 | `city_map_render.walu` | WebGL2 primitive drawing for the city, its walked and upcoming route, the last authored vault's landmark house, and the colored street streak, all at one opacity. |
+| `city_generator.walu` | DOM-free procedural medieval layout laboratory: river, terrain, planar street graph, landmarks, compounds and frontage houses. Isolated from the gameplay map. |
+| `city_plan_render.walu` | The generated laboratory city drawn in city units under the caller's camera, shared by the layout lab and the scrying view. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `run.walu` | DOM-free run state: the vault sequence, its boss cadence, victory milestone and endless tail, the spell loadout, and the mana and hearts carried between vaults — including the one way hearts climb back. |
 | `shop.walu` | DOM-free intermission between vaults: behavior-bearing item stock, quoted prices, spent offers, cursor input, and hot-replacement snapshots. |
@@ -270,6 +272,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `hand.stories.walu` | Storybook controls for the live hand-fan entity across card counts, selections, and focus positions. |
 | `entities/shop.stories.walu` | Storybook states and an interactive session for the retained shop entity. |
 | `ui/layout.stories.walu` | Storybook stories for the retained layout solver itself, on synthetic leaves. |
+| `city_generator.stories.walu` | Storybook layout lab for the procedural city: generation controls, routing overlays and a shortest road route. |
+| `city_scrying.stories.walu` | Storybook scrying view: the procedural city closed on its start node, without HUD, seen through the scrying lens shader. |
 | `.storybook/main.js` | Storybook configuration: the story glob and the compiler options stories are built with. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
@@ -448,6 +452,19 @@ explicit junction; each three-unit-wide passage is a routable edge to a courtyar
 node. These nodes fit within the settlement's overall node budget. Ordinary
 houses stay clear of the entire compound, including its passage and courtyard,
 while the outskirts retain detached, irregular footprints.
+
+The **city_scrying / Start node** story is the same generated city seen through
+a scrying spell: the start node (node 1, the Old Market) held at the centre of
+the canvas with no HUD, at a zoom control given as a percentage of the lab's
+fit-to-view scale, and the focus node, seed and settlement size selectable. The
+city is drawn by `src/city_plan_render.walu` into a linear-filtered render
+target at the screen's density and drawn back through
+`src/shaders/scrying-lens.frag`: the centre of the pool is still and sharp,
+the picture turns about the focus and smears along that turn toward the rim,
+splits into its colours and cools toward violet, and ends at a thin ring of the
+spell's light with the void beyond. Swirl, blur, ripple and aperture controls
+scale each of those; a viewer who prefers reduced motion sees one fixed
+moment of the water.
 
 `Building.group` identifies attached compounds (zero means detached), and
 `City.courtyards` exposes each courtyard's polygon, compound ID, and access node.

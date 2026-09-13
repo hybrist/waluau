@@ -1,0 +1,241 @@
+-- The generated city seen through a scrying spell: the start node, the Old
+-- Market, held at the centre of a pool of water, with the streets around it
+-- turning and blurring away toward the pool's rim and nothing of the HUD.
+--
+-- The city is drawn as it is in the layout lab, into a render target under a
+-- camera closed on the focus node; the scrying lens (shaders/scrying-lens.frag)
+-- is what that capture is drawn to the screen through. The capture is taken at
+-- the screen's own density and sampled with linear filtering, so the lens can
+-- turn and smear the picture without the streets breaking into stairs.
+--
+-- Isolated like the layout lab: the gameplay map does not import this.
+local engine = require("waluau:engine")
+local storybook = require("waluau:engine/storybook")
+local graphics_module = require("waluau:engine/graphics")
+local ui = require("./ui/node")
+local box = require("./ui/layout")
+local ui_story = require("./ui/story")
+local shader_program = require("./shader_program")
+local scrying_lens_shader = require("./shaders/scrying-lens.frag")
+local generator = require("./city_generator")
+local plan = require("./city_plan_render")
+local ink = require("./ink")
+
+const WIDTH: f64 = 960.0
+const HEIGHT: f64 = 640.0
+-- Captures above this density cost four times the pixels for no visible gain.
+const MAX_DENSITY: f64 = 2.0
+-- The moment of the spell a viewer who prefers reduced motion is shown.
+const STILL_PHASE: f64 = 9.0
+
+local seed = storybook.range("seed", 41, 1, 999, 1)
+local size = storybook.range("size", 90, 30, 900, 10)
+-- Percent of the lab's fit-to-view scale: 300 shows the Old Market and the
+-- streets around it, 1000 a single house front. Node 1 is the Old Market,
+-- the start node; 2 the East Market. Aperture is the pool's radius as a
+-- percentage of the canvas half-height.
+local zoom = storybook.range("zoom", 300, 100, 1000, 25)
+local focus = storybook.range("focus", 1, 1, 900, 1)
+local swirl = storybook.range("swirl", 65, 0, 100, 5)
+local blur = storybook.range("blur", 70, 0, 100, 5)
+local ripple = storybook.range("ripple", 45, 0, 100, 5)
+local aperture = storybook.range("aperture", 88, 50, 100, 2)
+
+local book = ui_story.Book.new()
+
+type View = {
+    city: generator.City,
+    heights: {f64},
+    seed: i32,
+    size: i32,
+    phase: f64,
+    capture: graphics_module.RenderTarget?
+}
+
+local function generate(seed_value: i32, size_value: i32): generator.City
+    return generator.generate(
+        {
+            seed = seed_value,
+            bridges = 1,
+            river = true,
+            relief = 1.0,
+            size = size_value,
+            density = 85
+        }
+    )
+end
+
+local view: View = {
+    city = generate(41, 90),
+    heights = {},
+    seed = 41,
+    size = 90,
+    phase = 0.0,
+    capture = nil
+}
+
+local lens: shader_program.Program = shader_program.new(scrying_lens_shader, "scrying lens", false)
+
+-- Controls regenerate the city only when they change it; the terrain sample
+-- goes with it.
+local function ensure_city(): unit
+    if view.seed ~= seed.value() or view.size ~= size.value() or #view.heights == 0 then
+        view.seed = seed.value()
+        view.size = size.value()
+        view.city = generate(view.seed, view.size)
+        view.heights = plan.sample_heights(view.city)
+    end
+end
+
+local function release_capture(graphics: engine.Graphics): unit
+    local capture: graphics_module.RenderTarget? = view.capture
+    if capture ~= nil then
+        graphics:release_render_target(capture::graphics_module.RenderTarget)
+    end
+    view.capture = nil
+end
+
+-- The capture at the screen's density, remade when the density changes.
+local function ensure_capture(
+    graphics: engine.Graphics,
+    density: f64
+): graphics_module.RenderTarget?
+    local width: i32 = math.ceil(WIDTH * density)::i32
+    local height: i32 = math.ceil(HEIGHT * density)::i32
+    local existing: graphics_module.RenderTarget? = view.capture
+    if existing ~= nil then
+        local capture: graphics_module.RenderTarget = existing::graphics_module.RenderTarget
+        if capture.width == width and capture.height == height then
+            return capture
+        end
+        release_capture(graphics)
+    end
+    local result: graphics_module.RenderTargetResult = graphics:create_smooth_render_target(
+        width,
+        height
+    )
+    if not result.ok then
+        return nil
+    end
+    view.capture = result.target
+    return result.target
+end
+
+-- The camera: the focus node at the centre of the canvas, the lab's fit scale
+-- times the zoom.
+local function apply_camera(graphics: engine.Graphics): unit
+    local city: generator.City = view.city
+    local fit: f64 = math.min(WIDTH / city.width, HEIGHT / city.height)
+    local scale: f64 = fit * (zoom.value()::f64) / 100.0
+    local node: i32 = math.min(focus.value(), #city.nodes)
+    local at: generator.Point = city.nodes[node]
+    graphics:translate(WIDTH * 0.5, HEIGHT * 0.5)
+    graphics:scale(scale, scale)
+    graphics:translate(-at.x, -at.y)
+end
+
+local function draw_city(graphics: engine.Graphics): unit
+    plan.draw(
+        graphics,
+        view.city,
+        view.heights,
+        { terrain = true, access = false, junctions = false }
+    )
+end
+
+local function load(): unit
+    view.phase = 0.0
+    view.heights = {}
+    ensure_city()
+end
+
+local function update(dt: f64, _input: engine.Input): unit
+    view.phase += dt
+end
+
+local function paint(surface: ui.Surface, bounds: box.Rect): unit
+    local graphics = surface.graphics
+    ensure_city()
+    local density: f64 = math.min(graphics:on_screen_density(), MAX_DENSITY)
+    local maybe_capture: graphics_module.RenderTarget? = nil
+    -- A capture can only be taken while drawing to the screen; switching
+    -- targets inside somebody else's capture would hand them the city.
+    if graphics.current_target == 0 then
+        maybe_capture = ensure_capture(graphics, density)
+    end
+    if maybe_capture == nil then
+        -- No lens without a capture: the plain plan, closed on the focus.
+        graphics:push()
+        graphics:translate(bounds.x, bounds.y)
+        graphics:set_color(plan.parchment)
+        graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+        apply_camera(graphics)
+        draw_city(graphics)
+        graphics:pop()
+        return
+    end
+    local capture: graphics_module.RenderTarget = maybe_capture::graphics_module.RenderTarget
+
+    graphics:set_render_target(capture)
+    graphics:push_identity()
+    graphics:clear(plan.parchment)
+    graphics:scale(density, density)
+    apply_camera(graphics)
+    draw_city(graphics)
+    graphics:pop()
+    graphics:set_screen_target()
+
+    local phase: f64 = view.phase
+    if surface.reduced_motion then
+        phase = STILL_PHASE
+    end
+    graphics:set_color("#ffffffff")
+    local through_lens: bool = lens:bind(
+        graphics,
+        {
+            graphics_module.float_parameter("u_aspect", WIDTH / HEIGHT),
+            graphics_module.float_parameter("u_phase", phase),
+            graphics_module.float_parameter("u_swirl", (swirl.value()::f64) / 100.0),
+            graphics_module.float_parameter("u_blur", (blur.value()::f64) / 100.0),
+            graphics_module.float_parameter("u_ripple", (ripple.value()::f64) / 100.0),
+            graphics_module.float_parameter("u_aperture", (aperture.value()::f64) / 100.0)
+        }
+    )
+    graphics:draw_render_target(capture, bounds.x, bounds.y, WIDTH, HEIGHT)
+    if through_lens then
+        ink.stop_effect(graphics)
+    end
+end
+
+local function node(): ui.Node
+    return ui.Node.sized(WIDTH, HEIGHT, paint)
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Start node",
+            book:scene(
+                {
+                    node = node,
+                    load = load,
+                    update = update,
+                    width = WIDTH,
+                    height = HEIGHT,
+                    scale = 1.0,
+                    background = "#050308"
+                }
+            ),
+            {
+                seed.declaration,
+                size.declaration,
+                zoom.declaration,
+                focus.declaration,
+                swirl.declaration,
+                blur.declaration,
+                ripple.declaration,
+                aperture.declaration
+            }
+        )
+    }
+)

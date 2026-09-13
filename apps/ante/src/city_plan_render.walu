@@ -1,0 +1,283 @@
+-- The generated city on the page: terrain bands, the river, the landmarks,
+-- courtyards, streets and houses, drawn in city units under whatever camera
+-- the caller has set. One picture serves the layout lab fitting the whole
+-- settlement to its viewport and the scrying view closing on a single square,
+-- so the two stories cannot drift into showing different cities.
+--
+-- Nothing here is HUD: labels, captions and route readouts belong to the story
+-- that wants them, in screen space, after it pops the camera.
+local engine = require("waluau:engine")
+local generator = require("./city_generator")
+
+type Graphics = engine.Graphics
+type Point = generator.Point
+
+-- Terrain is sampled once per generated city rather than thousands of
+-- river-distance queries per frame; this is the grid that sampling fills.
+const TERRAIN_COLUMNS: i32 = 72
+const TERRAIN_ROWS: i32 = 48
+-- The lab's page colour, so a view that clears its own capture matches it.
+const PARCHMENT: string = "#cdd1b0"
+
+-- Overlays the layout lab toggles. The scrying view leaves them all off: it
+-- is a picture of a place, not a diagram of its routing data.
+export type Layers = { terrain: bool, access: bool, junctions: bool }
+
+function sample_heights(city: generator.City): {f64}
+    local heights: {f64} = {}
+    for y = 0::i32, TERRAIN_ROWS - 1 do
+        for x = 0::i32, TERRAIN_COLUMNS - 1 do
+            table.insert(
+                heights,
+                generator.elevation(
+                    city,
+                    {
+                        x = (x::f64) * city.width / (TERRAIN_COLUMNS::f64),
+                        y = (y::f64) * city.height / (TERRAIN_ROWS::f64)
+                    }
+                )
+            )
+        end
+    end
+    return heights
+end
+
+function draw_terrain(graphics: Graphics, city: generator.City, heights: {f64}): unit
+    local cell_width: f64 = city.width / (TERRAIN_COLUMNS::f64)
+    local cell_height: f64 = city.height / (TERRAIN_ROWS::f64)
+    for y = 0::i32, TERRAIN_ROWS - 1 do
+        for x = 0::i32, TERRAIN_COLUMNS - 1 do
+            local height: f64 = heights[y * TERRAIN_COLUMNS + x + 1]
+            local band: f64 = math.floor(height / 4.0)
+            graphics:set_color_rgba(
+                0.80 - band * 0.021,
+                0.82 - band * 0.028,
+                0.69 - band * 0.02,
+                1.0
+            )
+            graphics:fill_rectangle(
+                (x::f64) * cell_width,
+                (y::f64) * cell_height,
+                cell_width + 0.2,
+                cell_height + 0.2
+            )
+        end
+    end
+end
+
+function draw_river(graphics: Graphics, city: generator.City): unit
+    graphics:set_color("#9aa893")
+    graphics:set_line_width(generator.river_width + 12.0)
+    for index = 2::i32, #city.river do
+        graphics:line(
+            city.river[index - 1].x,
+            city.river[index - 1].y,
+            city.river[index].x,
+            city.river[index].y
+        )
+    end
+    graphics:set_color("#779ea9")
+    graphics:set_line_width(generator.river_width)
+    for index = 2::i32, #city.river do
+        graphics:line(
+            city.river[index - 1].x,
+            city.river[index - 1].y,
+            city.river[index].x,
+            city.river[index].y
+        )
+        graphics:fill_circle(city.river[index].x, city.river[index].y, generator.river_width * 0.5)
+    end
+end
+
+function draw_landmarks(graphics: Graphics, city: generator.City): unit
+    for place in city.landmarks do
+        graphics:set_color("#918264")
+        graphics:fill_circle(place.center.x, place.center.y, place.radius)
+        graphics:set_color("#ded0a9")
+        if place.kind == "church" then
+            graphics:set_color("#b2bc93")
+        end
+        graphics:fill_circle(place.center.x, place.center.y, place.radius - 1.5)
+        if place.kind == "church" then
+            local access: Point = city.nodes[place.node]
+            graphics:set_color("#ece1c5")
+            graphics:set_line_width(4.0)
+            graphics:line(place.center.x, place.center.y, access.x, access.y)
+            -- Cruciform footprint identifies the church even without labels;
+            -- its surrounding reservation is the churchyard.
+            graphics:set_color("#76617f")
+            graphics:fill_rectangle(place.center.x - 7.0, place.center.y - 20.0, 14.0, 40.0)
+            graphics:fill_rectangle(place.center.x - 17.0, place.center.y - 9.0, 34.0, 12.0)
+        end
+    end
+end
+
+function fill_quad(graphics: Graphics, points: {Point}): unit
+    graphics:emit_triangle(
+        points[1].x,
+        points[1].y,
+        points[2].x,
+        points[2].y,
+        points[3].x,
+        points[3].y
+    )
+    graphics:emit_triangle(
+        points[1].x,
+        points[1].y,
+        points[3].x,
+        points[3].y,
+        points[4].x,
+        points[4].y
+    )
+end
+
+function draw_courtyards(graphics: Graphics, city: generator.City): unit
+    graphics:set_color("#c3ba99")
+    for court in city.courtyards do
+        fill_quad(graphics, court.footprint)
+    end
+end
+
+function draw_streets(graphics: Graphics, city: generator.City): unit
+    for edge in city.edges do
+        local a: Point = city.nodes[edge.a]
+        local b: Point = city.nodes[edge.b]
+        graphics:set_color("#aba28c")
+        if edge.bridge then
+            graphics:set_color("#63574d")
+        end
+        local border: f64 = 3.0
+        if edge.passage then
+            border = 0.7
+        end
+        graphics:set_line_width(edge.width + border)
+        graphics:line(a.x, a.y, b.x, b.y)
+        graphics:set_color("#ece1c5")
+        if edge.bridge then
+            graphics:set_color("#c3a77b")
+        end
+        graphics:set_line_width(edge.width)
+        graphics:line(a.x, a.y, b.x, b.y)
+    end
+    for node in city.nodes do
+        graphics:set_color("#ece1c5")
+        graphics:fill_circle(node.x, node.y, 3.0)
+    end
+end
+
+function draw_houses(graphics: Graphics, city: generator.City, access: bool): unit
+    for house in city.buildings do
+        local points: {Point} = house.footprint
+        graphics:set_color("#8b7563")
+        if house.group > 0 then
+            graphics:set_color("#806655")
+            if (math.floor(house.x + house.y)::i32) % 2 == 0 then
+                graphics:set_color("#97795d")
+            end
+        end
+        if #points == 4 then
+            fill_quad(graphics, points)
+        else
+            -- Fixed notch vertex order: preserve the concavity.
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[2].x,
+                points[2].y,
+                points[3].x,
+                points[3].y
+            )
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[3].x,
+                points[3].y,
+                points[4].x,
+                points[4].y
+            )
+            graphics:emit_triangle(
+                points[1].x,
+                points[1].y,
+                points[4].x,
+                points[4].y,
+                points[6].x,
+                points[6].y
+            )
+            graphics:emit_triangle(
+                points[4].x,
+                points[4].y,
+                points[5].x,
+                points[5].y,
+                points[6].x,
+                points[6].y
+            )
+        end
+        if house.group > 0 then
+            -- Party walls are real shared polygon edges, made legible by a
+            -- fine roof boundary rather than a gap between attached houses.
+            graphics:set_color("#5e5145")
+            graphics:set_line_width(0.55)
+            for index = 1::i32, #points do
+                local next: i32 = index % #points + 1
+                graphics:line(points[index].x, points[index].y, points[next].x, points[next].y)
+            end
+        end
+        if access then
+            graphics:set_color("#66846b")
+            graphics:set_line_width(1.0)
+            graphics:line(house.x, house.y, house.access.x, house.access.y)
+            graphics:fill_circle(house.access.x, house.access.y, 1.8)
+        end
+    end
+end
+
+-- Junction ids print in whatever font the caller has selected.
+function draw_junctions(graphics: Graphics, city: generator.City): unit
+    for index = 1::i32, #city.nodes do
+        local node: Point = city.nodes[index]
+        graphics:set_color("#4c6861")
+        graphics:fill_circle(node.x, node.y, 3.0)
+        graphics:print(tostring(index), node.x + 4.0, node.y - 4.0)
+    end
+end
+
+-- The city itself, ground to rooftops, under the current transform.
+function draw(graphics: Graphics, city: generator.City, heights: {f64}, layers: Layers): unit
+    if layers.terrain then
+        draw_terrain(graphics, city, heights)
+    end
+    draw_river(graphics, city)
+    draw_landmarks(graphics, city)
+    draw_courtyards(graphics, city)
+    draw_streets(graphics, city)
+    draw_houses(graphics, city, layers.access)
+    if layers.junctions then
+        draw_junctions(graphics, city)
+    end
+end
+
+-- A road route between two nodes, over the city. Empty routes draw nothing.
+function draw_route(graphics: Graphics, city: generator.City, route: {i32}): unit
+    graphics:set_color("#b84c36")
+    graphics:set_line_width(3.0)
+    for index = 2::i32, #route do
+        local a: Point = city.nodes[route[index - 1]]
+        local b: Point = city.nodes[route[index]]
+        graphics:line(a.x, a.y, b.x, b.y)
+    end
+    if #route > 0 then
+        local start: Point = city.nodes[route[1]]
+        local finish: Point = city.nodes[route[#route]]
+        graphics:fill_circle(start.x, start.y, 6.0)
+        graphics:fill_circle(finish.x, finish.y, 6.0)
+        graphics:set_color("#fff1cb")
+        graphics:fill_circle(start.x, start.y, 2.0)
+    end
+end
+
+return {
+    sample_heights = sample_heights,
+    draw = draw,
+    draw_route = draw_route,
+    parchment = PARCHMENT
+}
