@@ -36,6 +36,18 @@ void main() {
     float radial = r / outline;
     // Keep the focus still; a small radial ripple refracts the blurred edges.
     vec2 warped = p * (1.0 + u_strength * edge * 0.018 * sin(radial * 24.0 - t * 1.4));
+    // Outside the aperture, the city buckles like an image through moving
+    // thick glass. Broad crossed waves bend streets and stretch rooftops;
+    // their mask follows the wavy rim and leaves the central view untouched.
+    float outerWarp = smoothstep(0.84, 1.18, radial) * u_strength;
+    vec2 current = vec2(
+        sin(p.y * 6.0 + t * 0.72 + sin(p.x * 3.5 - t * 0.31)),
+        sin(p.x * 5.5 - t * 0.61 + sin(p.y * 4.0 + t * 0.27))
+    );
+    current += 0.3 * vec2(sin(p.y * 11.0 - t * 0.43), cos(p.x * 10.0 + t * 0.37));
+    // Pull the outer image inward as it refracts, providing sampling room at
+    // the screen edges instead of stretching clamped edge texels into bands.
+    warped += outerWarp * (current * 0.085 - p * 0.14);
     vec2 uv = sampleUV(warped);
     vec2 spread = vec2(1.0 / 960.0, 1.0 / 640.0) * u_strength * edge * edge * 20.0;
     // Blur the sampled map itself, including the city outside the clear lens.
