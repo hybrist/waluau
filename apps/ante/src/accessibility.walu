@@ -1,0 +1,540 @@
+-- Player-facing text and controls for the browser's accessible panel. This
+-- module is DOM-free so privacy, action readiness and modal transitions can
+-- be checked without a canvas. Never pass a rules View to the browser: it
+-- includes concealed opponent cards that this presentation must not reveal.
+local engine = require("waluau:engine")
+local game = require("./game")
+local menu = require("./menu")
+local game_screen = require("./game_screen")
+local city_map = require("./city_map")
+local spells = require("./spells/spell")
+
+type Item = engine.AccessibleItem
+type State = engine.AccessibleState
+
+function text(items: {Item}, key: string, label: string, parent: string?): unit
+    table.insert(items, { key = key, kind = "text", label = label, parent = parent })
+end
+
+function button(items: {Item}, key: string, label: string, disabled: bool): unit
+    table.insert(items, { key = key, kind = "button", label = label, disabled = disabled })
+end
+
+function group(items: {Item}, key: string, label: string): unit
+    table.insert(items, { key = key, kind = "group", label = label })
+end
+
+function help(items: {Item}): unit
+    text(
+        items,
+        "help-swap",
+        "Swap: select equal numbers of your cards and table cards. Each exchange must use more cards than the previous exchange. Each card costs one gold. Skip swap passes without spending gold.",
+        nil
+    )
+    text(
+        items,
+        "help-play",
+        "Play: select two cards. Your best five-card formation from those two and the five table cards competes with the opponent. Win a standard hand to clear the duel. A loss costs a heart. A tie continues play. Boss duels last until the hands run out; do not lose the finale.",
+        nil
+    )
+    text(
+        items,
+        "help-run",
+        "Hearts are your lives and do not refill between duels. Gold and spells carry on. Spells spend gold; select a spell, then a table card to target it. Frozen table cards cannot be exchanged.",
+        nil
+    )
+    text(
+        items,
+        "help-keys",
+        "Text controls: Tab moves between buttons. Enter or Space activates a button. Selected cards are pressed buttons. Escape closes help and the ledger. When the canvas has focus, arrows move, Space selects, Enter confirms, H opens history and R restarts the run.",
+        nil
+    )
+    button(items, "close", "Close help", false)
+end
+
+function spell_description(kind: spells.SpellKind): string
+    if kind == spells.SpellKind.Firebolt then
+        return "Burn and replace a table card."
+    elseif kind == spells.SpellKind.FreezeRay then
+        return "Freeze a table card so it cannot be exchanged this turn."
+    elseif kind == spells.SpellKind.RaiseCard then
+        return "Show a raising effect on a table card; the card stays unchanged."
+    end
+    return "Show a clone effect on a table card; your hand stays unchanged."
+end
+
+function menu_state(screen: menu.State): State
+    local items: {Item} = {}
+    if screen.model.help_open then
+        help(items)
+        return {
+            heading = "How to play",
+            status = "Game instructions",
+            items = items,
+            dialog = "menu-help",
+            dismiss = "close"
+        }
+    end
+    if screen.model.stage == "spell" then
+        for index = 1::i32, 4::i32 do
+            local maybe_kind: spells.SpellKind? = spells.SpellKind.from(index)
+            assert(maybe_kind ~= nil)
+            local kind: spells.SpellKind = maybe_kind::spells.SpellKind
+            table.insert(
+                items,
+                {
+                    key = "start-spell-" .. tostring(index),
+                    kind = "button",
+                    label = kind:__tostring(),
+                    description = spell_description(kind) .. " Costs 5 gold per cast."
+                }
+            )
+        end
+        button(items, "back", "Back to menu", false)
+        return {
+            heading = "Starting vendor",
+            status = "Choose a starting spell to carry throughout the run.",
+            items = items
+        }
+    end
+    button(items, "new-run", "New run", false)
+    button(items, "boss-rush", "Boss rush", false)
+    button(items, "help", "How to play", false)
+    return {
+        heading = "Main menu",
+        status = "Ante Magic. Win duels while your hearts dwindle. Gold carries over.",
+        items = items
+    }
+end
+
+function menu_focus(screen: menu.State, key: string): unit
+    local snapshot: State = menu_state(screen)
+    for index, item in snapshot.items do
+        if item.key == key and item.kind == "button" then
+            if screen.model.help_open then
+                return
+            end
+            if screen.model.stage == "spell" and index <= #screen.spell_targets then
+                screen.model.spell_cursor = index - 1
+                screen.model.cursor = index - 1
+            elseif screen.model.stage == "main" and index <= #screen.main_targets then
+                screen.model.cursor = index - 1
+            end
+            screen:sync_scope()
+            return
+        end
+    end
+end
+
+function menu_activate(screen: menu.State, key: string): menu.MenuAction
+    -- Validate against the current stage, rather than trusting a stale DOM row.
+    local valid: bool = false
+    for item in menu_state(screen).items do
+        if item.key == key and item.kind == "button" then
+            valid = true
+        end
+    end
+    if not valid then
+        return "none"
+    end
+    if key == "close" then
+        screen.model.help_open = false
+    elseif key == "back" then
+        screen.model.stage = "main"
+        screen.model.cursor = 0
+        if screen.model.rush_choice then
+            screen.model.cursor = 1
+        end
+    else
+        menu_focus(screen, key)
+        screen.router:activate_focused()
+    end
+    screen:sync_scope()
+    return screen:take_action()
+end
+
+function card_name(card: game.Card): string
+    local rank: string = tostring(card.rank)
+    if card.rank == 11 then
+        rank = "Jack"
+    elseif card.rank == 12 then
+        rank = "Queen"
+    elseif card.rank == 13 then
+        rank = "King"
+    elseif card.rank == 14 then
+        rank = "Ace"
+    end
+    local suits: {string} = {"red", "blue", "black", "green"}
+    return rank .. " of " .. suits[card.suit + 1]
+end
+
+function cards_text(cards: {game.Card}): string
+    local names: {string} = {}
+    for card in cards do
+        table.insert(names, card_name(card))
+    end
+    return table.concat(names, ", ")
+end
+
+function result_text(trick: game.Trick): string
+    local winner: string = "Tie"
+    if trick.winner > 0 then
+        winner = "You win"
+    elseif trick.winner < 0 then
+        winner = "Opponent wins"
+    end
+    return "Hand " .. tostring(
+        trick.round
+    ) .. ": " .. winner .. ". Your " .. game.category_name(
+        trick.player_value
+    ) .. "; opponent's " .. game.category_name(trick.computer_value) .. "."
+end
+
+function revealed_trick(items: {Item}, trick: game.Trick, key: string): unit
+    group(items, key, "Hand " .. tostring(trick.round))
+    text(items, key .. "-result", result_text(trick), key)
+    text(items, key .. "-player", "Your played cards: " .. cards_text(trick.player_cards), key)
+    text(
+        items,
+        key .. "-opponent",
+        "Opponent's played cards: " .. cards_text(trick.computer_cards),
+        key
+    )
+    text(items, key .. "-table", "Table cards: " .. cards_text(trick.middle), key)
+end
+
+function contains(picks: {i32}, index: i32): bool
+    for pick in picks do
+        if pick == index then
+            return true
+        end
+    end
+    return false
+end
+
+function duel_state(screen: game_screen.State): State
+    local items: {Item} = {}
+    local view: game.View = screen.rules:view()
+    local resources: string = "Duel " .. tostring(
+        screen.run.duel
+    ) .. ". Health " .. tostring(
+        screen.run.hearts
+    ) .. ". Gold " .. tostring(screen.rules:gold()) .. "."
+    if screen:on_map() then
+        resources = "Health " .. tostring(
+            screen.run.hearts
+        ) .. ". Gold " .. tostring(screen.run.gold) .. "."
+        for index, slot in screen.shop.slots do
+            button(
+                items,
+                "buy-" .. tostring(index),
+                slot.item:describe() .. ", " .. tostring(slot.price) .. " gold",
+                not screen.shop:slot_available(screen.run, index - 1)
+            )
+        end
+        button(items, "leave-shop", "Enter next duel", false)
+        button(items, "restart", "Restart run", false)
+        button(items, "menu", "Main menu", false)
+        return { heading = "Vendor", status = resources, items = items }
+    end
+    if screen.ui.modal == "help" then
+        help(items)
+        return {
+            heading = "How to play",
+            status = resources,
+            items = items,
+            dialog = "duel-help",
+            dismiss = "close"
+        }
+    elseif screen.ui.modal == "history" then
+        for index, trick in view.history do
+            revealed_trick(items, trick, "history-" .. tostring(index))
+        end
+        if #view.history == 0 then
+            text(items, "empty-history", "No hands played yet.", nil)
+        end
+        button(items, "close", "Close ledger", false)
+        return {
+            heading = "Ledger",
+            status = resources,
+            items = items,
+            dialog = "ledger",
+            dismiss = "close"
+        }
+    elseif screen.ui.modal == "final" then
+        local outcome: string = "Duel cleared."
+        if screen:run_outcome() == "lost-health" or screen:run_outcome() == "lost-duel" then
+            outcome = "Run ended."
+        end
+        local advance_label: string = "Continue run"
+        if outcome == "Run ended." then
+            advance_label = "Start new run"
+        end
+        button(items, "advance", advance_label, false)
+        button(items, "history", "Open ledger", false)
+        button(items, "restart", "Restart run", false)
+        return {
+            heading = "Duel verdict",
+            status = outcome .. " " .. resources,
+            items = items,
+            dialog = "verdict"
+        }
+    elseif screen.ui.revealing then
+        local finished: bool = screen.presentation:reveal_finished()
+        local status: string = "Revealing hand."
+        local trick: game.Trick? = screen.rules:last_trick()
+        if trick ~= nil then
+            if finished then
+                status = result_text(trick::game.Trick)
+                revealed_trick(items, trick::game.Trick, "revealed")
+            end
+        end
+        if not finished then
+            button(items, "finish-reveal", "Finish reveal", false)
+        end
+        button(items, "continue", "Continue", not finished)
+        return { heading = "Hand result", status = status .. " " .. resources, items = items }
+    end
+    local ready: bool = screen:board_ready()
+    local casting: bool = screen.ui.cast_slot ~= nil
+    local phase: string = "Play: select two cards."
+    if view.swap_open then
+        phase = "Swap: select at least " .. tostring(
+            screen.rules:minimum_swap()
+        ) .. " matching cards from your hand and the table, or skip."
+    end
+    if ready and not view.swap_open and #screen.ui.play_picks == 2 then
+        local preview: i32 = game.value_for_pair(
+            game.hand_cards(view.player_hand),
+            view.middle,
+            screen.ui.play_picks[1],
+            screen.ui.play_picks[2]
+        )
+        phase = "Selected hand: " .. game.category_name(preview) .. ". Ready to play."
+    end
+    if casting then
+        phase = "Choose a table card for your spell."
+    end
+    if not ready then
+        phase = "Cards are moving. Controls will be ready when the animation finishes."
+    end
+    group(items, "hand", "Your hand")
+    for index, slot in view.player_hand do
+        local selected: bool = contains(screen.ui.play_picks, index - 1)
+        if view.swap_open then
+            selected = contains(screen.ui.swap_hand, index - 1)
+        end
+        local label: string = "Card " .. tostring(index) .. ": moving"
+        if ready then
+            label = card_name(slot.card)
+        end
+        local description: string = ""
+        if ready and slot.known then
+            description = "Known to the opponent."
+        end
+        table.insert(
+            items,
+            {
+                key = "hand-" .. tostring(index),
+                kind = "button",
+                parent = "hand",
+                label = label,
+                description = description,
+                disabled = not ready or casting,
+                selected = selected
+            }
+        )
+    end
+    group(items, "table", "Table cards")
+    for index, card in view.middle do
+        local label: string = "Table card " .. tostring(index) .. ": moving"
+        if ready then
+            label = card_name(card)
+            if view.frozen_middle[index] then
+                label = label .. ", frozen"
+            end
+        end
+        table.insert(
+            items,
+            {
+                key = "table-" .. tostring(index),
+                kind = "button",
+                parent = "table",
+                label = label,
+                disabled = not ready or (not casting and (not view.swap_open or view.frozen_middle[index])),
+                selected = contains(screen.ui.swap_table_cards, index - 1)
+            }
+        )
+    end
+    -- Even the known flag does not make an unplayed opponent card face-up on
+    -- the canvas. Only a completed reveal supplies opponent card identities.
+    text(
+        items,
+        "opponent",
+        "Opponent: " .. tostring(#view.computer_hand) .. " concealed cards.",
+        nil
+    )
+    text(
+        items,
+        "wagers",
+        "Pot " .. tostring(
+            view.pot
+        ) .. ". Your wager " .. tostring(
+            view.player_wager
+        ) .. ". Opponent wager " .. tostring(view.computer_wager) .. ".",
+        nil
+    )
+    if view.swap_open then
+        local count: i32 = #screen.ui.swap_hand
+        button(
+            items,
+            "swap",
+            "Confirm swap",
+            not ready or casting or count ~= #screen.ui.swap_table_cards or count < screen.rules:minimum_swap() or count > screen.rules:gold()
+        )
+        button(items, "skip", "Skip swap", not ready or casting)
+    else
+        button(items, "play", "Play hand", not ready or casting or #screen.ui.play_picks ~= 2)
+    end
+    group(items, "spells", "Spells")
+    for index, spell in view.spells do
+        table.insert(
+            items,
+            {
+                key = "spell-" .. tostring(index),
+                kind = "button",
+                parent = "spells",
+                label = spell.kind:__tostring(),
+                description = spell_description(
+                    spell.kind
+                ) .. " Costs " .. tostring(spell.cost) .. " gold.",
+                disabled = screen.intervention.active or screen.presentation:firebolt_pending() or not screen.rules:can_cast(
+                    index - 1
+                ),
+                selected = screen.ui.cast_slot == index - 1
+            }
+        )
+    end
+    if casting then
+        button(items, "cancel-cast", "Cancel spell", not ready)
+    end
+    button(
+        items,
+        "history",
+        "Open ledger",
+        screen.intervention.active or screen.presentation:firebolt_pending()
+    )
+    button(
+        items,
+        "help",
+        "How to play",
+        screen.intervention.active or screen.presentation:firebolt_pending()
+    )
+    button(items, "restart", "Restart run", false)
+    button(items, "menu", "Main menu", false)
+    return { heading = "Duel", status = resources .. " " .. phase, items = items }
+end
+
+function duel_focus(screen: game_screen.State, key: string): unit
+    if screen:on_map() then
+        if key == "leave-shop" then
+            screen.shop.cursor = #screen.shop.slots
+        end
+        for index, _ in screen.shop.slots do
+            if key == "buy-" .. tostring(index) then
+                screen.shop.cursor = index - 1
+            end
+        end
+        return
+    end
+    if not screen:board_ready() then
+        return
+    end
+    for index = 1::i32, #screen.rules:view().player_hand do
+        if key == "hand-" .. tostring(index) then
+            screen.board:focus_hand(index - 1)
+        end
+    end
+    for index = 1::i32, screen.rules:community_size() do
+        if key == "table-" .. tostring(index) then
+            screen.board:focus_table(index - 1)
+        end
+    end
+end
+
+function duel_activate(screen: game_screen.State, city: city_map.State, key: string): bool
+    -- Regenerate readiness at activation time: a control from an earlier frame
+    -- can have become disabled or belong to an entirely different phase.
+    local allowed: bool = false
+    for item in duel_state(screen).items do
+        if item.key == key and item.kind == "button" and item.disabled ~= true then
+            allowed = true
+        end
+    end
+    if not allowed then
+        return false
+    end
+    if key == "menu" then
+        return true
+    end
+    if screen:on_map() then
+        if key == "leave-shop" then
+            screen:leave_shop()
+        elseif key == "restart" then
+            screen:reset(city, screen.run.rush, screen.run.start_spell)
+        else
+            for index, _ in screen.shop.slots do
+                if key == "buy-" .. tostring(index) then
+                    screen.shop.cursor = index - 1
+                    screen.shop:confirm_choice(screen.run)
+                end
+            end
+        end
+        return false
+    end
+    if key == "finish-reveal" or key == "continue" or key == "advance" or key == "close" then
+        screen:consume_gate(city, "advance")
+    elseif key == "history" then
+        screen:consume_gate(city, "history")
+    elseif key == "help" then
+        screen:consume_gate(city, "help")
+    elseif key == "restart" then
+        screen:consume_gate(city, "restart")
+    elseif key == "cancel-cast" then
+        screen.ui.cast_slot = nil
+        screen.board:focus_hand(0)
+    elseif key == "skip" then
+        screen.ui:clear_picks()
+        screen:submit_swap()
+    elseif key == "play" or key == "swap" then
+        screen:perform_board_action(city, { kind = "commit", index = 0 })
+    else
+        duel_focus(screen, key)
+        for index = 1::i32, #screen.rules:view().player_hand do
+            if key == "hand-" .. tostring(index) then
+                screen:perform_board_action(city, { kind = "hand", index = index - 1 })
+            end
+        end
+        for index = 1::i32, screen.rules:community_size() do
+            if key == "table-" .. tostring(index) then
+                screen:perform_board_action(city, { kind = "table-card", index = index - 1 })
+            end
+        end
+        for index = 1::i32, screen.rules:spell_count() do
+            if key == "spell-" .. tostring(index) then
+                screen:perform_board_action(city, { kind = "spell", index = index - 1 })
+            end
+        end
+    end
+    return false
+end
+
+return {
+    card_name = card_name,
+    menu_state = menu_state,
+    menu_activate = menu_activate,
+    menu_focus = menu_focus,
+    duel_state = duel_state,
+    duel_activate = duel_activate,
+    duel_focus = duel_focus
+}

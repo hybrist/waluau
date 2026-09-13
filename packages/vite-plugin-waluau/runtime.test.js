@@ -271,3 +271,19 @@ test('uploads uint32 index views without copying or truncating wide indices', ()
   runtime.memory.grow(1);
   assert.deepEqual([...runtime.dom_uint32_array_view(pointer)], [0, 42, 0xffffffff]);
 });
+
+
+test('forwards the element focus alias to its native receiver without changing window focus', () => {
+  const runtime = buildWaluauImports(null, undefined, {
+    requiredImports: ['HTMLElement.focusElement', 'Window.focus'].map(name => ({
+      module: WALUAU_IMPORT_MODULE, name, kind: 'function',
+    })),
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE];
+  const calls = [];
+  const element = { focus() { calls.push(this); } };
+  const window = { focus() { calls.push(this); } };
+  runtime['HTMLElement.focusElement'](element);
+  runtime['Window.focus'](window);
+  assert.deepEqual(calls, [element, window]);
+});

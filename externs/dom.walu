@@ -585,6 +585,7 @@ declare property HTMLElement: dataset: DOMStringMap
 declare property HTMLElement: nonce: string
 declare property HTMLElement: autofocus: bool
 declare property HTMLElement: tabIndex: i32
+declare function HTMLElement:focus_element(): unit
 declare property Range: commonAncestorContainer: Node
 declare function Range:setStart(node: Node, offset: u32): unit
 declare function Range:setEnd(node: Node, offset: u32): unit

@@ -460,3 +460,31 @@ content fingerprints. Generated sibling JavaScript maps the logical Waluau
 paths (`assets/card-back.png`, `assets/Cinzel-Bold.ttf`, and
 `assets/card-flip.wav`) to those emitted URLs and carries their typed asset
 kinds into the browser host.
+
+## Text controls and accessible play
+
+The **Text controls** button opens a visible browser panel for playing with
+native buttons, grouped card selections and readable game information. Tab
+moves through its controls; Enter or Space activates one. Selected cards are
+pressed buttons. Help, the ledger and the verdict have dialog semantics and
+restore focus when dismissed. Canvas drawing and its pointer controls remain
+available when the panel is closed.
+
+The panel covers the main menu, starting spell vendor, duel, spells, reveal,
+verdict, ledger, restart and shops between duels. It reads the same game state
+and calls the same domain actions as canvas controls. Unavailable controls are
+disabled, and activating a stale control rechecks the current phase. Continue
+becomes available when the result is ready to dismiss; Finish reveal can
+complete its animation immediately.
+
+Only player-visible cards are described. Opponent cards stay concealed until
+their played pair is revealed; the ledger never exposes the remainder of their
+hand. Moving cards are described as moving until the board settles. Health,
+gold, phase instructions and hand results use a status region whose text changes
+at meaningful transitions.
+
+The full-game browser test uses roles, names, pressed state and enabled controls.
+Focused graphics and touch tests still cover canvas rendering and pointer input.
+DOM-free presentation tests check concealed information and stale actions. This
+is an initial accessible play path; manual screen-reader testing remains necessary
+before claiming comprehensive accessibility support.

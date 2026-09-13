@@ -486,6 +486,13 @@ function State:arm_spell(slot: i32): unit
     self.board:focus_table(0)
 end
 
+-- Every board adapter uses this same readiness check, including activations
+-- retained by the browser between frames. Pending effects must finish before
+-- an index can name a newly dealt card.
+function State:board_ready(): bool
+    return not self:on_map() and not self.intervention.active and not self.presentation:firebolt_pending() and not self.presentation:is_animating() and self.ui.modal == "none" and not self.ui.revealing and not self:vault_finished()
+end
+
 -- "exit" is the way back to the menu, which only the control bar's own MENU
 -- produces; every other action is answered here and leaves the screen where it
 -- stands.
@@ -518,15 +525,24 @@ function State:perform_board_action(city: city_map.State, action: render.BoardAc
         self:consume_gate(city, "primary")
         return "none"
     end
+    if not self:board_ready() then
+        return "none"
+    end
     local ui: flow.State = self.ui
     local rules: game.State = self.rules
     if action.kind == "hand" then
+        if ui.cast_slot ~= nil or action.index < 0 or action.index >= #rules:view().player_hand then
+            return "none"
+        end
         if rules:swap_open() then
             flow.toggle(ui.swap_hand, action.index, rules:community_size())
         else
             flow.toggle(ui.play_picks, action.index, 2)
         end
     elseif action.kind == "table-card" then
+        if action.index < 0 or action.index >= rules:community_size() then
+            return "none"
+        end
         local aimed_slot: i32? = ui.cast_slot
         if aimed_slot ~= nil then
             self:confirm_cast(aimed_slot::i32, action.index)

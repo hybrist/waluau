@@ -6,6 +6,52 @@ local session: engine.Session? = nil
 local active_graphics: engine.Graphics? = nil
 local draws: i32 = 0
 local keypresses: i32 = 0
+local activations: i32 = 0
+local focused: string = ""
+local modal: bool = false
+local selected: bool = false
+
+local function accessibility(): engine.AccessibleState
+    if modal then
+        return {
+            heading = "Confirmation",
+            status = "Review your choice",
+            dialog = "confirmation",
+            dismiss = "close",
+            items = {{ key = "close", kind = "button", label = "Close confirmation" }}
+        }
+    end
+    return {
+        heading = "Choose a card",
+        status = "Ready",
+        items = {
+            { key = "hand", kind = "group", label = "Your hand" },
+            {
+                key = "card",
+                parent = "hand",
+                kind = "button",
+                label = "Ace of hearts",
+                description = "A red card",
+                selected = selected
+            },
+            { key = "open", kind = "button", label = "Open confirmation" },
+            { key = "unavailable", kind = "button", label = "Unavailable", disabled = true }
+        }
+    }
+end
+
+local function activate(key: string): unit
+    if key == "card" and not modal then
+        selected = not selected
+        activations += 1
+    elseif key == "open" and not modal then
+        modal = true
+        activations += 1
+    elseif key == "close" and modal then
+        modal = false
+        activations += 1
+    end
+end
 
 local function load(): unit
 end
@@ -40,7 +86,12 @@ session = engine.start(
         keyreleased = nil,
         mousepressed = nil,
         mousereleased = nil,
-        mousemoved = nil
+        mousemoved = nil,
+        accessibility = accessibility,
+        accessibility_activate = activate,
+        accessibility_focus = function(key: string): unit
+            focused = key
+        end
     }
 )
 
@@ -75,4 +126,12 @@ export function stop_game(): unit
         (running::engine.Session).stop()
         session = nil
     end
+end
+
+export function activation_count(): i32
+    return activations
+end
+
+export function focused_key(): string
+    return focused
 end

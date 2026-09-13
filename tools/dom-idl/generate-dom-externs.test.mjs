@@ -513,3 +513,30 @@ test('generated canvas externs expose fill, stroke, and both arc overloads', () 
     [5, 6],
   );
 });
+
+
+test('owner-specific DOM renames override shared names without changing other interfaces', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'waluau-dom-idl-renames-'));
+  const input = path.join(dir, 'custom.webidl');
+  const filter = path.join(dir, 'filter.json');
+  const patches = path.join(dir, 'patches.json');
+  writeFileSync(input, 'interface Window {\n  undefined focus();\n};\ninterface HTMLElement {\n  undefined focus();\n};\n');
+  writeFileSync(filter, JSON.stringify({
+    interfaces: ['Window', 'HTMLElement'], typeMap: { undefined: 'unit' }, disabledMembers: {},
+  }));
+  writeFileSync(patches, JSON.stringify({
+    memberRenames: { focus: 'focus_window', 'HTMLElement.focus': 'focus_element' },
+  }));
+  const generated = runGenerator({ input, filter, patches });
+  assert.match(generated.externs, /^declare function Window:focus_window\(\): unit$/m);
+  assert.match(generated.externs, /^declare function HTMLElement:focus_element\(\): unit$/m);
+  const members = JSON.parse(generated.metadata).emittedMembers;
+  assert.ok(members.some(member => member.interface === 'HTMLElement' &&
+    member.idlName === 'focus' && member.emittedName === 'focus_element'));
+});
+
+test('generated DOM externs expose element focus independently of window focus', () => {
+  const externs = readExterns();
+  assert.match(externs, /^declare function HTMLElement:focus_element\(\): unit$/m);
+  assert.match(externs, /^declare function Window:focus\(\): unit$/m);
+});

@@ -4501,6 +4501,14 @@
       "readonly": false
     },
     {
+      "interface": "HTMLElement",
+      "kind": "operation",
+      "idlName": "focus",
+      "emittedName": "focus_element",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
       "interface": "Range",
       "kind": "attribute",
       "idlName": "commonAncestorContainer",
@@ -13347,13 +13355,6 @@
       "interface": "HTMLElement",
       "member": "onbeforexrselect",
       "reason": "member 'attribute:onbeforexrselect' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
-      "issue": "waluau-1l02",
-      "disabled": true
-    },
-    {
-      "interface": "HTMLElement",
-      "member": "focus",
-      "reason": "member 'operation:focus' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
       "issue": "waluau-1l02",
       "disabled": true
     },

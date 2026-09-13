@@ -15,6 +15,7 @@ local hot = require("waluau:engine/hot")
 local city_map = require("./city_map")
 local city_map_render = require("./city_map_render")
 local menu = require("./menu")
+local accessibility = require("./accessibility")
 local game_screen = require("./game_screen")
 local ink = require("./ink")
 local layout = require("./layout")
@@ -215,7 +216,53 @@ function install_ante_magic(): unit
             keyreleased = nil,
             mousepressed = mousepressed,
             mousereleased = mousereleased,
-            mousemoved = mousemoved
+            mousemoved = mousemoved,
+            accessibility = function(): engine.AccessibleState
+                if #assets.fatal_audio_code > 0 then
+                    return {
+                        heading = "Audio could not load",
+                        status = "Ante Magic cannot continue: " .. assets.fatal_audio_message,
+                        items = {}
+                    }
+                end
+                if #assets.fatal_shader_error > 0 then
+                    return {
+                        heading = "Graphics could not load",
+                        status = "Ante Magic cannot continue: " .. assets.fatal_shader_error,
+                        items = {}
+                    }
+                end
+                if not presentation_started then
+                    return {
+                        heading = "Loading Ante Magic",
+                        status = "Loading cards and sounds.",
+                        items = {}
+                    }
+                end
+                if screen == "menu" then
+                    return accessibility.menu_state(menu_state)
+                end
+                return accessibility.duel_state(duel)
+            end,
+            accessibility_activate = function(key: string): unit
+                if not presentation_started or #assets.fatal_audio_code > 0 or #assets.fatal_shader_error > 0 then
+                    return
+                end
+                if screen == "menu" then
+                    menu_action(accessibility.menu_activate(menu_state, key))
+                else
+                    if accessibility.duel_activate(duel, city, key) then
+                        leave_run()
+                    end
+                end
+            end,
+            accessibility_focus = function(key: string): unit
+                if screen == "menu" then
+                    accessibility.menu_focus(menu_state, key)
+                else
+                    accessibility.duel_focus(duel, key)
+                end
+            end
         }
     )
 

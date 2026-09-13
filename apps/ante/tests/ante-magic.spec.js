@@ -8,7 +8,6 @@ import {
   countMenuTitleInk,
   frameSignature,
   openGame,
-  settleBoard,
   waitForMenu,
 } from './game-driver.js';
 
@@ -325,90 +324,93 @@ test('stops on the fatal audio diagnostic when the flip sound cannot load', asyn
   await expect
     .poll(countFatalPanelInk, { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(5000);
+  await page.getByRole('button', { name: 'Text controls', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Audio could not load', exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Ante Magic cannot continue:');
 });
 
-// Sample only the phase prompts, not the animated cards or background. These
-// baselines are the visible SWAP, PLAY and CONTINUE prompts in render.walu.
-function phaseInk(canvas, phase) {
-  const rect = phase === 'swap'
-    ? { centerOffsetX: -290, wardOffsetY: -51, width: 580, height: 13 }
-    : phase === 'play'
-      ? { centerOffsetX: -180, actionOffsetY: 6, width: 360, height: 12 }
-      : { centerOffsetX: -95, actionOffsetY: 18, width: 25, height: 12 };
-  // The left end of CONTINUE sits outside the PLAY HAND button. Its small
-  // antialiased letters need a wider tolerance over the reveal effects.
-  return countDesignInk(canvas, rect, [251, 191, 36], phase === 'continue' ? [80, 85, 25] : [20, 20, 20]);
-}
-
-function verdictHeadingInk(canvas) {
-  return countDesignInk(canvas,
-    { centerOffsetX: -350, heightRatio: 0.5, yOffset: -220, width: 300, height: 50 },
-    [251, 191, 36], [20, 20, 20]);
-}
-
-// A key changes the domain synchronously, but its retained controls and pixels
-// follow on the next frame. Read the presentation only after it has drawn.
-async function playKey(page, key) {
-  await page.keyboard.press(key);
-  await page.evaluate(() => new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  }));
-}
-
-test('plays a duel through its verdict, ledger, and run restart', async ({ page }) => {
+// The complete journey follows the same named controls and readiness that a
+// player uses, without reading GPU pixels or injecting private game state.
+test('plays a duel through accessible controls, verdict, ledger, and restart', async ({ page }) => {
   test.slow();
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
-  // Stabilize the runtime's initial PRNG seed, while still playing through the
-  // production input handlers and AI rather than arranging a private game state.
   await page.addInitScript(() => { Math.random = () => 0.5; });
-  const canvas = await openGame(page);
-  await beginHeist(page, canvas);
-  await settleBoard(canvas);
+  await openGame(page);
+  await page.getByRole('button', { name: 'Text controls', exact: true }).click();
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Firebolt', exact: true }).click();
 
   let handsPlayed = 0;
-  while (await verdictHeadingInk(canvas) < 50 && handsPlayed < 8) {
-    // More than one exchange can be needed to fill the five-card table.
-    let swaps = 0;
-    while (await phaseInk(canvas, 'swap') > 20 && swaps < 5) {
-      await playKey(page, 'p');
-      await settleBoard(canvas);
-      swaps += 1;
+  while (handsPlayed < 8) {
+    // A reveal dismissal either deals another hand or opens the verdict.
+    await expect(page.getByRole('heading', { name: /^(Duel|Duel verdict)$/ })).toBeVisible();
+    if (await page.getByRole('dialog', { name: 'Duel verdict', exact: true }).count()) break;
+    const skip = page.getByRole('button', { name: 'Skip swap', exact: true });
+    while (await skip.count()) {
+      const table = page.getByRole('group', { name: 'Table cards', exact: true });
+      const before = await table.getByRole('button').count();
+      await skip.click();
+      // First observe the exchange's result, then its readiness. Waiting only
+      // for idle text could accidentally accept the previous frame's status.
+      await expect.poll(async () => (await table.getByRole('button').count()) !== before
+        || (await page.getByRole('button', { name: 'Play hand', exact: true }).count()) > 0).toBe(true);
+      await expect(page.getByRole('status')).not.toContainText('Cards are moving');
     }
-    await expect.poll(() => phaseInk(canvas, 'play')).toBeGreaterThan(20);
-    await playKey(page, 'Space');
-    await playKey(page, 'ArrowRight');
-    await playKey(page, 'Space');
-    await expect.poll(() => countDesignInk(canvas,
-      { centerOffsetX: -180, wardOffsetY: -51, width: 360, height: 13 },
-      [212, 212, 216], [20, 20, 20])).toBeGreaterThan(20);
-    await playKey(page, 'Enter');
-    await expect.poll(() => phaseInk(canvas, 'continue')).toBeGreaterThan(20);
-
-    // Enter first finishes an unfinished reveal, then dismisses it. If the
-    // animation has already finished, only the dismissal press is needed.
-    // Stop when CONTINUE disappears so we never advance past the verdict.
-    for (let presses = 0; presses < 2 && await phaseInk(canvas, 'continue') > 20; presses++) {
-      await playKey(page, 'Enter');
-    }
-    await expect.poll(() => phaseInk(canvas, 'continue')).toBeLessThan(5);
+    const hand = page.getByRole('group', { name: 'Your hand', exact: true });
+    const first = hand.getByRole('button').nth(0);
+    const second = hand.getByRole('button').nth(1);
+    await first.click();
+    await expect(first).toHaveAttribute('aria-pressed', 'true');
+    await second.click();
+    await expect(second).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Play hand', exact: true }).click();
+    // Continue becomes enabled only once it dismisses the displayed result.
+    await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+    await expect(page.getByRole('status')).toContainText(/You win|Opponent wins|Tie/);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     handsPlayed += 1;
-    await settleBoard(canvas);
   }
   expect(handsPlayed).toBeGreaterThan(0);
-  await expect.poll(() => verdictHeadingInk(canvas)).toBeGreaterThan(50);
-  const verdict = await frameSignature(canvas);
-  await playKey(page, 'h');
-  await expect.poll(() => frameSignature(canvas)).not.toBe(verdict);
-  await playKey(page, 'h');
-  // Closing the ledger returns to the verdict, not a dead finished board.
-  await expect.poll(() => frameSignature(canvas)).toBe(verdict);
-  await playKey(page, 'r');
-  // Restart visits the starting vendor; Enter takes its default spell again.
-  await expect.poll(() => verdictHeadingInk(canvas)).toBeLessThan(5);
-  await playKey(page, 'Enter');
-  await expect.poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT }).toBeGreaterThan(40);
-  await settleBoard(canvas);
-  await expect.poll(() => phaseInk(canvas, 'swap')).toBeGreaterThan(20);
+  const verdict = page.getByRole('dialog', { name: 'Duel verdict', exact: true });
+  await expect(verdict).toBeVisible();
+  const ledgerButton = verdict.getByRole('button', { name: 'Open ledger', exact: true });
+  await ledgerButton.click();
+  const ledger = page.getByRole('dialog', { name: 'Ledger', exact: true });
+  await expect(ledger).toBeVisible();
+  await expect(ledger.getByRole('group')).toHaveCount(handsPlayed);
+  await page.keyboard.press('Escape');
+  await expect(verdict).toBeVisible();
+  await expect(ledgerButton).toBeFocused();
+  await verdict.getByRole('button', { name: 'Restart run', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Skip swap', exact: true })).toBeEnabled();
+  await expect(page.getByRole('status')).toContainText('Duel 1.');
   expect(pageErrors).toEqual([]);
+});
+
+test('native keyboard activation keeps focus and selects each card once', async ({ page }) => {
+  await openGame(page);
+  const toggle = page.getByRole('button', { name: 'Text controls', exact: true });
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  const start = page.getByRole('button', { name: 'New run', exact: true });
+  await expect(start).toBeVisible();
+  await toggle.focus();
+  await page.keyboard.press('Tab');
+  await expect(start).toBeFocused();
+  await page.keyboard.press('Enter');
+  // A duplicated Enter would also choose the vendor's default spell.
+  await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Firebolt', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const first = page.getByRole('group', { name: 'Your hand', exact: true }).getByRole('button').first();
+  await expect(first).toBeEnabled();
+  await first.focus();
+  await page.keyboard.press('Space');
+  await expect(first).toHaveAttribute('aria-pressed', 'true');
+  await expect(first).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(first).toHaveAttribute('aria-pressed', 'false');
+  await expect(first).toBeFocused();
 });

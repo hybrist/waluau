@@ -486,3 +486,29 @@ The renderer draws colored geometry, loaded textures, bitmap or custom-font
 glyphs, atlas sprite batches, and render targets through WebGL2, using the
 extern surface from `waluau-9tvw`. Games can compile and bind their own
 vertex/pixel programs on that same batched stream.
+
+### Text controls
+
+A game can provide `Game.accessibility`, `accessibility_activate`, and
+`accessibility_focus` to expose its canvas UI through native browser controls.
+The engine offers a visible **Text controls** toggle; its scrollable panel is
+usable with keyboard navigation and screen readers. The canvas keeps drawing
+with WebGL2.
+
+`AccessibleState` supplies a heading, a status announcement, and ordered
+`AccessibleItem` records. Items are `button`, `group`, or `text`; groups precede
+children that reference their key in `parent`. Stable keys preserve DOM identity
+and focus. Labels and descriptions must contain only player-visible information.
+`selected` exposes a toggle button's pressed state, while `disabled` means the
+underlying action cannot currently run. Omit `selected` on ordinary buttons.
+Activation uses the same game actions as the canvas and must recheck current
+state, since input may arrive after a snapshot. The optional focus callback lets
+the canvas highlight the corresponding control.
+
+Set `dialog` to a stable dialog identifier and include only that dialog's items
+in its snapshot. The expanded panel isolates outside content, contains keyboard
+focus, and restores the originating control when the dialog closes. `dismiss`
+is the activation key for Escape; without it Escape collapses the panel.
+Snapshots are read after drawing; unchanged status text is not reannounced.
+Stopping or suspending a session removes controls and listeners and restores
+outside content before a replacement instance adopts the canvas.

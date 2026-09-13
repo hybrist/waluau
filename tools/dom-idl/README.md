@@ -60,3 +60,12 @@ The one entry today collapses the canvas paint-style union to `string`, which
 is always valid to assign to `fillStyle`/`strokeStyle`; the getter is loosened
 to `string` as well. Before adding entries, check that newly emitted members do
 not introduce cross-interface duplicate-name collisions (waluau-1l02).
+
+## Owner-specific member names
+
+`patches.json` supports `memberRenames` keys of the form `Interface.member`,
+which take precedence over a plain member name. `HTMLElement.focus` uses
+`focus_element` to avoid the compiler's cross-interface name collision with
+`Window.focus`; the browser runtime forwards its `HTMLElement.focusElement`
+import to the native element's `focus()` method. Renames that do more than
+snake-case a DOM name need an explicit runtime mapping.
