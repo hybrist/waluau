@@ -1068,6 +1068,8 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
   };
 
   const specialImports = {
+    // The owner-specific extern name avoids a collision with Window.focus.
+    'HTMLElement.focusElement': (element) => element.focus(),
     dom_window: outputWindow,
     fetch: fetchFromDomContext,
     // Curated 3D context acquisition (waluau-9tvw): the generated

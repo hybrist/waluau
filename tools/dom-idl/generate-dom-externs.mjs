@@ -390,8 +390,8 @@ const RESERVED_WORDS = new Set([
   'bytes', 'extern', 'thread', 'nil', 'true', 'false',
 ]);
 
-function patchedName(name, patches) {
-  return patches.memberRenames?.[name] ?? name;
+function patchedName(owner, name, patches) {
+  return patches.memberRenames?.[`${owner}.${name}`] ?? patches.memberRenames?.[name] ?? name;
 }
 
 function patchedParamName(owner, member, param, patches) {
@@ -417,7 +417,7 @@ function sanitizeParamName(name, usedNames) {
 
 function emitInterfaceMember(iface, member, context) {
   const { filter, patches, knownInterfaces, include } = context;
-  const rename = patchedName(member.name, patches);
+  const rename = patchedName(iface.name, member.name, patches);
   const signature = patchedSignature(iface.name, member.name, patches);
 
   if (member.kind === 'attribute') {
