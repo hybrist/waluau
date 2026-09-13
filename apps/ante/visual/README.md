@@ -7,7 +7,10 @@ These are appearance baselines for this environment, not cross-driver graphics
 conformance assertions.
 
 The city scrying captures cover the Old Market at 240% and 400% zoom, with
-motion paused at spell phase 25. This procedural scene has no asynchronous
+motion paused at spell phase 25. Ring travel defaults to a 300 ms speed peak
+and a 7000 ms total duration. Story controls expose both times; the peak range
+(50–2000 ms) stays below the travel range (2500–12000 ms), so every setting
+retains an acceleration and a deceleration interval. This procedural scene has no asynchronous
 assets: its capture waits for the focal pixel to show the city through the lens,
 rather than the retained stories’ packaged-asset barrier.
 

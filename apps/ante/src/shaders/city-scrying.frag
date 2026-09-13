@@ -3,6 +3,20 @@ varying vec2 v_uv;
 uniform sampler2D u_texture;
 uniform float u_clock;
 uniform float u_strength;
+uniform float u_peak_time;
+uniform float u_travel_time;
+
+// Integral of a smoothstep velocity ramp up, then down. Speed and
+// acceleration are continuous at the peak; speed is zero at both endpoints.
+// Normalization makes the final distance exactly one for any peak time.
+float ringTravel(float age, float peak) {
+    if (age < peak) {
+        float x = age / peak;
+        return peak * (2.0 * x * x * x - x * x * x * x);
+    }
+    float y = (age - peak) / (1.0 - peak);
+    return peak + (1.0 - peak) * (2.0 * y - 2.0 * y * y * y + y * y * y * y);
+}
 
 // Coordinates are in units of the lens radius, preserving a circle on 960x640.
 vec2 sampleUV(vec2 p) {
@@ -51,10 +65,14 @@ void main() {
     color += u_strength * breath * (teal * ring * 0.8 + violet * halo * 0.35);
     // Soft pulses travel out from the lip and fade before wrapping. Each
     // concentric ring inherits precisely the same lobes as the inner circle.
+    float duration = max(u_travel_time, 0.1);
+    float peak = clamp(u_peak_time / duration, 0.001, 0.999);
     for (int i = 0; i < 3; i++) {
-        float phase = fract(t * 0.14 + float(i) / 3.0);
-        float radius = lip + phase * 0.60;
-        float envelope = pow(sin(phase * 3.14159265), 2.0);
+        float phase = fract(t / duration + float(i) / 3.0);
+        float radius = lip + ringTravel(phase, peak) * 0.60;
+        // Reveal the acceleration, then fade during the final settling interval.
+        float envelope = smoothstep(0.0, min(peak, 0.08), phase)
+            * (1.0 - smoothstep(0.55, 1.0, phase));
         float wave = exp(-abs(radial - radius) * 85.0);
         float glow = exp(-abs(radial - radius) * 25.0);
         color += u_strength * envelope * (mix(teal, violet, phase) * wave * 0.28 + violet * glow * 0.10);

@@ -11,6 +11,9 @@ local zoom = storybook.range("zoom percent", 240, 100, 600, 10)
 local seed = storybook.range("seed", 41, 1, 999, 1)
 local strength = storybook.range("spell intensity", 100, 0, 150, 5)
 local motion = storybook.range("motion", 1, 0, 1, 1)
+-- Non-overlapping ranges guarantee time to peak is less than total travel.
+local peak = storybook.range("ring peak speed ms", 300, 50, 2000, 50)
+local travel = storybook.range("ring travel time ms", 7000, 2500, 12000, 100)
 local phase = storybook.range("spell phase", 0, 0, 100, 1)
 
 type View = {
@@ -87,7 +90,9 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
                 lens,
                 {
                     gpu.float_parameter("u_clock", view.time + (phase.value()::f64) * 0.1),
-                    gpu.float_parameter("u_strength", (strength.value()::f64) / 100.0)
+                    gpu.float_parameter("u_strength", (strength.value()::f64) / 100.0),
+                    gpu.float_parameter("u_peak_time", (peak.value()::f64) / 1000.0),
+                    gpu.float_parameter("u_travel_time", (travel.value()::f64) / 1000.0)
                 }
             )
             if not bound.ok then
@@ -117,7 +122,9 @@ storybook.publish(
                 seed.declaration,
                 strength.declaration,
                 motion.declaration,
-                phase.declaration
+                phase.declaration,
+                peak.declaration,
+                travel.declaration
             }
         )
     }
