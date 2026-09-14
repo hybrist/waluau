@@ -35,6 +35,7 @@ test('canvas Firebolt targeting cancels freely and replaces only the confirmed c
   const beforeDeck = await deck(page);
   const beforeTable = await cardNames(tableCards(page));
   const beforeHand = await cardNames(handCards(page));
+  // Collapse the panel opened during setup: this test drives the canvas.
   const toggle = page.getByRole('button', { name: 'Text controls', exact: true });
   await toggle.click();
   await canvas.focus();

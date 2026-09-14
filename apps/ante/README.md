@@ -512,9 +512,11 @@ kinds into the browser host.
 
 ## Text controls and accessible play
 
-The **Text controls** button opens a visible browser panel for playing with
-native buttons, grouped card selections and readable game information. Tab
-moves through its controls; Enter or Space activates one. Selected cards are
+The **Text controls** button opens a browser panel for playing with native
+buttons, grouped card selections and readable game information. The button
+itself is clipped until focus reaches it, so it never covers the canvas for a
+player who does not use it: Tab from the canvas reveals it. Tab then moves
+through the panel's controls; Enter or Space activates one. Selected cards are
 pressed buttons. Help, the ledger and the verdict have dialog semantics and
 restore focus when dismissed. Canvas drawing and its pointer controls remain
 available when the panel is closed.

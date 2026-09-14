@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { designPoint, HELP_CONTROL } from './game-driver.js';
+import { designPoint, HELP_CONTROL, showTextControls } from './game-driver.js';
 
 test('canvas spell feedback remains readable without opening controls or changing focus', async ({ page }) => {
   await page.goto('/');
@@ -36,7 +36,7 @@ test('canvas spell feedback remains readable without opening controls or changin
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(feedback.getByRole('heading', { name: 'Duel', exact: true })).toBeAttached();
-  await toggle.click();
+  await showTextControls(page);
   await expect(page.getByRole('status')).toHaveCount(1);
   // No mutation means no repeated live announcement on the frame loop.
   const unchanged = await status.evaluate((node) => new Promise((resolve) => {

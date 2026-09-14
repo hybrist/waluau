@@ -276,7 +276,7 @@ test('plays a duel through accessible controls, verdict, ledger, and restart', a
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.addInitScript(() => { Math.random = () => 0.5; });
   await openGame(page);
-  await page.getByRole('button', { name: 'Text controls', exact: true }).click();
+  await showTextControls(page);
   await page.getByRole('button', { name: 'New run', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Starting vendor', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Firebolt', exact: true }).click();
