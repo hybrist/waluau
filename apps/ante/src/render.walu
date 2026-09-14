@@ -204,7 +204,10 @@ export type Interaction = {
 export type BoardAction = board_interaction.Action
 type Motion = { fan_parts: {f64}, reveal_clock: f64, anims: {Anim}, anim_clock: f64 }
 type Piles = { discards: {game.Card} }
-type SpellPresentation = { kind: spells.SpellKind?, clock: f64, target: i32 }
+-- The spell standing on the board this frame. `targets` is every table card
+-- the cast took, aimed card first: Firebolt's level spreads the burn across
+-- neighbours, and the carrier still flies at the card the player aimed at.
+type SpellPresentation = { kind: spells.SpellKind?, clock: f64, targets: {i32} }
 -- Everything a spell has in the air. `sparks` is the cast's own — the carrier's
 -- trail and the burst its landing threw — and belongs to the spell modules
 -- behind the launch seam. The grave dust is not a cast at all: it is the table_card
@@ -229,6 +232,28 @@ type Frame = {
     -- deformed sixty times a second should not be sixty allocations.
     sheet: card_warp.Mesh
 }
+
+-- Whether this table slot is one the standing spell took.
+function powers_slot(spell: SpellPresentation, index: i32): bool
+    for target in spell.targets do
+        if target == index then
+            return true
+        end
+    end
+    return false
+end
+
+-- Where the carrier flies. The aimed card leads the target list, so a spread
+-- burn still has one landing rather than one per card it reaches. With no
+-- spell standing there is nothing to fly, but the sparks the last one threw
+-- are still in the air: they are drawn relative to the first slot, which the
+-- row has whenever it has any card at all.
+function spell_aim(spell: SpellPresentation): i32
+    if #spell.targets == 0 then
+        return 0
+    end
+    return spell.targets[1]
+end
 
 function ease_progress(t: f64, kind: Ease): f64
     match kind do
@@ -528,7 +553,7 @@ function Board:begin_frame(frame: Frame): unit
         )
         local focused: bool = table_focus == index and (frame.view.swap_open or frame.interaction.casting)
         local power: spells.SpellKind? = nil
-        if index == frame.spell.target then
+        if powers_slot(frame.spell, index) then
             power = frame.spell.kind
         end
         self.view:present_table(
@@ -536,7 +561,7 @@ function Board:begin_frame(frame: Frame): unit
             card.look(frame.view.middle[index + 1], selected, focused, hidden, false, false),
             power,
             frame.spell.clock,
-            frame.ash,
+            frame.ash:slot(index),
             frame.spells.grave_dust,
             hidden
         )
@@ -1140,7 +1165,7 @@ function draw_table_card_at(
     colored: bool
 ): unit
     local look: card.Look = card.look(value, selected, focused, false, colored, false)
-    if index == frame.spell.target then
+    if powers_slot(frame.spell, index) then
         powered_card.draw_at(
             surface,
             look,
@@ -1148,7 +1173,7 @@ function draw_table_card_at(
             bounds.y,
             frame.spell.kind,
             frame.spell.clock,
-            frame.ash,
+            frame.ash:slot(index),
             frame.spells.grave_dust
         )
         return
@@ -1548,7 +1573,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
         viewport,
         frame.spell.kind,
         frame.spell.clock,
-        frame.spell.target,
+        spell_aim(frame.spell),
         #trick.middle,
         frame.spells.sparks
     )
@@ -1694,7 +1719,7 @@ function draw_playfield(board: Board, surface: ui.Surface, frame: Frame): unit
         viewport,
         frame.spell.kind,
         frame.spell.clock,
-        frame.spell.target,
+        spell_aim(frame.spell),
         #state.middle,
         frame.spells.sparks
     )

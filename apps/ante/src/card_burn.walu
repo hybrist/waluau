@@ -17,13 +17,20 @@ local ui = require("./ui/node")
 local ink = require("./ink")
 local card = require("./entities/card")
 
--- A reveal burns a pair, which is why there are two; the table card Fireball is
--- eating sheds a sheet fall and a coarser departing one on top of it.
+-- One burning table card's two falls: the sheet ash it sheds along the char
+-- front, and the coarser departing fall of larger pieces released later off
+-- the same front.
+export type TableAsh = { sheet: particles.ParticleSystem, fall: particles.ParticleSystem }
+
+-- A reveal burns a pair, which is why there are two. A Firebolt burns as many
+-- table cards at once as its level reaches, so the row carries its own pair of
+-- emitters per slot: cards burning side by side in lockstep off one clock
+-- would otherwise shed the identical flake for the identical flake, and the
+-- repetition reads as a tiling rather than as fire.
 export type CardAsh = {
     reveal_first: particles.ParticleSystem,
     reveal_second: particles.ParticleSystem,
-    table_card_sheet: particles.ParticleSystem,
-    table_card_fall: particles.ParticleSystem
+    table_cards: {TableAsh}
 }
 
 -- The burn is intentionally long enough to read as three distinct beats:
@@ -157,13 +164,43 @@ function new_table_card_ash(seed: i32): particles.ParticleSystem
     return system
 end
 
+-- How many table cards the row can hold, and so how many burns can be in the
+-- air at once. Rules cap the community at five; this is presentation's own
+-- copy of that ceiling, since an emitter has to exist before a card is dealt
+-- onto the slot it belongs to.
+const TABLE_ASH_SLOTS: i32 = 5
+-- Seeds walk by a stride coprime with nothing in particular — the point is
+-- only that neighbouring slots never share a random stream.
+const TABLE_SHEET_SEED: i32 = 613
+const TABLE_FALL_SEED: i32 = 607
+const TABLE_SEED_STRIDE: i32 = 97
+
 function CardAsh.new(): CardAsh
+    local table_cards: {TableAsh} = {}
+    for slot = 0::i32, TABLE_ASH_SLOTS - 1 do
+        table.insert(
+            table_cards,
+            {
+                sheet = new_sheet_ash(TABLE_SHEET_SEED + slot * TABLE_SEED_STRIDE),
+                fall = new_table_card_ash(TABLE_FALL_SEED + slot * TABLE_SEED_STRIDE)
+            }
+        )
+    end
     return {
         reveal_first = new_sheet_ash(401),
         reveal_second = new_sheet_ash(929),
-        table_card_sheet = new_sheet_ash(613),
-        table_card_fall = new_table_card_ash(607)
+        table_cards = table_cards
     }
+end
+
+-- The pair of emitters that belong to one table slot. A slot the row does not
+-- have — which a shrunk board or a stale condition can name for a frame —
+-- answers nil rather than the wrong slot's fire.
+function CardAsh:slot(index: i32): TableAsh?
+    if index < 0 or index >= #self.table_cards then
+        return nil
+    end
+    return self.table_cards[index + 1]
 end
 
 -- One tick of a sheet emitter. A progress outside the release window — which

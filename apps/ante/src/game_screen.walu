@@ -349,18 +349,36 @@ function State:update(city: city_map.State, dt: f64): i32
             community_count = #(revealed::game.Trick).middle
         end
     end
-    local burned_table_card: i32 = presentation:update_power(community_count, dt)
-    if burned_table_card >= 0 then
-        local discarded: game.Card? = self.rules:resolve_firebolt(burned_table_card)
-        if discarded ~= nil then
-            local rules_view: game.View = self.rules:view()
-            presentation:firebolt_resolved(
-                discarded::game.Card,
-                rules_view.middle[burned_table_card + 1],
-                burned_table_card,
-                #rules_view.middle
+    -- A spread Firebolt hands every slot it burned back on the same frame, so
+    -- the rules take them in one pass and the board is refilled in one beat.
+    -- A slot the sealed deck cannot replace is simply not burned; its card
+    -- comes back intact rather than leaving a hole in the row.
+    local burned: {i32} = presentation:update_power(community_count, dt)
+    if #burned > 0 then
+        local taken: {i32} = {}
+        local discards: {game.Card} = {}
+        for target in burned do
+            local discarded: game.Card? = self.rules:resolve_firebolt(target)
+            if discarded ~= nil then
+                table.insert(taken, target)
+                table.insert(discards, discarded::game.Card)
+            end
+        end
+        -- Every replacement is on the board before the first one is read: the
+        -- burned slots are distinct, so one settled view describes them all.
+        local settled: game.View = self.rules:view()
+        local burns: {choreography.FireboltBurn} = {}
+        for index, target in taken do
+            table.insert(
+                burns,
+                {
+                    discarded = discards[index],
+                    replacement = settled.middle[target + 1],
+                    target = target
+                }
             )
         end
+        presentation:firebolt_resolved(burns, #settled.middle)
     end
     if ui.revealing then
         return presentation:update_reveal(dt)
@@ -431,6 +449,28 @@ function State:submit_swap(): unit
     end
 end
 
+-- The cards a cast took, read out for the feedback line a screen reader
+-- announces. A single card keeps the phrasing it has always had; a spread
+-- Firebolt names every card it reached, aimed card first, so the reading says
+-- what the level bought without the player having to see the board.
+function cast_target_names(targets: {i32}): string
+    if #targets == 1 then
+        return "table card " .. tostring(targets[1] + 1)
+    end
+    local names: string = "table cards "
+    for index, target in targets do
+        if index > 1 then
+            if index == #targets then
+                names ..= " and "
+            else
+                names ..= ", "
+            end
+        end
+        names ..= tostring(target + 1)
+    end
+    return names
+end
+
 -- Pay for and launch the spell in the aimed loadout slot at the given table_card. The
 -- rules charge the gold only when they accept the cast, so a cancelled or
 -- unaffordable attempt costs nothing; targeting mode ends either way.
@@ -440,13 +480,21 @@ function State:cancel_cast(): unit
 end
 
 function State:confirm_cast(slot: i32, table_card: i32): unit
+    -- What the cast takes is asked before it is paid for: the rules answer
+    -- from the spell's own level, and charging first would leave nothing to
+    -- ask should the aim turn out to name no card at all.
+    local targets: {i32} = self.rules:cast_targets(slot, table_card)
+    if #targets == 0 then
+        self.ui.cast_slot = nil
+        return
+    end
     if self.rules:cast_spell(slot, table_card) then
         local kind: spells.SpellKind? = self.rules:spell_kind(slot)
         if kind ~= nil then
-            self.spell_feedback = (kind::spells.SpellKind):__tostring() .. " completed on table card " .. tostring(
-                table_card + 1
+            self.spell_feedback = (kind::spells.SpellKind):__tostring() .. " completed on " .. cast_target_names(
+                targets
             ) .. "."
-            self.presentation:apply_power(kind::spells.SpellKind, table_card)
+            self.presentation:apply_power(kind::spells.SpellKind, targets)
         end
     end
     self.ui.cast_slot = nil

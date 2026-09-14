@@ -25,6 +25,28 @@ local function loadout_of(kind: spells.SpellKind): {game.Spell}
     return {spells.Spell.new(kind, 1)}
 end
 
+-- A target list as one readable string. Order is part of what a spread
+-- promises — the aimed card leads, and the presentation flies its carrier at
+-- whatever leads — so the assertions compare the list itself and not a set.
+local function slots_of(targets: {i32}): string
+    local names: string = ""
+    for index, target in targets do
+        if index > 1 then
+            names ..= ","
+        end
+        names ..= tostring(target)
+    end
+    return names
+end
+
+local function spread_of(aim: i32, level: i32, count: i32): string
+    return slots_of(game.spread_targets(aim, level, count))
+end
+
+local function targets_of(state: game.State, slot: i32, table_card: i32): string
+    return slots_of(state:cast_targets(slot, table_card))
+end
+
 local function priced_spell(kind: spells.SpellKind, cost: i32): game.Spell
     local spell: game.Spell = spells.Spell.new(kind, 1)
     spell.cost = cost
@@ -1341,6 +1363,92 @@ describe(
                 expect(state:view().middle[2].rank):toBe(replacement.rank)
                 expect(state:view().middle[2].suit):toBe(replacement.suit)
                 expect(state:view().deck_count):toBe(deck_before - 1)
+            end
+        )
+
+        it(
+            "spreads a Firebolt outward from its aim, one card per level",
+            function()
+                -- The aimed card leads, then neighbours at growing distance,
+                -- right before left. Five levels take a five-card row whole.
+                expect(spread_of(2, 1, 5)):toBe("2")
+                expect(spread_of(2, 2, 5)):toBe("2,3")
+                expect(spread_of(2, 3, 5)):toBe("2,3,1")
+                expect(spread_of(2, 4, 5)):toBe("2,3,1,4")
+                expect(spread_of(2, 5, 5)):toBe("2,3,1,4,0")
+            end
+        )
+
+        it(
+            "keeps a levelled Firebolt at full reach when it is aimed at an edge",
+            function()
+                -- The side that has run out simply stops being offered, so the
+                -- other side carries the rest of the level rather than the aim
+                -- wasting it.
+                expect(spread_of(0, 3, 5)):toBe("0,1,2")
+                expect(spread_of(4, 3, 5)):toBe("4,3,2")
+                expect(spread_of(1, 4, 5)):toBe("1,2,0,3")
+                -- A level past the row's width takes the row and stops; a level
+                -- below one is not a cast.
+                expect(spread_of(1, 9, 3)):toBe("1,2,0")
+                expect(spread_of(1, 0, 5)):toBe("")
+                expect(spread_of(5, 3, 5)):toBe("")
+            end
+        )
+
+        it(
+            "reads a cast's reach off the level of the spell in that slot",
+            function()
+                math.randomseed(71)
+                local state = game.State.new(
+                    false,
+                    {
+                        spells.Spell.new(spells.SpellKind.Firebolt, 3),
+                        spells.Spell.new(spells.SpellKind.FreezeRay, 3)
+                    },
+                    game.starting_gold
+                )
+                -- The reach is read against the live row, so the row has to be
+                -- the full five the exchange leaves standing.
+                finish_swap_phase(state)
+                expect(targets_of(state, 0, 2)):toBe("2,3,1")
+                -- Level is Firebolt's alone: every other spell takes the one
+                -- card it was aimed at however sharp it is.
+                expect(targets_of(state, 1, 2)):toBe("2")
+                -- An aim off the row and a slot the loadout does not have take
+                -- nothing, which is what keeps a confirmed cast from charging
+                -- for a burn that has nowhere to land.
+                expect(targets_of(state, 0, 5)):toBe("")
+                expect(targets_of(state, 2, 2)):toBe("")
+            end
+        )
+
+        it(
+            "burns every card a levelled Firebolt reached and refills each from the deck",
+            function()
+                math.randomseed(73)
+                local state = game.State.new(
+                    false,
+                    {spells.Spell.new(spells.SpellKind.Firebolt, 3)},
+                    game.starting_gold
+                )
+                finish_swap_phase(state)
+                local reached: {i32} = state:cast_targets(0, 0)
+                expect(targets_of(state, 0, 0)):toBe("0,1,2")
+                local deck_before: i32 = state:view().deck_count
+                local untouched: game.Card = state:view().middle[4]
+                expect(state:cast_spell(0, 0)):toBe(true)
+
+                for target in reached do
+                    expect(state:resolve_firebolt(target) == nil):toBe(false)
+                end
+
+                -- Three cards left the row and three came off the deck; the
+                -- fourth slot, which the level never reached, still holds the
+                -- card it was dealt.
+                expect(state:view().deck_count):toBe(deck_before - 3)
+                expect(state:view().middle[4].rank):toBe(untouched.rank)
+                expect(state:view().middle[4].suit):toBe(untouched.suit)
             end
         )
 

@@ -80,7 +80,7 @@ function new(state: game.View, run: run_module.View): State
                 card.plain(sample),
                 nil,
                 0.0,
-                card_burn.CardAsh.new(),
+                nil,
                 powered_card.new_grave_dust()
             )
         )
@@ -232,7 +232,7 @@ function State:present_table(
     value: card.Look,
     kind: spells.SpellKind?,
     clock: f64,
-    ash: card_burn.CardAsh,
+    ash: card_burn.TableAsh?,
     dust: particles.ParticleSystem,
     hidden: bool
 ): unit
