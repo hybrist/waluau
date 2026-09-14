@@ -94,6 +94,11 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
             local bound: gpu.ShaderBindingResult = graphics:bind_imported_shader(
                 lens,
                 {
+                    gpu.float_parameter("u_width", 960.0),
+                    gpu.float_parameter("u_height", 640.0),
+                    gpu.float_parameter("u_focus_x", 0.5),
+                    gpu.float_parameter("u_focus_y", 0.5),
+                    gpu.float_parameter("u_opacity", 1.0),
                     gpu.float_parameter("u_clock", view.time + (phase.value()::f64) * 0.1),
                     gpu.float_parameter("u_strength", (strength.value()::f64) / 100.0),
                     gpu.float_parameter("u_static_circle", storybook.selected(static_circle)::f64),

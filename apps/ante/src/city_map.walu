@@ -21,6 +21,7 @@ export type Building = { x: f64, y: f64, width: f64, height: f64, tone: i32, det
 export type Stop = { x: f64, y: f64, duel: bool }
 export type Point = { x: f64, y: f64 }
 export type State = {
+    scenery_seed: i32,
     vertical_streets: {f64},
     horizontal_streets: {f64},
     buildings: {Building},
@@ -150,6 +151,7 @@ function fill_streets(state: State, streets: {f64}, limit: f64, low: f64, high: 
 end
 
 function generate(state: State): unit
+    state.scenery_seed = state.rng::i32
     state.vertical_streets = {}
     state.horizontal_streets = {}
     state.buildings = {}
@@ -574,6 +576,7 @@ function State.new(seed: i32): State
     local value: f64 = math.floor(math.abs(seed::f64))
     value = value - math.floor(value / (RANDOM_MODULUS - 1.0)) * (RANDOM_MODULUS - 1.0)
     local state: State = {
+        scenery_seed = seed,
         vertical_streets = {},
         horizontal_streets = {},
         buildings = {},

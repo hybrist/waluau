@@ -16,6 +16,10 @@ rather than the retained stories’ packaged-asset barrier.
 
 ## Coverage and migrated assertions
 
+The live menu and vendor use the generated city through the scrying lens. The
+focus follows the camera anchor, remains circular on resized viewports, and
+fades with the map during the duel transition.
+
 The shared `src/screens.stories.walu` fixture draws production menu, city,
 duel, and diagnostic renderers with a seeded run. It selects a screen before
 capture, bypassing interactive setup in this visual-only fixture. The same
@@ -29,7 +33,7 @@ the display font arrives. No production failure or layout drawing is copied here
 | Former gameplay measurement | Appearance replacement | Semantic coverage that remains |
 | --- | --- | --- |
 | Gold menu-title ink | `main-menu.png`: title/options on production city map | Main menu heading and named menu actions |
-| Cyan/gold vendor stop ink, then its absence after starting | `starting-vendor.png`: selected starting vendor and anchored city stop; `wide-duel.png`: board without map | Starting vendor → Duel screen transition |
+| Cyan/gold vendor stop ink, then its absence after starting | `starting-vendor.png`: starting spell list over the anchored scrying focus; `wide-duel.png`: board without map | Starting vendor → Duel screen transition |
 | Card-back ink proves asset decode/board arrival | Existing `card-back.png`, plus `wide-duel.png` deck | Packaged PNG network request and Board ready |
 | Loading gold line/text and absence of menu title | `loading.png`: production loading presentation | Held font request blocks menu input; fallback permits menu |
 | Fatal audio red panel | `fatal-audio.png`: production fatal diagnostic | Audio could not load heading and fatal message |

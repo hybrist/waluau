@@ -20,6 +20,7 @@ type Mode = "menu" | "vendor" | "help" | "board" | "targeting" | "firebolt" | "l
 local book = ui_story.Book.new()
 
 function screen_scene(mode: Mode, width: f64, height: f64): storybook.Scene
+    local city_view = city_map_render.State.new()
     local city = city_map.State.new(41)
     local options = menu.State.new()
     local duel = game_screen.State.new()
@@ -78,7 +79,7 @@ function screen_scene(mode: Mode, width: f64, height: f64): storybook.Scene
             end
             diagnostic:draw_status(graphics)
         elseif mode == "menu" or mode == "vendor" then
-            city_map_render.draw(city, graphics, ink.color_ink(city.streak_suit), city.cover, -1)
+            city_view:draw(city, graphics)
             options:draw(viewport, surface)
         else
             duel:draw_vault(surface)

@@ -251,6 +251,25 @@ test('production colocates and compiles every required fragment shader', async (
   await expect(page.locator('canvas#walua-game-canvas')).toBeVisible();
 });
 
+test('live city compiles the scrying lens once across viewport changes', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const source = await readFile(join(ANTE_ROOT, 'src', 'city_scrying.frag'), 'utf8');
+  const shaders = { scrying: source };
+  await installRuntimeProbe(page);
+  await openGame(page);
+  await expect.poll(async () => (await sourceCounts(page, shaders)).scrying,
+    { timeout: GAME_READY_TIMEOUT }).toBe(1);
+  await expect.poll(() => liveProgramCount(page, source)).toBe(1);
+  for (const viewport of [{ width: 600, height: 900 }, { width: 1440, height: 800 }]) {
+    await page.setViewportSize(viewport);
+    await page.waitForTimeout(250);
+    expect((await sourceCounts(page, shaders)).scrying).toBe(1);
+    expect(await liveProgramCount(page, source)).toBe(1);
+  }
+  expect(errors).toEqual([]);
+});
+
 test('development HMR updates each imported shader locally and retains its last good program', async ({ page }) => {
   test.slow();
   await installRuntimeProbe(page);
