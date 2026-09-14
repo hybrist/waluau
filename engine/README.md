@@ -491,9 +491,12 @@ vertex/pixel programs on that same batched stream.
 
 A game can provide `Game.accessibility`, `accessibility_activate`, and
 `accessibility_focus` to expose its canvas UI through native browser controls.
-The engine offers a visible **Text controls** toggle; its scrollable panel is
-usable with keyboard navigation and screen readers. The canvas keeps drawing
-with WebGL2.
+The engine offers a **Text controls** toggle whose scrollable panel is usable
+with keyboard navigation and screen readers. The canvas keeps drawing with
+WebGL2. The toggle stays clipped over the game the way a skip link stays out of
+a page: it is in the accessibility tree from the start and becomes visible once
+focus reaches it, so a player who never tabs never sees it on the canvas. An
+opened panel keeps its box even while the canvas holds focus.
 
 `AccessibleState` supplies a heading, a status announcement, and ordered
 `AccessibleItem` records. Items are `button`, `group`, or `text`; groups precede

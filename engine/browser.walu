@@ -340,13 +340,16 @@ function accessible_panel(
         }
     end
     local snapshot: () -> AccessibleState = read_state::(() -> AccessibleState)
+    -- A pointer player already has the canvas, so these controls stay off it
+    -- the way a skip link stays off a page: clipped but in the accessibility
+    -- tree, and drawn only once something inside them takes focus. Tab from
+    -- the canvas reveals the toggle.
+    local hidden_box: string = "position:fixed;z-index:20;left:8px;top:8px;width:1px;height:1px;padding:0;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;"
+    local collapsed_box: string = "position:fixed;z-index:20;left:8px;top:8px;width:max-content;max-width:calc(100vw - 16px);border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:4px;font:16px/1.5 system-ui;"
+    local expanded_box: string = "position:fixed;z-index:20;left:8px;top:8px;width:360px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:8px;box-sizing:border-box;font:16px/1.5 system-ui;"
     local wrapper: Element = document:create_element("section")
     accessible_attribute(wrapper, "aria-label", "Game text controls")
-    accessible_attribute(
-        wrapper,
-        "style",
-        "position:fixed;z-index:20;left:8px;top:8px;max-width:calc(100vw - 16px);width:max-content;max-height:calc(100dvh - 16px);overflow:auto;border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:8px;box-sizing:border-box;font:16px/1.5 system-ui;"
-    )
+    accessible_attribute(wrapper, "style", hidden_box)
     root:append_child(wrapper)
     local toggle: Element = document:create_element("button")
     toggle.text_content = "Text controls"
@@ -384,6 +387,7 @@ function accessible_panel(
     local nodes: {AccessibleNode} = {}
     local state: AccessibleState = snapshot()
     local expanded: bool = false
+    local focus_within: bool = false
     local disposed: bool = false
     local previous_dialog: string = ""
     local inert_elements: {InertElement} = {}
@@ -425,17 +429,24 @@ function accessible_panel(
             remove_accessible_attribute(wrapper, "aria-labelledby")
         end
     end
+    -- An open panel keeps its box even when focus moves to the canvas: the
+    -- player asked for it. Collapsed, only focus inside it draws the toggle.
+    local function apply_wrapper_style(): unit
+        if expanded then
+            accessible_attribute(wrapper, "style", expanded_box)
+        elseif focus_within then
+            accessible_attribute(wrapper, "style", collapsed_box)
+        else
+            accessible_attribute(wrapper, "style", hidden_box)
+        end
+    end
     local function set_expanded(value: bool): unit
         expanded = value
         if expanded then
             panel:insertBefore(feedback, content)
             remove_accessible_attribute(feedback, "style")
             accessible_attribute(observations, "hidden", "")
-            accessible_attribute(
-                wrapper,
-                "style",
-                "position:fixed;z-index:20;left:8px;top:8px;width:360px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:8px;box-sizing:border-box;font:16px/1.5 system-ui;"
-            )
+            apply_wrapper_style()
             panel:remove_attribute("hidden")
             accessible_attribute(toggle, "aria-expanded", "true")
         else
@@ -446,11 +457,7 @@ function accessible_panel(
                 "style",
                 "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;"
             )
-            accessible_attribute(
-                wrapper,
-                "style",
-                "position:fixed;z-index:20;left:8px;top:8px;width:max-content;max-width:calc(100vw - 16px);border:1px solid #64748b;border-radius:8px;background:#0f172a;color:#f8fafc;padding:4px;font:16px/1.5 system-ui;"
-            )
+            apply_wrapper_style()
             panel:set_attribute("hidden", "")
             accessible_attribute(toggle, "aria-expanded", "false")
             focus_element(toggle)
@@ -461,6 +468,18 @@ function accessible_panel(
         set_expanded(not expanded)
     end
     toggle:add_event_listener("click", on_toggle)
+    -- focusout arrives before the focusin of a move within the panel, so the
+    -- pair never paints a collapsed frame between two of its own controls.
+    local function on_focus_in(event: Event): unit
+        focus_within = true
+        apply_wrapper_style()
+    end
+    local function on_focus_out(event: Event): unit
+        focus_within = false
+        apply_wrapper_style()
+    end
+    wrapper:add_event_listener("focusin", on_focus_in)
+    wrapper:add_event_listener("focusout", on_focus_out)
 
     local function new_node(item: AccessibleItem): AccessibleNode
         local tag: string = "p"
@@ -750,6 +769,8 @@ function accessible_panel(
             expanded = false
             set_modal()
             toggle:remove_event_listener("click", on_toggle)
+            wrapper:remove_event_listener("focusin", on_focus_in)
+            wrapper:remove_event_listener("focusout", on_focus_out)
             wrapper:remove_event_listener("keydown", on_key)
             for _, node in nodes do
                 remove_node(node)

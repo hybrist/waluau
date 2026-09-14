@@ -30,9 +30,16 @@ export async function waitForBoardReady(canvas) {
     .toBeEnabled({ timeout: GAME_READY_TIMEOUT });
 }
 
+// The toggle is clipped until something inside the panel takes focus, the way
+// a skip link is. Focusing it is how a keyboard player reaches it, and it is
+// what makes the button hit-testable for the activation that follows.
 export async function showTextControls(page) {
   const toggle = page.getByRole('button', { name: 'Text controls', exact: true });
-  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+  if (await toggle.getAttribute('aria-expanded') === 'true') return;
+  await toggle.focus();
+  await expect(toggle).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 }
 
 export async function waitForMenu(canvas) {

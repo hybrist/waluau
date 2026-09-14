@@ -1280,7 +1280,13 @@ describe('browser conformance', () => {
       const panel = game.root.querySelector('#walua-text-controls');
       const card = game.root.querySelector('[data-game-control="card"]');
       const status = game.root.querySelector('[role="status"]');
+      const wrapper = toggle.parentElement;
       expect(panel.hidden).toBe(true);
+      // Closed controls stay off the canvas until focus reaches them, the way
+      // a skip link does, while remaining in the accessibility tree.
+      expect(wrapper.getBoundingClientRect().width).toBeLessThanOrEqual(1);
+      toggle.focus();
+      expect(wrapper.getBoundingClientRect().width).toBeGreaterThan(1);
       toggle.click();
       expect(panel.hidden).toBe(false);
       card.focus();
@@ -1330,6 +1336,7 @@ describe('browser conformance', () => {
       const canvas = game.root.querySelector('#walua-game-canvas');
       canvas.dispatchEvent(new document.defaultView.PointerEvent('pointerdown', { bubbles: true }));
       expect(document.activeElement).toBe(canvas);
+      expect(wrapper.getBoundingClientRect().width).toBeLessThanOrEqual(1);
       canvas.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
       expect(game.exports.keypress_count()).toBe(1);
     } finally {
