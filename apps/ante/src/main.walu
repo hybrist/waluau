@@ -17,7 +17,6 @@ local city_map_render = require("./city_map_render")
 local menu = require("./menu")
 local accessibility = require("./accessibility")
 local game_screen = require("./game_screen")
-local ink = require("./ink")
 local layout = require("./layout")
 local presentation_resources = require("./presentation_resources")
 local spells = require("./spells/spell")
@@ -44,6 +43,7 @@ function install_ante_magic(): unit
     local menu_state: menu.State = menu.State.new()
     local duel: game_screen.State = game_screen.State.new()
     local city: city_map.State = city_map.State.new(math.random(2147483646))
+    local city_view = city_map_render.State.new()
     local assets: presentation_resources.State = presentation_resources.State.new()
     local presentation_started: bool = false
     local function load_assets_async(): i32
@@ -112,19 +112,7 @@ function install_ante_magic(): unit
                 duel:draw_vault(assets:surface(graphics))
             end
             if city:visible() then
-                -- The menu's map is a drifting view of a city nobody is running,
-                -- so it has no last duel to mark.
-                local landmark: i32 = -1
-                if screen ~= "menu" then
-                    landmark = duel:landmark_stop()
-                end
-                city_map_render.draw(
-                    city,
-                    graphics,
-                    ink.color_ink(city.streak_suit),
-                    city.cover,
-                    landmark
-                )
+                city_view:draw(city, graphics)
             end
             if screen == "menu" then
                 menu_state:draw(canvas, assets:surface(graphics))

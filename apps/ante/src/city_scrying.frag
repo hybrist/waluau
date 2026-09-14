@@ -2,6 +2,11 @@ precision highp float;
 varying vec2 v_uv;
 uniform sampler2D u_texture;
 uniform float u_clock;
+uniform float u_width;
+uniform float u_height;
+uniform float u_focus_x;
+uniform float u_focus_y;
+uniform float u_opacity;
 uniform float u_strength;
 uniform float u_static_circle;
 uniform float u_peak_time;
@@ -19,13 +24,13 @@ float ringTravel(float age, float peak) {
     return peak + (1.0 - peak) * (2.0 * y - 2.0 * y * y * y + y * y * y * y);
 }
 
-// Coordinates are in units of the lens radius, preserving a circle on 960x640.
+// Coordinates are in lens radii, keeping the focus circular in any viewport.
 vec2 sampleUV(vec2 p) {
-    return clamp(p * vec2(0.3333333, 0.5) + 0.5, vec2(0.002), vec2(0.998));
+    return clamp(p * (min(u_width, u_height) * 0.5) / vec2(u_width, u_height) + vec2(u_focus_x, u_focus_y), vec2(0.002), vec2(0.998));
 }
 
 void main() {
-    vec2 p = (v_uv - 0.5) * vec2(3.0, 2.0);
+    vec2 p = (v_uv - vec2(u_focus_x, u_focus_y)) * vec2(u_width, u_height) / (min(u_width, u_height) * 0.5);
     float r = length(p);
     float angle = atan(p.y, p.x);
     float t = u_clock;
@@ -50,7 +55,7 @@ void main() {
     // the screen edges instead of stretching clamped edge texels into bands.
     warped += outerWarp * (current * 0.085 - p * 0.14);
     vec2 uv = sampleUV(warped);
-    vec2 spread = vec2(1.0 / 960.0, 1.0 / 640.0) * u_strength * edge * edge * 20.0;
+    vec2 spread = vec2(1.0 / u_width, 1.0 / u_height) * u_strength * edge * edge * 20.0;
     // Blur the sampled map itself, including the city outside the clear lens.
     vec3 city = texture2D(u_texture, uv).rgb * 0.2;
     for (int i = 0; i < 8; i++) {
@@ -70,7 +75,7 @@ void main() {
     float lip = 0.865 + 0.004 * sin(t * 1.4);
     float aperture = 1.0 - smoothstep(0.77, 1.02, radial);
     // A translucent dark veil leaves the surrounding blurred streets visible.
-    // The final composite is opaque because it already contains that map.
+    // Opacity hands the map over to the duel during the camera dive.
     vec3 outside = city * vec3(0.32, 0.34, 0.43) + vec3(0.012, 0.008, 0.025);
     vec3 color = mix(outside, city, aperture);
     float ring = exp(-abs(radial - lip) * 150.0);
@@ -90,5 +95,5 @@ void main() {
         float glow = exp(-abs(radial - radius) * 25.0);
         color += u_strength * envelope * (mix(teal, violet, phase) * wave * 0.28 + violet * glow * 0.10);
     }
-    gl_FragColor = vec4(color, 1.0);
+    gl_FragColor = vec4(color, u_opacity);
 }
