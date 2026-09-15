@@ -1,0 +1,245 @@
+-- A run visits real frontage parcels. Travel between their access points uses
+-- the generated street graph; the only off-street steps go to a front door.
+local generator = require("./city_generator")
+export type Point = generator.Point
+export type Stop = { x: f64, y: f64, duel: bool, building: i32 }
+export type Leg = { points: {Point}, length: f64 }
+export type State = {
+    city: generator.City,
+    stops: {Stop},
+    legs: {Leg},
+    used: {bool},
+    scale_x: f64,
+    scale_y: f64
+}
+const INFINITY: f64 = 1000000000.0
+
+function distance(a: Point, b: Point): f64
+    local dx: f64 = b.x - a.x
+    local dy: f64 = b.y - a.y
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+function project(point: Point, a: Point, b: Point): Point
+    local dx: f64 = b.x - a.x
+    local dy: f64 = b.y - a.y
+    local squared: f64 = dx * dx + dy * dy
+    if squared <= 0.000001 then
+        return a
+    end
+    local t: f64 = math.max(
+        0.0,
+        math.min(1.0, ((point.x - a.x) * dx + (point.y - a.y) * dy) / squared)
+    )
+    return { x = a.x + dx * t, y = a.y + dy * t }
+end
+
+-- The nearest point on the actual footprint is the door facing the street.
+-- This also handles attached rows and concave parcels without crossing a roof.
+function door(house: generator.Building): Point
+    local best: Point = house.footprint[1]
+    for index = 1::i32, #house.footprint do
+        local point = project(
+            house.access,
+            house.footprint[index],
+            house.footprint[index % #house.footprint + 1]
+        )
+        if distance(point, house.access) < distance(best, house.access) then
+            best = point
+        end
+    end
+    return best
+end
+
+function State:world(point: Point): Point
+    return { x = point.x * self.scale_x, y = point.y * self.scale_y }
+end
+
+function append_point(points: {Point}, point: Point): unit
+    if #points == 0 or distance(points[#points], point) > 0.000001 then
+        table.insert(points, point)
+    end
+end
+
+function State:append_stop(building: i32, duel: bool, path: {Point}): unit
+    local house = self.city.buildings[building]
+    local place: Point = house.access
+    if duel then
+        place = door(house)
+    end
+    local point = self:world(place)
+    if #self.stops > 0 then
+        local points: {Point} = {}
+        local length: f64 = 0.0
+        for step in path do
+            local next = self:world(step)
+            if #points > 0 then
+                length += distance(points[#points], next)
+            end
+            append_point(points, next)
+        end
+        table.insert(self.legs, { points = points, length = length })
+    end
+    table.insert(self.stops, { x = point.x, y = point.y, duel = duel, building = building })
+end
+
+-- Multi-source Dijkstra starts partway along the current house's street.
+-- The predecessor chain therefore contains only real edges, including bridges.
+function street_distances(city: generator.City, house: generator.Building): ({f64}, {i32})
+    local costs: {f64} = {}
+    local previous: {i32} = {}
+    local visited: {bool} = {}
+    for _ = 1::i32, #city.nodes do
+        table.insert(costs, INFINITY)
+        table.insert(previous, 0)
+        table.insert(visited, false)
+    end
+    local street = city.edges[house.edge]
+    costs[street.a] = distance(house.access, city.nodes[street.a])
+    costs[street.b] = distance(house.access, city.nodes[street.b])
+    for _ = 1::i32, #city.nodes do
+        local current: i32 = 0
+        local best: f64 = INFINITY
+        for index = 1::i32, #city.nodes do
+            if not visited[index] and costs[index] < best then
+                current = index
+                best = costs[index]
+            end
+        end
+        if current == 0 then
+            break
+        end
+        visited[current] = true
+        for edge in city.edges do
+            local next: i32 = 0
+            if edge.a == current then
+                next = edge.b
+            elseif edge.b == current then
+                next = edge.a
+            end
+            if next > 0 and costs[current] + edge.length < costs[next] then
+                costs[next] = costs[current] + edge.length
+                previous[next] = current
+            end
+        end
+    end
+    return costs, previous
+end
+
+function State:extend(): bool
+    local current = self.city.buildings[self.stops[#self.stops].building]
+    -- Every vendor is followed by the house it stands outside.
+    if #self.stops % 2 == 1 then
+        self:append_stop(self.stops[#self.stops].building, true, {current.access, door(current)})
+        return true
+    end
+    local costs, previous = street_distances(self.city, current)
+    local best: f64 = INFINITY
+    local chosen: i32 = 0
+    local endpoint: i32 = 0
+    for index = 1::i32, #self.city.buildings do
+        if not self.used[index] then
+            local house = self.city.buildings[index]
+            local edge = self.city.edges[house.edge]
+            local node: i32 = edge.a
+            local cost: f64 = costs[edge.a] + distance(self.city.nodes[edge.a], house.access)
+            local via_b: f64 = costs[edge.b] + distance(self.city.nodes[edge.b], house.access)
+            if via_b < cost then
+                cost = via_b
+                node = edge.b
+            end
+            if house.edge == current.edge and distance(current.access, house.access) < cost then
+                cost = distance(current.access, house.access)
+                node = 0
+            end
+            if cost < best then
+                best = cost
+                chosen = index
+                endpoint = node
+            end
+        end
+    end
+    if chosen == 0 then
+        return false
+    end
+    self.used[chosen] = true
+    local path: {Point} = {door(current), current.access}
+    local reverse: {i32} = {}
+    while endpoint > 0 do
+        table.insert(reverse, endpoint)
+        endpoint = previous[endpoint]
+    end
+    for index = #reverse, 1::i32, -1::i32 do
+        append_point(path, self.city.nodes[reverse[index]])
+    end
+    append_point(path, self.city.buildings[chosen].access)
+    self:append_stop(chosen, false, path)
+    return true
+end
+
+function State:ensure_stops(count: i32): unit
+    while #self.stops < count do
+        if not self:extend() then
+            -- An endless run can revisit the city's houses once every reachable
+            -- house has been visited. It still walks real roads to get there.
+            for index = 1::i32, #self.used do
+                self.used[index] = index == self.stops[#self.stops].building
+            end
+            if not self:extend() then
+                return
+            end
+        end
+    end
+end
+
+function State.new(city: generator.City, width: f64, height: f64): State
+    local state: State = {
+        city = city,
+        stops = {},
+        legs = {},
+        used = {},
+        scale_x = width / city.width,
+        scale_y = height / city.height
+    }
+    local start: i32 = 0
+    local nearest: f64 = INFINITY
+    local center: Point = { x = city.width * 0.5, y = city.height * 0.5 }
+    for index = 1::i32, #city.buildings do
+        table.insert(state.used, false)
+        local gap = distance(city.buildings[index].access, center)
+        if gap < nearest then
+            nearest = gap
+            start = index
+        end
+    end
+    assert(start > 0, "The generated city needs a house for the run")
+    state.used[start] = true
+    state:append_stop(start, false, {})
+    return state
+end
+
+function State:position_at(travel: f64): Point
+    local last: i32 = #self.stops - 1
+    if travel <= 0.0 then
+        return { x = self.stops[1].x, y = self.stops[1].y }
+    end
+    if travel >= last::f64 then
+        return { x = self.stops[last + 1].x, y = self.stops[last + 1].y }
+    end
+    local base: i32 = math.floor(travel)::i32
+    local leg = self.legs[base + 1]
+    local remaining: f64 = (travel - base::f64) * leg.length
+    for index = 2::i32, #leg.points do
+        local a = leg.points[index - 1]
+        local b = leg.points[index]
+        local span = distance(a, b)
+        if remaining <= span then
+            local t: f64 = remaining / span
+            return { x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t }
+        end
+        remaining -= span
+    end
+    return leg.points[#leg.points]
+end
+
+return { door = door, distance = distance }

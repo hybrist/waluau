@@ -1,0 +1,154 @@
+-- Street paths and parcel outlines are captured in the same camera coordinates
+-- as the city. The lens refracts both captures together, keeping the gold ink.
+local engine = require("waluau:engine")
+local ink = require("./ink")
+local city_map = require("./city_map")
+local route = require("./city_route")
+type Graphics = engine.Graphics
+type Point = route.Point
+
+function furniture_opacity(dive: f64): f64
+    local t: f64 = math.min(1.0, dive / 0.30)
+    return 1.0 - t * t * (3.0 - 2.0 * t)
+end
+
+function dashed_line(graphics: Graphics, a: Point, b: Point, offset: f64): unit
+    local length = route.distance(a, b)
+    if length < 0.000001 then
+        return
+    end
+    local along: f64 = 0.0
+    while along < length do
+        local phase: f64 = (offset + along) % 20.0
+        local step: f64 = math.min(length - along, 20.0 - phase)
+        if phase < 11.0 then
+            step = math.min(step, 11.0 - phase)
+            graphics:line(
+                a.x + (b.x - a.x) * along / length,
+                a.y + (b.y - a.y) * along / length,
+                a.x + (b.x - a.x) * (along + step) / length,
+                a.y + (b.y - a.y) * (along + step) / length
+            )
+        end
+        -- Avoid a rounded phase boundary leaving a zero-length iteration.
+        along += math.max(step, 0.00001)
+    end
+end
+
+function draw_path(state: city_map.State, graphics: Graphics, alpha: f64, glow: bool): unit
+    local offset: f64 = 0.0
+    for index = 1::i32, #state.route.legs do
+        local leg = state.route.legs[index]
+        local done: f64 = math.max(0.0, math.min(1.0, state.travel - (index - 1)::f64)) * leg.length
+        local walked: f64 = 0.0
+        for step = 2::i32, #leg.points do
+            local a = leg.points[step - 1]
+            local b = leg.points[step]
+            local length = route.distance(a, b)
+            if length > 0.000001 then
+                local fraction: f64 = math.max(0.0, math.min(1.0, (done - walked) / length))
+                local split: Point = {
+                    x = a.x + (b.x - a.x) * fraction,
+                    y = a.y + (b.y - a.y) * fraction
+                }
+                if fraction > 0.0 then
+                    graphics:set_color(ink.fade("#fbbf24", alpha))
+                    graphics:set_line_width(3.0)
+                    if glow then
+                        graphics:set_color(ink.fade("#fbbf24", alpha * 0.22))
+                        graphics:set_line_width(9.0)
+                    end
+                    graphics:line(a.x, a.y, split.x, split.y)
+                end
+                if fraction < 1.0 and not glow then
+                    graphics:set_color(ink.fade("#c5b580", alpha * 0.80))
+                    graphics:set_line_width(2.0)
+                    dashed_line(graphics, split, b, offset + length * fraction)
+                end
+            end
+            walked += length
+            offset += length
+        end
+    end
+end
+
+function draw_stops(state: city_map.State, graphics: Graphics, alpha: f64, landmark: i32): unit
+    for index = 1::i32, #state.route.stops do
+        local stop = state.route.stops[index]
+        local reached: bool = (index - 1)::f64 <= state.travel + 0.001
+        local tone: string = "#b7aa85"
+        if reached then
+            tone = "#fbbf24"
+        end
+        if stop.duel then
+            local house = state.route.city.buildings[stop.building]
+            local weight: f64 = alpha
+            if state.dive > 0.0 and index - 1 == math.floor(state.target + 0.5)::i32 then
+                weight = 1.0
+            end
+            graphics:set_color(ink.fade(tone, weight))
+            graphics:set_line_width(2.0)
+            for vertex = 1::i32, #house.footprint do
+                local a = state.route:world(house.footprint[vertex])
+                local b = state.route:world(house.footprint[vertex % #house.footprint + 1])
+                graphics:line(a.x, a.y, b.x, b.y)
+            end
+            if alpha > 0.0 then
+                local center = state.route:world({ x = house.x, y = house.y })
+                local label: string = "DUEL " .. tostring(city_map.stop_duel(index - 1))
+                if index - 1 == landmark then
+                    label = label .. "   LAST"
+                end
+                ink.text_centered(
+                    graphics,
+                    label,
+                    center.x + 1.0,
+                    center.y + 5.0,
+                    10,
+                    ink.fade("#16130b", alpha)
+                )
+                ink.text_centered(
+                    graphics,
+                    label,
+                    center.x,
+                    center.y + 4.0,
+                    10,
+                    ink.fade(tone, alpha)
+                )
+            end
+        elseif alpha > 0.0 then
+            graphics:set_color(ink.fade(tone, alpha))
+            graphics:set_line_width(1.5)
+            graphics:line(stop.x - 6.0, stop.y, stop.x, stop.y - 6.0)
+            graphics:line(stop.x, stop.y - 6.0, stop.x + 6.0, stop.y)
+            graphics:line(stop.x + 6.0, stop.y, stop.x, stop.y + 6.0)
+            graphics:line(stop.x, stop.y + 6.0, stop.x - 6.0, stop.y)
+        end
+    end
+end
+
+function draw(state: city_map.State, graphics: Graphics, landmark: i32): unit
+    local alpha = furniture_opacity(state.dive)
+    graphics:push_identity()
+    graphics:translate(state.anchor_x, state.anchor_y)
+    graphics:scale(state.zoom, state.zoom)
+    graphics:translate(-state.camera_x, -state.camera_y)
+    if alpha > 0.0 then
+        draw_path(state, graphics, alpha, true)
+        draw_path(state, graphics, alpha, false)
+    end
+    draw_stops(state, graphics, alpha, landmark)
+    if alpha > 0.0 then
+        local standing = state:position()
+        local pulse: f64 = 10.0 + math.sin(state.pan_clock * 3.1) * 1.6
+        graphics:set_color(ink.fade("#fbbf24", alpha * 0.25))
+        graphics:fill_circle(standing.x, standing.y, pulse)
+        graphics:set_color(ink.fade("#fde68a", alpha))
+        graphics:fill_circle(standing.x, standing.y, 4.6)
+        graphics:set_color(ink.fade("#3b2a06", alpha))
+        graphics:fill_circle(standing.x, standing.y, 2.0)
+    end
+    graphics:pop()
+end
+
+return { draw = draw }

@@ -14,6 +14,13 @@ retains an acceleration and a deceleration interval. This procedural scene has n
 assets: its capture waits for the focal pixel to show the city through the lens,
 rather than the retained stories’ packaged-asset barrier.
 
+The `route-progress.png` capture shows the third vendor after two duels: the
+golden traveled path ends at the player mote, with upcoming stops and the last
+duel landmark ahead. Its stops outline generated building footprints, and the
+path follows their connected frontage streets. `route-progress-refracted.png`
+advances the lens to 2400 ms. The city and route captures use the same lens
+coordinates; a separate ink pass preserves gold without losing alignment.
+
 ## Coverage and migrated assertions
 
 The live menu and vendor use the generated city through the scrying lens. The
