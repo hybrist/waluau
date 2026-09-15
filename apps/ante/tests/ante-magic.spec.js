@@ -55,6 +55,9 @@ test('leaves the splash for the built-in fallback when the display font fails', 
 });
 
 test('opens help and returns to the menu before starting a run', async ({ page }) => {
+  // This journey opens help, enters a duel, then regenerates the menu city.
+  // Software-rendered CI needs a full journey budget; readiness stays bounded.
+  test.slow();
   const canvas = await openGame(page);
   await waitForMenu(canvas);
   for (const name of ['New run', 'Boss rush', 'How to play']) {
