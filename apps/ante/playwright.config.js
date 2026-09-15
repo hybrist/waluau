@@ -12,6 +12,9 @@ const previewCommand = `pnpm preview --host=127.0.0.1 --strictPort --port=${serv
 
 export default defineConfig({
   testDir: './tests',
+  // Journeys include asset loading and real WebGL animations on CI's software
+  // renderer. Individual readiness assertions retain their shorter deadlines.
+  timeout: 60_000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
