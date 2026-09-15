@@ -15,7 +15,7 @@ local presentation_resources = require("./presentation_resources")
 local ink = require("./ink")
 local spells = require("./spells/spell")
 
-type Mode = "menu" | "vendor" | "help" | "board" | "targeting" | "firebolt" | "loading" | "fatal"
+type Mode = "route" | "menu" | "vendor" | "help" | "board" | "targeting" | "firebolt" | "loading" | "fatal"
 
 local book = ui_story.Book.new()
 
@@ -38,7 +38,10 @@ function screen_scene(mode: Mode, width: f64, height: f64): storybook.Scene
         if mode == "vendor" then
             options:keypressed("Enter")
         end
-        if mode == "menu" or mode == "vendor" then
+        if mode == "route" then
+            city:warp(city_map.shop_stop(3))
+            city:settle()
+        elseif mode == "menu" or mode == "vendor" then
             options:update(city, 0.0)
             city:settle()
         elseif mode == "fatal" then
@@ -58,7 +61,9 @@ function screen_scene(mode: Mode, width: f64, height: f64): storybook.Scene
     end
 
     local function update(dt: f64, input: engine.Input): unit
-        if mode == "menu" or mode == "vendor" then
+        if mode == "route" then
+            city:update(dt)
+        elseif mode == "menu" or mode == "vendor" then
             options:update(city, dt)
             city:update(dt)
         elseif mode ~= "loading" and mode ~= "fatal" then
@@ -78,8 +83,10 @@ function screen_scene(mode: Mode, width: f64, height: f64): storybook.Scene
                 graphics:use_builtin_font()
             end
             diagnostic:draw_status(graphics)
+        elseif mode == "route" then
+            city_view:draw(city, graphics, city_map.duel_stop(3))
         elseif mode == "menu" or mode == "vendor" then
-            city_view:draw(city, graphics)
+            city_view:draw(city, graphics, -1)
             options:draw(viewport, surface)
         else
             duel:draw_vault(surface)
@@ -107,6 +114,7 @@ end
 storybook.publish(
     {
         storybook.story("Main menu", screen_scene("menu", 1200.0, 600.0)),
+        storybook.story("Route progress", screen_scene("route", 1200.0, 600.0)),
         storybook.story("Starting vendor", screen_scene("vendor", 1200.0, 600.0)),
         storybook.story("Help", screen_scene("help", 1000.0, 750.0)),
         storybook.story("Wide duel", screen_scene("board", 1200.0, 600.0)),

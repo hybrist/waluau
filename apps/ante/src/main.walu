@@ -112,7 +112,11 @@ function install_ante_magic(): unit
                 duel:draw_vault(assets:surface(graphics))
             end
             if city:visible() then
-                city_view:draw(city, graphics)
+                local landmark: i32 = -1
+                if screen ~= "menu" then
+                    landmark = duel:landmark_stop()
+                end
+                city_view:draw(city, graphics, landmark)
             end
             if screen == "menu" then
                 menu_state:draw(canvas, assets:surface(graphics))

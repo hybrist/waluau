@@ -61,6 +61,7 @@ const scenes = [
   ['card-draw-mid-flight', 'card--drawn-from-the-deck', 'playback:1;phase:45', 250],
   ['hand-focused', 'hand--fan', 'focused:3;selected:1', 0],
   ['shop', 'entities-shop--open-visit', '', 0],
+  ['route-progress', 'screens--route-progress', '', 0],
   ['main-menu', 'screens--main-menu', '', 0],
   ['starting-vendor', 'screens--starting-vendor', '', 0],
   ['help', 'screens--help', '', 0],

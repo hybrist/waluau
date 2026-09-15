@@ -243,7 +243,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `main.walu` | Thin engine adapter that owns the session and routes callbacks to the live screen. |
 | `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
 | `city_map.walu` | DOM-free city generation, the alternating vendor/vault route, and the camera pans and dissolves that carry it between screens. |
-| `city_map_render.walu` | WebGL2 primitive drawing for the city, its walked and upcoming route, the last authored vault's landmark house, and the colored street streak, all at one opacity. |
+| `city_map_render.walu` | Generated city and scrying lens, followed by the route overlay. |
+| `city_route_render.walu` | Golden traveled route and current position, dashed upcoming route, vendor/vault stops, and the last authored vault landmark; fades route furniture during entry. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `run.walu` | DOM-free run state: the vault sequence, its boss cadence, victory milestone and endless tail, the spell loadout, and the mana and hearts carried between vaults — including the one way hearts climb back. |
 | `shop.walu` | DOM-free intermission between vaults: behavior-bearing item stock, quoted prices, spent offers, cursor input, and hot-replacement snapshots. |

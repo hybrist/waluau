@@ -5,6 +5,7 @@ local gpu = require("waluau:engine/graphics")
 local city_map = require("./city_map")
 local generator = require("./city_generator")
 local city_render = require("./city_generator_render")
+local route_render = require("./city_route_render")
 local lens = require("./city_scrying.frag")
 
 export type State = {
@@ -42,7 +43,7 @@ function prepare_city(view: State, seed: i32): unit
     end
 end
 
-function State:draw(state: city_map.State, graphics: engine.Graphics): unit
+function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: i32): unit
     if not state:visible() then
         return
     end
@@ -115,6 +116,7 @@ function State:draw(state: city_map.State, graphics: engine.Graphics): unit
             graphics:set_color("#ffffff")
             graphics:draw_render_target(target, 0.0, 0.0, state.view_width, state.view_height)
             graphics:use_default_shader()
+            route_render.draw(state, graphics, landmark)
         end
     end
 end
