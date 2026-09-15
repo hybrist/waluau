@@ -14,7 +14,7 @@ describe(
 
                 state.fan_parts = {0.2, 0.4}
                 state.sheet.xs[1] = 321.0
-                state:apply_power(spells.SpellKind.Firebolt, 1)
+                state:apply_power(spells.SpellKind.Firebolt, {1})
                 state:finish_reveal()
 
                 expect(state:snapshot() == baseline):toBe(false)
@@ -32,19 +32,59 @@ describe(
         )
 
         it(
+            "carries every table card a spread Firebolt took through a snapshot",
+            function()
+                local state: choreography.State = choreography.State.new()
+                state:apply_power(spells.SpellKind.Firebolt, {2, 3, 1})
+                local restored: choreography.State? = choreography.State.restore(state:snapshot())
+
+                expect(restored == nil):toBe(false)
+                assert(restored ~= nil)
+                local live: choreography.State = restored::choreography.State
+                -- A restored burn settles past the boundary that owes the rules
+                -- a mutation, so the first tick pays for all three slots at once
+                -- rather than for the aimed card alone.
+                local burned: {i32} = live:update_power(5, 0.016)
+                expect(#burned):toBe(3)
+                expect(burned[1]):toBe(2)
+                expect(burned[2]):toBe(3)
+                expect(burned[3]):toBe(1)
+            end
+        )
+
+        it(
+            "ignores a cast that names no slot the row has",
+            function()
+                local state: choreography.State = choreography.State.new()
+                local baseline: string = state:snapshot()
+                state:apply_power(spells.SpellKind.Firebolt, {})
+
+                expect(state:snapshot()):toBe(baseline)
+                expect(state:firebolt_pending()):toBe(false)
+            end
+        )
+
+        it(
             "rejects invalid restored spell conditions",
             function()
                 -- The same body with the condition intact restores, so each rejection
                 -- below is the condition failing and not a malformed snapshot.
                 local state: choreography.State = choreography.State.new()
-                state:apply_power(spells.SpellKind.Firebolt, 1)
+                state:apply_power(spells.SpellKind.Firebolt, {1})
                 local encoded: string = state:snapshot()
                 expect(choreography.State.restore(encoded) == nil):toBe(false)
-                -- A spell that does not exist, and a target past the community row.
+                -- A spell that does not exist, a target past the community row,
+                -- a condition that took nothing, and one that took the same card
+                -- twice.
                 local unknown_kind: string = string.gsub(encoded, '"kind":%d+', '"kind":9')
                 expect(choreography.State.restore(unknown_kind) == nil):toBe(true)
-                local far_target: string = string.gsub(encoded, '"target":%d+', '"target":5')
+                local far_target: string = string.gsub(encoded, '"targets":%[1%]', '"targets":[5]')
+                expect(far_target == encoded):toBe(false)
                 expect(choreography.State.restore(far_target) == nil):toBe(true)
+                local no_target: string = string.gsub(encoded, '"targets":%[1%]', '"targets":[]')
+                expect(choreography.State.restore(no_target) == nil):toBe(true)
+                local twice: string = string.gsub(encoded, '"targets":%[1%]', '"targets":[1,1]')
+                expect(choreography.State.restore(twice) == nil):toBe(true)
             end
         )
 
@@ -53,7 +93,22 @@ describe(
             function()
                 local state: choreography.State = choreography.State.new()
 
-                expect(state:update_power(0, 0.016)):toBe(-1)
+                expect(#state:update_power(0, 0.016)):toBe(0)
+            end
+        )
+
+        it(
+            "drops only the burned slots the next board no longer has",
+            function()
+                local state: choreography.State = choreography.State.new()
+                -- A river-wide burn caught by a board that has shrunk back to
+                -- the flop keeps the two slots the flop still has.
+                state:apply_power(spells.SpellKind.Firebolt, {2, 3, 1})
+                local burned: {i32} = state:update_power(3, 10.0)
+
+                expect(#burned):toBe(2)
+                expect(burned[1]):toBe(2)
+                expect(burned[2]):toBe(1)
             end
         )
 
@@ -62,10 +117,10 @@ describe(
             function()
                 local state: choreography.State = choreography.State.new()
                 local baseline: string = state:snapshot()
-                state:apply_power(spells.SpellKind.RaiseCard, 4)
+                state:apply_power(spells.SpellKind.RaiseCard, {4})
 
                 expect(state:snapshot() == baseline):toBe(false)
-                expect(state:update_power(3, 0.016)):toBe(-1)
+                expect(#state:update_power(3, 0.016)):toBe(0)
                 expect(state:snapshot()):toBe(baseline)
             end
         )

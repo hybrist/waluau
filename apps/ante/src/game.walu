@@ -1617,6 +1617,53 @@ function State:can_cast(slot: i32): bool
     return self.player_points >= self.spells[slot + 1].cost
 end
 
+-- Which table cards one cast of the spell in that slot takes, aimed at
+-- `table_card`. Firebolt is the spell level reaches: a level-N bolt burns N
+-- cards at once, the aimed card first and then its nearest neighbours
+-- spreading outward — right, left, right — so the aim always names the centre
+-- of what burns. An aim near an edge keeps spreading along the side that still
+-- has board, which is what makes a level worth its price wherever it is thrown
+-- rather than only in the middle of the row. Every other spell takes the one
+-- card it was aimed at, whatever its level.
+--
+-- The answer is the presentation's too: the burn it choreographs and the
+-- reading a screen reader is given both come from this list, so there is one
+-- description of what a cast does rather than three.
+function State:cast_targets(slot: i32, table_card: i32): {i32}
+    if not self:can_cast(slot) or table_card < 0 or table_card >= #self.middle then
+        return {}
+    end
+    if self.spells[slot + 1].kind ~= spells.SpellKind.Firebolt then
+        return {table_card}
+    end
+    return spread_targets(table_card, self.spells[slot + 1].level, #self.middle)
+end
+
+-- The aimed card, then alternating neighbours outward until the level is spent
+-- or the row is. A level below one takes nothing; a level past the row's width
+-- takes the whole row.
+function spread_targets(aim: i32, level: i32, count: i32): {i32}
+    local targets: {i32} = {}
+    if level < 1 or aim < 0 or aim >= count then
+        return targets
+    end
+    table.insert(targets, aim)
+    local reach: i32 = 1
+    -- Each step offers the pair at distance `reach`, right before left. A side
+    -- the row has run out of is simply not offered, so the other side carries
+    -- the rest of the level.
+    while #targets < level and (aim - reach >= 0 or aim + reach < count) do
+        if #targets < level and aim + reach < count then
+            table.insert(targets, aim + reach)
+        end
+        if #targets < level and aim - reach >= 0 then
+            table.insert(targets, aim - reach)
+        end
+        reach += 1
+    end
+    return targets
+end
+
 -- Pay for one cast of the spell in that slot. Returns false — charging
 -- nothing — when the slot is empty or the spell unaffordable, so a confirmed
 -- target only spends gold once this accepts.
@@ -1939,6 +1986,7 @@ return {
     formation_marks = formation_marks,
     valid_card = valid_card,
     clone_spells = clone_spells,
+    spread_targets = spread_targets,
     spell_cost = SPELL_COST,
     starting_gold = STARTING_GOLD
 }

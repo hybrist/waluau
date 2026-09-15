@@ -7,6 +7,7 @@ local run = require("./run")
 local city_map = require("./city_map")
 local game_screen = require("./game_screen")
 local render = require("./render")
+local spells = require("./spells/spell")
 
 local function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
@@ -279,6 +280,50 @@ describe(
                 screen:consume_gate(city, "advance")
                 screen:perform_board_action(city, { kind = "history", index = 0 })
                 expect(tostring(screen.ui.modal)):toBe("history")
+            end
+        )
+
+        it(
+            "burns and refills every table card a levelled Firebolt reached",
+            function(): unit
+                math.randomseed(107)
+                local screen: game_screen.State = game_screen.State.new()
+                local city: city_map.State = city_map.State.new(107)
+                -- A bolt sharpened to three, aimed at the middle of the row:
+                -- the aimed card and one neighbour on each side. The duel is
+                -- redealt with that loadout, since a spell's level is dealt in
+                -- rather than set on a live board.
+                screen.rules:reset(
+                    false,
+                    {spells.Spell.new(spells.SpellKind.Firebolt, 3)},
+                    game.starting_gold
+                )
+                finish_swap_phase(screen.rules)
+                screen.presentation:skip()
+                -- Copies, not the row itself: what the burn replaced has to
+                -- survive the replacement to be compared against.
+                local before: {game.Card} = {}
+                for dealt in screen.rules:view().middle do
+                    table.insert(before, card(dealt.rank, dealt.suit))
+                end
+                local deck_before: i32 = screen.rules:view().deck_count
+
+                screen:confirm_cast(0, 2)
+                expect(screen.spell_feedback):toBe("Firebolt completed on table cards 3, 4 and 2.")
+                -- One tick past the whole burn hands all three slots back at
+                -- once, and the replacements are on the board before the deal
+                -- that shows them arriving has begun.
+                screen:update(city, 10.0)
+
+                local after: {game.Card} = screen.rules:view().middle
+                expect(screen.rules:view().deck_count):toBe(deck_before - 3)
+                for index = 1::i32, 5::i32 do
+                    local same: bool = after[index].rank == before[index].rank and after[index].suit == before[index].suit
+                    -- Slots 2, 3 and 4 — the aim and its neighbours — changed;
+                    -- the two the level never reached did not.
+                    expect(same):toBe(index == 1 or index == 5)
+                end
+                expect(#screen.presentation.session.discards):toBe(3)
             end
         )
     end

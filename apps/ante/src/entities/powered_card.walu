@@ -155,7 +155,7 @@ function draw_fireball(
     x: f64,
     y: f64,
     progress: f64,
-    ash: card_burn.CardAsh
+    ash: card_burn.TableAsh
 ): unit
     local lift: f64 = 0.0
     if value.selected then
@@ -168,13 +168,13 @@ function draw_fireball(
         if progress < 0.86 then
             card.draw_at(surface, value, x, y)
         end
-        card_burn.draw_ash(surface, ash.table_card_sheet, x, top, seed + 401)
+        card_burn.draw_ash(surface, ash.sheet, x, top, seed + 401)
     else
         local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-        card_burn.draw_captured(surface, captured, x, top, progress, seed, ash.table_card_sheet)
+        card_burn.draw_captured(surface, captured, x, top, progress, seed, ash.sheet)
         surface.graphics:release_render_target(captured)
     end
-    card_burn.draw_ash(surface, ash.table_card_fall, x, top, seed + 607)
+    card_burn.draw_ash(surface, ash.fall, x, top, seed + 607)
 end
 
 -- Freeze Ray leaves the card readable under a translucent shell. The ice
@@ -486,7 +486,7 @@ function draw_at(
     y: f64,
     kind: spells.SpellKind?,
     clock: f64,
-    ash: card_burn.CardAsh,
+    ash: card_burn.TableAsh?,
     dust: particles.ParticleSystem
 ): unit
     local progress: f64 = hand(clock)
@@ -496,7 +496,13 @@ function draw_at(
     if kind == nil or value.hidden or progress <= 0.0 then
         card.draw_at(surface, value, x, y)
     elseif kind == spells.SpellKind.Firebolt then
-        draw_fireball(surface, value, x, y, progress, ash)
+        -- A slot with no emitters of its own is one the row does not have;
+        -- there is nothing on it to burn, so it keeps its plain face.
+        if ash == nil then
+            card.draw_at(surface, value, x, y)
+        else
+            draw_fireball(surface, value, x, y, progress, ash::card_burn.TableAsh)
+        end
     elseif kind == spells.SpellKind.FreezeRay then
         draw_freeze(surface, value, x, y, progress, clock)
     elseif kind == spells.SpellKind.RaiseCard then
@@ -513,7 +519,7 @@ type PoweredPresentation = {
     value: card.Look,
     kind: spells.SpellKind?,
     clock: f64,
-    ash: card_burn.CardAsh,
+    ash: card_burn.TableAsh?,
     dust: particles.ParticleSystem
 }
 export type Stateful = { presentation: PoweredPresentation, root: ui.Node }
@@ -522,7 +528,7 @@ function Stateful.new(
     value: card.Look,
     kind: spells.SpellKind?,
     clock: f64,
-    ash: card_burn.CardAsh,
+    ash: card_burn.TableAsh?,
     dust: particles.ParticleSystem
 ): Stateful
     local presentation: PoweredPresentation = {
@@ -556,7 +562,7 @@ function Stateful:present(
     value: card.Look,
     kind: spells.SpellKind?,
     clock: f64,
-    ash: card_burn.CardAsh,
+    ash: card_burn.TableAsh?,
     dust: particles.ParticleSystem
 ): unit
     self.presentation.value = value
@@ -570,7 +576,7 @@ function node(
     value: card.Look,
     kind: spells.SpellKind?,
     clock: f64,
-    ash: card_burn.CardAsh,
+    ash: card_burn.TableAsh?,
     dust: particles.ParticleSystem
 ): ui.Node
     return Stateful.new(value, kind, clock, ash, dust).root

@@ -346,9 +346,21 @@ function duel_state(screen: game_screen.State): State
         feedback = "Firebolt resolving. Burning the table card."
     end
     if casting and ready then
-        local target: i32 = screen.board:focused_table()
-        if target >= 0 and target < #view.middle then
-            feedback = feedback .. " Target: " .. card_name(view.middle[target + 1]) .. "."
+        -- What the aim would take, not merely what it is pointed at: a
+        -- levelled Firebolt reaches neighbours, and a player who cannot see
+        -- the row has to hear the whole reach before paying for it.
+        local reach: {i32} = screen.rules:cast_targets(
+            screen.ui.cast_slot or 0,
+            screen.board:focused_table()
+        )
+        local names: {string} = {}
+        for target in reach do
+            table.insert(names, card_name(view.middle[target + 1]))
+        end
+        if #names == 1 then
+            feedback = feedback .. " Target: " .. names[1] .. "."
+        elseif #names > 1 then
+            feedback = feedback .. " Targets: " .. table.concat(names, ", ") .. "."
         end
     end
     if ready then

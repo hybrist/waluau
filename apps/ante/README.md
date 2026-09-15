@@ -62,6 +62,15 @@ Losing the last heart, or losing a boss's final hand, ends the run and everythin
 it bought with it, so a fresh run sets out with its starting spell at level one
 again.
 
+Level is what a scroll buys, and Firebolt is the spell that spends it on reach:
+a level-N bolt burns N wards at once. The aimed ward goes first and its nearest
+neighbours follow, spreading outward — right, left, right — so the aim names the
+centre of what burns. A bolt thrown at the end of the row keeps spreading along
+the side that still has board rather than wasting the level, and a level past the
+row's width takes the row whole. Every ward it reaches ignites off the same clock
+and crumbles together, and the deck refills all of them in one throw. The other
+three spells take the one ward they were aimed at, whatever their level.
+
 Every third vault of a run is a boss battle: both sides start with seven relics
 rather than five, widening the opening feint and committed-pair choice. Spent
 pairs are not replaced. The hands shrink by two after every breach until fewer
@@ -250,7 +259,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `ink.walu` | The drawing vocabulary entities share: type, panels, school colours, and the one fade a screen is taken down by. |
 | `plate.walu` | The material the vault is built from: lit faces, etched borders, domes, wells, halos, and the ramps they are made of. |
 | `easing.walu` | The four curves the board moves on. |
-| `card_burn.walu` | How a card comes apart: the captured sheet, the advancing front, and the ash that peels off it. |
+| `card_burn.walu` | How a card comes apart: the captured sheet, the advancing front, and the ash that peels off it. Each ward slot keeps its own emitters, so wards burning together never shed the same flake twice. |
 | `render.walu` | The board, composed: which entities are on it this frame, which band each gets, and the cards in flight between them. |
 | `spell_cast.walu` | Target-aware spell trajectory and shared impact geometry. |
 | `spell_launch*.walu` | Stable launch seam plus one independently editable carrier/impact module per spell. |

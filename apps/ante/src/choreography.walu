@@ -11,7 +11,11 @@ local layout = require("./layout")
 local card_warp = require("./card_warp")
 
 type AnimKind = "none" | "deal" | "swap" | "firebolt-replace"
-type Power = { kind: spells.SpellKind, clock: f64, target: i32 }
+-- A spell standing on the board: its kind, how long it has stood, and every
+-- table card it took. The aimed card leads the list — Firebolt's level spreads
+-- the burn to neighbours, and the carrier still flies at what the player aimed
+-- at — and a condition with no targets left does not exist.
+type Power = { kind: spells.SpellKind, clock: f64, targets: {i32} }
 
 type Session = {
     anims: {render.Anim},
@@ -87,7 +91,12 @@ const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
 -- A burn reading below zero means nothing is burning: an ash emitter goes
 -- quiet on it, while the flakes already in the air keep falling.
 const NOT_BURNING: f64 = -1.0
-const SNAPSHOT_SCHEMA: string = "target-presentation-v6"
+-- The table slot a launch is anchored to when no cast is standing. Nothing is
+-- emitting then, so the anchor only has to be a slot the row actually has:
+-- the sparks still in the air are advanced and drawn relative to it, and a
+-- launch seam given no slot would stop settling them altogether.
+const IDLE_ANCHOR: i32 = 0
+const SNAPSHOT_SCHEMA: string = "target-presentation-v7"
 
 function new_session(): Session
     return {
@@ -137,78 +146,126 @@ function State:reset(): unit
 -- resets; the renderer overwrites every vertex before a thrown card draws.
 end
 
--- Spell treatments mirror the rules-owned gameplay state: a kind replaces the
--- prior visible condition and restarts the launch toward it; nil clears the
--- condition entirely. update_power reports a timed rules transition when
--- Firebolt's visual burn lands.
-function State:apply_power(kind: spells.SpellKind?, target: i32): unit
-    if target < 0 or target > 4 then
+-- Everything a cast left in the air, dropped. A new condition starts each of
+-- its table cards' burns from nothing; whatever the last one left in the air
+-- belongs to cards that are no longer there. The same holds for the last
+-- cast's trail and burst, and for the dust off a grave that is no longer open.
+function reset_spell_particles(state: State): unit
+    for slot in state.session.ash.table_cards do
+        slot.sheet:reset()
+        slot.fall:reset()
+    end
+    state.session.spells.sparks.trail:reset()
+    state.session.spells.sparks.burst:reset()
+    state.session.spells.grave_dust:reset()
+end
+
+-- Spell treatments mirror the rules-owned gameplay state: a cast replaces the
+-- prior visible condition and restarts the launch toward it. `targets` is
+-- every table card the cast took, aimed card first, which is what the rules
+-- hand back from cast_targets; a Firebolt sharpened past level one arrives
+-- here with neighbours behind its aim. A cast that names no slot the row has
+-- is not a condition and leaves the board as it found it.
+--
+-- update_power reports a timed rules transition when Firebolt's visual burn
+-- lands.
+function State:apply_power(kind: spells.SpellKind, targets: {i32}): unit
+    local live: {i32} = {}
+    for target in targets do
+        if target >= 0 and target < #self.session.ash.table_cards then
+            table.insert(live, target)
+        end
+    end
+    if #live == 0 then
         return
     end
-    if kind == nil then
-        self.session.power = nil
-    else
-        self.session.power = { kind = kind::spells.SpellKind, clock = 0.0, target = target }
+    self.session.power = { kind = kind, clock = 0.0, targets = live }
+    reset_spell_particles(self)
+end
+
+-- Take the standing condition off the board, whatever it was.
+function State:clear_power(): unit
+    self.session.power = nil
+    reset_spell_particles(self)
+end
+
+-- Both of a burning table card's falls run off one reading of its burn. Every
+-- slot is ticked, burning or not: a negative reading shuts an emitter while
+-- the flakes it already shed finish falling, which is how a slot the burn has
+-- passed keeps its ash in the air.
+function tick_table_card_ash(state: State, burning: {i32}, progress: f64, dt: f64): unit
+    for index, slot in state.session.ash.table_cards do
+        local reading: f64 = NOT_BURNING
+        for target in burning do
+            if target == index - 1 then
+                reading = progress
+            end
+        end
+        render.step_reveal_ash(slot.sheet, reading, dt)
+        render.step_table_card_ash(slot.fall, reading, dt)
     end
-    -- A new condition starts its table_card's burn from nothing; whatever the last
-    -- one left in the air belongs to a card that is no longer there. The same
-    -- holds for the last cast's trail and burst, and for the dust off a grave
-    -- that is no longer open.
-    self.session.ash.table_card_sheet:reset()
-    self.session.ash.table_card_fall:reset()
-    self.session.spells.sparks.trail:reset()
-    self.session.spells.sparks.burst:reset()
-    self.session.spells.grave_dust:reset()
 end
 
--- Both of a burning table_card's falls run off one reading of its burn.
-function tick_table_card_ash(state: State, progress: f64, dt: f64): unit
-    render.step_reveal_ash(state.session.ash.table_card_sheet, progress, dt)
-    render.step_table_card_ash(state.session.ash.table_card_fall, progress, dt)
+-- The aimed card of a standing condition: the one the carrier flies at, and
+-- the one a spread burn radiates from. A condition always took at least one
+-- card, so the fallback is only the anchor an idle tick borrows.
+function power_aim(power: Power): i32
+    if #power.targets == 0 then
+        return IDLE_ANCHOR
+    end
+    return power.targets[1]
 end
 
--- Advance a spell condition and return the table_card whose Firebolt has just
--- finished burning, or -1 when no rules mutation is due this frame. Clearing
--- the condition at that boundary lets the replacement card render intact.
+-- One idle tick: nothing is standing, so no emitter opens and everything
+-- already in the air finishes its fall. The anchor is still a real slot —
+-- the trail and burst have to keep being advanced to settle, and a launch
+-- seam handed no slot at all would freeze them where they hang.
+function tick_idle_spell(state: State, middle_count: i32, dt: f64): unit
+    tick_table_card_ash(state, {}, NOT_BURNING, dt)
+    render.step_spell_particles(
+        state.session.spells,
+        layout.current(),
+        nil,
+        0.0,
+        IDLE_ANCHOR,
+        middle_count,
+        dt
+    )
+end
+
+-- Advance a spell condition and return every table card whose Firebolt has
+-- just finished burning — all of them on one frame, since a spread burn runs
+-- off a single clock — or nothing when no rules mutation is due. Clearing the
+-- condition at that boundary lets the replacement cards render intact.
 --
 -- The particle ticks are deliberately outside that decision. They read the
 -- clock this function has already advanced and never touch the active power
--- record or the returned table_card, so the rules boundary fires on exactly the
+-- record or the returned slots, so the rules boundary fires on exactly the
 -- frame it always did — a visual emitter must not be able to move when a card
 -- is replaced.
-function State:update_power(middle_count: i32, dt: f64): i32
+function State:update_power(middle_count: i32, dt: f64): {i32}
     local power: Power? = self.session.power
     if power ~= nil then
+        -- Cards this condition named can leave with the prior board. Drop them
+        -- before the next live board tries to draw those old slots, and drop
+        -- the condition itself once nothing it took is still on the table.
         local active: Power = power::Power
-        if active.target < 0 or active.target >= middle_count then
-            -- The card this condition named left with the prior board. Clear
-            -- it before the next live board tries to draw that old slot.
-            self:apply_power(nil, 0)
-            tick_table_card_ash(self, NOT_BURNING, dt)
-            render.step_spell_particles(
-                self.session.spells,
-                layout.current(),
-                nil,
-                0.0,
-                0,
-                middle_count,
-                dt
-            )
-            return -1
+        local live: {i32} = {}
+        for target in active.targets do
+            if target >= 0 and target < middle_count then
+                table.insert(live, target)
+            end
         end
+        if #live == 0 then
+            self:clear_power()
+            tick_idle_spell(self, middle_count, dt)
+            return {}
+        end
+        active.targets = live
     end
     if power == nil then
-        tick_table_card_ash(self, NOT_BURNING, dt)
-        render.step_spell_particles(
-            self.session.spells,
-            layout.current(),
-            nil,
-            0.0,
-            0,
-            middle_count,
-            dt
-        )
-        return -1
+        tick_idle_spell(self, middle_count, dt)
+        return {}
     end
     local active: Power = power::Power
     active.clock += dt
@@ -216,22 +273,22 @@ function State:update_power(middle_count: i32, dt: f64): i32
     if active.kind == spells.SpellKind.Firebolt then
         burning = render.fireball_formation(active.clock)
     end
-    tick_table_card_ash(self, burning, dt)
+    tick_table_card_ash(self, active.targets, burning, dt)
     render.step_spell_particles(
         self.session.spells,
         layout.current(),
         active.kind,
         active.clock,
-        active.target,
+        power_aim(active),
         middle_count,
         dt
     )
     if active.kind == spells.SpellKind.Firebolt and render.firebolt_burn_finished(active.clock) then
-        local target: i32 = active.target
+        local burned: {i32} = active.targets
         self.session.power = nil
-        return target
+        return burned
     end
-    return -1
+    return {}
 end
 
 -- Drop a Freeze Ray's standing condition, leaving any other spell's alone. The
@@ -242,7 +299,7 @@ function State:clear_freeze(): unit
     if power ~= nil then
         local active: Power = power::Power
         if active.kind == spells.SpellKind.FreezeRay then
-            self:apply_power(nil, 0)
+            self:clear_power()
         end
     end
 end
@@ -503,32 +560,56 @@ function push_deal(
     return finish
 end
 
--- Once Firebolt's old table_card is fully gone, expose the rules result as one
--- coordinated presentation beat: the burned card joins the spent pile,
--- while its replacement flies from the sealed deck into the empty table_card slot.
--- The live middle already contains replacement; the animation's destination
--- mark keeps that settled copy hidden until this card lands.
-function State:firebolt_resolved(
-    discarded: game.Card,
-    replacement: game.Card,
-    target: i32,
-    middle_count: i32
-): unit
-    table.insert(self.session.discards, discarded)
+-- One table card a resolved Firebolt burned: the card that left, the card the
+-- rules drew in its place, and the slot both stand on.
+export type FireboltBurn = { discarded: game.Card, replacement: game.Card, target: i32 }
+
+-- Once Firebolt's old table cards are fully gone, expose the rules result as
+-- one coordinated presentation beat: every burned card joins the spent pile,
+-- while its replacement flies from the sealed deck into the empty slot. The
+-- live middle already contains the replacements; each animation's destination
+-- mark keeps that settled copy hidden until its card lands.
+--
+-- A spread burn resolves as one beat rather than a card at a time. The whole
+-- row ignited off one clock, so it is refilled off one too — the deals leave
+-- together and the board is whole again in a single throw's time, whether the
+-- bolt took one card or five.
+function State:firebolt_resolved(burns: {FireboltBurn}, middle_count: i32): unit
+    if #burns == 0 then
+        return
+    end
     local anims: {render.Anim} = {}
-    local finish: f64 = push_deal(
-        layout.current(),
-        anims,
-        replacement,
-        render.slot_middle,
-        target,
-        middle_count,
-        render.faces_flip_up,
-        0.0
-    )
-    local ash_finish: f64 = push_ash_reappearance(layout.current(), anims, discarded, 0.0)
-    if ash_finish > finish then
-        finish = ash_finish
+    local finish: f64 = 0.0
+    local ash_start: f64 = 0.0
+    for burn in burns do
+        table.insert(self.session.discards, burn.discarded)
+        local deal_finish: f64 = push_deal(
+            layout.current(),
+            anims,
+            burn.replacement,
+            render.slot_middle,
+            burn.target,
+            middle_count,
+            render.faces_flip_up,
+            0.0
+        )
+        if deal_finish > finish then
+            finish = deal_finish
+        end
+        -- The replacements land together, but the burned cards all rebuild on
+        -- the one spent pile: reforming them at the same instant in the same
+        -- place would show as a single card. They are staggered by the step a
+        -- burned pair already reforms on.
+        local ash_finish: f64 = push_ash_reappearance(
+            layout.current(),
+            anims,
+            burn.discarded,
+            ash_start
+        )
+        ash_start += ASH_REAPPEAR_STEP
+        if ash_finish > finish then
+            finish = ash_finish
+        end
     end
     begin_anims(self, anims, finish, "firebolt-replace")
 end
@@ -1125,14 +1206,14 @@ end
 -- width for a boss battle's longer hand), the spell condition standing on a
 -- table_card, and the spent pile's ledger. The condition's clock is left to
 -- restore to settle, so a snapshot writes only which spell and where.
-type SnapshotPower = { kind: spells.SpellKind, target: i32 }
+type SnapshotPower = { kind: spells.SpellKind, targets: {i32} }
 type Snapshot = { schema: string, fan_count: i32, power: SnapshotPower?, discards: {game.Card} }
 
 function State:snapshot(): string
     local power: SnapshotPower? = nil
     local active: Power? = self.session.power
     if active ~= nil then
-        power = { kind = active.kind, target = active.target }
+        power = { kind = active.kind, targets = active.targets }
     end
     local payload: Snapshot = {
         schema = SNAPSHOT_SCHEMA,
@@ -1158,15 +1239,27 @@ function State.restore(snapshot_value: string): State?
     state.fan_parts = closed_fan_parts(decoded.fan_count)
     local power: SnapshotPower? = decoded.power
     if power ~= nil then
-        -- A spell kind is bounded by the spells that exist, and its target
+        -- A spell kind is bounded by the spells that exist, and each target
         -- names a community slot; neither bound is one the JSON shape carries.
+        -- A condition took at least one card, and never the same one twice.
         if not spells.SpellKind.valid(power.kind) then
             return nil
         end
-        if power.target < 0 or power.target > 4 then
+        local targets: {i32} = power.targets
+        if #targets == 0 or #targets > #state.session.ash.table_cards then
             return nil
         end
-        state.session.power = { kind = power.kind, clock = 0.0, target = power.target }
+        local seen: {bool} = {}
+        for _ = 1, #state.session.ash.table_cards do
+            table.insert(seen, false)
+        end
+        for target in targets do
+            if target < 0 or target >= #seen or seen[target + 1] then
+                return nil
+            end
+            seen[target + 1] = true
+        end
+        state.session.power = { kind = power.kind, clock = 0.0, targets = targets }
     end
     if not valid_cards(decoded.discards) then
         return nil
@@ -1191,12 +1284,12 @@ function State:draw(
     local power: Power? = self.session.power
     local kind: spells.SpellKind? = nil
     local clock: f64 = 0.0
-    local target: i32 = 0
+    local targets: {i32} = {}
     if power ~= nil then
         local active: Power = power::Power
         kind = active.kind
         clock = active.clock
-        target = active.target
+        targets = active.targets
     end
     board:draw(
         surface,
@@ -1212,7 +1305,7 @@ function State:draw(
                 anim_clock = self.session.anim_clock
             },
             piles = { discards = self.session.discards },
-            spell = { kind = kind, clock = clock, target = target },
+            spell = { kind = kind, clock = clock, targets = targets },
             ash = self.session.ash,
             spells = self.session.spells,
             sheet = self.sheet
