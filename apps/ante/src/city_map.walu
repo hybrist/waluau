@@ -15,26 +15,13 @@
 -- map is the picture and 0.0 once the duel has taken it over. Its private
 -- random stream keeps generation and animation timing from changing the duel's
 -- deck shuffle.
-export type Building = { x: f64, y: f64, width: f64, height: f64, tone: i32, detail: i32 }
--- One place the duel stops. `duel` tells the two kinds apart: a house with a
--- duel in it, or the street vendor standing between two of them.
-export type Stop = { x: f64, y: f64, duel: bool }
-export type Point = { x: f64, y: f64 }
+local generator = require("./city_generator")
+local route = require("./city_route")
+export type Stop = route.Stop
+export type Point = route.Point
 export type State = {
     scenery_seed: i32,
-    vertical_streets: {f64},
-    horizontal_streets: {f64},
-    buildings: {Building},
-    stops: {Stop},
-    walk_column: i32,
-    walk_row: i32,
-    walk_horizontal: bool,
-    walk_up: bool,
-    walk_omissions: i32,
-    column_low: i32,
-    column_high: i32,
-    row_low: i32,
-    row_high: i32,
+    route: route.State,
     travel: f64,
     target: f64,
     drifting: bool,
@@ -50,20 +37,13 @@ export type State = {
     cover: f64,
     street: f64,
     rng: f64,
-    pan_clock: f64,
-    streak_clock: f64,
-    streak_duration: f64,
-    streak_horizontal: bool,
-    streak_street: f64,
-    streak_forward: bool,
-    streak_suit: i32
+    pan_clock: f64
 }
 
 -- Wide enough that a route of a dozen stops is a journey across a city rather
 -- than a lap of one neighbourhood.
 const CITY_WIDTH: f64 = 2560.0
 const CITY_HEIGHT: f64 = 1720.0
-const STREET_WIDTH: f64 = 20.0
 const RANDOM_MODULUS: f64 = 2147483647.0
 const RANDOM_MULTIPLIER: f64 = 16807.0
 
@@ -78,26 +58,12 @@ const DIVE_OCTAVES: f64 = 4.9
 -- the stop stands a fixed length in from the left edge, clear of that column;
 -- a canvas too narrow for that length parks it at three-quarters of whatever
 -- width there is instead. The length is fixed rather than a share of the
--- width because the route's streets are chosen before any canvas is measured
--- (see the route margins below): a stop can only be brought under an anchor
--- the route's own margins cover, so the anchor must not wander further right
--- on wider canvases. Vertically the stop rides just past half the live
--- height. A duel is dived into head-on, so the push in walks both anchors
--- back to the middle of the screen as the map goes.
+-- width. Near the city's edges the camera clamps to keep the landscape in
+-- view. Vertically the stop rides just past half the live height. A duel is
+-- dived into head-on, so the push walks both anchors back to the middle.
 const STOP_ANCHOR_X: f64 = 736.0
 const STOP_ANCHOR_MAX_SHARE_X: f64 = 0.75
 const STOP_ANCHOR_SHARE_Y: f64 = 0.51
--- The band of the city the route keeps to, as margins off the city's edges.
--- The left margin matches the anchor above so a followed stop always has
--- anchor-width of city on its left; the right margin gives canvases up to
--- roughly STOP_ANCHOR_X + ROUTE_MARGIN_RIGHT logical units of width the room
--- to centre a stop, and the vertical margins do the same for the anchor's
--- share of any height that keeps the fit constraints of layout.walu. Wider
--- or taller screens see the whole city and simply clamp, which parks a stop
--- a little wide of its mark rather than showing the void past the streets.
-const ROUTE_MARGIN_RIGHT: f64 = 560.0
-const ROUTE_MARGIN_TOP: f64 = 320.0
-const ROUTE_MARGIN_BOTTOM: f64 = 320.0
 -- The two movements a screen change is made of, each walked at a steady pace so
 -- it takes the same time every time: the player cross a block to the door, and
 -- then the camera goes in after them. They never overlap — a push into a house
@@ -114,10 +80,6 @@ const CAMERA_RATE: f64 = 3.2
 -- duels of dashed road ahead is enough to read as a plan without the map
 -- promising a run that has an end.
 const LOOKAHEAD: i32 = 7
--- The historical long-route check follows duel forty (stop 79) with the usual
--- seven stops of road ahead. When a generated route band contains that many
--- intersections, randomness leaves enough of them unused to preserve it.
-const MIN_ROUTE_INTERSECTIONS: i32 = 86
 
 function random(state: State): f64
     local next: f64 = state.rng * RANDOM_MULTIPLIER
@@ -129,190 +91,17 @@ function random(state: State): f64
     return (next - 1.0) / (RANDOM_MODULUS - 1.0)
 end
 
-function random_range(state: State, low: f64, high: f64): f64
-    return low + (high - low) * random(state)
-end
-
-function random_index(state: State, count: i32): i32
-    if count <= 1 then
-        return 0
-    end
-    return math.floor(random(state) * (count::f64))::i32
-end
-
-function fill_streets(state: State, streets: {f64}, limit: f64, low: f64, high: f64): unit
-    table.insert(streets, 0.0)
-    local position: f64 = random_range(state, low * 0.55, high * 0.55)
-    while position < limit - low * 0.55 do
-        table.insert(streets, position)
-        position += random_range(state, low, high)
-    end
-    table.insert(streets, limit)
-end
-
-function generate(state: State): unit
-    state.scenery_seed = state.rng::i32
-    state.vertical_streets = {}
-    state.horizontal_streets = {}
-    state.buildings = {}
-    fill_streets(state, state.vertical_streets, CITY_WIDTH, 108.0, 168.0)
-    fill_streets(state, state.horizontal_streets, CITY_HEIGHT, 82.0, 132.0)
-
-    for column = 1::i32, #state.vertical_streets - 1 do
-        local left: f64 = state.vertical_streets[column] + STREET_WIDTH * 0.5
-        local right: f64 = state.vertical_streets[column + 1] - STREET_WIDTH * 0.5
-        for row = 1::i32, #state.horizontal_streets - 1 do
-            local top: f64 = state.horizontal_streets[row] + STREET_WIDTH * 0.5
-            local bottom: f64 = state.horizontal_streets[row + 1] - STREET_WIDTH * 0.5
-            local inset_x: f64 = random_range(state, 5.0, 12.0)
-            local inset_y: f64 = random_range(state, 5.0, 11.0)
-            table.insert(
-                state.buildings,
-                {
-                    x = left + inset_x,
-                    y = top + inset_y,
-                    width = right - left - inset_x * 2.0,
-                    height = bottom - top - inset_y * 2.0,
-                    tone = random_index(state, 4),
-                    detail = random_index(state, 3)
-                }
-            )
-        end
-    end
-end
-
--- The band of streets the route is allowed to stand on. A stop has to be
--- bringable under the map's anchor, and the anchor is off to one side, so a
--- street closer to a city edge than the anchor's own margin could never be put
--- there — the camera would clamp and the stop would sit wide of the mark the
--- screens leave room for. The outermost street of each axis is out for its own
--- reason: a stop on it would have no block on one side to be a corner of.
-function first_street_past(streets: {f64}, margin: f64): i32
-    for index = 1::i32, #streets - 2 do
-        if streets[index] >= margin then
-            return index
-        end
-    end
-    return 1
-end
-
-function last_street_before(streets: {f64}, margin: f64): i32
-    local found: i32 = 1
-    for index = 1::i32, #streets - 2 do
-        if streets[index] <= margin then
-            found = index
-        end
-    end
-    return found
-end
-
--- Vendors and duels alternate from the start of the route, so every odd stop
--- is a house and every even one the vendor standing before it.
-function append_stop(state: State): unit
-    local index: i32 = #state.stops
-    table.insert(
-        state.stops,
-        {
-            x = state.vertical_streets[state.walk_column],
-            y = state.horizontal_streets[state.walk_row],
-            duel = index % 2 == 1
-        }
+function generate_route(seed: i32): route.State
+    local city = generator.generate(
+        { seed = seed, bridges = 1, river = true, relief = 1.0, size = 90, density = 85 }
     )
+    local path = route.State.new(city, CITY_WIDTH, CITY_HEIGHT)
+    path:ensure_stops(LOOKAHEAD)
+    return path
 end
 
--- Sweep the city's intersections from left to right. A vertical sweep walks
--- one adjacent intersection at a time until it reaches the edge of the route
--- band, then one rightward step opens a fresh column for the opposite sweep.
--- Consequently the walk only goes right, up, or down; an up leg and a down leg
--- can never be consecutive; and every intersection it crosses is a stop it has
--- not visited.
-function walk_next(state: State): bool
-    if state.walk_horizontal then
-        if state.walk_column >= state.column_high then
-            return false
-        end
-        state.walk_column += 1
-        state.walk_horizontal = false
-    else
-        -- A turn can come a little before the edge, which keeps the route
-        -- seed-dependent rather than making every city the same full-column
-        -- sweep. Turning here leaves this many intersections unused in both
-        -- the column being left and the fresh column entered. Spend only the
-        -- surplus above the long-route capacity promised by the map.
-        local remaining: i32 = state.walk_row - state.row_low
-        if not state.walk_up then
-            remaining = state.row_high - state.walk_row
-        end
-        local omission_cost: i32 = remaining * 2
-        local can_turn_early: bool = state.walk_column < state.column_high and remaining > 0 and omission_cost <= state.walk_omissions
-        if can_turn_early and random(state) < 0.5 then
-            state.walk_column += 1
-            state.walk_up = not state.walk_up
-            state.walk_omissions -= omission_cost
-            append_stop(state)
-            return true
-        end
-
-        if state.walk_up then
-            state.walk_row -= 1
-            if state.walk_row <= state.row_low then
-                state.walk_row = state.row_low
-                state.walk_horizontal = true
-                state.walk_up = false
-            end
-        else
-            state.walk_row += 1
-            if state.walk_row >= state.row_high then
-                state.walk_row = state.row_high
-                state.walk_horizontal = true
-                state.walk_up = true
-            end
-        end
-    end
-    append_stop(state)
-    return true
-end
-
--- Walk far enough that the route holds that many stops. The map extends itself
--- as the run asks for more of it, because a run has no last duel to generate
--- up to. A finite map eventually runs out of new intersections; at that point
--- the route ends instead of doubling back over one it already used.
 function State:ensure_stops(count: i32): unit
-    while #self.stops < count do
-        if not walk_next(self) then
-            return
-        end
-    end
-end
-
-function begin_route(state: State): unit
-    state.stops = {}
-    state.column_low = first_street_past(state.vertical_streets, STOP_ANCHOR_X)
-    state.column_high = last_street_before(state.vertical_streets, CITY_WIDTH - ROUTE_MARGIN_RIGHT)
-    state.row_low = first_street_past(state.horizontal_streets, ROUTE_MARGIN_TOP)
-    state.row_high = last_street_before(state.horizontal_streets, CITY_HEIGHT - ROUTE_MARGIN_BOTTOM)
-    state.walk_column = state.column_low
-    state.walk_up = random(state) < 0.5
-    local intersections: i32 = (state.column_high - state.column_low + 1) * (state.row_high - state.row_low + 1)
-    state.walk_omissions = intersections - MIN_ROUTE_INTERSECTIONS
-    if state.walk_omissions < 0 then
-        state.walk_omissions = 0
-    end
-    local start_inset: i32 = 0
-    if state.walk_omissions > 0 then
-        start_inset = random_index(state, 2)
-        state.walk_omissions -= start_inset
-    end
-    if state.walk_up then
-        state.walk_row = state.row_high - start_inset
-    else
-        state.walk_row = state.row_low + start_inset
-    end
-    state.walk_horizontal = false
-    append_stop(state)
-    state.travel = 0.0
-    state.target = 0.0
-    state:ensure_stops(LOOKAHEAD)
+    self.route:ensure_stops(count)
 end
 
 -- Duels and vendors alternate along the route: the run sets out from the
@@ -327,7 +116,7 @@ function shop_stop(duel: i32): i32
 end
 
 function State:stop_count(): i32
-    return #self.stops
+    return #self.route.stops
 end
 
 -- Which duel a stop is, counting from one. Vendor stops answer with the duel
@@ -340,21 +129,7 @@ end
 -- it stands on the last stop there is, so a caller that reads ahead of the walk
 -- never falls off the route.
 function State:position_at(travel: f64): Point
-    local last: i32 = #self.stops - 1
-    if last < 0 then
-        return { x = CITY_WIDTH * 0.5, y = CITY_HEIGHT * 0.5 }
-    end
-    if travel <= 0.0 then
-        return { x = self.stops[1].x, y = self.stops[1].y }
-    end
-    if travel >= last::f64 then
-        return { x = self.stops[last + 1].x, y = self.stops[last + 1].y }
-    end
-    local base: i32 = math.floor(travel)::i32
-    local fraction: f64 = travel - (base::f64)
-    local from: Stop = self.stops[base + 1]
-    local into: Stop = self.stops[base + 2]
-    return { x = from.x + (into.x - from.x) * fraction, y = from.y + (into.y - from.y) * fraction }
+    return self.route:position_at(travel)
 end
 
 function State:position(): Point
@@ -530,29 +305,6 @@ function step_toward(value: f64, goal: f64, step: f64): f64
     return goal
 end
 
-function choose_streak(state: State, wait: bool): unit
-    state.streak_horizontal = random(state) < 0.5
-    if state.streak_horizontal then
-        state.streak_street = state.horizontal_streets[1 + random_index(
-            state,
-            #state.horizontal_streets - 2
-        )]
-    else
-        state.streak_street = state.vertical_streets[1 + random_index(
-            state,
-            #state.vertical_streets - 2
-        )]
-    end
-    state.streak_forward = random(state) < 0.5
-    state.streak_suit = random_index(state, 4)
-    state.streak_duration = random_range(state, 0.62, 0.88)
-    if wait then
-        state.streak_clock = -random_range(state, 1.8, 4.8)
-    else
-        state.streak_clock = -0.75
-    end
-end
-
 -- Stand on the stop being headed for, with the camera already over it. Ground
 -- the map is moved across without being walked is ground nobody watched it
 -- cover.
@@ -576,20 +328,8 @@ function State.new(seed: i32): State
     local value: f64 = math.floor(math.abs(seed::f64))
     value = value - math.floor(value / (RANDOM_MODULUS - 1.0)) * (RANDOM_MODULUS - 1.0)
     local state: State = {
-        scenery_seed = seed,
-        vertical_streets = {},
-        horizontal_streets = {},
-        buildings = {},
-        stops = {},
-        walk_column = 1,
-        walk_row = 1,
-        walk_horizontal = true,
-        walk_up = true,
-        walk_omissions = 0,
-        column_low = 1,
-        column_high = 1,
-        row_low = 1,
-        row_high = 1,
+        scenery_seed = (value + 1.0)::i32,
+        route = generate_route((value + 1.0)::i32),
         travel = 0.0,
         target = 0.0,
         drifting = true,
@@ -608,17 +348,8 @@ function State.new(seed: i32): State
         cover = 1.0,
         street = 1.0,
         rng = value + 1.0,
-        pan_clock = 0.0,
-        streak_clock = 0.0,
-        streak_duration = 0.75,
-        streak_horizontal = true,
-        streak_street = 0.0,
-        streak_forward = true,
-        streak_suit = 0
+        pan_clock = 0.0
     }
-    generate(state)
-    begin_route(state)
-    choose_streak(state, false)
     state:settle()
     return state
 end
@@ -651,9 +382,11 @@ function State:regenerate(): unit
     self.pan_clock = 0.0
     self.drifting = true
     self.dive_target = 0.0
-    generate(self)
-    begin_route(self)
-    choose_streak(self, false)
+    random(self)
+    self.scenery_seed = self.rng::i32
+    self.route = generate_route(self.scenery_seed)
+    self.travel = 0.0
+    self.target = 0.0
     place_camera(self)
 end
 
@@ -698,10 +431,6 @@ end
 
 function State:update(dt: f64): unit
     self.pan_clock += dt
-    self.streak_clock += dt
-    if self.streak_clock > self.streak_duration then
-        choose_streak(self, true)
-    end
 
     -- The two movements take turns. On the map the duel walks; once it is on
     -- the doorstep the camera goes in after it, and coming back out the camera

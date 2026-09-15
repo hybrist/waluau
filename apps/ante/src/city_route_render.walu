@@ -1,330 +1,152 @@
--- Route furniture stays above the scrying lens so progress keeps its gold ink.
--- Positions and transition timing come from the same map state as the camera.
+-- Street paths and parcel outlines are captured in the same camera coordinates
+-- as the city. The lens refracts both captures together, keeping the gold ink.
 local engine = require("waluau:engine")
 local ink = require("./ink")
-local plate = require("./plate")
 local city_map = require("./city_map")
-
+local route = require("./city_route")
 type Graphics = engine.Graphics
-type Point = city_map.Point
+type Point = route.Point
 
--- The road already walked, and the road still to come. The walked half is the
--- one gold thing on the map; the rest is a dashed intention.
-const ROUTE_DONE: string = "#fbbf24"
-const ROUTE_AHEAD: string = "#5b5f70"
-const DASH_LENGTH: f64 = 13.0
-const DASH_GAP: f64 = 11.0
-
--- A stop the route has already reached is lit rather than merely brighter:
--- the tone it is drawn in also spills into the street around it, which is what
--- separates a landmark from a symbol on a key.
-const LANTERN_RINGS: i32 = 5
-const LANTERN_STRENGTH: f64 = 0.30
-
-function draw_lantern(
-    graphics: Graphics,
-    stop: city_map.Stop,
-    tone: string,
-    reach: f64,
-    alpha: f64
-): unit
-    graphics:set_color(tone)
-    plate.halo(
-        graphics,
-        stop.x,
-        stop.y,
-        reach * 0.35,
-        reach,
-        LANTERN_RINGS,
-        LANTERN_STRENGTH * alpha
-    )
+function furniture_opacity(dive: f64): f64
+    local t: f64 = math.min(1.0, dive / 0.30)
+    return 1.0 - t * t * (3.0 - 2.0 * t)
 end
 
-const VAULT_INK: string = "#fbbf24"
-const VAULT_DIM: string = "#6b6f7d"
-const VENDOR_INK: string = "#67e8f9"
-const VENDOR_DIM: string = "#4a5560"
-
--- 0 at or below `low`, 1 at or above `high`, eased between them.
-function ramp(value: f64, low: f64, high: f64): f64
-    if value <= low then
-        return 0.0
-    end
-    if value >= high then
-        return 1.0
-    end
-    local progress: f64 = (value - low) / (high - low)
-    return progress * progress * (3.0 - 2.0 * progress)
-end
-
--- A dashed run between two points, walked in even steps so corners of the route
--- keep the same rhythm as its straights.
-function dashed_line(graphics: Graphics, from_x: f64, from_y: f64, into_x: f64, into_y: f64): unit
-    local span_x: f64 = into_x - from_x
-    local span_y: f64 = into_y - from_y
-    local length: f64 = math.sqrt(span_x * span_x + span_y * span_y)
-    if length < 1.0 then
+function dashed_line(graphics: Graphics, a: Point, b: Point, offset: f64): unit
+    local length = route.distance(a, b)
+    if length < 0.000001 then
         return
     end
-    local step_x: f64 = span_x / length
-    local step_y: f64 = span_y / length
-    local walked: f64 = 0.0
-    while walked < length do
-        local ends: f64 = walked + DASH_LENGTH
-        if ends > length then
-            ends = length
+    local along: f64 = 0.0
+    while along < length do
+        local phase: f64 = (offset + along) % 20.0
+        local step: f64 = math.min(length - along, 20.0 - phase)
+        if phase < 11.0 then
+            step = math.min(step, 11.0 - phase)
+            graphics:line(
+                a.x + (b.x - a.x) * along / length,
+                a.y + (b.y - a.y) * along / length,
+                a.x + (b.x - a.x) * (along + step) / length,
+                a.y + (b.y - a.y) * (along + step) / length
+            )
         end
-        graphics:line(
-            from_x + step_x * walked,
-            from_y + step_y * walked,
-            from_x + step_x * ends,
-            from_y + step_y * ends
-        )
-        walked = ends + DASH_GAP
+        -- Avoid a rounded phase boundary leaving a zero-length iteration.
+        along += math.max(step, 0.00001)
     end
 end
 
--- The road still to come, from wherever the duel stands to as far ahead as the
--- route has been walked out.
-function draw_route_ahead(state: city_map.State, graphics: Graphics, alpha: f64): unit
-    local last: i32 = state:stop_count() - 1
-    local standing: Point = state:position_at(state.travel)
-    local next_stop: i32 = math.floor(state.travel)::i32 + 1
-    if next_stop > last then
-        return
-    end
-    graphics:set_color(ink.fade(ROUTE_AHEAD, alpha * 0.85))
-    graphics:set_line_width(2.0)
-    local from_x: f64 = standing.x
-    local from_y: f64 = standing.y
-    for index = next_stop, last do
-        dashed_line(graphics, from_x, from_y, state.stops[index + 1].x, state.stops[index + 1].y)
-        from_x = state.stops[index + 1].x
-        from_y = state.stops[index + 1].y
-    end
-end
-
--- The road already walked, ending exactly where the duel stands rather than at
--- the last stop it passed, so the line and the marker are never apart.
-function draw_route_done(state: city_map.State, graphics: Graphics, alpha: f64): unit
-    local standing: Point = state:position_at(state.travel)
-    local passed: i32 = math.floor(state.travel)::i32
-    -- Standing on the last stop the route has been walked out to leaves nothing
-    -- past it to join up with.
-    if passed > state:stop_count() - 1 then
-        passed = state:stop_count() - 1
-    end
-    if passed < 0 then
-        return
-    end
-    graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.30))
-    graphics:set_line_width(9.0)
-    for index = 0::i32, passed - 1 do
-        graphics:line(
-            state.stops[index + 1].x,
-            state.stops[index + 1].y,
-            state.stops[index + 2].x,
-            state.stops[index + 2].y
-        )
-    end
-    graphics:line(state.stops[passed + 1].x, state.stops[passed + 1].y, standing.x, standing.y)
-    graphics:set_color(ink.fade(ROUTE_DONE, alpha * 0.92))
-    graphics:set_line_width(2.5)
-    for index = 0::i32, passed - 1 do
-        graphics:line(
-            state.stops[index + 1].x,
-            state.stops[index + 1].y,
-            state.stops[index + 2].x,
-            state.stops[index + 2].y
-        )
-    end
-    graphics:line(state.stops[passed + 1].x, state.stops[passed + 1].y, standing.x, standing.y)
-end
-
--- A house with a duel in it: a gabled block on the corner, wearing the number
--- of the duel it holds so the map says how far into the run the duel is. The
--- number sits on its own plate, because it lands on rooftops as often as on
--- street and has to be read off either.
--- `alpha` carries the house itself and `label_alpha` the writing under it: a
--- house being gone into keeps its walls all the way in while its map label,
--- which would be a banner across the screen by then, drops away early.
--- `final` is the house the run's table ends on. The route does not stop there —
--- the city goes on and so does a run that took it — so it is drawn as a landmark
--- walked past rather than as a terminus: a second roof over the first, and a
--- label that says which duel it is the last of.
-function draw_duel_stop(
-    graphics: Graphics,
-    stop: city_map.Stop,
-    label: string,
-    reached: bool,
-    final: bool,
-    alpha: f64,
-    label_alpha: f64
-): unit
-    local tone: string = VAULT_DIM
-    if reached then
-        tone = VAULT_INK
-        draw_lantern(graphics, stop, VAULT_INK, 40.0, alpha)
-    end
-    graphics:set_color(ink.fade("#0b0c12", alpha))
-    graphics:fill_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
-    graphics:set_color(ink.fade(tone, alpha))
-    graphics:set_line_width(2.0)
-    graphics:stroke_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
-    graphics:line(stop.x - 18.0, stop.y - 12.0, stop.x, stop.y - 24.0)
-    graphics:line(stop.x, stop.y - 24.0, stop.x + 18.0, stop.y - 12.0)
-    if final then
-        graphics:line(stop.x - 22.0, stop.y - 17.0, stop.x, stop.y - 31.0)
-        graphics:line(stop.x, stop.y - 31.0, stop.x + 22.0, stop.y - 17.0)
-    end
-    if label_alpha <= 0.0 then
-        return
-    end
-    -- The dial is the marker saying "duel", not part of the building: a house
-    -- being walked into keeps its walls and gives that up, rather than hanging
-    -- a storey-high disc in the room.
-    graphics:set_color(ink.fade(tone, label_alpha))
-    graphics:fill_circle(stop.x, stop.y + 1.0, 4.0)
-    local writing: string = "DUEL " .. label
-    local banner: f64 = 52.0
-    if final then
-        writing = writing .. "   LAST"
-        banner = 86.0
-    end
-    graphics:set_color(ink.fade("#0b0c12", label_alpha * 0.9))
-    plate.draw(
-        graphics,
-        stop.x - banner * 0.5,
-        stop.y + 19.0,
-        banner,
-        17.0,
-        ink.fade("#0b0c12", label_alpha * 0.9),
-        ink.fade(tone, label_alpha * 0.35),
-        1.0
-    )
-    ink.text_centered(graphics, writing, stop.x, stop.y + 32.0, 10, ink.fade(tone, label_alpha))
-end
-
--- A street vendor: a stall with an awning, small enough that the houses stay
--- the landmarks of the route.
-function draw_vendor_stop(graphics: Graphics, stop: city_map.Stop, reached: bool, alpha: f64): unit
-    local tone: string = VENDOR_DIM
-    if reached then
-        tone = VENDOR_INK
-        draw_lantern(graphics, stop, VENDOR_INK, 28.0, alpha)
-    end
-    graphics:set_color(ink.fade("#0b0c12", alpha))
-    graphics:fill_rectangle(stop.x - 11.0, stop.y - 4.0, 22.0, 14.0)
-    graphics:set_color(ink.fade(tone, alpha))
-    graphics:set_line_width(2.0)
-    graphics:stroke_rectangle(stop.x - 11.0, stop.y - 4.0, 22.0, 14.0)
-    graphics:line(stop.x - 14.0, stop.y - 5.0, stop.x + 14.0, stop.y - 5.0)
-    graphics:line(stop.x - 14.0, stop.y - 5.0, stop.x - 9.0, stop.y - 12.0)
-    graphics:line(stop.x + 14.0, stop.y - 5.0, stop.x + 9.0, stop.y - 12.0)
-    graphics:line(stop.x - 9.0, stop.y - 12.0, stop.x + 9.0, stop.y - 12.0)
-end
-
--- The stop the camera is going into, or -1 while the map is simply being read.
--- It is the only one that keeps its full weight through a dive: the others are
--- map furniture, and the map is on its way out.
-function entered_stop(state: city_map.State): i32
-    if state.dive <= 0.0 then
-        return -1
-    end
-    return math.floor(state.target + 0.5)::i32
-end
-
--- `landmark` is the stop the run's last authored duel stands on, or -1 for a
--- map nobody is running — the menu's drifting view. A stop index rather than a
--- duel number: this module lays out a route and does not know what a run is.
-function draw_stops(
-    state: city_map.State,
-    graphics: Graphics,
-    left: f64,
-    right: f64,
-    top: f64,
-    bottom: f64,
-    alpha: f64,
-    furniture: f64,
-    landmark: i32
-): unit
-    local last: i32 = state:stop_count() - 1
-    local entered: i32 = entered_stop(state)
-    for index = 0::i32, last do
-        local stop: city_map.Stop = state.stops[index + 1]
-        if stop.x >= left and stop.x <= right and stop.y >= top and stop.y <= bottom then
-            local reached: bool = (index::f64) <= state.travel + 0.001
-            local final: bool = index == landmark
-            if index == entered then
-                draw_duel_stop(
-                    graphics,
-                    stop,
-                    tostring(city_map.stop_duel(index)),
-                    reached,
-                    final,
-                    alpha,
-                    furniture
-                )
-            elseif furniture > 0.0 then
-                if stop.duel then
-                    draw_duel_stop(
-                        graphics,
-                        stop,
-                        tostring(city_map.stop_duel(index)),
-                        reached,
-                        final,
-                        furniture,
-                        furniture
-                    )
-                else
-                    draw_vendor_stop(graphics, stop, reached, furniture)
+function draw_path(state: city_map.State, graphics: Graphics, alpha: f64, glow: bool): unit
+    local offset: f64 = 0.0
+    for index = 1::i32, #state.route.legs do
+        local leg = state.route.legs[index]
+        local done: f64 = math.max(0.0, math.min(1.0, state.travel - (index - 1)::f64)) * leg.length
+        local walked: f64 = 0.0
+        for step = 2::i32, #leg.points do
+            local a = leg.points[step - 1]
+            local b = leg.points[step]
+            local length = route.distance(a, b)
+            if length > 0.000001 then
+                local fraction: f64 = math.max(0.0, math.min(1.0, (done - walked) / length))
+                local split: Point = {
+                    x = a.x + (b.x - a.x) * fraction,
+                    y = a.y + (b.y - a.y) * fraction
+                }
+                if fraction > 0.0 then
+                    graphics:set_color(ink.fade("#fbbf24", alpha))
+                    graphics:set_line_width(3.0)
+                    if glow then
+                        graphics:set_color(ink.fade("#fbbf24", alpha * 0.22))
+                        graphics:set_line_width(9.0)
+                    end
+                    graphics:line(a.x, a.y, split.x, split.y)
+                end
+                if fraction < 1.0 and not glow then
+                    graphics:set_color(ink.fade("#c5b580", alpha * 0.80))
+                    graphics:set_line_width(2.0)
+                    dashed_line(graphics, split, b, offset + length * fraction)
                 end
             end
+            walked += length
+            offset += length
         end
     end
 end
 
--- Where the player is: a breathing mote on the route, between two stops while
--- they are walking and on one while they are working.
-function draw_party(state: city_map.State, graphics: Graphics, alpha: f64): unit
-    local standing: Point = state:position_at(state.travel)
-    local pulse: f64 = 6.5 + math.sin(state.pan_clock * 3.1) * 1.6
-    graphics:set_blend_mode("add")
-    graphics:set_color(ink.fade("#fde68a", alpha * 0.24))
-    graphics:fill_circle(standing.x, standing.y, pulse + 7.0)
-    graphics:set_blend_mode("alpha")
-    graphics:set_color(ink.fade("#fde68a", alpha))
-    graphics:fill_circle(standing.x, standing.y, 4.6)
-    graphics:set_color(ink.fade("#3b2a06", alpha))
-    graphics:fill_circle(standing.x, standing.y, 2.0)
-end
-
--- The camera transform: the map is read from a point in the city rather than
--- from a corner of it, so the same aim works at any zoom. The anchor is where
--- on the screen that point lands, which a screen with a list down one side
--- moves out from under it.
-function apply_camera(state: city_map.State, graphics: Graphics): unit
-    graphics:push()
-    graphics:translate(state.anchor_x, state.anchor_y)
-    graphics:scale(state.zoom, state.zoom)
-    graphics:translate(-state.camera_x, -state.camera_y)
+function draw_stops(state: city_map.State, graphics: Graphics, alpha: f64, landmark: i32): unit
+    for index = 1::i32, #state.route.stops do
+        local stop = state.route.stops[index]
+        local reached: bool = (index - 1)::f64 <= state.travel + 0.001
+        local tone: string = "#b7aa85"
+        if reached then
+            tone = "#fbbf24"
+        end
+        if stop.duel then
+            local house = state.route.city.buildings[stop.building]
+            local weight: f64 = alpha
+            if state.dive > 0.0 and index - 1 == math.floor(state.target + 0.5)::i32 then
+                weight = 1.0
+            end
+            graphics:set_color(ink.fade(tone, weight))
+            graphics:set_line_width(2.0)
+            for vertex = 1::i32, #house.footprint do
+                local a = state.route:world(house.footprint[vertex])
+                local b = state.route:world(house.footprint[vertex % #house.footprint + 1])
+                graphics:line(a.x, a.y, b.x, b.y)
+            end
+            if alpha > 0.0 then
+                local center = state.route:world({ x = house.x, y = house.y })
+                local label: string = "DUEL " .. tostring(city_map.stop_duel(index - 1))
+                if index - 1 == landmark then
+                    label = label .. "   LAST"
+                end
+                ink.text_centered(
+                    graphics,
+                    label,
+                    center.x + 1.0,
+                    center.y + 5.0,
+                    10,
+                    ink.fade("#16130b", alpha)
+                )
+                ink.text_centered(
+                    graphics,
+                    label,
+                    center.x,
+                    center.y + 4.0,
+                    10,
+                    ink.fade(tone, alpha)
+                )
+            end
+        elseif alpha > 0.0 then
+            graphics:set_color(ink.fade(tone, alpha))
+            graphics:set_line_width(1.5)
+            graphics:line(stop.x - 6.0, stop.y, stop.x, stop.y - 6.0)
+            graphics:line(stop.x, stop.y - 6.0, stop.x + 6.0, stop.y)
+            graphics:line(stop.x + 6.0, stop.y, stop.x, stop.y + 6.0)
+            graphics:line(stop.x, stop.y + 6.0, stop.x - 6.0, stop.y)
+        end
+    end
 end
 
 function draw(state: city_map.State, graphics: Graphics, landmark: i32): unit
-    local alpha: f64 = state.cover
-    local furniture: f64 = alpha * (1.0 - ramp(state.dive, 0.0, 0.30))
-    local left: f64 = state.camera_x - (state.anchor_x / state.zoom + 60.0)
-    local right: f64 = state.camera_x + ((state.view_width - state.anchor_x) / state.zoom + 60.0)
-    local top: f64 = state.camera_y - (state.anchor_y / state.zoom + 60.0)
-    local bottom: f64 = state.camera_y + ((state.view_height - state.anchor_y) / state.zoom + 60.0)
-    apply_camera(state, graphics)
-    if furniture > 0.0 then
-        draw_route_ahead(state, graphics, furniture)
-        draw_route_done(state, graphics, furniture)
+    local alpha = furniture_opacity(state.dive)
+    graphics:push_identity()
+    graphics:translate(state.anchor_x, state.anchor_y)
+    graphics:scale(state.zoom, state.zoom)
+    graphics:translate(-state.camera_x, -state.camera_y)
+    if alpha > 0.0 then
+        draw_path(state, graphics, alpha, true)
+        draw_path(state, graphics, alpha, false)
     end
-    draw_stops(state, graphics, left, right, top, bottom, alpha, furniture, landmark)
-    if furniture > 0.0 then
-        draw_party(state, graphics, furniture)
+    draw_stops(state, graphics, alpha, landmark)
+    if alpha > 0.0 then
+        local standing = state:position()
+        local pulse: f64 = 10.0 + math.sin(state.pan_clock * 3.1) * 1.6
+        graphics:set_color(ink.fade("#fbbf24", alpha * 0.25))
+        graphics:fill_circle(standing.x, standing.y, pulse)
+        graphics:set_color(ink.fade("#fde68a", alpha))
+        graphics:fill_circle(standing.x, standing.y, 4.6)
+        graphics:set_color(ink.fade("#3b2a06", alpha))
+        graphics:fill_circle(standing.x, standing.y, 2.0)
     end
     graphics:pop()
 end

@@ -62,6 +62,7 @@ const scenes = [
   ['hand-focused', 'hand--fan', 'focused:3;selected:1', 0],
   ['shop', 'entities-shop--open-visit', '', 0],
   ['route-progress', 'screens--route-progress', '', 0],
+  ['route-progress-refracted', 'screens--route-progress', '', 2400],
   ['main-menu', 'screens--main-menu', '', 0],
   ['starting-vendor', 'screens--starting-vendor', '', 0],
   ['help', 'screens--help', '', 0],

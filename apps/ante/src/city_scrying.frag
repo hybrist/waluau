@@ -2,6 +2,7 @@ precision highp float;
 varying vec2 v_uv;
 uniform sampler2D u_texture;
 uniform float u_clock;
+uniform float u_overlay;
 uniform float u_width;
 uniform float u_height;
 uniform float u_focus_x;
@@ -55,6 +56,14 @@ void main() {
     // the screen edges instead of stretching clamped edge texels into bands.
     warped += outerWarp * (current * 0.085 - p * 0.14);
     vec2 uv = sampleUV(warped);
+    // The route uses the identical refraction, but keeps its ink and sharpness.
+    // Offscreen alpha blending stores premultiplied RGB; undo it for the
+    // screen's straight-alpha blend, applying the handover opacity only once.
+    if (u_overlay > 0.5) {
+        vec4 route = texture2D(u_texture, uv);
+        gl_FragColor = vec4(route.rgb / max(route.a, 0.00001), route.a * u_opacity);
+        return;
+    }
     vec2 spread = vec2(1.0 / u_width, 1.0 / u_height) * u_strength * edge * edge * 20.0;
     // Blur the sampled map itself, including the city outside the clear lens.
     vec3 city = texture2D(u_texture, uv).rgb * 0.2;

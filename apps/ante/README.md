@@ -193,7 +193,11 @@ the route, every fence between two vaults is the next vendor along it, and a
 vault is the house the camera goes into. The route alternates the two — vendor,
 house, vendor, house — with the road already walked drawn solid in gold behind
 the robbers and the road still to come dashed ahead of them, so the map is the
-run's progress bar as well as its backdrop.
+run's progress bar as well as its backdrop. Both the route and the renderer
+use the same generated city. Vendors stand at building access points, duels
+mark the actual footprint's front door, and shortest street paths connect them
+through the generated junctions and bridges. A route visits each reachable
+house before reusing houses on an endless run.
 
 The vault keeps its own backdrop, and the map goes into it rather than cutting
 to it. A screen change is two movements taking the screen in turn, never at
@@ -242,9 +246,10 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `project.js` | Stable source-project adapter for playground and conformance hosts. |
 | `main.walu` | Thin engine adapter that owns the session and routes callbacks to the live screen. |
 | `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
-| `city_map.walu` | DOM-free city generation, the alternating vendor/vault route, and the camera pans and dissolves that carry it between screens. |
-| `city_map_render.walu` | Generated city and scrying lens, followed by the route overlay. |
-| `city_route_render.walu` | Golden traveled route and current position, dashed upcoming route, vendor/vault stops, and the last authored vault landmark; fades route furniture during entry. |
+| `city_map.walu` | Owns the generated city and route, plus the camera pans and dissolves between screens. |
+| `city_route.walu` | DOM-free street routing, building/front-door stops, and distance-based travel along polylines. |
+| `city_map_render.walu` | City and route captures refracted through the same scrying lens, preserving route ink. |
+| `city_route_render.walu` | Golden street progress and player marker, dashed upcoming streets, and outlines of the actual duel buildings; fades map annotations during entry. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `run.walu` | DOM-free run state: the vault sequence, its boss cadence, victory milestone and endless tail, the spell loadout, and the mana and hearts carried between vaults — including the one way hearts climb back. |
 | `shop.walu` | DOM-free intermission between vaults: behavior-bearing item stock, quoted prices, spent offers, cursor input, and hot-replacement snapshots. |
@@ -273,7 +278,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence and endless tail, persistent hearts, mana carryover, the carried loadout, and run outcomes. |
 | `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how persistent hearts end a run, played from a shuffled deck by a reference policy. |
 | `shop.test.walu` | Deterministic Vitest assertions for item stock, spending, spell levels, full-loadout and full-health refusal, healing purchases, lifecycle, and snapshots. |
-| `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
+| `city_map.test.walu` | Seeded city ownership and camera pans/dissolves between screens. |
+| `city_route.test.walu` | Street and bridge connectivity, real front-door endpoints, roof clearance, and travel along bends. |
 | `ui/node.test.walu` | Headless assertions for retained identity, layout, arrangement, hit order, and controlled presentation. |
 | `ui/presentation.test.walu` | Headless assertions for composition and the type-sized retained presenters. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |
@@ -431,7 +437,8 @@ and housing density controls regenerate the city. Junction and building-access
 overlays expose the routing data; select start/end node IDs to draw a shortest
 road route. Nodes 1 and 2 are the two market squares. A separately reserved
 churchyard has its own road access node. With a river and no bridges, the markets
-deliberately have no connecting route. The existing gameplay map is unchanged.
+deliberately have no connecting route. The live gameplay map uses the same
+generator with its own seed and fixed settings.
 
 `src/city_generator.walu` generates a meandering river and compatible low valley,
 then joins settlement points using distance, slope, road clearance, and explicit

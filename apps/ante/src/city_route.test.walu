@@ -1,0 +1,242 @@
+require("waluau:vitest")
+local generator = require("./city_generator")
+local route = require("./city_route")
+local city_map = require("./city_map")
+
+function fixture(): generator.City
+    return {
+        width = 100.0,
+        height = 100.0,
+        nodes = {
+            { x = 10.0, y = 10.0 },
+            { x = 50.0, y = 10.0 },
+            { x = 50.0, y = 80.0 },
+            { x = 90.0, y = 80.0 }
+        },
+        edges = {
+            { a = 1, b = 2, width = 4.0, length = 40.0, bridge = false, passage = false },
+            { a = 2, b = 3, width = 4.0, length = 70.0, bridge = true, passage = false },
+            { a = 3, b = 4, width = 4.0, length = 40.0, bridge = false, passage = false }
+        },
+        buildings = {
+            {
+                x = 45.0,
+                y = 19.0,
+                radius = 6.0,
+                group = 0,
+                edge = 1,
+                access = { x = 45.0, y = 10.0 },
+                footprint = {
+                    { x = 41.0, y = 15.0 },
+                    { x = 49.0, y = 15.0 },
+                    { x = 49.0, y = 23.0 },
+                    { x = 41.0, y = 23.0 }
+                }
+            },
+            {
+                x = 85.0,
+                y = 89.0,
+                radius = 6.0,
+                group = 0,
+                edge = 3,
+                access = { x = 85.0, y = 80.0 },
+                footprint = {
+                    { x = 81.0, y = 85.0 },
+                    { x = 89.0, y = 85.0 },
+                    { x = 89.0, y = 93.0 },
+                    { x = 81.0, y = 93.0 }
+                }
+            }
+        },
+        river = {},
+        landmarks = {},
+        courtyards = {},
+        options = { seed = 1, bridges = 1, river = false, relief = 0.0, size = 90, density = 85 }
+    }
+end
+
+function on_segment(point: route.Point, a: route.Point, b: route.Point): bool
+    return math.abs(
+        route.distance(a, point) + route.distance(point, b) - route.distance(a, b)
+    ) < 0.00001
+end
+
+function inside_roof(point: route.Point, polygon: {route.Point}): bool
+    local inside: bool = false
+    for index = 1::i32, #polygon do
+        local a = polygon[index]
+        local b = polygon[index % #polygon + 1]
+        if on_segment(point, a, b) then
+            return false
+        end
+        if (a.y > point.y) ~= (b.y > point.y) then
+            if point.x < a.x + (point.y - a.y) * (b.x - a.x) / (b.y - a.y) then
+                inside = not inside
+            end
+        end
+    end
+    return inside
+end
+
+function street_segment(city: generator.City, a: route.Point, b: route.Point): bool
+    for edge in city.edges do
+        if on_segment(
+            a,
+            city.nodes[edge.a],
+            city.nodes[edge.b]
+        ) and on_segment(b, city.nodes[edge.a], city.nodes[edge.b]) then
+            return true
+        end
+    end
+    return false
+end
+
+function access_segment(city: generator.City, a: route.Point, b: route.Point): bool
+    for house in city.buildings do
+        if on_segment(
+            a,
+            house.access,
+            route.door(house)
+        ) and on_segment(b, house.access, route.door(house)) then
+            return true
+        end
+    end
+    return false
+end
+
+describe(
+    "city street route",
+    function()
+        it(
+            "turns along the bridge and stops at real front doors",
+            function()
+                local city = fixture()
+                local path = route.State.new(city, 100.0, 100.0)
+                path:ensure_stops(4)
+                expect(path.stops[1].building):toBe(1)
+                expect(path.stops[1].duel):toBe(false)
+                expect(path.stops[2].duel):toBe(true)
+                expect(path.stops[2].x):toBe(45.0)
+                expect(path.stops[2].y):toBe(15.0)
+                expect(path.stops[3].building):toBe(2)
+                expect(path.stops[4].y):toBe(85.0)
+                expect(#path.legs[2].points):toBe(5)
+                expect(path.legs[2].length):toBe(115.0)
+                -- Halfway between houses is on the bridge, not a chord through blocks.
+                local halfway = path:position_at(1.5)
+                expect(halfway.x):toBe(50.0)
+                expect(halfway.y):toBe(57.5)
+                expect(path:position_at(-1.0).x):toBe(45.0)
+                expect(path:position_at(100.0).y):toBe(85.0)
+            end
+        )
+
+        it(
+            "takes a direct stretch when both houses front the same street",
+            function()
+                local city = fixture()
+                city.buildings[2].edge = 1
+                city.buildings[2].access = { x = 15.0, y = 10.0 }
+                local path = route.State.new(city, 100.0, 100.0)
+                path:ensure_stops(3)
+                expect(#path.legs[2].points):toBe(3)
+                expect(path.legs[2].points[3].x):toBe(15.0)
+                expect(path.legs[2].length):toBe(35.0)
+            end
+        )
+
+        it(
+            "does not invent a crossing to unreachable houses",
+            function()
+                local city = fixture()
+                table.remove(city.edges, 2)
+                city.buildings[2].edge = 2
+                local path = route.State.new(city, 100.0, 100.0)
+                path:ensure_stops(4)
+                expect(#path.stops):toBe(2)
+            end
+        )
+
+        it(
+            "extends a run beyond one tour without moving its existing stops",
+            function()
+                local path = route.State.new(fixture(), 100.0, 100.0)
+                path:ensure_stops(4)
+                path:ensure_stops(12)
+                expect(#path.stops):toBe(12)
+                expect(path.stops[1].building):toBe(1)
+                expect(path.stops[3].building):toBe(2)
+                expect(path.stops[5].building):toBe(1)
+                expect(path.stops[1].x):toBe(45.0)
+            end
+        )
+
+        it(
+            "keeps seeded live routes on real streets or their own front-door access",
+            function()
+                for seed = 1::i32, 4::i32 do
+                    local map = city_map.State.new(seed)
+                    map:ensure_stops(24)
+                    local path = map.route
+                    local city = path.city
+                    expect(#path.stops):toBeGreaterThanOrEqual(24)
+                    for index = 1::i32, 24::i32 do
+                        local stop = path.stops[index]
+                        local house = city.buildings[stop.building]
+                        local point: route.Point = {
+                            x = stop.x / path.scale_x,
+                            y = stop.y / path.scale_y
+                        }
+                        expect(stop.duel):toBe(index % 2 == 0)
+                        if stop.duel then
+                            local boundary: bool = false
+                            for vertex = 1::i32, #house.footprint do
+                                if on_segment(
+                                    point,
+                                    house.footprint[vertex],
+                                    house.footprint[vertex % #house.footprint + 1]
+                                ) then
+                                    boundary = true
+                                end
+                            end
+                            expect(boundary):toBe(true)
+                            expect(stop.building):toBe(path.stops[index - 1].building)
+                        else
+                            expect(route.distance(point, house.access)):toBeLessThan(0.00001)
+                            for previous = 1::i32, index - 2, 2::i32 do
+                                expect(stop.building == path.stops[previous].building):toBe(false)
+                            end
+                        end
+                    end
+                    for index = 1::i32, #path.legs do
+                        local leg = path.legs[index]
+                        expect(leg.length):toBeGreaterThan(0.0)
+                        for step = 2::i32, #leg.points do
+                            local a: route.Point = {
+                                x = leg.points[step - 1].x / path.scale_x,
+                                y = leg.points[step - 1].y / path.scale_y
+                            }
+                            local b: route.Point = {
+                                x = leg.points[step].x / path.scale_x,
+                                y = leg.points[step].y / path.scale_y
+                            }
+                            expect(
+                                street_segment(city, a, b) or access_segment(city, a, b)
+                            ):toBe(true)
+                        end
+                        for fraction = 0::i32, 10::i32 do
+                            local p = path:position_at((index - 1)::f64 + fraction::f64 / 10.0)
+                            local found: bool = false
+                            for step = 2::i32, #leg.points do
+                                if on_segment(p, leg.points[step - 1], leg.points[step]) then
+                                    found = true
+                                end
+                            end
+                            expect(found):toBe(true)
+                        end
+                    end
+                end
+            end
+        )
+    end
+)

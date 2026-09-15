@@ -10,25 +10,22 @@ local lens = require("./city_scrying.frag")
 
 export type State = {
     seed: i32,
-    city: generator.City?,
     heights: {f64},
     target: gpu.RenderTarget?,
+    route_target: gpu.RenderTarget?,
     owner: engine.Graphics?
 }
 
 function State.new(): State
-    return { seed = -1, city = nil, heights = {}, target = nil, owner = nil }
+    return { seed = -1, heights = {}, target = nil, route_target = nil, owner = nil }
 end
 
-function prepare_city(view: State, seed: i32): unit
-    if view.city ~= nil and view.seed == seed then
+function prepare_city(view: State, state: city_map.State): unit
+    if view.seed == state.scenery_seed then
         return
     end
-    local city = generator.generate(
-        { seed = seed, bridges = 1, river = true, relief = 1.0, size = 90, density = 85 }
-    )
-    view.city = city
-    view.seed = seed
+    local city = state.route.city
+    view.seed = state.scenery_seed
     view.heights = {}
     for y = 0::i32, 47::i32 do
         for x = 0::i32, 71::i32 do
@@ -47,7 +44,7 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
     if not state:visible() then
         return
     end
-    prepare_city(self, state.scenery_seed)
+    prepare_city(self, state)
     local width: i32 = math.ceil(state.view_width)::i32
     local height: i32 = math.ceil(state.view_height)::i32
     local owner = self.owner
@@ -55,11 +52,17 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
     if owner ~= nil then
         if (owner::engine.Graphics).disposed then
             self.target = nil
+            self.route_target = nil
         elseif previous ~= nil then
             local target = previous::gpu.RenderTarget
             if target.width ~= width or target.height ~= height then
                 (owner::engine.Graphics):release_render_target(target)
                 self.target = nil
+                local route_target = self.route_target
+                if route_target ~= nil then
+                    (owner::engine.Graphics):release_render_target(route_target::gpu.RenderTarget)
+                end
+                self.route_target = nil
             end
         end
     end
@@ -69,14 +72,20 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
             error("Scrying target: " .. created.error.message)
         end
         self.target = created.target
+        local route_created = graphics:create_render_target(width, height)
+        if not route_created.ok then
+            error("Route target: " .. route_created.error.message)
+        end
+        self.route_target = route_created.target
         self.owner = graphics
     end
     local maybe_target = self.target
-    local maybe_city = self.city
+    local maybe_route_target = self.route_target
     if maybe_target ~= nil then
-        if maybe_city ~= nil then
+        if maybe_route_target ~= nil then
             local target: gpu.RenderTarget = maybe_target::gpu.RenderTarget
-            local city: generator.City = maybe_city::generator.City
+            local city = state.route.city
+            local route_target = maybe_route_target::gpu.RenderTarget
             if not graphics:set_render_target(target) then
                 error("Cannot bind scrying target")
             end
@@ -94,29 +103,52 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
             )
             city_render.draw(graphics, city, self.heights, true, false)
             graphics:pop()
-            graphics:set_screen_target()
-            local bound = graphics:bind_imported_shader(
-                lens,
-                {
-                    gpu.float_parameter("u_width", state.view_width),
-                    gpu.float_parameter("u_height", state.view_height),
-                    gpu.float_parameter("u_focus_x", state.anchor_x / state.view_width),
-                    gpu.float_parameter("u_focus_y", 1.0 - state.anchor_y / state.view_height),
-                    gpu.float_parameter("u_opacity", state.cover),
-                    gpu.float_parameter("u_clock", state.pan_clock),
-                    gpu.float_parameter("u_strength", 1.0),
-                    gpu.float_parameter("u_static_circle", 1.0),
-                    gpu.float_parameter("u_peak_time", 0.3),
-                    gpu.float_parameter("u_travel_time", 7.0)
-                }
-            )
-            if not bound.ok then
-                error("Scrying lens: " .. bound.error.message)
+            if not graphics:set_render_target(route_target) then
+                error("Cannot bind route target")
             end
-            graphics:set_color("#ffffff")
-            graphics:draw_render_target(target, 0.0, 0.0, state.view_width, state.view_height)
-            graphics:use_default_shader()
+            graphics:clear("#00000000")
             route_render.draw(state, graphics, landmark)
+            graphics:set_screen_target()
+            for pass = 0::i32, 1::i32 do
+                local bound = graphics:bind_imported_shader(
+                    lens,
+                    {
+                        gpu.float_parameter("u_overlay", pass::f64),
+                        gpu.float_parameter("u_width", state.view_width),
+                        gpu.float_parameter("u_height", state.view_height),
+                        gpu.float_parameter("u_focus_x", state.anchor_x / state.view_width),
+                        gpu.float_parameter("u_focus_y", 1.0 - state.anchor_y / state.view_height),
+                        gpu.float_parameter("u_opacity", state.cover),
+                        gpu.float_parameter("u_clock", state.pan_clock),
+                        gpu.float_parameter("u_strength", 1.0),
+                        gpu.float_parameter("u_static_circle", 1.0),
+                        gpu.float_parameter("u_peak_time", 0.3),
+                        gpu.float_parameter("u_travel_time", 7.0)
+                    }
+                )
+                if not bound.ok then
+                    error("Scrying lens: " .. bound.error.message)
+                end
+                graphics:set_color("#ffffff")
+                if pass == 0 then
+                    graphics:draw_render_target(
+                        target,
+                        0.0,
+                        0.0,
+                        state.view_width,
+                        state.view_height
+                    )
+                else
+                    graphics:draw_render_target(
+                        route_target,
+                        0.0,
+                        0.0,
+                        state.view_width,
+                        state.view_height
+                    )
+                end
+                graphics:use_default_shader()
+            end
         end
     end
 end
