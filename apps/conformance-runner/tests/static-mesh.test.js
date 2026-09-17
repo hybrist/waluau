@@ -5,7 +5,7 @@ import graphics from '../../../engine/graphics.walu?raw';
 import resources from '../../../engine/resources.walu?raw';
 import font from '../../../engine/font.walu?raw';
 
-it('depth-tests indexed static meshes and restores 2D drawing after each preview', async () => {
+it('rejects invalid mesh draws, then depth-tests previews and restores 2D drawing', async () => {
   const { root, cleanup } = await compileAndInstantiateWithDom({
     '/fixtures/game-engine/static-mesh.walu': fixture,
     '/engine/graphics.walu': graphics,
@@ -26,6 +26,10 @@ it('depth-tests indexed static meshes and restores 2D drawing after each preview
       expect(green).toBeGreaterThan(150);
       expect(blue).toBeLessThan(2);
     }
+    // The fixture rejects released meshes and depthless-target draws via pcall.
+    // Cyan proves the rejected draw left the offscreen target usable; the green
+    // previews above prove valid screen mesh draws still work afterwards.
+    expect(pixel(152, 72)).toEqual([0, 255, 255, 255]);
     expect(pixel(40, 40)).toEqual([255, 0, 255, 255]);
     expect(pixel(3, 3)).toEqual([255, 255, 0, 255]);
     expect(pixel(155, 3)).toEqual([0, 0, 255, 255]);
