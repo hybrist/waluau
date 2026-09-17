@@ -6,6 +6,11 @@ separately with `test:gameplay`; it does not use these images or their readiness
 These are appearance baselines for this environment, not cross-driver graphics
 conformance assertions.
 
+The live city and isolated scrying story capture at the display density, capped
+at two texels per logical pixel, with linear sampling through the lens. City
+and route ink use matching capture coordinates. The system reduced-motion
+preference freezes the lens clock; the story still allows scrubbing spell phase.
+
 The city scrying captures cover the Old Market at 240% and 400% zoom, with
 motion paused at spell phase 25. Ring travel defaults to a 300 ms speed peak
 and a 7000 ms total duration. Story controls expose both times; the peak range

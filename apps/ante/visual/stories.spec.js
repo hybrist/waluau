@@ -87,3 +87,16 @@ for (const [name, id, args, time] of scenes) {
     expect(errors).toEqual([]);
   });
 }
+
+test('scrying story respects reduced motion with its motion control enabled', async ({ page }) => {
+  const { installScryingProbe } = await import('../renderer/scrying-probe.js');
+  await installScryingProbe(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openStory(page, 'city-scrying--start-node', 'motion:1;spell phase:25', 1000);
+  expect(await page.evaluate(() => [...new Set(window.scryingProbe.clocks)])).toEqual([2.5]);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.evaluate(() => {
+    for (let frame = 61; frame <= 90; frame++) window.anteVisualFrame(frame * (1000 / 60));
+  });
+  expect(await page.evaluate(() => new Set(window.scryingProbe.clocks).size)).toBeGreaterThan(2);
+});
