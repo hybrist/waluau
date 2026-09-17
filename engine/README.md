@@ -410,7 +410,9 @@ soon as upload succeeds. `draw_image` and `draw_sprite` use top-left logical
 coordinates (including atlas source rectangles); consecutive sprites that use
 the same texture remain in one batch. `create_render_target`,
 `set_render_target`, `set_screen_target`, and `draw_render_target` provide
-offscreen composition. Texture and target release is explicit and idempotent,
+offscreen composition; `create_smooth_render_target` is the same target with
+linear filtering, for an effect that resamples the capture off its texel grid
+(a swirl or a blur) rather than drawing it back one-to-one. Texture and target release is explicit and idempotent,
 and later use returns `false`; creation returns structured `invalid_resource`,
 `wrong_type`, `invalid_size`, `unavailable`, upload, and framebuffer failures.
 `font_from_resource` similarly copies a loaded font into a GPU atlas;
