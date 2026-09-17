@@ -127,9 +127,16 @@ function draw_stops(state: city_map.State, graphics: Graphics, alpha: f64, landm
     end
 end
 
-function draw(state: city_map.State, graphics: Graphics, landmark: i32): unit
+function draw(
+    state: city_map.State,
+    graphics: Graphics,
+    landmark: i32,
+    density_x: f64,
+    density_y: f64
+): unit
     local alpha = furniture_opacity(state.dive)
     graphics:push_identity()
+    graphics:scale(density_x, density_y)
     graphics:translate(state.anchor_x, state.anchor_y)
     graphics:scale(state.zoom, state.zoom)
     graphics:translate(-state.camera_x, -state.camera_y)

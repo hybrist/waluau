@@ -1738,7 +1738,7 @@ describe('browser conformance', () => {
       };
       await expect.poll(() => steps, { timeout: 10_000 }).toContain('rendered');
       expect(asyncErrors).toEqual([]);
-      expect(steps).toEqual(['decoded', 'uploaded', 'rendered']);
+      expect(steps).toEqual(['decoded', 'density-checked', 'uploaded', 'rendered']);
       expect(fetchCount).toBe(1);
       expect(decodeCount).toBe(1);
       expect(pixelAt(20, 20)).toEqual([255, 0, 0, 255]);
