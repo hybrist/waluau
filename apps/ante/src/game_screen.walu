@@ -689,6 +689,15 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
         end
         return "none"
     end
+    -- Forfeiting interrupts every card-game phase, including spells and overlays.
+    if key == "k" or key == "K" then
+        self.run.hearts = 0
+        ui:reset()
+        presentation:reset()
+        self.intervention:reset()
+        ui.modal = "final"
+        return "none"
+    end
     -- Recognition sits ahead of ordinary board controls so the completing A
     -- belongs to the invocation, not to one last cursor movement. Earlier
     -- arrows remain normal play until the full hidden sequence is known.
