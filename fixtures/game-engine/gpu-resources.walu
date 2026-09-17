@@ -44,6 +44,18 @@ function install_gpu_resources_fixture(): unit
         assert(graphics:supports("textures") and graphics:supports("sprite-batches"))
         assert(graphics:supports("render-targets"))
 
+        -- Density reads the current one-based transform, including the base
+        -- identity (where an off-by-one would read index zero and trap).
+        local density: f64 = graphics:on_screen_density()
+        assert(density >= 1.0)
+        graphics:push()
+        graphics:scale(2.0, 3.0)
+        graphics:translate(17.0, -9.0)
+        assert(math.abs(graphics:on_screen_density() - density * math.sqrt(6.0)) < 0.000001)
+        graphics:pop()
+        assert(graphics:on_screen_density() == density)
+        record_gpu_resource_step("density-checked")
+
         local maybe_source: resources.Resource? = state.loaded_image
         assert(maybe_source ~= nil)
         local source: resources.Resource = maybe_source::resources.Resource

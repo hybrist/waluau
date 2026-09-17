@@ -574,7 +574,7 @@ end
 -- pixels to show them with; a capture at logical size on a dense display
 -- hands back a visibly softer card than the one that was captured.
 function Graphics:on_screen_density(): f64
-    local base: i32 = #self.transforms - 6
+    local base: i32 = #self.transforms - 5
     local a: f64 = self.transforms[base]
     local b: f64 = self.transforms[base + 1]
     local c: f64 = self.transforms[base + 2]
