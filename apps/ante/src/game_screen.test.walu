@@ -23,6 +23,60 @@ describe(
     "Ante Magic run health wiring",
     function()
         it(
+            "forfeits immediately during the opening deal and restarts from the loss screen",
+            function(): unit
+                local screen: game_screen.State = game_screen.State.new()
+                local city: city_map.State = city_map.State.new(105)
+                screen:deal_vault()
+                expect(screen.presentation:is_animating()):toBe(true)
+
+                screen:keypressed(city, "k")
+
+                expect(screen.run.hearts):toBe(0)
+                expect(tostring(screen:run_outcome())):toBe("lost-health")
+                expect(tostring(screen.ui.modal)):toBe("final")
+                expect(screen.presentation:is_animating()):toBe(false)
+                screen:keypressed(city, "Enter")
+                expect(screen.run.hearts):toBe(run.max_hearts)
+                expect(screen.run.duel):toBe(1)
+                expect(tostring(screen.ui.modal)):toBe("none")
+            end
+        )
+
+        it(
+            "lets uppercase K interrupt overlays, targeting, reveals and spell effects",
+            function(): unit
+                local city: city_map.State = city_map.State.new(106)
+                for phase = 1, 6 do
+                    local screen: game_screen.State = game_screen.State.new()
+                    if phase == 1 then
+                        screen.ui.modal = "help"
+                    elseif phase == 2 then
+                        screen.ui.modal = "history"
+                    elseif phase == 3 then
+                        screen:arm_spell(0)
+                    elseif phase == 4 then
+                        screen.ui:begin_reveal()
+                    elseif phase == 5 then
+                        screen:confirm_cast(0, 0)
+                    else
+                        screen.intervention.active = true
+                    end
+
+                    screen:keypressed(city, "K")
+                    screen:update(city, 10.0)
+
+                    expect(tostring(screen:run_outcome())):toBe("lost-health")
+                    expect(tostring(screen.ui.modal)):toBe("final")
+                    expect(screen.ui.revealing):toBe(false)
+                    expect(screen.ui.cast_slot == nil):toBe(true)
+                    expect(screen.presentation:firebolt_pending()):toBe(false)
+                    expect(screen.intervention.active):toBe(false)
+                end
+            end
+        )
+
+        it(
             "applies retained board actions to domain selection and commit",
             function(): unit
                 math.randomseed(103)
