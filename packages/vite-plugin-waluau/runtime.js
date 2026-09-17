@@ -1539,7 +1539,10 @@ export function createGameServicesHost(options = {}) {
       return gpuFailure(code, error instanceof Error ? error.message : String(error));
     }
   };
-  const createRenderTarget = (gl, width, height) => {
+  // `smooth` selects linear filtering, for a target an effect will resample
+  // off its texel grid (a swirl, a blur, a zoom); the default nearest keeps
+  // one-to-one captures exact.
+  const createRenderTarget = (gl, width, height, smooth = false) => {
     const w = Number(width);
     const h = Number(height);
     if (!Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0) {
@@ -1556,8 +1559,9 @@ export function createGameServicesHost(options = {}) {
         return gpuFailure('unavailable', 'WebGL render targets are unavailable');
       }
       gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      const filter = smooth ? gl.LINEAR : gl.NEAREST;
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
