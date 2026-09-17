@@ -85,6 +85,48 @@ if HTMLCanvasElement(canvas) = element then
         {0, 1, 2}::Uint32Array
     )
 
+    local guard_view: graphics_module.MeshView = {
+        x = 0.0,
+        y = 0.0,
+        width = 80.0,
+        height = 80.0,
+        yaw = 0.0,
+        pitch = 0.0,
+        span = 3.0,
+        center_x = 0.0,
+        center_y = 0.0,
+        center_z = 0.0,
+        depth = 10.0
+    }
+    local released: graphics_module.StaticMesh = graphics:create_static_mesh(
+        vertices,
+        {0, 1, 2}::Uint32Array
+    )
+    graphics:release_static_mesh(released)
+    local drew_released = pcall(
+        function(): unit
+            graphics:draw_static_mesh(released, guard_view)
+        end
+    )
+    assert(not drew_released)
+
+    -- Color-only targets have no depth buffer. Rejection must leave the target
+    -- usable for 2D drawing, and subsequent screen mesh previews must still work.
+    local created: graphics_module.RenderTargetResult = graphics:create_render_target(16, 16)
+    assert(created.ok)
+    local target: graphics_module.RenderTarget = created.target
+    assert(graphics:set_render_target(target))
+    graphics:clear("#000000")
+    local drew_without_depth = pcall(
+        function(): unit
+            graphics:draw_static_mesh(mesh, guard_view)
+        end
+    )
+    assert(not drew_without_depth)
+    graphics:set_color("#00ffff")
+    graphics:fill_rectangle(0.0, 0.0, 16.0, 16.0)
+    graphics:set_screen_target()
+
     graphics:clear("#0000ff")
     graphics:set_color("#ffff00")
     graphics:fill_rectangle(0.0, 0.0, 8.0, 8.0)
@@ -108,7 +150,10 @@ if HTMLCanvasElement(canvas) = element then
     end
     graphics:set_color("#ff00ff")
     graphics:fill_rectangle(35.0, 35.0, 10.0, 10.0)
+    graphics:set_color("#ffffff")
+    assert(graphics:draw_render_target(target, 144.0, 64.0, 16.0, 16.0))
     graphics:present()
+    graphics:release_render_target(target)
     graphics:release_static_mesh(mesh)
     graphics:release_static_mesh(mesh)
     assert(mesh.released and mesh.vertices == nil and mesh.indices == nil)
