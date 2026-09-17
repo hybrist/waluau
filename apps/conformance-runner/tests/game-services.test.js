@@ -209,7 +209,7 @@ describe('browser game resource services', () => {
       drawingBufferWidth: 160, drawingBufferHeight: 100,
       createTexture: () => ({ texture: true }), createFramebuffer: () => ({ framebuffer: true }),
       bindTexture: (...args) => calls.push(['bindTexture', ...args]),
-      texParameteri: () => {}, pixelStorei: () => {},
+      texParameteri: (...args) => calls.push(['texParameteri', ...args]), pixelStorei: () => {},
       texImage2D: (...args) => calls.push(['texImage2D', ...args]),
       generateMipmap: (...args) => calls.push(['generateMipmap', ...args]),
       bindFramebuffer: () => {}, framebufferTexture2D: () => {},
@@ -235,6 +235,19 @@ describe('browser game resource services', () => {
     expect(host.game_gpu_resource_error_code(invalid)).toBe('invalid_resource');
     const badTarget = host.game_gpu_render_target_create(gl, 0, 16);
     expect(host.game_gpu_resource_error_code(badTarget)).toBe('invalid_size');
+    // Filtering follows the fourth argument: nearest by default, linear when
+    // an effect asks to resample the capture smoothly.
+    const filters = () => calls
+      .filter(([name, , parameter]) => name === 'texParameteri' && parameter === gl.TEXTURE_MAG_FILTER)
+      .map((call) => call.at(-1));
+    const exactTarget = host.game_gpu_render_target_create(gl, 16, 16);
+    expect(host.game_gpu_resource_ok(exactTarget)).toBe(true);
+    expect(filters().at(-1)).toBe(gl.NEAREST);
+    const smoothTarget = host.game_gpu_render_target_create(gl, 16, 16, true);
+    expect(host.game_gpu_resource_ok(smoothTarget)).toBe(true);
+    expect(filters().at(-1)).toBe(gl.LINEAR);
+    host.game_gpu_resource_release(exactTarget);
+    host.game_gpu_resource_release(smoothTarget);
 
     const loadedFont = await host.game_resource_load_font('/assets/game.woff2', 'Sample Game');
     const gpuFont = host.game_gpu_font_from_resource(gl, loadedFont);
