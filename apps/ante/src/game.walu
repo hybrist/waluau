@@ -1767,6 +1767,16 @@ function shuffle_battlefield(state: State, level: i32): unit
     end
 end
 
+-- A reroll is always a change: sample one of every other legal value and
+-- skip over the card's existing value in the ordered domain.
+function different_value(value: i32, minimum: i32, maximum: i32): i32
+    local replacement: i32 = minimum + math.random(maximum - minimum) - 1
+    if replacement >= value then
+        replacement += 1
+    end
+    return replacement
+end
+
 -- Pay for one cast of the spell in that slot. Returns false — charging
 -- nothing — when the slot is empty or the spell unaffordable, so a confirmed
 -- target only spends gold once this accepts.
@@ -1834,6 +1844,18 @@ function State:cast_spell(slot: i32, table_card: i32): bool
             rank = MIN_RANK
         end
         self.middle[table_card + 1] = { rank = rank, suit = card.suit }
+    elseif spell.kind == spells.SpellKind.ColorChange then
+        local card: Card = self.middle[table_card + 1]
+        self.middle[table_card + 1] = {
+            rank = card.rank,
+            suit = different_value(card.suit, MIN_SUIT, MAX_SUIT)
+        }
+    elseif spell.kind == spells.SpellKind.RankChange then
+        local card: Card = self.middle[table_card + 1]
+        self.middle[table_card + 1] = {
+            rank = different_value(card.rank, MIN_RANK, MAX_RANK),
+            suit = card.suit
+        }
     elseif spell.kind == spells.SpellKind.FreezeRay then
         self:clear_frozen()
         self.frozen_middle[table_card + 1] = true

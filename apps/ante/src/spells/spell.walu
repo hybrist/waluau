@@ -11,7 +11,9 @@ export enum SpellKind {
     Wither,
     MindRead,
     Tornado,
-    Oblivion
+    Oblivion,
+    ColorChange,
+    RankChange
 }
 
 function SpellKind.from(value: i32): SpellKind?
@@ -44,6 +46,12 @@ function SpellKind.from(value: i32): SpellKind?
     end
     if value == 10 then
         return SpellKind.Oblivion
+    end
+    if value == 11 then
+        return SpellKind.ColorChange
+    end
+    if value == 12 then
+        return SpellKind.RankChange
     end
     return nil
 end
@@ -81,6 +89,10 @@ function SpellKind:__tostring(): string
         return "Tornado"
     elseif self == SpellKind.Oblivion then
         return "Oblivion"
+    elseif self == SpellKind.ColorChange then
+        return "Color Change"
+    elseif self == SpellKind.RankChange then
+        return "Rank Change"
     else
         return "Unknown Spell"
     end
@@ -106,6 +118,10 @@ function SpellKind:description(): string
         return "Mix up to level cards per area; frozen cards stay put."
     elseif self == SpellKind.Oblivion then
         return "Destroy exposed hand cards; draw hidden replacements."
+    elseif self == SpellKind.ColorChange then
+        return "Give a table card a random different color."
+    elseif self == SpellKind.RankChange then
+        return "Give a table card a random different rank."
     end
     return ""
 end

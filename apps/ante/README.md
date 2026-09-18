@@ -47,7 +47,7 @@ sequence of vaults continue for as long as the run still has hearts.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
 once, on keys 1 and 2. A visit to the shop stocks exactly two offers, drawn
-without replacement from one pool: a scroll for each of the ten spells, plus a
+without replacement from one pool: a scroll for each of the twelve spells, plus a
 healing potion. A scroll for a known spell carries its next level; a scroll for
 a new kind starts at level one and takes the next free key. There is no separate
 learn-or-upgrade product and no trade prompt: once both keys are taken, a scroll
@@ -72,7 +72,7 @@ and crumbles together, and the deck refills all of them in one throw. Freeze Ray
 Raise Card, and Clone take the one ward they were aimed at, whatever their level.
 
 The starting vendor still offers Firebolt, Freeze Ray, Raise Card, and Clone.
-Six additional spells can be learned in shops during a run, each costing five
+Eight additional spells can be learned in shops during a run, each costing five
 gold per cast:
 
 - **Drain Life** immediately lowers every card in your hand by one rank
@@ -98,6 +98,10 @@ gold per cast:
   Concealed hand cards and the center stay unchanged. No exposed cards, or too
   few cards in the deck to refill every slot, means no cast and no gold spent.
   Its reach is always all exposed cards, regardless of level.
+- **Color Change** gives a selected table card a random new color, always
+  different from its current color. Its rank is unchanged.
+- **Rank Change** gives a selected table card a random new rank from 2 through
+  Ace, always different from its current rank. Its color is unchanged.
 
 Suits and exposed-card knowledge survive rank-changing spells.
 

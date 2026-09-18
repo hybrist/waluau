@@ -163,6 +163,63 @@ describe(
         )
 
         it(
+            "changes exactly the selected table card's color or rank to a different legal value",
+            function()
+                math.randomseed(233)
+                local rules = game.State.new(
+                    false,
+                    {
+                        spells.Spell.new(spells.SpellKind.ColorChange, 9),
+                        spells.Spell.new(spells.SpellKind.RankChange, 1)
+                    },
+                    30
+                )
+                fixture.arrange_breach(
+                    rules,
+                    {{ rank = 2, suit = 0 }, { rank = 9, suit = 1 }, { rank = 14, suit = 2 }},
+                    {
+                        { rank = 3, suit = 0 },
+                        { rank = 4, suit = 1 },
+                        { rank = 5, suit = 2 },
+                        { rank = 6, suit = 3 },
+                        { rank = 7, suit = 0 }
+                    },
+                    {
+                        { rank = 8, suit = 1 },
+                        { rank = 9, suit = 2 },
+                        { rank = 10, suit = 3 },
+                        { rank = 11, suit = 0 },
+                        { rank = 12, suit = 1 }
+                    }
+                )
+                local before: {game.Card} = {}
+                for card in rules:view().middle do
+                    table.insert(before, { rank = card.rank, suit = card.suit })
+                end
+                local targets = rules:cast_targets(0, 1)
+                expect(#targets):toBe(1)
+                expect(targets[1]):toBe(1)
+                expect(rules:cast_spell(0, 1)):toBe(true)
+                local colored = rules:view().middle
+                expect(colored[2].rank):toBe(before[2].rank)
+                expect(colored[2].suit ~= before[2].suit):toBe(true)
+                expect(colored[2].suit >= 0 and colored[2].suit <= 3):toBe(true)
+                expect(colored[1].rank):toBe(before[1].rank)
+                expect(colored[3].rank):toBe(before[3].rank)
+
+                expect(rules:cast_spell(1, 2)):toBe(true)
+                local ranked = rules:view().middle
+                expect(ranked[3].suit):toBe(before[3].suit)
+                expect(ranked[3].rank ~= before[3].rank):toBe(true)
+                expect(ranked[3].rank >= 2 and ranked[3].rank <= 14):toBe(true)
+                expect(rules:gold()):toBe(20)
+                expect(game.State.restore(rules:snapshot()) ~= nil):toBe(true)
+                expect(rules:cast_spell(1, 3)):toBe(false)
+                expect(rules:gold()):toBe(20)
+            end
+        )
+
+        it(
             "rolls, buys, and restores every new shop spell",
             function()
                 math.randomseed(71)
@@ -173,6 +230,8 @@ describe(
                 local mind: bool = false
                 local tornado: bool = false
                 local oblivion: bool = false
+                local color_change: bool = false
+                local rank_change: bool = false
                 for _ = 1, 100 do
                     local visit = shop_.State.new(run)
                     for slot in visit.slots do
@@ -195,16 +254,26 @@ describe(
                         if name == "Oblivion (level 1)" then
                             oblivion = true
                         end
+                        if name == "Color Change (level 1)" then
+                            color_change = true
+                        end
+                        if name == "Rank Change (level 1)" then
+                            rank_change = true
+                        end
                     end
                 end
-                expect(drain and wind and wither and mind and tornado and oblivion):toBe(true)
+                expect(
+                    drain and wind and wither and mind and tornado and oblivion and color_change and rank_change
+                ):toBe(true)
                 for kind in {
                     spells.SpellKind.DrainLife,
                     spells.SpellKind.SecondWind,
                     spells.SpellKind.Wither,
                     spells.SpellKind.MindRead,
                     spells.SpellKind.Tornado,
-                    spells.SpellKind.Oblivion
+                    spells.SpellKind.Oblivion,
+                    spells.SpellKind.ColorChange,
+                    spells.SpellKind.RankChange
                 } do
                     local buyer = run_.State.new(spells.SpellKind.Firebolt, false)
                     local visit = shop_.State.new(buyer)

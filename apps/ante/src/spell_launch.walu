@@ -41,6 +41,12 @@ function name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Oblivion then
         return "OBLIVION"
     end
+    if kind == spells.SpellKind.ColorChange then
+        return "COLOR CHANGE"
+    end
+    if kind == spells.SpellKind.RankChange then
+        return "RANK CHANGE"
+    end
     return "NO SPELL"
 end
 
@@ -71,6 +77,12 @@ function color(kind: spells.SpellKind): string
     end
     if kind == spells.SpellKind.Oblivion then
         return "#a78bfa"
+    end
+    if kind == spells.SpellKind.ColorChange then
+        return "#f472b6"
+    end
+    if kind == spells.SpellKind.RankChange then
+        return "#facc15"
     end
     return "#4ade80"
 end
