@@ -83,6 +83,14 @@ uses a page screenshot clipped to the canvas bounds and compares that buffer;
 it never asks a locator screenshot to wait for rAF-driven element stability
 while the fixture clock is paused.
 
+The playable `duel` stories also have semantic interaction coverage in
+`duel.spec.js`: all four spells, seeded replay, boss/level configuration,
+keyboard and canvas controls, live args updates, and unaffordable casts. These
+use the game's existing accessible text controls to observe actual rules effects.
+The four `duel-*` baselines capture each spell launched at table card 2: Firebolt
+at 1600 ms, and Freeze Ray, Raise Card, and Clone at 800 ms. They use the same
+explicit clock and resource barrier as the appearance fixtures above.
+
 ## Baseline review and updates
 
 Use the exact image above even on macOS. Start a remote browser in one terminal:

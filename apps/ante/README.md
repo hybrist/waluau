@@ -431,6 +431,29 @@ license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
 pnpm --filter ante storybook
 ```
 
+The **duel / Sandbox** story opens a playable, seeded duel using the real game
+screen. Its controls choose the spell, level (1–5), starting gold (0–100),
+standard or boss duel, seed, starting phase, and target table card. **duel /
+Firebolt**, **Freeze Ray**, **Raise Card**, and **Clone** fix the spell while
+keeping the other setup controls. Changing any setup control rebuilds the
+scenario; ordinary frames preserve your play.
+
+Click the canvas to use the game's keys: **1** arms the spell, arrows choose a
+table card, **Enter** casts, and **Escape** cancels. Mouse card and spell controls
+work too. **R** replays the current setup with the same deal and gold. The canvas
+Restart/Menu controls and the text panel's **Replay scenario** and **Return to
+scenario start** buttons do the same. Clearing a duel continues through the real vendor and next duel; R returns
+to the configured starting scenario at any point. The browser's **Text controls**
+panel exposes the same player-visible state and actions as the live game.
+
+**Board** starts after the opening deal, **Targeting** arms the spell, and
+**Casting** launches it immediately. Targets are numbered from 1; a target past
+the end of the table uses its last card. Casting still follows the game's rules:
+less than five gold leaves the spell unarmed. Effects animate normally. Raise
+Card and Clone currently show their production visual effects without changing
+the cards. These scenarios deal a valid seeded deck; exact-card arrangements and
+arbitrary mid-round states are outside this sandbox's setup controls.
+
 The **city_generator / Medieval layout** story is an isolated procedural layout
 experiment. Its seed, river toggle, bridge budget (0–2), relief, settlement size,
 and housing density controls regenerate the city. Junction and building-access

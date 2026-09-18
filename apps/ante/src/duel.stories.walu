@@ -1,0 +1,312 @@
+-- Playable, seeded scenarios use the production duel and its input adapters.
+-- Only setup belongs to the story; rules, presentation and run progression are
+-- the same ones the live game uses.
+local engine = require("waluau:engine")
+local storybook = require("waluau:engine/storybook")
+local ui = require("./ui/node")
+local box = require("./ui/layout")
+local ui_story = require("./ui/story")
+local layout = require("./layout")
+local game_screen = require("./game_screen")
+local city_map = require("./city_map")
+local city_map_render = require("./city_map_render")
+local accessibility = require("./accessibility")
+local spells = require("./spells/spell")
+
+type Phase = "board" | "targeting" | "casting"
+type Setup = {
+    spell: spells.SpellKind,
+    level: i32,
+    gold: i32,
+    boss: bool,
+    seed: i32,
+    phase: Phase,
+    target: i32
+}
+
+const WIDTH = 1000.0
+const HEIGHT = 750.0
+local book = ui_story.Book.new()
+local spell = storybook.select(
+    "spell",
+    1::i32,
+    {
+        storybook.choice("Firebolt", 1::i32),
+        storybook.choice("Freeze Ray", 2::i32),
+        storybook.choice("Raise Card", 3::i32),
+        storybook.choice("Clone", 4::i32)
+    }
+)
+local level = storybook.range("level", 1, 1, 5, 1)
+local gold = storybook.range("gold", 20, 0, 100, 1)
+local duel_kind = storybook.select(
+    "duel",
+    0::i32,
+    {storybook.choice("Standard", 0::i32), storybook.choice("Boss", 1::i32)}
+)
+local seed = storybook.range("seed", 12345, 1, 99999, 1)
+local phase = storybook.select(
+    "phase",
+    "board"::Phase,
+    {
+        storybook.choice("Board", "board"::Phase),
+        storybook.choice("Targeting", "targeting"::Phase),
+        storybook.choice("Casting", "casting"::Phase)
+    }
+)
+local target = storybook.range("target", 1, 1, 5, 1)
+
+function same_setup(left: Setup, right: Setup): bool
+    return left.spell == right.spell and left.level == right.level and left.gold == right.gold and left.boss == right.boss and left.seed == right.seed and left.phase == right.phase and left.target == right.target
+end
+
+function duel_scene(preset: spells.SpellKind, choose_spell: bool): storybook.Scene
+    local city = city_map.State.new(41)
+    local city_view = city_map_render.State.new()
+    local duel = game_screen.State.new()
+    local initialized = false
+    local previous: Setup = {
+        spell = preset,
+        level = 1,
+        gold = 20,
+        boss = false,
+        seed = 12345,
+        phase = "board",
+        target = 1
+    }
+
+    local function configuration(): Setup
+        local kind = preset
+        if choose_spell then
+            kind = spells.SpellKind.from(
+                storybook.selected<i32>(spell)
+            ) or spells.SpellKind.Firebolt
+        end
+        return {
+            spell = kind,
+            level = level.value(),
+            gold = gold.value(),
+            boss = storybook.selected<i32>(duel_kind) == 1,
+            seed = seed.value(),
+            phase = storybook.selected<Phase>(phase),
+            target = target.value()
+        }
+    end
+
+    local function replay(): unit
+        local setup = configuration()
+        previous = setup
+        initialized = true
+        math.randomseed(setup.seed::f64)
+        city = city_map.State.new(setup.seed)
+        duel = game_screen.State.new()
+        duel:reset(city, setup.boss, setup.spell)
+        duel.run.gold = setup.gold
+        duel.run.spells = {spells.Spell.new(setup.spell, setup.level)}
+        duel:deal_vault()
+        duel.presentation:skip()
+        layout.update(WIDTH, HEIGHT)
+        local viewport = layout.current()
+        city:resize(viewport.width, viewport.height)
+        duel:place_city(city)
+        local aimed: i32 = math.min(setup.target, duel.rules:community_size()) - 1
+        if setup.phase ~= "board" then
+            duel:arm_spell(0)
+            duel.board:focus_table(aimed)
+            -- An unaffordable setup remains playable without inventing gold or
+            -- bypassing the rules' cast validation.
+            if setup.phase == "casting" and duel.ui.cast_slot ~= nil then
+                duel:confirm_cast(0, aimed)
+            end
+        end
+    end
+
+    -- Args can change while a scene stays mounted. Compare the setup values,
+    -- rather than redealing every draw and erasing the player's actions.
+    local function sync_setup(): unit
+        if not initialized then
+            replay()
+        elseif not same_setup(previous, configuration()) then
+            replay()
+        end
+    end
+
+    local function update(dt: f64, input: engine.Input): unit
+        sync_setup()
+        -- Keep a configured cast at its first frame until it can be seen.
+        if not book.assets.load_finished then
+            return
+        end
+        duel:steer_city(city)
+        duel:update(city, dt)
+        city:update(dt)
+    end
+
+    local function paint(surface: ui.Surface, bounds: box.Rect): unit
+        layout.update(WIDTH, HEIGHT)
+        local viewport = layout.current()
+        city:resize(viewport.width, viewport.height)
+        local graphics = surface.graphics
+        graphics:push()
+        graphics:scale(viewport.scale, viewport.scale)
+        if city.cover < 1.0 then
+            duel:draw_vault(surface)
+        end
+        if city:visible() then
+            city_view:draw(city, graphics, duel:landmark_stop())
+        end
+        if duel:fence_open() then
+            duel:draw_fence(city, viewport, surface)
+        end
+        graphics:pop()
+    end
+
+    local function keypressed(key: string): unit
+        sync_setup()
+        if key == "r" or key == "R" or key == "m" or key == "M" then
+            replay()
+        elseif duel:keypressed(city, key) == "exit" then
+            replay()
+        end
+    end
+
+    local function mousepressed(x: f64, y: f64, button: i32): unit
+        sync_setup()
+        duel:mousepressed(city, layout.canvas_x(x), layout.canvas_y(y), button)
+    end
+
+    local function mousereleased(x: f64, y: f64, button: i32): unit
+        sync_setup()
+        x = layout.canvas_x(x)
+        y = layout.canvas_y(y)
+        if duel:on_map() then
+            duel:mousereleased(city, x, y, button)
+        elseif button == 1 then
+            -- Match the screen's release adapter, intercepting only the two
+            -- run-reset controls so they restore this scenario's setup.
+            local action = duel.board:pointer_up(x, y, button)
+            if action.kind == "restart" or action.kind == "menu" then
+                replay()
+            else
+                duel:perform_board_action(city, action)
+            end
+        end
+    end
+
+    local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+        sync_setup()
+        duel:mousemoved(layout.canvas_x(x), layout.canvas_y(y))
+    end
+
+    local function accessible_state(): engine.AccessibleState
+        sync_setup()
+        local state = accessibility.duel_state(duel)
+        for item in state.items do
+            if item.key == "restart" then
+                item.label = "Replay scenario"
+            elseif item.key == "menu" then
+                item.label = "Return to scenario start"
+            end
+        end
+        return state
+    end
+
+    local function accessible_activate(key: string): unit
+        sync_setup()
+        if key == "restart" or key == "menu" then
+            replay()
+        elseif accessibility.duel_activate(duel, city, key) then
+            replay()
+        end
+    end
+
+    return book:scene(
+        {
+            node = function(): ui.Node
+                return ui.Node.sized(WIDTH, HEIGHT, paint)
+            end,
+            load = replay,
+            present = sync_setup,
+            update = update,
+            keypressed = keypressed,
+            mousepressed = mousepressed,
+            mousereleased = mousereleased,
+            mousemoved = mousemoved,
+            accessibility = accessible_state,
+            accessibility_activate = accessible_activate,
+            accessibility_focus = function(key: string): unit
+                accessibility.duel_focus(duel, key)
+            end,
+            width = WIDTH,
+            height = HEIGHT,
+            scale = 1.0,
+            background = "#09090b"
+        }
+    )
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Sandbox",
+            duel_scene(spells.SpellKind.Firebolt, true),
+            {
+                spell.declaration,
+                level.declaration,
+                gold.declaration,
+                duel_kind.declaration,
+                seed.declaration,
+                phase.declaration,
+                target.declaration
+            }
+        ),
+        storybook.story(
+            "Firebolt",
+            duel_scene(spells.SpellKind.Firebolt, false),
+            {
+                level.declaration,
+                gold.declaration,
+                duel_kind.declaration,
+                seed.declaration,
+                phase.declaration,
+                target.declaration
+            }
+        ),
+        storybook.story(
+            "Freeze Ray",
+            duel_scene(spells.SpellKind.FreezeRay, false),
+            {
+                level.declaration,
+                gold.declaration,
+                duel_kind.declaration,
+                seed.declaration,
+                phase.declaration,
+                target.declaration
+            }
+        ),
+        storybook.story(
+            "Raise Card",
+            duel_scene(spells.SpellKind.RaiseCard, false),
+            {
+                level.declaration,
+                gold.declaration,
+                duel_kind.declaration,
+                seed.declaration,
+                phase.declaration,
+                target.declaration
+            }
+        ),
+        storybook.story(
+            "Clone",
+            duel_scene(spells.SpellKind.Clone, false),
+            {
+                level.declaration,
+                gold.declaration,
+                duel_kind.declaration,
+                seed.declaration,
+                phase.declaration,
+                target.declaration
+            }
+        )
+    }
+)
