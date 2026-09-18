@@ -691,7 +691,7 @@ function State:keypressed(city: city_map.State, key: string): ScreenAction
     end
     -- Forfeiting interrupts every card-game phase, including spells and overlays.
     if key == "k" or key == "K" then
-        self.run.hearts = 0
+        self.run.health = 0
         ui:reset()
         presentation:reset()
         self.intervention:reset()

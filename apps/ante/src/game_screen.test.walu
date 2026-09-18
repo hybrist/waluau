@@ -32,12 +32,12 @@ describe(
 
                 screen:keypressed(city, "k")
 
-                expect(screen.run.hearts):toBe(0)
+                expect(screen.run.health):toBe(0)
                 expect(tostring(screen:run_outcome())):toBe("lost-health")
                 expect(tostring(screen.ui.modal)):toBe("final")
                 expect(screen.presentation:is_animating()):toBe(false)
                 screen:keypressed(city, "Enter")
-                expect(screen.run.hearts):toBe(run.max_hearts)
+                expect(screen.run.health):toBe(run.max_health)
                 expect(screen.run.duel):toBe(1)
                 expect(tostring(screen.ui.modal)):toBe("none")
             end
