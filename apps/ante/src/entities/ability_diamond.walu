@@ -134,6 +134,9 @@ function short_name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Tornado then
         return "STORM"
     end
+    if kind == spells.SpellKind.Oblivion then
+        return "VOID"
+    end
     return ""
 end
 

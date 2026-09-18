@@ -172,6 +172,7 @@ describe(
                 local wither: bool = false
                 local mind: bool = false
                 local tornado: bool = false
+                local oblivion: bool = false
                 for _ = 1, 100 do
                     local visit = shop_.State.new(run)
                     for slot in visit.slots do
@@ -191,15 +192,19 @@ describe(
                         if name == "Tornado (level 1)" then
                             tornado = true
                         end
+                        if name == "Oblivion (level 1)" then
+                            oblivion = true
+                        end
                     end
                 end
-                expect(drain and wind and wither and mind and tornado):toBe(true)
+                expect(drain and wind and wither and mind and tornado and oblivion):toBe(true)
                 for kind in {
                     spells.SpellKind.DrainLife,
                     spells.SpellKind.SecondWind,
                     spells.SpellKind.Wither,
                     spells.SpellKind.MindRead,
-                    spells.SpellKind.Tornado
+                    spells.SpellKind.Tornado,
+                    spells.SpellKind.Oblivion
                 } do
                     local buyer = run_.State.new(spells.SpellKind.Firebolt, false)
                     local visit = shop_.State.new(buyer)

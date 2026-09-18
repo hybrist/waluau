@@ -38,6 +38,9 @@ function name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Tornado then
         return "TORNADO"
     end
+    if kind == spells.SpellKind.Oblivion then
+        return "OBLIVION"
+    end
     return "NO SPELL"
 end
 
@@ -65,6 +68,9 @@ function color(kind: spells.SpellKind): string
     end
     if kind == spells.SpellKind.Tornado then
         return "#67e8f9"
+    end
+    if kind == spells.SpellKind.Oblivion then
+        return "#a78bfa"
     end
     return "#4ade80"
 end

@@ -493,6 +493,10 @@ function State:confirm_cast(slot: i32, table_card: i32): unit
     end
     local kind: spells.SpellKind = self.rules:spell_kind(slot) or spells.SpellKind.Firebolt
     if kind:is_untargeted() then
+        local destroyed: {game.OblivionTarget} = {}
+        if kind == spells.SpellKind.Oblivion then
+            destroyed = self.rules:oblivion_targets()
+        end
         if self.rules:cast_spell(slot, -1) then
             if kind == spells.SpellKind.DrainLife then
                 self.run:heal(run_module.health_per_heart)
@@ -501,6 +505,12 @@ function State:confirm_cast(slot: i32, table_card: i32): unit
                 self.spell_feedback = "Second Wind completed. Raised your weakest hand card."
             elseif kind == spells.SpellKind.MindRead then
                 self.spell_feedback = "Mind Read completed. Opponent hand revealed."
+            elseif kind == spells.SpellKind.Oblivion then
+                self.ui:clear_picks()
+                self.presentation:oblivion_resolved(destroyed, self.rules:view())
+                self.spell_feedback = "Oblivion completed. Destroyed " .. tostring(
+                    #destroyed
+                ) .. " exposed cards; dealt concealed replacements."
             elseif kind == spells.SpellKind.Tornado then
                 self.ui:clear_picks()
                 self.spell_feedback = "Tornado completed. Mixed cards from both hands and the center."

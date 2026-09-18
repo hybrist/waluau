@@ -1608,6 +1608,25 @@ function State:is_frozen(table_card: i32): bool
     return table_card >= 0 and table_card < #self.frozen_middle and self.frozen_middle[table_card + 1]
 end
 
+-- Both players can identify watched cards; Mind Read additionally exposes
+-- cards that have never passed through the center.
+export type OblivionTarget = { opponent: bool, index: i32, card: Card }
+
+function State:oblivion_targets(): {OblivionTarget}
+    local targets: {OblivionTarget} = {}
+    for index, held in self.player_hand do
+        if held.known or held.revealed == true then
+            table.insert(targets, { opponent = false, index = index - 1, card = held.card })
+        end
+    end
+    for index, held in self.computer_hand do
+        if held.known or held.revealed == true then
+            table.insert(targets, { opponent = true, index = index - 1, card = held.card })
+        end
+    end
+    return targets
+end
+
 -- Whether the spell in that loadout slot could be cast right now: the run is
 -- live, the slot holds a spell, and the player can pay its price. Where in the
 -- turn a cast is allowed is the input layer's decision; affordability is the
@@ -1619,6 +1638,12 @@ function State:can_cast(slot: i32): bool
     local kind: SpellKind = self.spells[slot + 1].kind
     if kind:is_untargeted() and #self.player_hand == 0 then
         return false
+    end
+    if kind == spells.SpellKind.Oblivion then
+        local targets = self:oblivion_targets()
+        if #targets == 0 or #targets > #self.deck then
+            return false
+        end
     end
     if kind == spells.SpellKind.MindRead then
         local hidden: bool = false
@@ -1760,7 +1785,16 @@ function State:cast_spell(slot: i32, table_card: i32): bool
     end
     self.player_points -= spell.cost
     self.cast_kind = spell.kind
-    if spell.kind == spells.SpellKind.MindRead then
+    if spell.kind == spells.SpellKind.Oblivion then
+        for target in self:oblivion_targets() do
+            local replacement: HandSlot = deal_slot(self.deck)
+            if target.opponent then
+                self.computer_hand[target.index + 1] = replacement
+            else
+                self.player_hand[target.index + 1] = replacement
+            end
+        end
+    elseif spell.kind == spells.SpellKind.MindRead then
         for index, held in self.computer_hand do
             self.computer_hand[index] = { card = held.card, known = held.known, revealed = true }
         end

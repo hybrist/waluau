@@ -10,7 +10,8 @@ export enum SpellKind {
     SecondWind,
     Wither,
     MindRead,
-    Tornado
+    Tornado,
+    Oblivion
 }
 
 function SpellKind.from(value: i32): SpellKind?
@@ -40,6 +41,9 @@ function SpellKind.from(value: i32): SpellKind?
     end
     if value == 9 then
         return SpellKind.Tornado
+    end
+    if value == 10 then
+        return SpellKind.Oblivion
     end
     return nil
 end
@@ -75,6 +79,8 @@ function SpellKind:__tostring(): string
         return "Mind Read"
     elseif self == SpellKind.Tornado then
         return "Tornado"
+    elseif self == SpellKind.Oblivion then
+        return "Oblivion"
     else
         return "Unknown Spell"
     end
@@ -84,7 +90,7 @@ end
 const STARTING_SPELL_COUNT: i32 = 4
 
 function SpellKind:is_untargeted(): bool
-    return self == SpellKind.DrainLife or self == SpellKind.SecondWind or self == SpellKind.MindRead or self == SpellKind.Tornado
+    return self == SpellKind.DrainLife or self == SpellKind.SecondWind or self == SpellKind.MindRead or self == SpellKind.Tornado or self == SpellKind.Oblivion
 end
 
 function SpellKind:description(): string
@@ -98,6 +104,8 @@ function SpellKind:description(): string
         return "Reveal all cards currently in the opponent hand."
     elseif self == SpellKind.Tornado then
         return "Mix up to level cards per area; frozen cards stay put."
+    elseif self == SpellKind.Oblivion then
+        return "Destroy exposed hand cards; draw hidden replacements."
     end
     return ""
 end

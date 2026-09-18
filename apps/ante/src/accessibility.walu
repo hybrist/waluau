@@ -41,7 +41,7 @@ function help(items: {Item}): unit
     text(
         items,
         "help-run",
-        "Hearts are your lives and do not refill between duels. Gold and spells carry on. Spells spend gold; select a spell, then a table card to target it. Drain Life, Second Wind, Mind Read, and Tornado cast immediately without a target. Frozen table cards cannot be exchanged.",
+        "Hearts are your lives and do not refill between duels. Gold and spells carry on. Spells spend gold; select a spell, then a table card to target it. Drain Life, Second Wind, Mind Read, Tornado, and Oblivion cast immediately without a target. Frozen table cards cannot be exchanged.",
         nil
     )
     text(

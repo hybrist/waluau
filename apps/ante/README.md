@@ -47,7 +47,7 @@ sequence of vaults continue for as long as the run still has hearts.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
 once, on keys 1 and 2. A visit to the shop stocks exactly two offers, drawn
-without replacement from one pool: a scroll for each of the nine spells, plus a
+without replacement from one pool: a scroll for each of the ten spells, plus a
 healing potion. A scroll for a known spell carries its next level; a scroll for
 a new kind starts at level one and takes the next free key. There is no separate
 learn-or-upgrade product and no trade prompt: once both keys are taken, a scroll
@@ -72,7 +72,7 @@ and crumbles together, and the deck refills all of them in one throw. Freeze Ray
 Raise Card, and Clone take the one ward they were aimed at, whatever their level.
 
 The starting vendor still offers Firebolt, Freeze Ray, Raise Card, and Clone.
-Five additional spells can be learned in shops during a run, each costing five
+Six additional spells can be learned in shops during a run, each costing five
 gold per cast:
 
 - **Drain Life** immediately lowers every card in your hand by one rank
@@ -91,6 +91,13 @@ gold per cast:
   area. Frozen center cards stay put. Short rows contribute only their available
   cards. Shuffled hand cards become concealed and lose their watched marks;
   untouched cards keep their information. The deck and wagers are unchanged.
+
+- **Oblivion** destroys every exposed card in both hands: watched cards and
+  cards revealed by Mind Read. They join the spent pile, and each destroyed slot
+  refills from the deck with a concealed card, including in boss battles.
+  Concealed hand cards and the center stay unchanged. No exposed cards, or too
+  few cards in the deck to refill every slot, means no cast and no gold spent.
+  Its reach is always all exposed cards, regardless of level.
 
 Suits and exposed-card knowledge survive rank-changing spells.
 
@@ -243,7 +250,7 @@ Keyboard (in the vault):
 - 1 and 2 enter targeting for the spell on that key; arrows choose a ward, Enter
   casts, and Esc cancels. The other spell's key swings the aim over to it, and
   the aimed spell's own key calls the cast off. Drain Life, Second Wind,
-  Mind Read, and Tornado cast immediately without targeting.
+  Mind Read, Tornado, and Oblivion cast immediately without targeting.
 - H opens the breach ledger, ? opens help, and R restarts the run.
 - On the vault's verdict, Enter, Space, or a click takes whatever the run has
   next: the fence before the following vault, the walk on into the endless city
