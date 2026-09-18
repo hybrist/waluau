@@ -34,7 +34,15 @@ local spell = storybook.select(
         storybook.choice("Firebolt", 1::i32),
         storybook.choice("Freeze Ray", 2::i32),
         storybook.choice("Raise Card", 3::i32),
-        storybook.choice("Clone", 4::i32)
+        storybook.choice("Clone", 4::i32),
+        storybook.choice("Drain Life", 5::i32),
+        storybook.choice("Second Wind", 6::i32),
+        storybook.choice("Wither", 7::i32),
+        storybook.choice("Mind Read", 8::i32),
+        storybook.choice("Tornado", 9::i32),
+        storybook.choice("Oblivion", 10::i32),
+        storybook.choice("Color Change", 11::i32),
+        storybook.choice("Rank Change", 12::i32)
     }
 )
 local level = storybook.range("level", 1, 1, 5, 1)
