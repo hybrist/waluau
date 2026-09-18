@@ -479,7 +479,31 @@ function State:cancel_cast(): unit
     self.spell_feedback = "Spell cancelled. No gold spent."
 end
 
+function State:can_cast(slot: i32): bool
+    if not self.rules:can_cast(slot) then
+        return false
+    end
+    return self.rules:spell_kind(slot) ~= spells.SpellKind.DrainLife or self.run:can_heal()
+end
+
 function State:confirm_cast(slot: i32, table_card: i32): unit
+    if not self:can_cast(slot) then
+        self.ui.cast_slot = nil
+        return
+    end
+    local kind: spells.SpellKind = self.rules:spell_kind(slot) or spells.SpellKind.Firebolt
+    if kind:targets_hand() then
+        if self.rules:cast_spell(slot, -1) then
+            if kind == spells.SpellKind.DrainLife then
+                self.run:heal(run_module.health_per_heart)
+                self.spell_feedback = "Drain Life completed. Hand ranks lowered by 1; restored 1 heart."
+            else
+                self.spell_feedback = "Second Wind completed. Raised your weakest hand card."
+            end
+        end
+        self.ui.cast_slot = nil
+        return
+    end
     -- What the cast takes is asked before it is paid for: the rules answer
     -- from the spell's own level, and charging first would leave nothing to
     -- ask should the aim turn out to name no card at all.
@@ -533,7 +557,7 @@ function State:arm_spell(slot: i32): unit
         self:cancel_cast()
         return
     end
-    if not self.rules:can_cast(slot) then
+    if not self:can_cast(slot) then
         return
     end
     -- The cast should respond on the first gesture. If the opening deal is
@@ -541,6 +565,11 @@ function State:arm_spell(slot: i32): unit
     -- visibly present for the aim cursor.
     if self.presentation:is_animating() then
         self.presentation:skip()
+    end
+    local kind: spells.SpellKind = self.rules:spell_kind(slot) or spells.SpellKind.Firebolt
+    if kind:targets_hand() then
+        self:confirm_cast(slot, -1)
+        return
     end
     ui.cast_slot = slot
     self.board:focus_table(0)

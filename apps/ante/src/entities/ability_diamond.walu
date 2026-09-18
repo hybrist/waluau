@@ -119,6 +119,15 @@ function short_name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Clone then
         return "CLONE"
     end
+    if kind == spells.SpellKind.DrainLife then
+        return "DRAIN"
+    end
+    if kind == spells.SpellKind.SecondWind then
+        return "WIND"
+    end
+    if kind == spells.SpellKind.Wither then
+        return "WITHER"
+    end
     return ""
 end
 

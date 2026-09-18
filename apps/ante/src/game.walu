@@ -1614,6 +1614,21 @@ function State:can_cast(slot: i32): bool
     if self.finished or slot < 0 or slot >= #self.spells then
         return false
     end
+    local kind: SpellKind = self.spells[slot + 1].kind
+    if kind:targets_hand() and #self.player_hand == 0 then
+        return false
+    end
+    if kind == spells.SpellKind.SecondWind then
+        local useful: bool = false
+        for held in self.player_hand do
+            if held.card.rank < MAX_RANK then
+                useful = true
+            end
+        end
+        if not useful then
+            return false
+        end
+    end
     return self.player_points >= self.spells[slot + 1].cost
 end
 
@@ -1668,13 +1683,55 @@ end
 -- nothing — when the slot is empty or the spell unaffordable, so a confirmed
 -- target only spends gold once this accepts.
 function State:cast_spell(slot: i32, table_card: i32): bool
-    if not self:can_cast(slot) or table_card < 0 or table_card >= #self.middle then
+    if not self:can_cast(slot) then
         return false
     end
     local spell: Spell = self.spells[slot + 1]
+    if not spell.kind:targets_hand() then
+        if table_card < 0 or table_card >= #self.middle then
+            return false
+        end
+        if spell.kind == spells.SpellKind.Wither and self.middle[table_card + 1].rank == MIN_RANK then
+            return false
+        end
+    end
     self.player_points -= spell.cost
     self.cast_kind = spell.kind
-    if spell.kind == spells.SpellKind.FreezeRay then
+    if spell.kind == spells.SpellKind.DrainLife then
+        for index, held in self.player_hand do
+            local rank: i32 = held.card.rank - 1
+            if rank < MIN_RANK then
+                rank = MIN_RANK
+            end
+            self.player_hand[index] = {
+                card = { rank = rank, suit = held.card.suit },
+                known = held.known
+            }
+        end
+    elseif spell.kind == spells.SpellKind.SecondWind then
+        local weakest: i32 = 1
+        for index, held in self.player_hand do
+            if held.card.rank < self.player_hand[weakest].card.rank then
+                weakest = index
+            end
+        end
+        local held: HandSlot = self.player_hand[weakest]
+        local rank: i32 = held.card.rank + spell.level
+        if rank > MAX_RANK then
+            rank = MAX_RANK
+        end
+        self.player_hand[weakest] = {
+            card = { rank = rank, suit = held.card.suit },
+            known = held.known
+        }
+    elseif spell.kind == spells.SpellKind.Wither then
+        local card: Card = self.middle[table_card + 1]
+        local rank: i32 = card.rank - spell.level
+        if rank < MIN_RANK then
+            rank = MIN_RANK
+        end
+        self.middle[table_card + 1] = { rank = rank, suit = card.suit }
+    elseif spell.kind == spells.SpellKind.FreezeRay then
         self:clear_frozen()
         self.frozen_middle[table_card + 1] = true
     end

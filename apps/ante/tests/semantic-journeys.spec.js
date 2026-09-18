@@ -96,20 +96,21 @@ test('buys a spell between duels, carries resources, then loses and starts a fre
   await expect(status(page)).toContainText('Duel cleared. Standard run. Standard duel. Duel 1. Health 2. Gold 21.');
   await button(page, 'Continue run').click();
   const clone = button(page, 'Clone (level 1), 4 gold');
-  const raise = button(page, 'Raise Card (level 1), 4 gold');
+  const wither = button(page, 'Wither (level 1), 4 gold');
   await expect(clone).toBeEnabled();
-  await expect(raise).toBeEnabled();
-  await clone.click();
+  await expect(wither).toBeEnabled();
+  await expect(wither).toHaveAccessibleDescription('Table card -level ranks (min 2).');
+  await wither.click();
   await expect(status(page)).toContainText('Health 2. Gold 17.');
-  await expect(clone).toBeDisabled();
+  await expect(wither).toBeDisabled();
   // The two-spell loadout is full; the other kind cannot be purchased.
-  await expect(raise).toBeDisabled();
+  await expect(clone).toBeDisabled();
   await button(page, 'Enter next duel').click();
   await ready(page);
   await expect(status(page)).toContainText('Duel 2. Health 2. Gold 17.');
   await expect(group(page, 'Spells').getByRole('button')).toHaveCount(2);
   await expect(group(page, 'Spells').getByRole('button', { name: 'Firebolt', exact: true })).toBeEnabled();
-  await expect(group(page, 'Spells').getByRole('button', { name: 'Clone', exact: true })).toBeEnabled();
+  await expect(group(page, 'Spells').getByRole('button', { name: 'Wither', exact: true })).toBeEnabled();
   await playHand(page, ['8 of red', '10 of red'], 'pair', 'Hand 1: Opponent wins.');
   await ready(page);
   await expect(status(page)).toContainText('Duel 2. Health 1. Gold 17.');

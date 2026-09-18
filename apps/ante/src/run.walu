@@ -309,9 +309,8 @@ function State:can_heal(): bool
 end
 
 -- Give back health a duel took, never past the pool the run opened with. This
--- is the one thing that moves health upward: nothing inside a duel repairs it
--- and clearing one does not either, so health only ever climbs by something
--- bought in the intermission.
+-- serves both shop potions and Drain Life casts. Clearing a duel alone never
+-- repairs health.
 function State:heal(health: i32): bool
     if health < 1 or not self:can_heal() then
         return false

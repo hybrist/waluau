@@ -122,11 +122,23 @@ function draw_row(
     end
 
     local slot: Slot = state.slots[index + 1]
+    local baseline: f64 = ROW_BASELINE
+    if slot.item:detail() ~= "" then
+        baseline = 23.0
+        ink.text(
+            surface.graphics,
+            slot.item:detail(),
+            row_bounds.x + ROW_PAD_X,
+            row_bounds.y + 39.0,
+            9.0,
+            shop_slot_color(slot, presentation.run)
+        )
+    end
     ink.text(
         surface.graphics,
         slot.item:describe(),
         row_bounds.x + ROW_PAD_X,
-        row_bounds.y + ROW_BASELINE,
+        row_bounds.y + baseline,
         ROW_TEXT_SIZE,
         shop_slot_color(slot, presentation.run)
     )

@@ -47,7 +47,7 @@ sequence of vaults continue for as long as the run still has hearts.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
 once, on keys 1 and 2. A visit to the shop stocks exactly two offers, drawn
-without replacement from one pool: a scroll for each of the four spells, plus a
+without replacement from one pool: a scroll for each of the seven spells, plus a
 healing potion. A scroll for a known spell carries its next level; a scroll for
 a new kind starts at level one and takes the next free key. There is no separate
 learn-or-upgrade product and no trade prompt: once both keys are taken, a scroll
@@ -68,8 +68,23 @@ neighbours follow, spreading outward — right, left, right — so the aim names
 centre of what burns. A bolt thrown at the end of the row keeps spreading along
 the side that still has board rather than wasting the level, and a level past the
 row's width takes the row whole. Every ward it reaches ignites off the same clock
-and crumbles together, and the deck refills all of them in one throw. The other
-three spells take the one ward they were aimed at, whatever their level.
+and crumbles together, and the deck refills all of them in one throw. Freeze Ray,
+Raise Card, and Clone take the one ward they were aimed at, whatever their level.
+
+The starting vendor still offers Firebolt, Freeze Ray, Raise Card, and Clone.
+Three additional spells can be learned in shops during a run, each costing five
+gold per cast:
+
+- **Drain Life** immediately lowers every card in your hand by one rank
+  (minimum 2) and restores exactly one heart. It requires missing health and
+  never revives an ended run. Its effect stays the same at every level.
+- **Second Wind** immediately raises the lowest-ranked card in your hand by its
+  spell level (maximum Ace). Ties use the first card in hand order; an all-Ace
+  hand cannot cast it.
+- **Wither** lowers a selected table card by its spell level (minimum 2). A
+  target already at 2 costs nothing.
+
+Suits and exposed-card knowledge survive these rank changes.
 
 Every third vault of a run is a boss battle: both sides start with seven relics
 rather than five, widening the opening feint and committed-pair choice. Spent
@@ -219,7 +234,8 @@ Keyboard (in the vault):
 - C sorts the relic fan by school (color); V sorts it by rank.
 - 1 and 2 enter targeting for the spell on that key; arrows choose a ward, Enter
   casts, and Esc cancels. The other spell's key swings the aim over to it, and
-  the aimed spell's own key calls the cast off.
+  the aimed spell's own key calls the cast off. Drain Life and Second Wind
+  cast immediately on your hand without targeting.
 - H opens the breach ledger, ? opens help, and R restarts the run.
 - On the vault's verdict, Enter, Space, or a click takes whatever the run has
   next: the fence before the following vault, the walk on into the endless city
@@ -251,7 +267,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `city_map_render.walu` | City and route captures refracted through the same scrying lens, preserving route ink. |
 | `city_route_render.walu` | Golden street progress and player marker, dashed upcoming streets, and outlines of the actual duel buildings; fades map annotations during entry. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
-| `run.walu` | DOM-free run state: the vault sequence, its boss cadence, victory milestone and endless tail, the spell loadout, and the mana and hearts carried between vaults — including the one way hearts climb back. |
+| `run.walu` | DOM-free run state: the vault sequence, its boss cadence, victory milestone and endless tail, the spell loadout, and the mana and hearts carried between vaults — including healing from potions and Drain Life. |
 | `shop.walu` | DOM-free intermission between vaults: behavior-bearing item stock, quoted prices, spent offers, cursor input, and hot-replacement snapshots. |
 | `items/` | The common item behavior/snapshot seam, its restore catalog, and the concrete offers: spell scrolls that teach or raise a spell without replacing the loadout, and a healing potion that gives back one heart. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and presentation snapshots. |
