@@ -3,6 +3,7 @@
 -- be checked without a canvas. Never pass a rules View to the browser: it
 -- includes concealed opponent cards that this presentation must not reveal.
 local engine = require("waluau:engine")
+local run_ = require("./run")
 local game = require("./game")
 local menu = require("./menu")
 local game_screen = require("./game_screen")
@@ -229,11 +230,11 @@ function duel_state(screen: game_screen.State): State
     local resources: string = context .. " Duel " .. tostring(
         screen.run.duel
     ) .. ". Health " .. tostring(
-        screen.run.hearts
+        (screen.run.health::f64) / (run_.health_per_heart::f64)
     ) .. ". Gold " .. tostring(screen.rules:gold()) .. "."
     if screen:on_map() then
         resources = "Health " .. tostring(
-            screen.run.hearts
+            (screen.run.health::f64) / (run_.health_per_heart::f64)
         ) .. ". Gold " .. tostring(screen.run.gold) .. "."
         for index, slot in screen.shop.slots do
             button(

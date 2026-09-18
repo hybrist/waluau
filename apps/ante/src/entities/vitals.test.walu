@@ -1,0 +1,39 @@
+require("waluau:vitest")
+local vitals = require("./vitals")
+
+describe(
+    "heart fill",
+    function()
+        it(
+            "fills three slots in twelfths from left to right",
+            function()
+                expect(vitals.heart_fill(36, 2)):toBe(1.0)
+                expect(vitals.heart_fill(18, 0)):toBe(1.0)
+                expect(vitals.heart_fill(18, 1)):toBe(0.5)
+                expect(vitals.heart_fill(18, 2)):toBe(0.0)
+                expect(vitals.heart_fill(1, 0)):toBe(1.0 / 12.0)
+                expect(vitals.heart_fill(0, 0)):toBe(0.0)
+            end
+        )
+        it(
+            "clips the red surface at the boundary and preserves its lighting",
+            function()
+                local triangle: {vitals.HeartVertex} = {
+                    { x = -1.0, y = 0.0, shade = 0.0 },
+                    { x = 1.0, y = 0.0, shade = 1.0 },
+                    { x = -1.0, y = 2.0, shade = 0.0 }
+                }
+                local half = vitals.clip_triangle(triangle, 0.0)
+                expect(#half):toBe(4)
+                expect(half[2].x):toBe(0.0)
+                expect(half[2].y):toBe(0.0)
+                expect(half[2].shade):toBe(0.5)
+                expect(half[3].x):toBe(0.0)
+                expect(half[3].y):toBe(1.0)
+                expect(half[3].shade):toBe(0.5)
+                expect(#vitals.clip_triangle(triangle, -2.0)):toBe(0)
+                expect(#vitals.clip_triangle(triangle, 1.0)):toBe(3)
+            end
+        )
+    end
+)

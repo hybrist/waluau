@@ -72,7 +72,7 @@ local function present_stock(): unit
     stock_run.gold = stock_gold.value()
     stock_run.duel = stock_duel.value()
     stock_run.cleared = stock_run.duel - 1
-    stock_run.hearts = stock_hearts.value()
+    stock_run.health = stock_hearts.value() * run_.health_per_heart
     stock_shop.cursor = stock_cursor.value()
     apply_sold(stock_shop, storybook.selected<SoldChoice>(stock_sold))
     stock_view:present(stock_shop, stock_run)
