@@ -128,6 +128,12 @@ function short_name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Wither then
         return "WITHER"
     end
+    if kind == spells.SpellKind.MindRead then
+        return "MIND"
+    end
+    if kind == spells.SpellKind.Tornado then
+        return "STORM"
+    end
     return ""
 end
 

@@ -47,7 +47,7 @@ sequence of vaults continue for as long as the run still has hearts.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
 once, on keys 1 and 2. A visit to the shop stocks exactly two offers, drawn
-without replacement from one pool: a scroll for each of the seven spells, plus a
+without replacement from one pool: a scroll for each of the nine spells, plus a
 healing potion. A scroll for a known spell carries its next level; a scroll for
 a new kind starts at level one and takes the next free key. There is no separate
 learn-or-upgrade product and no trade prompt: once both keys are taken, a scroll
@@ -72,7 +72,7 @@ and crumbles together, and the deck refills all of them in one throw. Freeze Ray
 Raise Card, and Clone take the one ward they were aimed at, whatever their level.
 
 The starting vendor still offers Firebolt, Freeze Ray, Raise Card, and Clone.
-Three additional spells can be learned in shops during a run, each costing five
+Five additional spells can be learned in shops during a run, each costing five
 gold per cast:
 
 - **Drain Life** immediately lowers every card in your hand by one rank
@@ -83,8 +83,16 @@ gold per cast:
   hand cannot cast it.
 - **Wither** lowers a selected table card by its spell level (minimum 2). A
   target already at 2 costs nothing.
+- **Mind Read** immediately reveals every card currently in the opponent's
+  hand. Those cards stay face-up while held; later draws remain hidden. Casting
+  again while the entire hand is already revealed costs nothing.
+- **Tornado** randomly takes up to its level in cards from each hand and the
+  center, shuffles them into one pool, and deals the same number back to each
+  area. Frozen center cards stay put. Short rows contribute only their available
+  cards. Shuffled hand cards become concealed and lose their watched marks;
+  untouched cards keep their information. The deck and wagers are unchanged.
 
-Suits and exposed-card knowledge survive these rank changes.
+Suits and exposed-card knowledge survive rank-changing spells.
 
 Every third vault of a run is a boss battle: both sides start with seven relics
 rather than five, widening the opening feint and committed-pair choice. Spent
@@ -234,8 +242,8 @@ Keyboard (in the vault):
 - C sorts the relic fan by school (color); V sorts it by rank.
 - 1 and 2 enter targeting for the spell on that key; arrows choose a ward, Enter
   casts, and Esc cancels. The other spell's key swings the aim over to it, and
-  the aimed spell's own key calls the cast off. Drain Life and Second Wind
-  cast immediately on your hand without targeting.
+  the aimed spell's own key calls the cast off. Drain Life, Second Wind,
+  Mind Read, and Tornado cast immediately without targeting.
 - H opens the breach ledger, ? opens help, and R restarts the run.
 - On the vault's verdict, Enter, Space, or a click takes whatever the run has
   next: the fence before the following vault, the walk on into the endless city

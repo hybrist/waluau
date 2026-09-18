@@ -1,7 +1,17 @@
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const DEFAULT_SPELL_COST: i32 = 5
 
-export enum SpellKind { Firebolt, FreezeRay, RaiseCard, Clone, DrainLife, SecondWind, Wither }
+export enum SpellKind {
+    Firebolt,
+    FreezeRay,
+    RaiseCard,
+    Clone,
+    DrainLife,
+    SecondWind,
+    Wither,
+    MindRead,
+    Tornado
+}
 
 function SpellKind.from(value: i32): SpellKind?
     if value == 1 then
@@ -24,6 +34,12 @@ function SpellKind.from(value: i32): SpellKind?
     end
     if value == 7 then
         return SpellKind.Wither
+    end
+    if value == 8 then
+        return SpellKind.MindRead
+    end
+    if value == 9 then
+        return SpellKind.Tornado
     end
     return nil
 end
@@ -55,6 +71,10 @@ function SpellKind:__tostring(): string
         return "Second Wind"
     elseif self == SpellKind.Wither then
         return "Wither"
+    elseif self == SpellKind.MindRead then
+        return "Mind Read"
+    elseif self == SpellKind.Tornado then
+        return "Tornado"
     else
         return "Unknown Spell"
     end
@@ -63,8 +83,8 @@ end
 -- Only these four are offered when starting a run; shops use the full enum.
 const STARTING_SPELL_COUNT: i32 = 4
 
-function SpellKind:targets_hand(): bool
-    return self == SpellKind.DrainLife or self == SpellKind.SecondWind
+function SpellKind:is_untargeted(): bool
+    return self == SpellKind.DrainLife or self == SpellKind.SecondWind or self == SpellKind.MindRead or self == SpellKind.Tornado
 end
 
 function SpellKind:description(): string
@@ -74,6 +94,10 @@ function SpellKind:description(): string
         return "Weakest hand card +level ranks (max Ace)."
     elseif self == SpellKind.Wither then
         return "Table card -level ranks (min 2)."
+    elseif self == SpellKind.MindRead then
+        return "Reveal all cards currently in the opponent hand."
+    elseif self == SpellKind.Tornado then
+        return "Mix up to level cards per area; frozen cards stay put."
     end
     return ""
 end

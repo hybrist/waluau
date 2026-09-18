@@ -41,7 +41,7 @@ function help(items: {Item}): unit
     text(
         items,
         "help-run",
-        "Hearts are your lives and do not refill between duels. Gold and spells carry on. Spells spend gold; select a spell, then a table card to target it. Drain Life and Second Wind affect your hand immediately. Frozen table cards cannot be exchanged.",
+        "Hearts are your lives and do not refill between duels. Gold and spells carry on. Spells spend gold; select a spell, then a table card to target it. Drain Life, Second Wind, Mind Read, and Tornado cast immediately without a target. Frozen table cards cannot be exchanged.",
         nil
     )
     text(
@@ -457,14 +457,23 @@ function duel_state(screen: game_screen.State): State
             }
         )
     end
-    -- Even the known flag does not make an unplayed opponent card face-up on
-    -- the canvas. Only a completed reveal supplies opponent card identities.
-    text(
-        items,
-        "opponent",
-        "Opponent: " .. tostring(#view.computer_hand) .. " concealed cards.",
-        nil
-    )
+    local concealed: i32 = 0
+    for slot in view.computer_hand do
+        if slot.revealed ~= true then
+            concealed += 1
+        end
+    end
+    text(items, "opponent", "Opponent: " .. tostring(concealed) .. " concealed cards.", nil)
+    for index, slot in view.computer_hand do
+        if slot.revealed == true then
+            text(
+                items,
+                "opponent-card-" .. tostring(index),
+                "Opponent card " .. tostring(index) .. ": " .. card_name(slot.card),
+                nil
+            )
+        end
+    end
     text(
         items,
         "wagers",

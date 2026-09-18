@@ -32,6 +32,12 @@ function name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Wither then
         return "WITHER"
     end
+    if kind == spells.SpellKind.MindRead then
+        return "MIND READ"
+    end
+    if kind == spells.SpellKind.Tornado then
+        return "TORNADO"
+    end
     return "NO SPELL"
 end
 
@@ -53,6 +59,12 @@ function color(kind: spells.SpellKind): string
     end
     if kind == spells.SpellKind.Wither then
         return "#c084fc"
+    end
+    if kind == spells.SpellKind.MindRead then
+        return "#e879f9"
+    end
+    if kind == spells.SpellKind.Tornado then
+        return "#67e8f9"
     end
     return "#4ade80"
 end
