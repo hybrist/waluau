@@ -24,7 +24,10 @@ type Scene = {
     keyreleased: ((string) -> unit)?,
     mousepressed: ((f64, f64, i32) -> unit)?,
     mousereleased: ((f64, f64, i32) -> unit)?,
-    mousemoved: ((f64, f64, f64, f64) -> unit)?
+    mousemoved: ((f64, f64, f64, f64) -> unit)?,
+    accessibility: (() -> engine.AccessibleState)?,
+    accessibility_activate: ((string) -> unit)?,
+    accessibility_focus: ((string) -> unit)?
 }
 
 function Book.new(): Book
@@ -103,6 +106,9 @@ function Book:scene(spec: Scene): storybook.Scene
         mousepressed = spec.mousepressed,
         mousereleased = spec.mousereleased,
         mousemoved = spec.mousemoved,
+        accessibility = spec.accessibility,
+        accessibility_activate = spec.accessibility_activate,
+        accessibility_focus = spec.accessibility_focus,
         width = (spec.width * spec.scale)::u32,
         height = (spec.height * spec.scale)::u32,
         background = spec.background

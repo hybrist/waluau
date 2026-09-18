@@ -70,6 +70,10 @@ const scenes = [
   ['tall-duel', 'screens--tall-duel', '', 0],
   ['targeting', 'screens--targeting', '', 0],
   ['firebolt-burning', 'screens--firebolt', '', 1600],
+  ['duel-firebolt', 'duel--firebolt', 'phase:2;target:2', 1600],
+  ['duel-freeze-ray', 'duel--freeze-ray', 'phase:2;target:2', 800],
+  ['duel-raise-card', 'duel--raise-card', 'phase:2;target:2', 800],
+  ['duel-clone', 'duel--clone', 'phase:2;target:2', 800],
   ['loading', 'screens--loading', '', 0],
   ['fatal-audio', 'screens--fatal-audio', '', 0],
 ];
