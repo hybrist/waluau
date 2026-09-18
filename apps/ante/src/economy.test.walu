@@ -221,7 +221,7 @@ local function play_run(seed: i32): RunTrial
     for attempt = 1::i32, 40 do
         math.randomseed(seed * 1000 + attempt)
         local duel: game.State = game.State.new(state:boss(), state.spells, state.gold)
-        autopilot(duel, state.hearts)
+        autopilot(duel, state.health // run.health_per_heart)
         -- The live game screen charges health as each breach resolves. This aggregate
         -- runner plays the whole vault in one call, then applies those same
         -- losses before asking the run for its outcome.

@@ -260,14 +260,14 @@ end
 -- from the same classifier the settle uses is what keeps the screen and the
 -- movement it announces in agreement. A live duel has no verdict yet.
 function State:run_outcome(): run_module.Outcome
-    if not self.rules:is_finished() and self.run.hearts > 0 then
+    if not self.rules:is_finished() and self.run.health > 0 then
         return "none"
     end
     local run: run_module.State = self.run
     return run_module.outcome_of(
         run.duel,
         run.rush,
-        run.hearts,
+        run.health,
         self.rules:is_finished(),
         self.rules:is_victory()
     )
@@ -276,7 +276,7 @@ end
 -- Losing the last heart finishes the screen's live duel immediately even when
 -- the duel rules have not reached their own verdict yet.
 function State:vault_finished(): bool
-    return self.run.hearts <= 0 or self.rules:is_finished()
+    return self.run.health <= 0 or self.rules:is_finished()
 end
 
 function key_command(key: Key): flow.Command

@@ -107,7 +107,7 @@ describe(
                 -- One lost hand drains the last heart before the duel is cleared.
                 screen.run.rush = true
                 screen:deal_vault()
-                screen.run.hearts = 1
+                screen.run.health = 1
 
                 finish_swap_phase(screen.rules)
                 game_fixture.arrange_breach(
@@ -121,7 +121,7 @@ describe(
 
                 screen:keypressed(city, "Enter")
 
-                expect(screen.run.hearts):toBe(0)
+                expect(screen.run.health):toBe(0)
                 expect(screen.rules:is_finished()):toBe(false)
                 expect(screen.ui.revealing):toBe(true)
 
@@ -130,7 +130,7 @@ describe(
                 expect(tostring(screen.ui.modal)):toBe("final")
 
                 screen:keypressed(city, "Enter")
-                expect(screen.run.hearts):toBe(run.max_hearts)
+                expect(screen.run.health):toBe(run.max_health)
                 expect(screen.run.duel):toBe(1)
                 expect(tostring(screen.ui.modal)):toBe("none")
             end
@@ -159,7 +159,7 @@ describe(
 
                 screen:keypressed(city, "Enter")
 
-                expect(screen.run.hearts):toBe(run.max_hearts - 1)
+                expect(screen.run.health):toBe(run.max_health - run.health_per_heart)
                 expect(screen.rules:is_finished()):toBe(true)
                 expect(screen.rules:is_victory()):toBe(false)
                 expect(screen.ui.revealing):toBe(true)
@@ -170,7 +170,7 @@ describe(
                 expect(tostring(screen:run_outcome())):toBe("lost-duel")
 
                 screen:keypressed(city, "Enter")
-                expect(screen.run.hearts):toBe(run.max_hearts)
+                expect(screen.run.health):toBe(run.max_health)
                 expect(screen.run.duel):toBe(1)
                 expect(tostring(screen.ui.modal)):toBe("none")
             end
@@ -199,7 +199,7 @@ describe(
 
                 screen:keypressed(city, "Enter")
 
-                expect(screen.run.hearts):toBe(run.max_hearts - 1)
+                expect(screen.run.health):toBe(run.max_health - run.health_per_heart)
                 expect(screen.rules:is_finished()):toBe(false)
                 expect(#screen.rules:view().player_hand):toBe(3)
                 expect(#screen.rules:view().computer_hand):toBe(3)

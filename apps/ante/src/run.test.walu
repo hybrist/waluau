@@ -56,7 +56,7 @@ describe(
                 expect(state.duel):toBe(1)
                 expect(state.cleared):toBe(0)
                 expect(state.gold):toBe(game.starting_gold)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state.health):toBe(run.max_health)
                 -- The menu's pick is the whole opening loadout, at full price and on
                 -- the first cast key.
                 expect(state:spell_count()):toBe(1)
@@ -97,14 +97,14 @@ describe(
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 expect(state:lose_hand()):toBe(false)
-                expect(state.hearts):toBe(run.max_hearts - 1)
+                expect(state.health):toBe(run.max_health - run.health_per_heart)
 
                 state:settle(true, true, 31)
                 expect(state.duel):toBe(2)
-                expect(state.hearts):toBe(run.max_hearts - 1)
+                expect(state.health):toBe(run.max_health - run.health_per_heart)
 
                 state:restart(spells.SpellKind.Firebolt, false)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state.health):toBe(run.max_health)
             end
         )
 
@@ -114,24 +114,24 @@ describe(
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 -- Nothing to undo yet, so there is no sale to make.
                 expect(state:can_heal()):toBe(false)
-                expect(state:heal(1)):toBe(false)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state:heal(run.health_per_heart)):toBe(false)
+                expect(state.health):toBe(run.max_health)
 
                 state:lose_hand()
                 expect(state:can_heal()):toBe(true)
-                expect(state:heal(1)):toBe(true)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state:heal(run.health_per_heart)):toBe(true)
+                expect(state.health):toBe(run.max_health)
 
                 -- Healing more than was lost tops out at full rather than banking
                 -- the overflow against damage the run has not taken yet.
                 state:lose_hand()
-                expect(state:heal(run.max_hearts)):toBe(true)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state:heal(run.max_health)):toBe(true)
+                expect(state.health):toBe(run.max_health)
 
                 state:lose_hand()
                 expect(state:heal(0)):toBe(false)
                 expect(state:heal(-1)):toBe(false)
-                expect(state.hearts):toBe(run.max_hearts - 1)
+                expect(state.health):toBe(run.max_health - run.health_per_heart)
             end
         )
 
@@ -142,10 +142,10 @@ describe(
                 for _ = 1, run.max_hearts do
                     state:lose_hand()
                 end
-                expect(state.hearts):toBe(0)
+                expect(state.health):toBe(0)
                 expect(state:can_heal()):toBe(false)
-                expect(state:heal(1)):toBe(false)
-                expect(state.hearts):toBe(0)
+                expect(state:heal(run.health_per_heart)):toBe(false)
+                expect(state.health):toBe(0)
             end
         )
 
@@ -178,7 +178,7 @@ describe(
                 expect(state.duel):toBe(1)
                 expect(state.cleared):toBe(0)
                 expect(state.gold):toBe(game.starting_gold)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state.health):toBe(run.max_health)
                 expect(state.start_spell):toBe(spells.SpellKind.FreezeRay)
                 expect(state:boss()):toBe(true)
             end
@@ -197,7 +197,7 @@ describe(
                     expect(restored.duel):toBe(2)
                     expect(restored.cleared):toBe(1)
                     expect(restored.gold):toBe(27)
-                    expect(restored.hearts):toBe(run.max_hearts - 1)
+                    expect(restored.health):toBe(run.max_health - run.health_per_heart)
                     expect(restored.spells[1].kind):toBe(spells.SpellKind.RaiseCard)
                     expect(restored.spells[1].level):toBe(1)
                     expect(restored.start_spell):toBe(spells.SpellKind.RaiseCard)
@@ -209,7 +209,7 @@ describe(
                 -- payload carrying a stale schema marker, or one with trailing
                 -- garbage — is a normal refusal rather than a crash.
                 expect(run.State.restore("duel-run-v3,1,10,0,1,0") == nil):toBe(true)
-                local stale_schema: string = string.gsub(encoded, "duel%-run%-v6", "duel-run-v5")
+                local stale_schema: string = string.gsub(encoded, "duel%-run%-v7", "duel-run-v6")
                 expect(run.State.restore(stale_schema) == nil):toBe(true)
                 expect(run.State.restore(encoded .. ",unexpected") == nil):toBe(true)
                 -- A spell kind is bounded by the spells that exist, and health by what
@@ -223,7 +223,7 @@ describe(
                 state.spells[1].level = 0
                 expect(run.State.restore(state:snapshot()) == nil):toBe(true)
                 state.spells[1].level = 1
-                state.hearts = run.max_hearts + 1
+                state.health = run.max_health + 1
                 expect(run.State.restore(state:snapshot()) == nil):toBe(true)
             end
         )
@@ -363,16 +363,16 @@ describe(
             "names the things a fought duel or exhausted heart pool can become",
             function()
                 expect(
-                    tostring(run.outcome_of(1, false, run.max_hearts, false, false))
+                    tostring(run.outcome_of(1, false, run.max_health, false, false))
                 ):toBe("none")
                 expect(
-                    tostring(run.outcome_of(1, false, run.max_hearts, true, true))
+                    tostring(run.outcome_of(1, false, run.max_health, true, true))
                 ):toBe("advance")
                 -- The last heart can disappear before the duel has otherwise ended.
                 expect(tostring(run.outcome_of(1, false, 0, false, false))):toBe("lost-health")
                 -- A depleted boss duel is terminal even when hearts remain.
                 expect(
-                    tostring(run.outcome_of(3, false, run.max_hearts, true, false))
+                    tostring(run.outcome_of(3, false, run.max_health, true, false))
                 ):toBe("lost-duel")
             end
         )
@@ -384,14 +384,14 @@ describe(
                 for _ = 1, run.max_hearts do
                     state:lose_hand()
                 end
-                expect(state.hearts):toBe(0)
+                expect(state.health):toBe(0)
                 -- Repeated terminal signals clamp rather than manufacturing negative
                 -- health while the final reveal waits to be dismissed.
                 expect(state:lose_hand()):toBe(true)
-                expect(state.hearts):toBe(0)
+                expect(state.health):toBe(0)
                 expect(tostring(state:settle(false, false, 99))):toBe("lost-health")
                 expect(state.duel):toBe(1)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state.health):toBe(run.max_health)
                 expect(state.start_spell):toBe(spells.SpellKind.Clone)
             end
         )
@@ -400,12 +400,12 @@ describe(
             "loses and restarts the run after the Opponent wins a final boss hand",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Clone, true)
-                state.hearts = run.max_hearts - 1
+                state.health = run.max_health - run.health_per_heart
 
                 expect(tostring(state:settle(true, false, 99))):toBe("lost-duel")
                 expect(state.duel):toBe(1)
                 expect(state.cleared):toBe(0)
-                expect(state.hearts):toBe(run.max_hearts)
+                expect(state.health):toBe(run.max_health)
                 expect(state.gold):toBe(game.starting_gold)
                 expect(state.start_spell):toBe(spells.SpellKind.Clone)
                 expect(state.rush):toBe(true)
@@ -417,18 +417,18 @@ describe(
             function()
                 local finish: i32 = run.run_length(false)
                 expect(
-                    tostring(run.outcome_of(finish, false, run.max_hearts, true, true))
+                    tostring(run.outcome_of(finish, false, run.max_health, true, true))
                 ):toBe("won")
                 expect(
-                    tostring(run.outcome_of(finish - 1, false, run.max_hearts, true, true))
+                    tostring(run.outcome_of(finish - 1, false, run.max_health, true, true))
                 ):toBe("advance")
                 -- Not a state the run stays in: the duel after the finish is an
                 -- ordinary one again, however far past the milestone it is.
                 expect(
-                    tostring(run.outcome_of(finish + 1, false, run.max_hearts, true, true))
+                    tostring(run.outcome_of(finish + 1, false, run.max_health, true, true))
                 ):toBe("advance")
                 expect(
-                    tostring(run.outcome_of(finish + 7, false, run.max_hearts, true, true))
+                    tostring(run.outcome_of(finish + 7, false, run.max_health, true, true))
                 ):toBe("advance")
             end
         )
@@ -707,6 +707,53 @@ describe(
                 state.boss_pool = {bosses.Kind.Vanilla, bosses.Kind.Vanilla}
                 expect(run.State.restore(state:snapshot()) == nil):toBe(true)
                 state.boss_pool = {state.next_boss}
+                expect(run.State.restore(state:snapshot()) == nil):toBe(true)
+            end
+        )
+    end
+)
+
+describe(
+    "health in twelfths",
+    function()
+        it(
+            "starts with 36 health and loses 12 per hand",
+            function()
+                local state = run.State.new(spells.SpellKind.Firebolt, false)
+                expect(state.health):toBe(36)
+                state:lose_hand()
+                expect(state.health):toBe(24)
+                state.health = 6
+                expect(state:lose_hand()):toBe(true)
+                expect(state.health):toBe(0)
+            end
+        )
+        it(
+            "heals individual health points and caps fractional hearts",
+            function()
+                local state = run.State.new(spells.SpellKind.Firebolt, false)
+                state.health = 18
+                expect(state:heal(1)):toBe(true)
+                expect(state.health):toBe(19)
+                expect(state:heal(12)):toBe(true)
+                expect(state.health):toBe(31)
+                expect(state:heal(12)):toBe(true)
+                expect(state.health):toBe(36)
+            end
+        )
+        it(
+            "preserves partial hearts through snapshots and the view",
+            function()
+                local state = run.State.new(spells.SpellKind.Firebolt, false)
+                state.health = 17
+                local restored = run.State.restore(state:snapshot())
+                expect(restored ~= nil):toBe(true)
+                if restored ~= nil then
+                    expect(restored.health):toBe(17)
+                    expect(restored:view("none").health):toBe(17)
+                    expect(restored:view("none").max_hearts):toBe(3)
+                end
+                state.health = -1
                 expect(run.State.restore(state:snapshot()) == nil):toBe(true)
             end
         )
