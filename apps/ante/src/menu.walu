@@ -109,12 +109,13 @@ function item_start_y(viewport: viewport_layout.State): f64
 end
 
 function list_style(viewport: viewport_layout.State): ui_layout.Style
+    local center_x: f64 = viewport_layout.map_overlay_center_x(viewport.width)
     return ui_layout.style(
         "column",
         ITEM_PITCH - ITEM_H,
         "start",
         "center",
-        ui_layout.edges(0.0, item_start_y(viewport), 0.0, 0.0)
+        ui_layout.edges(0.0, item_start_y(viewport), viewport.width - center_x * 2.0, 0.0)
     )
 end
 
@@ -205,24 +206,18 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
     end
     local viewport: viewport_layout.State = presentation.viewport
     local graphics = surface.graphics
+    local center_x: f64 = viewport_layout.map_overlay_center_x(viewport.width)
     local heading_y: f64 = title_y(viewport)
     if model.stage == "spell" then
         local mode: string = "NEW RUN"
         if model.rush_choice then
             mode = "BOSS RUSH"
         end
-        ink.text_centered(
-            graphics,
-            "CHOOSE YOUR START",
-            viewport.center_x,
-            heading_y,
-            30,
-            "#fbbf24"
-        )
+        ink.text_centered(graphics, "CHOOSE YOUR START", center_x, heading_y, 30, "#fbbf24")
         ink.text_centered(
             graphics,
             "CHOOSE A STARTING SPELL",
-            viewport.center_x,
+            center_x,
             heading_y + 34.0,
             12,
             "#d4d4d8"
@@ -230,7 +225,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
         ink.text_centered(
             graphics,
             mode .. "   CARRIED ALL RUN, EVERY USE COSTS 5 GOLD",
-            viewport.center_x,
+            center_x,
             heading_y + 56.0,
             11,
             "#a1a1aa"
@@ -238,7 +233,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
         ink.text_centered(
             graphics,
             "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
-            viewport.center_x,
+            center_x,
             viewport.height - 34.0,
             11,
             "#a1a1aa"
@@ -246,11 +241,11 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
         return
     end
 
-    ink.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
+    ink.text_centered(graphics, "ANTE MAGIC", center_x, heading_y, 52, "#fbbf24")
     ink.text_centered(
         graphics,
         "DUEL AFTER DUEL ON ONE POOL OF GOLD. ONE HAND EACH",
-        viewport.center_x,
+        center_x,
         heading_y + 40.0,
         12,
         "#d4d4d8"
@@ -259,7 +254,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
     -- into the field around it and is domed toward the same light the rest of
     -- the menu's chrome is lit by.
     for i = 0::i32, 3::i32 do
-        local orb_x: f64 = viewport.center_x - 54.0 + (i::f64) * 36.0
+        local orb_x: f64 = center_x - 54.0 + (i::f64) * 36.0
         local orb_y: f64 = heading_y + 70.0
         graphics:set_color(ink.color_ink(i))
         plate.halo(
@@ -279,7 +274,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
         ink.text_centered(
             graphics,
             "EVERY THIRD DUEL IS A CHALLENGE. GOLD CARRIES OVER",
-            viewport.center_x,
+            center_x,
             detail_y,
             10,
             "#fbbf24"
@@ -288,7 +283,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
         ink.text_centered(
             graphics,
             "EVERY DUEL IS A CHALLENGE. KEEP SEVEN CARDS IN HAND",
-            viewport.center_x,
+            center_x,
             detail_y,
             10,
             "#fbbf24"
@@ -297,7 +292,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
     ink.text_centered(
         graphics,
         "ARROWS MOVE   ENTER OR CLICK SELECTS",
-        viewport.center_x,
+        center_x,
         viewport.height - 76.0,
         11,
         "#a1a1aa"
@@ -305,7 +300,7 @@ function draw_chrome(presentation: Presentation, surface: ui.Surface, bounds: ui
     ink.text_centered(
         graphics,
         "IN A DUEL: ? HELP   H HISTORY   R RESTART RUN   M MENU",
-        viewport.center_x,
+        center_x,
         viewport.height - 52.0,
         10,
         "#8a8a92"
