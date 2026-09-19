@@ -83,9 +83,10 @@ function menuItemPoint(canvas, index) {
   return canvas.evaluate((node, itemIndex) => {
     const bounds = node.getBoundingClientRect();
     const scale = Math.min(bounds.width / 700, bounds.height / 600);
+    const logicalWidth = bounds.width / scale;
     const logicalHeight = bounds.height / scale;
     return {
-      x: bounds.x + bounds.width * 0.5,
+      x: bounds.x + Math.min(300, logicalWidth * 0.5) * scale,
       y: bounds.y + (logicalHeight * 0.51 + itemIndex * 60 + 26) * scale,
     };
   }, index);

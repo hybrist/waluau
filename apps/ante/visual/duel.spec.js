@@ -107,6 +107,9 @@ test('live Storybook controls rebuild the scenario and zero gold prevents castin
 });
 
 test('sandbox selects every shop-only spell', async ({ page }) => {
+  // Eight complete story loads exercise the resource barrier in sequence. The
+  // pinned CI renderer can take slightly longer than the suite's 30s default.
+  test.setTimeout(60_000);
   for (const [value, name] of [
     [4, 'Drain Life'], [5, 'Second Wind'], [6, 'Wither'], [7, 'Mind Read'],
     [8, 'Tornado'], [9, 'Oblivion'], [10, 'Color Change'], [11, 'Rank Change'],

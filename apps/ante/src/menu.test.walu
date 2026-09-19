@@ -38,6 +38,21 @@ describe(
         )
 
         it(
+            "keeps its choices in the map's left-hand UI lane",
+            function(): unit
+                local state: menu.State = menu.State.new()
+                arrange(state)
+                local viewport: viewport_layout.State = viewport_layout.current()
+                local first: ui_layout.Rect = state.main_targets[1].node:bounds()
+
+                expect(
+                    first.x + first.width * 0.5
+                ):toBe(viewport_layout.map_overlay_center_x(viewport.width))
+                expect(first.x + first.width):toBeLessThan(viewport.width * 0.75)
+            end
+        )
+
+        it(
             "wraps focus and unifies keyboard activation",
             function(): unit
                 local state: menu.State = menu.State.new()

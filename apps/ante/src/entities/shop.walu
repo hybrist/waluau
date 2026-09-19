@@ -10,6 +10,7 @@ local button = require("./button")
 local modal = require("./modal")
 local run_module = require("../run")
 local shop_ = require("../shop")
+local viewport_layout = require("../layout")
 
 type ShopState = shop_.State
 type Slot = shop_.Slot
@@ -271,7 +272,7 @@ end
 
 function Stateful:draw(surface: ui.Surface, width: f64, height: f64): unit
     local size: box.Intrinsic = self.root:measure(surface.graphics)
-    local x: f64 = (width - size.preferred_width) * 0.5
+    local x: f64 = viewport_layout.map_overlay_x(width, size.preferred_width)
     local y: f64 = (height - size.preferred_height) * 0.5
     self.root:draw(surface, x, y, size.preferred_width, size.preferred_height)
 end
