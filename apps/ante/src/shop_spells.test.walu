@@ -1,0 +1,301 @@
+require("waluau:vitest")
+
+local game = require("./game")
+local fixture = require("../test/game_fixture")
+local screen_ = require("./game_screen")
+local run_ = require("./run")
+local shop_ = require("./shop")
+local scroll_ = require("./items/scroll")
+local item_ = require("./items/item")
+local spells = require("./spells/spell")
+local menu = require("./menu")
+local accessibility = require("./accessibility")
+
+type ShopState = shop_.State
+
+function ready(kind: spells.SpellKind, level: i32): screen_.State
+    local screen: screen_.State = screen_.State.new()
+    screen.run.spells = {spells.Spell.new(kind, level)}
+    screen:deal_vault()
+    screen.presentation:skip()
+    fixture.set_player_points(screen.rules, 30)
+    fixture.arrange_player(
+        screen.rules,
+        {
+            { rank = 2, suit = 0 },
+            { rank = 7, suit = 1 },
+            { rank = 14, suit = 2 },
+            { rank = 8, suit = 0 },
+            { rank = 9, suit = 1 }
+        },
+        {true, false, true, false, false}
+    )
+    return screen
+end
+
+describe(
+    "Shop-only spells",
+    function()
+        it(
+            "keeps the original four starting choices",
+            function()
+                local state: menu.State = menu.State.new()
+                state.model.stage = "spell"
+                local view = accessibility.menu_state(state)
+                local count: i32 = 0
+                for entry in view.items do
+                    if entry.kind == "button" and entry.key ~= "back" then
+                        count += 1
+                    end
+                end
+                expect(count):toBe(4)
+                expect(spells.SpellKind.from(1)):toBe(spells.SpellKind.Firebolt)
+                expect(spells.SpellKind.from(4)):toBe(spells.SpellKind.Clone)
+            end
+        )
+
+        it(
+            "drains all hand cards, preserves suits and knowledge, and heals exactly one heart",
+            function()
+                local screen = ready(spells.SpellKind.DrainLife, 3)
+                screen.run.health = 1
+                local before = screen.rules:view().player_hand[2].card
+                screen:arm_spell(0)
+                local after = screen.rules:view().player_hand
+                expect(after[1].card.rank):toBe(2)
+                expect(after[2].card.rank):toBe(6)
+                expect(after[3].card.rank):toBe(13)
+                expect(after[4].card.rank):toBe(7)
+                expect(after[5].card.rank):toBe(8)
+                expect(after[2].card.suit):toBe(1)
+                expect(after[1].known):toBe(true)
+                expect(after[2].known):toBe(false)
+                expect(before.rank):toBe(7)
+                expect(screen.run.health):toBe(1 + run_.health_per_heart)
+                expect(screen.rules:gold()):toBe(25)
+                expect(screen.ui.cast_slot == nil):toBe(true)
+                expect(game.State.restore(screen.rules:snapshot()) ~= nil):toBe(true)
+                expect(run_.State.restore(screen.run:snapshot()) ~= nil):toBe(true)
+            end
+        )
+
+        it(
+            "caps Drain Life healing at full health",
+            function()
+                local screen = ready(spells.SpellKind.DrainLife, 1)
+                screen.run.health = run_.max_health - 1
+                screen:arm_spell(0)
+                expect(screen.run.health):toBe(run_.max_health)
+                expect(screen.rules:gold()):toBe(25)
+                screen:arm_spell(0)
+                expect(screen.rules:gold()):toBe(25)
+            end
+        )
+
+        it(
+            "refuses Drain Life at full health, after death, or without gold",
+            function()
+                local screen = ready(spells.SpellKind.DrainLife, 1)
+                screen:arm_spell(0)
+                expect(screen.rules:gold()):toBe(30)
+                expect(screen.rules:view().player_hand[2].card.rank):toBe(7)
+                screen.run.health = 0
+                screen:confirm_cast(0, -1)
+                expect(screen.run.health):toBe(0)
+                expect(screen.rules:gold()):toBe(30)
+                screen.run.health = 1
+                fixture.set_player_points(screen.rules, 4)
+                screen:arm_spell(0)
+                expect(screen.run.health):toBe(1)
+                expect(screen.rules:gold()):toBe(4)
+            end
+        )
+
+        it(
+            "raises only the weakest card and caps Second Wind at Ace",
+            function()
+                local screen = ready(spells.SpellKind.SecondWind, 20)
+                screen:arm_spell(0)
+                local hand = screen.rules:view().player_hand
+                expect(hand[1].card.rank):toBe(14)
+                expect(hand[2].card.rank):toBe(7)
+                expect(hand[1].known):toBe(true)
+                expect(screen.rules:gold()):toBe(25)
+                expect(screen.run.health):toBe(run_.max_health)
+                fixture.arrange_player(screen.rules, {{ rank = 14, suit = 0 }}, {false})
+                expect(screen:can_cast(0)):toBe(false)
+                screen:arm_spell(0)
+                expect(screen.rules:gold()):toBe(25)
+            end
+        )
+
+        it(
+            "withers the selected table card only and refuses a card already at two",
+            function()
+                local screen = ready(spells.SpellKind.Wither, 20)
+                local before: {game.Card} = {}
+                for card in screen.rules:view().middle do
+                    table.insert(before, card)
+                end
+                local target: i32 = -1
+                for index, card in before do
+                    if card.rank > 2 then
+                        target = index - 1
+                    end
+                end
+                assert(target >= 0)
+                screen:arm_spell(0)
+                expect(screen.ui.cast_slot):toBe(0)
+                screen:confirm_cast(0, target)
+                local after = screen.rules:view().middle
+                expect(after[target + 1].rank):toBe(2)
+                expect(after[target + 1].suit):toBe(before[target + 1].suit)
+                expect(screen.rules:gold()):toBe(25)
+                screen:confirm_cast(0, target)
+                expect(screen.rules:gold()):toBe(25)
+                for index, card in after do
+                    if index ~= target + 1 then
+                        expect(card.rank):toBe(before[index].rank)
+                    end
+                end
+                expect(game.State.restore(screen.rules:snapshot()) ~= nil):toBe(true)
+            end
+        )
+
+        it(
+            "changes exactly the selected table card's color or rank to a different legal value",
+            function()
+                math.randomseed(233)
+                local rules = game.State.new(
+                    false,
+                    {
+                        spells.Spell.new(spells.SpellKind.ColorChange, 9),
+                        spells.Spell.new(spells.SpellKind.RankChange, 1)
+                    },
+                    30
+                )
+                fixture.arrange_breach(
+                    rules,
+                    {{ rank = 2, suit = 0 }, { rank = 9, suit = 1 }, { rank = 14, suit = 2 }},
+                    {
+                        { rank = 3, suit = 0 },
+                        { rank = 4, suit = 1 },
+                        { rank = 5, suit = 2 },
+                        { rank = 6, suit = 3 },
+                        { rank = 7, suit = 0 }
+                    },
+                    {
+                        { rank = 8, suit = 1 },
+                        { rank = 9, suit = 2 },
+                        { rank = 10, suit = 3 },
+                        { rank = 11, suit = 0 },
+                        { rank = 12, suit = 1 }
+                    }
+                )
+                local before: {game.Card} = {}
+                for card in rules:view().middle do
+                    table.insert(before, { rank = card.rank, suit = card.suit })
+                end
+                local targets = rules:cast_targets(0, 1)
+                expect(#targets):toBe(1)
+                expect(targets[1]):toBe(1)
+                expect(rules:cast_spell(0, 1)):toBe(true)
+                local colored = rules:view().middle
+                expect(colored[2].rank):toBe(before[2].rank)
+                expect(colored[2].suit ~= before[2].suit):toBe(true)
+                expect(colored[2].suit >= 0 and colored[2].suit <= 3):toBe(true)
+                expect(colored[1].rank):toBe(before[1].rank)
+                expect(colored[3].rank):toBe(before[3].rank)
+
+                expect(rules:cast_spell(1, 2)):toBe(true)
+                local ranked = rules:view().middle
+                expect(ranked[3].suit):toBe(before[3].suit)
+                expect(ranked[3].rank ~= before[3].rank):toBe(true)
+                expect(ranked[3].rank >= 2 and ranked[3].rank <= 14):toBe(true)
+                expect(rules:gold()):toBe(20)
+                expect(game.State.restore(rules:snapshot()) ~= nil):toBe(true)
+                expect(rules:cast_spell(1, 3)):toBe(false)
+                expect(rules:gold()):toBe(20)
+            end
+        )
+
+        it(
+            "rolls, buys, and restores every new shop spell",
+            function()
+                math.randomseed(71)
+                local run = run_.State.new(spells.SpellKind.Firebolt, false)
+                local drain: bool = false
+                local wind: bool = false
+                local wither: bool = false
+                local mind: bool = false
+                local tornado: bool = false
+                local oblivion: bool = false
+                local color_change: bool = false
+                local rank_change: bool = false
+                for _ = 1, 100 do
+                    local visit = shop_.State.new(run)
+                    for slot in visit.slots do
+                        local name = slot.item:describe()
+                        if name == "Drain Life (level 1)" then
+                            drain = true
+                        end
+                        if name == "Second Wind (level 1)" then
+                            wind = true
+                        end
+                        if name == "Wither (level 1)" then
+                            wither = true
+                        end
+                        if name == "Mind Read (level 1)" then
+                            mind = true
+                        end
+                        if name == "Tornado (level 1)" then
+                            tornado = true
+                        end
+                        if name == "Oblivion (level 1)" then
+                            oblivion = true
+                        end
+                        if name == "Color Change (level 1)" then
+                            color_change = true
+                        end
+                        if name == "Rank Change (level 1)" then
+                            rank_change = true
+                        end
+                    end
+                end
+                expect(
+                    drain and wind and wither and mind and tornado and oblivion and color_change and rank_change
+                ):toBe(true)
+                for kind in {
+                    spells.SpellKind.DrainLife,
+                    spells.SpellKind.SecondWind,
+                    spells.SpellKind.Wither,
+                    spells.SpellKind.MindRead,
+                    spells.SpellKind.Tornado,
+                    spells.SpellKind.Oblivion,
+                    spells.SpellKind.ColorChange,
+                    spells.SpellKind.RankChange
+                } do
+                    local buyer = run_.State.new(spells.SpellKind.Firebolt, false)
+                    local visit = shop_.State.new(buyer)
+                    visit.slots = {
+                        {
+                            item = scroll_.SpellScroll.new(kind, 1)::item_.Item,
+                            price = 4,
+                            sold = false
+                        }
+                    }
+                    local restored: ShopState? = shop_.State.restore(visit:snapshot())
+                    expect(restored ~= nil):toBe(true)
+                    if restored ~= nil then
+                        local shop: ShopState = restored::ShopState
+                        local gold = buyer.gold
+                        shop:confirm_choice(buyer)
+                        expect(buyer:carries(kind)):toBe(true)
+                        expect(buyer.gold):toBe(gold - 4)
+                        expect(run_.State.restore(buyer:snapshot()) ~= nil):toBe(true)
+                    end
+                end
+            end
+        )
+    end
+)

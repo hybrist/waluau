@@ -105,3 +105,14 @@ test('live Storybook controls rebuild the scenario and zero gold prevents castin
   await expect(page.getByRole('button', { name: 'Freeze Ray', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Firebolt', exact: true })).toHaveCount(0);
 });
+
+test('sandbox selects every shop-only spell', async ({ page }) => {
+  for (const [value, name] of [
+    [4, 'Drain Life'], [5, 'Second Wind'], [6, 'Wither'], [7, 'Mind Read'],
+    [8, 'Tornado'], [9, 'Oblivion'], [10, 'Color Change'], [11, 'Rank Change'],
+  ]) {
+    await openDuel(page, 'sandbox', `spell:${value}`);
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Firebolt', exact: true })).toHaveCount(0);
+  }
+});

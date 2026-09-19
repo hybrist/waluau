@@ -479,7 +479,46 @@ function State:cancel_cast(): unit
     self.spell_feedback = "Spell cancelled. No gold spent."
 end
 
+function State:can_cast(slot: i32): bool
+    if not self.rules:can_cast(slot) then
+        return false
+    end
+    return self.rules:spell_kind(slot) ~= spells.SpellKind.DrainLife or self.run:can_heal()
+end
+
 function State:confirm_cast(slot: i32, table_card: i32): unit
+    if not self:can_cast(slot) then
+        self.ui.cast_slot = nil
+        return
+    end
+    local kind: spells.SpellKind = self.rules:spell_kind(slot) or spells.SpellKind.Firebolt
+    if kind:is_untargeted() then
+        local destroyed: {game.OblivionTarget} = {}
+        if kind == spells.SpellKind.Oblivion then
+            destroyed = self.rules:oblivion_targets()
+        end
+        if self.rules:cast_spell(slot, -1) then
+            if kind == spells.SpellKind.DrainLife then
+                self.run:heal(run_module.health_per_heart)
+                self.spell_feedback = "Drain Life completed. Hand ranks lowered by 1; restored 1 heart."
+            elseif kind == spells.SpellKind.SecondWind then
+                self.spell_feedback = "Second Wind completed. Raised your weakest hand card."
+            elseif kind == spells.SpellKind.MindRead then
+                self.spell_feedback = "Mind Read completed. Opponent hand revealed."
+            elseif kind == spells.SpellKind.Oblivion then
+                self.ui:clear_picks()
+                self.presentation:oblivion_resolved(destroyed, self.rules:view())
+                self.spell_feedback = "Oblivion completed. Destroyed " .. tostring(
+                    #destroyed
+                ) .. " exposed cards; dealt concealed replacements."
+            elseif kind == spells.SpellKind.Tornado then
+                self.ui:clear_picks()
+                self.spell_feedback = "Tornado completed. Mixed cards from both hands and the center."
+            end
+        end
+        self.ui.cast_slot = nil
+        return
+    end
     -- What the cast takes is asked before it is paid for: the rules answer
     -- from the spell's own level, and charging first would leave nothing to
     -- ask should the aim turn out to name no card at all.
@@ -520,7 +559,8 @@ function State:submit_round(): unit
     self.presentation:begin_reveal(resolved.winner ~= 0)
 end
 
--- Arming a spell is a toggle: asking for the one already aimed calls it off,
+-- Immediate spells cast on activation. Arming a targeted spell is a toggle:
+-- asking for the one already aimed calls it off,
 -- and asking for another swings the aim over to it. The cast keys and the
 -- ability sockets both come through here, so a run played with a finger arms
 -- exactly what a run played with the number row does.
@@ -533,7 +573,7 @@ function State:arm_spell(slot: i32): unit
         self:cancel_cast()
         return
     end
-    if not self.rules:can_cast(slot) then
+    if not self:can_cast(slot) then
         return
     end
     -- The cast should respond on the first gesture. If the opening deal is
@@ -541,6 +581,11 @@ function State:arm_spell(slot: i32): unit
     -- visibly present for the aim cursor.
     if self.presentation:is_animating() then
         self.presentation:skip()
+    end
+    local kind: spells.SpellKind = self.rules:spell_kind(slot) or spells.SpellKind.Firebolt
+    if kind:is_untargeted() then
+        self:confirm_cast(slot, -1)
+        return
     end
     ui.cast_slot = slot
     self.board:focus_table(0)

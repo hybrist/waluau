@@ -55,7 +55,6 @@ const ITEM_NEW_RUN: i32 = 0
 const ITEM_BOSS_RUSH: i32 = 1
 const ITEM_HOW_TO_PLAY: i32 = 2
 const ITEM_COUNT: i32 = 3
-const SPELL_COUNT: i32 = 4
 const BACK_INSET: f64 = 16.0
 const ITEM_W: f64 = 380.0
 const ITEM_H: f64 = 52.0
@@ -376,7 +375,7 @@ function State.new(): State
         main_row(presentation, ITEM_HOW_TO_PLAY, "HOW TO PLAY")
     }
     local spell_rows: {ui.Node} = {}
-    for index = 0::i32, SPELL_COUNT - 1 do
+    for index = 0::i32, spells.starting_spell_count - 1 do
         table.insert(spell_rows, spell_row(presentation, index))
     end
     local chrome: ui.Node = ui.Node.measured(

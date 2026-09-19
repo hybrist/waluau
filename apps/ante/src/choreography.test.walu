@@ -76,7 +76,7 @@ describe(
                 -- A spell that does not exist, a target past the community row,
                 -- a condition that took nothing, and one that took the same card
                 -- twice.
-                local unknown_kind: string = string.gsub(encoded, '"kind":%d+', '"kind":9')
+                local unknown_kind: string = string.gsub(encoded, '"kind":%d+', '"kind":99')
                 expect(choreography.State.restore(unknown_kind) == nil):toBe(true)
                 local far_target: string = string.gsub(encoded, '"targets":%[1%]', '"targets":[5]')
                 expect(far_target == encoded):toBe(false)

@@ -23,6 +23,10 @@ function SpellScroll:describe(): string
     return self.kind:__tostring() .. " (level " .. self.level .. ")"
 end
 
+function SpellScroll:detail(): string
+    return self.kind:description()
+end
+
 function SpellScroll:accent(): string
     return spell_launch.color(self.kind)
 end

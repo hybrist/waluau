@@ -23,6 +23,30 @@ function name(kind: spells.SpellKind): string
     if kind == spells.SpellKind.Clone then
         return "CLONE"
     end
+    if kind == spells.SpellKind.DrainLife then
+        return "DRAIN LIFE"
+    end
+    if kind == spells.SpellKind.SecondWind then
+        return "SECOND WIND"
+    end
+    if kind == spells.SpellKind.Wither then
+        return "WITHER"
+    end
+    if kind == spells.SpellKind.MindRead then
+        return "MIND READ"
+    end
+    if kind == spells.SpellKind.Tornado then
+        return "TORNADO"
+    end
+    if kind == spells.SpellKind.Oblivion then
+        return "OBLIVION"
+    end
+    if kind == spells.SpellKind.ColorChange then
+        return "COLOR CHANGE"
+    end
+    if kind == spells.SpellKind.RankChange then
+        return "RANK CHANGE"
+    end
     return "NO SPELL"
 end
 
@@ -35,6 +59,30 @@ function color(kind: spells.SpellKind): string
     end
     if kind == spells.SpellKind.RaiseCard then
         return "#a3e635"
+    end
+    if kind == spells.SpellKind.DrainLife then
+        return "#fb7185"
+    end
+    if kind == spells.SpellKind.SecondWind then
+        return "#fbbf24"
+    end
+    if kind == spells.SpellKind.Wither then
+        return "#c084fc"
+    end
+    if kind == spells.SpellKind.MindRead then
+        return "#e879f9"
+    end
+    if kind == spells.SpellKind.Tornado then
+        return "#67e8f9"
+    end
+    if kind == spells.SpellKind.Oblivion then
+        return "#a78bfa"
+    end
+    if kind == spells.SpellKind.ColorChange then
+        return "#f472b6"
+    end
+    if kind == spells.SpellKind.RankChange then
+        return "#facc15"
     end
     return "#4ade80"
 end
@@ -98,7 +146,7 @@ function draw(
         freeze_ray.draw(graphics, cast)
     elseif kind == spells.SpellKind.RaiseCard then
         raise_card.draw(graphics, cast)
-    elseif kind == spells.SpellKind.Clone then
+    elseif kind == spells.SpellKind.Clone or kind == spells.SpellKind.Wither then
         clone.draw(graphics, cast)
     end
     -- One burst for every spell, outside the dispatch because the sparks a
