@@ -82,7 +82,7 @@ describe(
                 expect(
                     string.find(
                         accessibility.duel_state(screen).status,
-                        "Boss rush. Boss duel: Arch Mage.",
+                        "Boss rush. Boss duel: " .. tostring(screen.run.next_boss) .. ".",
                         1,
                         true
                     ) ~= nil

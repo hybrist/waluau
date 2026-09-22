@@ -574,7 +574,11 @@ export type FireboltBurn = { discarded: game.Card, replacement: game.Card, targe
 -- row ignited off one clock, so it is refilled off one too — the deals leave
 -- together and the board is whole again in a single throw's time, whether the
 -- bolt took one card or five.
-function State:firebolt_resolved(burns: {FireboltBurn}, middle_count: i32): unit
+function State:firebolt_resolved(
+    burns: {FireboltBurn},
+    middle_count: i32,
+    middle_hidden: bool?
+): unit
     if #burns == 0 then
         return
     end
@@ -583,6 +587,10 @@ function State:firebolt_resolved(burns: {FireboltBurn}, middle_count: i32): unit
     local ash_start: f64 = 0.0
     for burn in burns do
         table.insert(self.session.discards, burn.discarded)
+        local replacement_faces: render.Face = render.faces_flip_up
+        if middle_hidden == true then
+            replacement_faces = render.faces_down
+        end
         local deal_finish: f64 = push_deal(
             layout.current(),
             anims,
@@ -590,7 +598,7 @@ function State:firebolt_resolved(burns: {FireboltBurn}, middle_count: i32): unit
             render.slot_middle,
             burn.target,
             middle_count,
-            render.faces_flip_up,
+            replacement_faces,
             0.0
         )
         if deal_finish > finish then
@@ -620,6 +628,14 @@ function State:opening_deal(view: game.View): unit
     local anims: {render.Anim} = {}
     local start: f64 = 0.0
     local finish: f64 = 0.0
+    local player_faces: render.Face = render.faces_flip_up
+    if view.player_cards_hidden then
+        player_faces = render.faces_down
+    end
+    local middle_faces: render.Face = render.faces_flip_up
+    if view.middle_cards_hidden then
+        middle_faces = render.faces_down
+    end
     for i = 0::i32, count - 1 do
         finish = push_deal(
             layout.current(),
@@ -628,7 +644,7 @@ function State:opening_deal(view: game.View): unit
             render.slot_player,
             i,
             count,
-            render.faces_flip_up,
+            player_faces,
             start
         )
         start += DEAL_STEP
@@ -652,7 +668,7 @@ function State:opening_deal(view: game.View): unit
             render.slot_middle,
             i,
             #view.middle,
-            render.faces_flip_up,
+            middle_faces,
             start
         )
         start += DEAL_STEP
@@ -974,6 +990,10 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
     -- Matching sizes mean the spent pair was replaced off the deck; a boss
     -- battle's hands shrink instead, and there is nothing to deal.
     if new_count == old_count then
+        local player_faces: render.Face = render.faces_flip_up
+        if view.player_cards_hidden then
+            player_faces = render.faces_down
+        end
         for i = new_count - 2, new_count - 1 do
             finish = push_deal(
                 layout.current(),
@@ -993,11 +1013,15 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
                 render.slot_player,
                 i,
                 new_count,
-                render.faces_flip_up,
+                player_faces,
                 start
             )
             start += DEAL_STEP
         end
+    end
+    local middle_faces: render.Face = render.faces_flip_up
+    if view.middle_cards_hidden then
+        middle_faces = render.faces_down
     end
     for i = 0::i32, #view.middle - 1 do
         if not retained_community(trick, view.middle[i + 1]) then
@@ -1008,7 +1032,7 @@ function State:resolved_breach_cleanup(view: game.View, trick: game.Trick): unit
                 render.slot_middle,
                 i,
                 #view.middle,
-                render.faces_flip_up,
+                middle_faces,
                 start
             )
             start += DEAL_STEP
@@ -1025,6 +1049,10 @@ function State:swap(outcome: game.SwapOutcome): unit
             return
         end
         local deal_anims: {render.Anim} = {}
+        local dealt_faces: render.Face = render.faces_flip_up
+        if outcome.middle_cards_hidden then
+            dealt_faces = render.faces_down
+        end
         local finish: f64 = push_deal(
             layout.current(),
             deal_anims,
@@ -1032,7 +1060,7 @@ function State:swap(outcome: game.SwapOutcome): unit
             render.slot_middle,
             outcome.middle_count - 1,
             outcome.middle_count,
-            render.faces_flip_up,
+            dealt_faces,
             0.0
         )
         begin_anims(self, deal_anims, finish, "deal")
@@ -1087,6 +1115,17 @@ function State:swap(outcome: game.SwapOutcome): unit
             settle_faces = render.faces_flip_up
             return_faces = render.faces_flip_down
         end
+        if player_won and outcome.player_cards_hidden then
+            leave_faces = render.faces_down
+            return_faces = render.faces_down
+        end
+        if outcome.middle_cards_hidden then
+            settle_faces = render.faces_down
+        end
+        local incoming_faces: render.Face = render.faces_up
+        if outcome.middle_cards_hidden then
+            incoming_faces = render.faces_down
+        end
         table.insert(
             anims,
             {
@@ -1131,7 +1170,7 @@ function State:swap(outcome: game.SwapOutcome): unit
             anims,
             {
                 card = incoming,
-                faces = render.faces_up,
+                faces = incoming_faces,
                 known = true,
                 effect = render.anim_effect_move,
                 from = mid,
@@ -1171,6 +1210,10 @@ function State:swap(outcome: game.SwapOutcome): unit
     local dealt: game.Card? = outcome.dealt
     if dealt ~= nil then
         local start: f64 = total + 0.1
+        local dealt_faces: render.Face = render.faces_flip_up
+        if outcome.middle_cards_hidden then
+            dealt_faces = render.faces_down
+        end
         total = push_deal(
             layout.current(),
             anims,
@@ -1178,7 +1221,7 @@ function State:swap(outcome: game.SwapOutcome): unit
             render.slot_middle,
             outcome.middle_count - 1,
             outcome.middle_count,
-            render.faces_flip_up,
+            dealt_faces,
             start
         )
     end

@@ -2,8 +2,10 @@
 -- colors, cards as cards, and the computer as the Opponent; the underlying
 -- five-card hand, exchange, wager, and trick rules remain unchanged.
 local spells = require("./spells/spell")
+local bosses = require("./bosses/boss")
 
 type SpellKind = spells.SpellKind
+type BossKind = bosses.Kind
 
 -- Suits, winners, and sides are plain i32s. A suit is 0..3 (MIN_SUIT to
 -- MAX_SUIT), a winner is -1 (Opponent), 0 (tie), or 1 (player), and a side
@@ -24,7 +26,9 @@ export type SwapOutcome = {
     outgoing: {Card},
     incoming: {Card},
     dealt: Card?,
-    middle_count: i32
+    middle_count: i32,
+    player_cards_hidden: bool,
+    middle_cards_hidden: bool
 }
 -- One slot of a hand: the card sitting there, plus whether the opponent has
 -- watched it. `known` is set when the card arrived from the middle, which
@@ -97,6 +101,8 @@ export opaque type State = {
     swap_middle_indices: {i32},
     finished: bool,
     boss: bool,
+    boss_kind: BossKind?,
+    pending_boss_firebolt: i32,
     spells: {Spell},
     cast_kind: SpellKind?
 }
@@ -122,6 +128,8 @@ export type View = {
     swap_middle_indices: {i32},
     finished: bool,
     boss: bool,
+    player_cards_hidden: bool,
+    middle_cards_hidden: bool,
     spells: {Spell}
 }
 -- The pair one side committed to a resolved trick, the hand slots it left,
@@ -150,7 +158,7 @@ const BOSS_HAND_SIZE: i32 = 7
 const STARTING_GOLD: i32 = 10
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "duel-state-v12"
+const SNAPSHOT_SCHEMA: string = "duel-state-v13"
 
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
@@ -163,11 +171,15 @@ function clone_spells(spells: {Spell}): {Spell}
     return copy
 end
 
-function make_deck(): {Card}
+function make_deck(all_green: bool?): {Card}
     local deck: {Card} = {}
     for suit = MIN_SUIT, MAX_SUIT do
         for rank = MIN_RANK, MAX_RANK do
-            table.insert(deck, { rank = rank, suit = suit })
+            local dealt_suit: i32 = suit
+            if all_green == true then
+                dealt_suit = MAX_SUIT
+            end
+            table.insert(deck, { rank = rank, suit = dealt_suit })
         end
     end
     return deck
@@ -1016,7 +1028,7 @@ function next_swap_min(own_max: i32, opponent_max: i32): i32
 end
 
 function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOutcome?
-    if self.finished or not self.swap_open then
+    if self.finished or not self.swap_open or not (self.boss_kind or bosses.Kind.Vanilla):allows_swapping() then
         return nil
     end
     local player_wager: i32 = #hand_indices
@@ -1111,6 +1123,9 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
     else
         self.swap_open = false
     end
+    if (self.boss_kind or bosses.Kind.Vanilla):firebolts_after_swap() then
+        self.pending_boss_firebolt = math.random(#self.middle) - 1
+    end
     return {
         winner = self.swap_winner,
         hand_indices = self.swap_hand_indices,
@@ -1118,7 +1133,9 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
         outgoing = outgoing,
         incoming = incoming,
         dealt = dealt,
-        middle_count = #self.middle
+        middle_count = #self.middle,
+        player_cards_hidden = (self.boss_kind or bosses.Kind.Vanilla):hides_player_cards(),
+        middle_cards_hidden = (self.boss_kind or bosses.Kind.Vanilla):hides_middle_cards()
     }
 end
 
@@ -1144,6 +1161,9 @@ function State:play(first: i32, second: i32): Trick?
         self.last_winner = 1
     elseif self.last_computer_value > self.last_player_value then
         self.last_winner = -1
+        if (self.boss_kind or bosses.Kind.Vanilla):halves_gold_on_loss() then
+            self.player_points //= 2
+        end
     else
         -- No trick winner means no pot winner; return the player's wager.
         self.player_points += self.player_wager
@@ -1206,7 +1226,7 @@ function State:play(first: i32, second: i32): Trick?
     else
         self.round += 1
         self:rotate_middle()
-        self.swap_open = true
+        self.swap_open = (self.boss_kind or bosses.Kind.Vanilla):allows_swapping()
         self.pot = 0
         self.player_wager = 0
         self.computer_wager = 0
@@ -1341,6 +1361,16 @@ function State.restore(snapshot_value: string): State?
         return nil
     end
     local restored: State = decoded.state
+    local restored_boss: BossKind? = restored.boss_kind
+    if restored.boss ~= (restored_boss ~= nil) then
+        return nil
+    end
+    if restored_boss ~= nil then
+        local known_boss: BossKind = restored_boss::BossKind
+        if not bosses.Kind.valid(known_boss) then
+            return nil
+        end
+    end
     if not valid_cards(
         restored.deck
     ) or not valid_slots(
@@ -1358,7 +1388,11 @@ function State.restore(snapshot_value: string): State?
     elseif #restored.middle < OPENING_COMMUNITY_SIZE or #restored.middle > MAX_COMMUNITY_SIZE then
         return nil
     end
-    if not restored.finished and not restored.swap_open and #restored.middle ~= MAX_COMMUNITY_SIZE then
+    local swapping_forbidden: bool = not (restored_boss or bosses.Kind.Vanilla):allows_swapping()
+    if swapping_forbidden and restored.swap_open then
+        return nil
+    end
+    if not restored.finished and not restored.swap_open and #restored.middle ~= MAX_COMMUNITY_SIZE and not swapping_forbidden then
         return nil
     end
     if restored.round < 1 then
@@ -1370,6 +1404,12 @@ function State.restore(snapshot_value: string): State?
         end
     end
     if restored.player_points < 0 then
+        return nil
+    end
+    if restored.pending_boss_firebolt < -1 or restored.pending_boss_firebolt >= #restored.middle then
+        return nil
+    end
+    if restored.pending_boss_firebolt >= 0 and not (restored_boss or bosses.Kind.Vanilla):firebolts_after_swap() then
         return nil
     end
     if not valid_winner(restored.last_winner) or not valid_winner(restored.swap_winner) then
@@ -1410,8 +1450,16 @@ function State.restore(snapshot_value: string): State?
     return restored
 end
 
-function State.new(boss: bool, spells: {Spell}, gold: i32): State
-    local deck: {Card} = make_deck()
+function State.new(boss: bool, spells: {Spell}, gold: i32, boss_kind: BossKind?): State
+    local active_kind: BossKind? = nil
+    if boss then
+        active_kind = boss_kind or bosses.Kind.Vanilla
+    end
+    local all_green: bool = false
+    if active_kind ~= nil then
+        all_green = (active_kind::BossKind):all_green()
+    end
+    local deck: {Card} = make_deck(all_green)
     shuffle(deck)
     local state: State = {
         deck = deck,
@@ -1425,7 +1473,7 @@ function State.new(boss: bool, spells: {Spell}, gold: i32): State
         last_player_value = 0,
         last_computer_value = 0,
         last_winner = 0,
-        swap_open = true,
+        swap_open = (active_kind or bosses.Kind.Vanilla):allows_swapping(),
         pot = 0,
         player_wager = 0,
         computer_wager = 0,
@@ -1437,6 +1485,8 @@ function State.new(boss: bool, spells: {Spell}, gold: i32): State
         swap_middle_indices = {},
         finished = false,
         boss = boss,
+        boss_kind = active_kind,
+        pending_boss_firebolt = -1,
         spells = clone_spells(spells),
         cast_kind = nil
     }
@@ -1475,6 +1525,8 @@ function State:view(): View
         swap_middle_indices = self.swap_middle_indices,
         finished = self.finished,
         boss = self.boss,
+        player_cards_hidden = (self.boss_kind or bosses.Kind.Vanilla):hides_player_cards(),
+        middle_cards_hidden = (self.boss_kind or bosses.Kind.Vanilla):hides_middle_cards(),
         spells = self.spells
     }
 end
@@ -1551,6 +1603,27 @@ end
 
 function State:is_boss(): bool
     return self.boss
+end
+
+function State:boss_effect_pending(): bool
+    return self.pending_boss_firebolt >= 0
+end
+
+-- Hand the screen a Pyromancer bolt only after the swap choreography has
+-- settled. Arming it as an ordinary Firebolt lets the existing burn,
+-- replacement, spent-pile, and input-lock path own the complete effect.
+function State:launch_boss_firebolt(): i32?
+    if self.pending_boss_firebolt < 0 then
+        return nil
+    end
+    local target: i32 = self.pending_boss_firebolt
+    self.pending_boss_firebolt = -1
+    self.cast_kind = spells.SpellKind.Firebolt
+    return target
+end
+
+function State:loss_is_lethal(): bool
+    return (self.boss_kind or bosses.Kind.Vanilla):loss_is_lethal()
 end
 
 function State:hand_size(): i32
@@ -1752,9 +1825,11 @@ end
 -- arguments rather than carried-over fields so the next deal can also be a mode
 -- or spell switch from the menu, or the next duel of a run fought with the
 -- gold the last one left and whatever it bought between duels.
-function State:reset(boss: bool, spells: {Spell}, gold: i32): unit
-    local fresh: State = State.new(boss, spells, gold)
+function State:reset(boss: bool, spells: {Spell}, gold: i32, boss_kind: BossKind?): unit
+    local fresh: State = State.new(boss, spells, gold, boss_kind)
     self.boss = fresh.boss
+    self.boss_kind = fresh.boss_kind
+    self.pending_boss_firebolt = fresh.pending_boss_firebolt
     self.spells = fresh.spells
     self.cast_kind = fresh.cast_kind
     self.deck = fresh.deck

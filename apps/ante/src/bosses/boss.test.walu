@@ -1,0 +1,147 @@
+require("waluau:vitest")
+
+local bosses = require("./boss")
+local game = require("../game")
+local run = require("../run")
+local spells = require("../spells/spell")
+local fixture = require("../../test/game_fixture")
+
+function loadout(): {game.Spell}
+    return {spells.Spell.new(spells.SpellKind.Firebolt, 1)}
+end
+
+function card(rank: i32, suit: i32): game.Card
+    return { rank = rank, suit = suit }
+end
+
+function boss(kind: bosses.Kind, gold: i32): game.State
+    return game.State.new(true, loadout(), gold, kind)
+end
+
+function finish_swaps(state: game.State): unit
+    while state:swap_open() do
+        assert(state:resolve_swap({}, {}) ~= nil)
+    end
+end
+
+function arrange_loss(state: game.State): unit
+    fixture.arrange_breach(
+        state,
+        {card(2, 0), card(3, 1), card(4, 2), card(10, 0), card(12, 1)},
+        {card(7, 0), card(9, 1), card(2, 1), card(2, 2), card(2, 3), card(3, 0), card(3, 2)},
+        {card(5, 0), card(6, 1), card(2, 0), card(2, 1), card(2, 2), card(3, 1), card(3, 3)}
+    )
+end
+
+describe(
+    "Ante Magic boss variants",
+    function(): unit
+        it(
+            "draws every named boss from the roster",
+            function(): unit
+                expect(bosses.count()):toBe(8)
+                for kind in bosses.all() do
+                    expect(bosses.Kind.valid(kind)):toBe(true)
+                    expect(tostring(kind) == "Unknown Boss"):toBe(false)
+                end
+            end
+        )
+
+        it(
+            "queues and resolves a random Pyromancer Firebolt after a swap",
+            function(): unit
+                math.randomseed(804)
+                local state: game.State = boss(bosses.Kind.Pyromancer, 10)
+                expect(state:resolve_swap({}, {}) == nil):toBe(false)
+                expect(state:boss_effect_pending()):toBe(true)
+                local target: i32? = state:launch_boss_firebolt()
+                expect(target == nil):toBe(false)
+                if target ~= nil then
+                    expect(target::i32):toBeGreaterThanOrEqual(0)
+                    expect(target::i32):toBeLessThan(state:community_size())
+                    expect(state:resolve_firebolt(target::i32) == nil):toBe(false)
+                end
+                expect(state:boss_effect_pending()):toBe(false)
+            end
+        )
+
+        it(
+            "opens the Jailer's hands directly in the play phase",
+            function(): unit
+                local state: game.State = boss(bosses.Kind.Jailer, 10)
+                expect(state:swap_open()):toBe(false)
+                expect(state:resolve_swap({}, {}) == nil):toBe(true)
+                expect(state:community_size()):toBe(3)
+                local restored: game.State? = game.State.restore(state:snapshot())
+                expect(restored == nil):toBe(false)
+                if restored ~= nil then
+                    expect((restored::game.State):swap_open()):toBe(false)
+                    expect((restored::game.State):community_size()):toBe(3)
+                end
+            end
+        )
+
+        it(
+            "deals four copies of every green rank for the Verdant Witch",
+            function(): unit
+                local deck: {game.Card} = game.make_deck(true)
+                expect(#deck):toBe(52)
+                local copies: {i32} = {}
+                for _ = 2, 14 do
+                    table.insert(copies, 0)
+                end
+                for dealt in deck do
+                    expect(dealt.suit):toBe(3)
+                    copies[dealt.rank - 1] += 1
+                end
+                for count in copies do
+                    expect(count):toBe(4)
+                end
+            end
+        )
+
+        it(
+            "halves the Usurer player's gold after each lost hand",
+            function(): unit
+                local state: game.State = boss(bosses.Kind.Usurer, 11)
+                finish_swaps(state)
+                arrange_loss(state)
+                local trick: game.Trick? = state:play(0, 1)
+                expect(trick == nil):toBe(false)
+                if trick ~= nil then
+                    expect((trick::game.Trick).winner):toBe(-1)
+                end
+                expect(state:gold()):toBe(5)
+            end
+        )
+
+        it(
+            "makes an Executioner loss consume every remaining heart",
+            function(): unit
+                local state: game.State = boss(bosses.Kind.Executioner, 10)
+                local run_state: run.State = run.State.new(spells.SpellKind.Firebolt, true)
+                expect(state:loss_is_lethal()):toBe(true)
+                expect(run_state:lose_hand(state:loss_is_lethal())):toBe(true)
+                expect(run_state.hearts):toBe(0)
+            end
+        )
+
+        it(
+            "conceals only the player's draws for the Blind Dealer",
+            function(): unit
+                local view: game.View = boss(bosses.Kind.BlindDealer, 10):view()
+                expect(view.player_cards_hidden):toBe(true)
+                expect(view.middle_cards_hidden):toBe(false)
+            end
+        )
+
+        it(
+            "conceals only the center cards for the Veiled Oracle",
+            function(): unit
+                local view: game.View = boss(bosses.Kind.VeiledOracle, 10):view()
+                expect(view.player_cards_hidden):toBe(false)
+                expect(view.middle_cards_hidden):toBe(true)
+            end
+        )
+    end
+)

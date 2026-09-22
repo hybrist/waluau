@@ -8,6 +8,7 @@ local city_map = require("./city_map")
 local game_screen = require("./game_screen")
 local render = require("./render")
 local spells = require("./spells/spell")
+local bosses = require("./bosses/boss")
 
 local function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
@@ -52,6 +53,7 @@ describe(
                 local city: city_map.State = city_map.State.new(101)
                 -- One lost hand drains the last heart before the duel is cleared.
                 screen.run.rush = true
+                screen.run.next_boss = bosses.Kind.Vanilla
                 screen:deal_vault()
                 screen.run.hearts = 1
 
@@ -89,6 +91,7 @@ describe(
                 local screen: game_screen.State = game_screen.State.new()
                 local city: city_map.State = city_map.State.new(102)
                 screen.run.rush = true
+                screen.run.next_boss = bosses.Kind.Vanilla
                 screen:deal_vault()
 
                 finish_swap_phase(screen.rules)
@@ -129,6 +132,7 @@ describe(
                 local screen: game_screen.State = game_screen.State.new()
                 local city: city_map.State = city_map.State.new(104)
                 screen.run.rush = true
+                screen.run.next_boss = bosses.Kind.Vanilla
                 screen:deal_vault()
 
                 finish_swap_phase(screen.rules)

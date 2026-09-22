@@ -4,10 +4,20 @@
 -- draw (see run.walu); this module owns the roster it draws from.
 --
 -- `Vanilla` is the boss battle as it has always been fought — both sides hold
--- seven relics and nothing else moves. It is the whole roster for now, so
--- every boss duel draws it; the point of the seam is that the next boss is a
--- member here rather than another branch inside the rules.
-export enum Kind { Vanilla }
+-- seven relics and nothing else moves. The other members each add one rule to
+-- that same long duel; keeping those identities here lets rules and
+-- presentation ask narrowly about an effect instead of copying a second
+-- roster beside this one.
+export enum Kind {
+    Vanilla,
+    Pyromancer,
+    Jailer,
+    VerdantWitch,
+    Usurer,
+    Executioner,
+    BlindDealer,
+    VeiledOracle
+}
 
 -- Whether a value that arrived through a decoder names a boss this build
 -- knows. JSON unpacking checks an enum's shape (an integer), not its domain,
@@ -24,9 +34,51 @@ end
 function Kind:__tostring(): string
     if self == Kind.Vanilla then
         return "Arch Mage"
+    elseif self == Kind.Pyromancer then
+        return "Pyromancer"
+    elseif self == Kind.Jailer then
+        return "The Jailer"
+    elseif self == Kind.VerdantWitch then
+        return "Verdant Witch"
+    elseif self == Kind.Usurer then
+        return "The Usurer"
+    elseif self == Kind.Executioner then
+        return "The Executioner"
+    elseif self == Kind.BlindDealer then
+        return "Blind Dealer"
+    elseif self == Kind.VeiledOracle then
+        return "Veiled Oracle"
     else
         return "Unknown Boss"
     end
+end
+
+function Kind:firebolts_after_swap(): bool
+    return self == Kind.Pyromancer
+end
+
+function Kind:allows_swapping(): bool
+    return self ~= Kind.Jailer
+end
+
+function Kind:all_green(): bool
+    return self == Kind.VerdantWitch
+end
+
+function Kind:halves_gold_on_loss(): bool
+    return self == Kind.Usurer
+end
+
+function Kind:loss_is_lethal(): bool
+    return self == Kind.Executioner
+end
+
+function Kind:hides_player_cards(): bool
+    return self == Kind.BlindDealer
+end
+
+function Kind:hides_middle_cards(): bool
+    return self == Kind.VeiledOracle
 end
 
 -- Every boss in the roster, in a fresh table the caller may keep and mutate:
@@ -34,7 +86,16 @@ end
 -- walked with pairs so the order a run works through the roster is the order
 -- the roster is declared in, not whatever iteration hands back.
 function all(): {Kind}
-    return {Kind.Vanilla}
+    return {
+        Kind.Vanilla,
+        Kind.Pyromancer,
+        Kind.Jailer,
+        Kind.VerdantWitch,
+        Kind.Usurer,
+        Kind.Executioner,
+        Kind.BlindDealer,
+        Kind.VeiledOracle
+    }
 end
 
 function count(): i32

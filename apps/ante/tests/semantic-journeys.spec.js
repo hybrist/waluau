@@ -129,7 +129,7 @@ test('buys a spell between duels, carries resources, then loses and starts a fre
 test('plays all three boss hands before advancing to the next boss duel', async ({ page }) => {
   test.setTimeout(240_000);
   await start(page, 2, 'Boss rush');
-  const context = 'Boss rush. Boss duel: Arch Mage.';
+  const context = 'Boss rush. Boss duel: The Executioner.';
   await expect(status(page)).toContainText(`${context} Duel 1. Health 3. Gold 10.`);
   await expect(cards(page, 'Your hand')).toHaveCount(7);
   await playHand(page, ['3 of black', '2 of black'], 'flush', 'Hand 1: You win.');
@@ -148,7 +148,9 @@ test('plays all three boss hands before advancing to the next boss duel', async 
   await expect(status(page)).toContainText('Health 3. Gold 36.');
   await button(page, 'Enter next duel').click();
   await ready(page);
-  await expect(status(page)).toContainText(`${context} Duel 2. Health 3. Gold 36.`);
+  await expect(status(page)).toContainText('Boss rush. Boss duel:');
+  await expect(status(page)).toContainText('Duel 2. Health 3. Gold 36.');
   await expect(cards(page, 'Your hand')).toHaveCount(7);
-  await expect(button(page, 'Skip swap')).toBeEnabled();
+  const swapOrPlay = await button(page, 'Skip swap').count() + await button(page, 'Play hand').count();
+  expect(swapOrPlay).toBe(1);
 });
