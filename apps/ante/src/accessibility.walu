@@ -323,13 +323,17 @@ function duel_state(screen: game_screen.State): State
         ) .. " matching cards from your hand and the table, or skip."
     end
     if ready and not view.swap_open and #screen.ui.play_picks == 2 then
-        local preview: i32 = game.value_for_pair(
-            game.hand_cards(view.player_hand),
-            view.middle,
-            screen.ui.play_picks[1],
-            screen.ui.play_picks[2]
-        )
-        phase = "Selected hand: " .. game.category_name(preview) .. ". Ready to play."
+        if view.player_cards_hidden or view.middle_cards_hidden then
+            phase = "Two cards selected. Ready to play."
+        else
+            local preview: i32 = game.value_for_pair(
+                game.hand_cards(view.player_hand),
+                view.middle,
+                screen.ui.play_picks[1],
+                screen.ui.play_picks[2]
+            )
+            phase = "Selected hand: " .. game.category_name(preview) .. ". Ready to play."
+        end
     end
     if casting then
         phase = "Choose a table card for your spell."
@@ -360,7 +364,11 @@ function duel_state(screen: game_screen.State): State
         )
         local names: {string} = {}
         for target in reach do
-            table.insert(names, card_name(view.middle[target + 1]))
+            if view.middle_cards_hidden then
+                table.insert(names, "face-down table card " .. tostring(target + 1))
+            else
+                table.insert(names, card_name(view.middle[target + 1]))
+            end
         end
         if #names == 1 then
             feedback = feedback .. " Target: " .. names[1] .. "."
@@ -376,18 +384,30 @@ function duel_state(screen: game_screen.State): State
                 screen.ui.swap_hand,
                 index - 1
             )) or (not view.swap_open and contains(screen.ui.play_picks, index - 1)) then
-                table.insert(selected_hand, card_name(slot.card))
+                if view.player_cards_hidden then
+                    table.insert(selected_hand, "face-down card " .. tostring(index))
+                else
+                    table.insert(selected_hand, card_name(slot.card))
+                end
             end
         end
         for index, card in view.middle do
             if contains(screen.ui.swap_table_cards, index - 1) then
-                table.insert(selected_table, card_name(card))
+                if view.middle_cards_hidden then
+                    table.insert(selected_table, "face-down table card " .. tostring(index))
+                else
+                    table.insert(selected_table, card_name(card))
+                end
             end
             if view.frozen_middle[index] then
                 text(
                     items,
                     "frozen-" .. tostring(index),
-                    "Table card " .. tostring(index) .. ": " .. card_name(card) .. ", frozen.",
+                    "Table card " .. tostring(
+                        index
+                    ) .. ": " .. (if view.middle_cards_hidden then "face down" else card_name(
+                        card
+                    )) .. ", frozen.",
                     nil
                 )
             end
@@ -417,7 +437,11 @@ function duel_state(screen: game_screen.State): State
         end
         local label: string = "Card " .. tostring(index) .. ": moving"
         if ready then
-            label = card_name(slot.card)
+            if view.player_cards_hidden then
+                label = "Card " .. tostring(index) .. ": face down"
+            else
+                label = card_name(slot.card)
+            end
         end
         local description: string = ""
         if ready and slot.known then
@@ -440,7 +464,11 @@ function duel_state(screen: game_screen.State): State
     for index, card in view.middle do
         local label: string = "Table card " .. tostring(index) .. ": moving"
         if ready then
-            label = card_name(card)
+            if view.middle_cards_hidden then
+                label = "Table card " .. tostring(index) .. ": face down"
+            else
+                label = card_name(card)
+            end
             if view.frozen_middle[index] then
                 label = label .. ", frozen"
             end

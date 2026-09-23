@@ -604,7 +604,7 @@ describe(
                 -- knows who is standing in the third.
                 expect(state:boss()):toBe(false)
                 expect(state:boss_kind() == nil):toBe(true)
-                expect(state.next_boss):toBe(bosses.Kind.Vanilla)
+                expect(bosses.Kind.valid(state.next_boss)):toBe(true)
 
                 local coming: bosses.Kind = state.next_boss
                 reach_duel(state, 3)
@@ -644,22 +644,25 @@ describe(
                 -- The opening roll has already taken its boss out of the pool.
                 expect(#state.boss_pool):toBe(bosses.count() - 1)
 
-                -- Every boss has now been fought, so the roll after the third
-                -- duel can only be made by throwing the roster back in.
-                reach_duel(state, 4)
-                expect(#state.boss_pool):toBe(bosses.count() - 1)
+                -- Drain the rest of this cycle, then ask for one more boss.
+                -- Refill holds the last boss back and the new draw removes one
+                -- more, leaving every other boss available.
+                for _ = 1, bosses.count() do
+                    state:roll_next_boss()
+                end
+                expect(#state.boss_pool):toBe(bosses.count() - 2)
                 expect(bosses.Kind.valid(state.next_boss)):toBe(true)
             end
         )
 
         it(
-            "hands the last boss straight back when the roster has nobody else",
+            "holds the last boss out of a refilled roster",
             function()
-                -- With one boss on the roster the hold-back would refill to
-                -- nothing, so the repeat wins over the bias.
                 local pool: {bosses.Kind} = run.refilled_pool(bosses.Kind.Vanilla)
-                expect(#pool):toBe(1)
-                expect(pool[1]):toBe(bosses.Kind.Vanilla)
+                expect(#pool):toBe(bosses.count() - 1)
+                for kind in pool do
+                    expect(kind == bosses.Kind.Vanilla):toBe(false)
+                end
             end
         )
 

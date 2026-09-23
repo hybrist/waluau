@@ -115,7 +115,7 @@ end
 
 function State.new(): State
     local run: run_module.State = run_module.State.new(spells.SpellKind.Firebolt, false)
-    local rules: game.State = game.State.new(run:boss(), run.spells, run.gold)
+    local rules: game.State = game.State.new(run:boss(), run.spells, run.gold, run:boss_kind())
     local intermission: shop.State = shop.State.new(run)
     intermission:close()
     return {
@@ -144,7 +144,7 @@ end
 function State:deal_vault(): unit
     self.spell_feedback = "No spell cast."
     local run: run_module.State = self.run
-    self.rules:reset(run:boss(), run.spells, run.gold)
+    self.rules:reset(run:boss(), run.spells, run.gold, run:boss_kind())
     self.ui:reset()
     self.presentation:reset()
     self.board:pointer_leave()
@@ -339,6 +339,15 @@ function State:update(city: city_map.State, dt: f64): i32
     local presentation: choreography.State = self.presentation
     local animating: bool = presentation:is_animating()
     presentation:update_fan(self.board:fan_focus(animating), dt)
+    -- The Pyromancer waits for the exchange to land, then uses the same
+    -- Firebolt pipeline as a player cast. Keeping the target in rules state
+    -- makes a snapshot between those beats deterministic.
+    if not animating and not presentation:firebolt_pending() then
+        local boss_target: i32? = self.rules:launch_boss_firebolt()
+        if boss_target ~= nil then
+            presentation:apply_power(spells.SpellKind.Firebolt, {boss_target::i32})
+        end
+    end
     local community_count: i32 = self.rules:community_size()
     -- Rules rotate or clear the live board as soon as play resolves, while the
     -- reveal still presents the five cards recorded in the trick. Keep spell
@@ -378,7 +387,7 @@ function State:update(city: city_map.State, dt: f64): i32
                 }
             )
         end
-        presentation:firebolt_resolved(burns, #settled.middle)
+        presentation:firebolt_resolved(burns, #settled.middle, settled.middle_cards_hidden)
     end
     if ui.revealing then
         return presentation:update_reveal(dt)
@@ -550,7 +559,7 @@ function State:submit_round(): unit
     end
     local resolved: game.Trick = trick::game.Trick
     if resolved.winner < 0 then
-        self.run:lose_hand()
+        self.run:lose_hand(self.rules:loss_is_lethal())
     end
     self.presentation:record_burned_losers(resolved)
     ui:begin_reveal()
@@ -595,7 +604,7 @@ end
 -- retained by the browser between frames. Pending effects must finish before
 -- an index can name a newly dealt card.
 function State:board_ready(): bool
-    return not self:on_map() and not self.intervention.active and not self.presentation:firebolt_pending() and not self.presentation:is_animating() and self.ui.modal == "none" and not self.ui.revealing and not self:vault_finished()
+    return not self:on_map() and not self.intervention.active and not self.rules:boss_effect_pending() and not self.presentation:firebolt_pending() and not self.presentation:is_animating() and self.ui.modal == "none" and not self.ui.revealing and not self:vault_finished()
 end
 
 -- "exit" is the way back to the menu, which only the control bar's own MENU
@@ -667,7 +676,7 @@ end
 -- Information controls must not interrupt an effect that still owns the board.
 -- Both native control readiness and every canvas route use this decision.
 function State:information_ready(): bool
-    return not self.intervention.active and not self.presentation:firebolt_pending()
+    return not self.intervention.active and not self.rules:boss_effect_pending() and not self.presentation:firebolt_pending()
 end
 
 function State:consume_gate(city: city_map.State, command: flow.Command): bool

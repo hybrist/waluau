@@ -290,8 +290,10 @@ end
 -- Charge exactly one heart for a hand the Opponent took. A terminal reveal
 -- may call this before the run is settled, so zero is an observable state,
 -- while repeated calls cannot take health negative.
-function State:lose_hand(): bool
-    if self.health > 0 then
+function State:lose_hand(lethal: bool?): bool
+    if lethal == true then
+        self.health = 0
+    elseif self.health > 0 then
         self.health -= HEALTH_PER_HEART
         if self.health < 0 then
             self.health = 0

@@ -491,7 +491,7 @@ function Board:begin_frame(frame: Frame): unit
                 frame.view.player_hand[index + 1].card,
                 selected,
                 index == frame.interaction.hand_focus,
-                false,
+                frame.view.player_cards_hidden,
                 false,
                 frame.view.player_hand[index + 1].known
             ),
@@ -562,7 +562,14 @@ function Board:begin_frame(frame: Frame): unit
         end
         self.view:present_table(
             index,
-            card.look(frame.view.middle[index + 1], selected, focused, hidden, false, false),
+            card.look(
+                frame.view.middle[index + 1],
+                selected,
+                focused,
+                hidden or frame.view.middle_cards_hidden,
+                false,
+                false
+            ),
             power,
             frame.spell.clock,
             frame.ash:slot(index),
