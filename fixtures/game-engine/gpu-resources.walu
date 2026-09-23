@@ -44,6 +44,18 @@ function install_gpu_resources_fixture(): unit
         assert(graphics:supports("textures") and graphics:supports("sprite-batches"))
         assert(graphics:supports("render-targets"))
 
+        -- Density reads the current one-based transform, including the base
+        -- identity (where an off-by-one would read index zero and trap).
+        local density: f64 = graphics:on_screen_density()
+        assert(density >= 1.0)
+        graphics:push()
+        graphics:scale(2.0, 3.0)
+        graphics:translate(17.0, -9.0)
+        assert(math.abs(graphics:on_screen_density() - density * math.sqrt(6.0)) < 0.000001)
+        graphics:pop()
+        assert(graphics:on_screen_density() == density)
+        record_gpu_resource_step("density-checked")
+
         local maybe_source: resources.Resource? = state.loaded_image
         assert(maybe_source ~= nil)
         local source: resources.Resource = maybe_source::resources.Resource
@@ -70,8 +82,28 @@ function install_gpu_resources_fixture(): unit
         assert(graphics:draw_sprite(texture, 8.0, 8.0, 16.0, 16.0, 0.0, 1.0, 1.0, 1.0))
         graphics:set_screen_target()
         assert(graphics:draw_render_target(target, 84.0, 8.0, 48.0, 48.0))
+
+        -- A smooth target blends between its texels when it is drawn larger
+        -- than it was captured: a red and a blue column meet in a violet seam
+        -- rather than a hard edge.
+        local smooth_result: graphics_module.RenderTargetResult = graphics:create_smooth_render_target(
+            2,
+            2
+        )
+        assert(smooth_result.ok)
+        local smooth: graphics_module.RenderTarget = smooth_result.target
+        assert(graphics:set_render_target(smooth))
+        graphics:clear("#000000")
+        graphics:set_color("#ff0000")
+        graphics:fill_rectangle(0.0, 0.0, 1.0, 2.0)
+        graphics:set_color("#0000ff")
+        graphics:fill_rectangle(1.0, 0.0, 1.0, 2.0)
+        graphics:set_screen_target()
+        graphics:set_color("#ffffff")
+        assert(graphics:draw_render_target(smooth, 140.0, 8.0, 48.0, 48.0))
         graphics:flush()
         record_gpu_resource_step("rendered")
+        graphics:release_render_target(smooth)
 
         graphics:release_render_target(target)
         graphics:release_render_target(target)
@@ -89,7 +121,7 @@ function install_gpu_resources_fixture(): unit
     engine.start(
         {
             title = "GPU resource conformance",
-            width = 144,
+            width = 208,
             height = 64,
             update_hz = 60.0,
             max_frame_seconds = 0.25,

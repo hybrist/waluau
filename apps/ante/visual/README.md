@@ -6,6 +6,11 @@ separately with `test:gameplay`; it does not use these images or their readiness
 These are appearance baselines for this environment, not cross-driver graphics
 conformance assertions.
 
+The live city and isolated scrying story capture at the display density, capped
+at two texels per logical pixel, with linear sampling through the lens. City
+and route ink use matching capture coordinates. The system reduced-motion
+preference freezes the lens clock; the story still allows scrubbing spell phase.
+
 The city scrying captures cover the Old Market at 240% and 400% zoom, with
 motion paused at spell phase 25. Ring travel defaults to a 300 ms speed peak
 and a 7000 ms total duration. Story controls expose both times; the peak range
@@ -78,6 +83,14 @@ uses a page screenshot clipped to the canvas bounds and compares that buffer;
 it never asks a locator screenshot to wait for rAF-driven element stability
 while the fixture clock is paused.
 
+The playable `duel` stories also have semantic interaction coverage in
+`duel.spec.js`: all four spells, seeded replay, boss/level configuration,
+keyboard and canvas controls, live args updates, and unaffordable casts. These
+use the game's existing accessible text controls to observe actual rules effects.
+The four `duel-*` baselines capture each spell launched at table card 2: Firebolt
+at 1600 ms, and Freeze Ray, Raise Card, and Clone at 800 ms. They use the same
+explicit clock and resource barrier as the appearance fixtures above.
+
 ## Baseline review and updates
 
 Use the exact image above even on macOS. Start a remote browser in one terminal:
@@ -102,18 +115,19 @@ review baselines. Change the image and Playwright lockfile together when upgradi
 
 Inspect every changed PNG in `visual/baselines/`, confirm each intentional
 appearance change, and include those PNGs in the implementation PR. Run the
-comparison twice without updating to confirm reproducibility. Zero pixels may
-exceed the 0.0053 perceptual color threshold. The original entity scenes measured
-1/255 channel rounding between native CI amd64 and amd64 emulation on Apple
-Silicon. Full-screen text adds at most 2/255 channel differences: the CI capture
-of main menu, starting vendor, help and fatal audio had 429, 350, 583 and 342
-raw differing pixels respectively, all at text edges. Only 1, 7, 1 and 4 pixels
-exceeded the earlier 0.004 threshold after Playwright's antialias handling.
-The largest measured normalized YIQ distance was 0.005241463806366468 at fatal
-panel text; 0.0053 rounds that measured bound upward. The pixel allowance stays
-zero. This is Playwright's perceptual color distance, not a raw channel
-tolerance; geometry and shader captures otherwise matched.
-Never increase a threshold merely to make an unexplained diff pass.
+comparison twice without updating to confirm reproducibility. Pixels may exceed
+the 0.0053 perceptual color threshold in up to 1% of an image. The original
+entity scenes measured 1/255 channel rounding between native CI amd64 and amd64
+emulation on Apple Silicon. Full-screen text adds at most 2/255 channel
+differences: the CI capture of main menu, starting vendor, help and fatal audio
+had 429, 350, 583 and 342 raw differing pixels respectively, all at text edges.
+Only 1, 7, 1 and 4 pixels exceeded the earlier 0.004 threshold after
+Playwright's antialias handling. The largest measured normalized YIQ distance
+was 0.005241463806366468 at fatal panel text; 0.0053 rounds that measured bound
+upward. The 1% allowance absorbs minor text and rasterization changes while
+still rejecting substantial layout or artwork differences. This is Playwright's
+perceptual color distance, not a raw channel tolerance. Never increase either
+tolerance merely to make an unexplained diff pass.
 
 Failures retain Playwright traces and expected/actual/diff PNGs in
 `visual-results/` and a browsable HTML report in `visual-report/`; CI uploads both

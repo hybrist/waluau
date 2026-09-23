@@ -3,7 +3,7 @@
 --
 -- Both used to be a line of text — "HEARTS 3 / 3" and "GOLD 10" — which is the
 -- one place in the duel where a resource was spelled rather than shown. A
--- heart that has been spent is now a hollow the shape of the one beside it,
+-- heart that has been spent is gray, and partial health fills it from the left,
 -- and the pool is a struck gold coin, so the corner reads at a glance and at
 -- the same distance the rest of the board does.
 local game = require("../game")
@@ -21,8 +21,7 @@ const HEART_INK: string = "#fb7185"
 const HEART_GLOW: f64 = 7.0
 const HEART_RINGS: i32 = 4
 const HEART_STRENGTH: f64 = 0.32
-const SPENT_INK: string = "#3a2a30"
-const SPENT_HOLLOW: string = "#131317"
+const SPENT_INK: string = "#565660"
 
 -- Gold is the amber the rest of the vault already writes prices and the
 -- selected menu line in, so the purse names the same metal the shop asks for.
@@ -86,12 +85,50 @@ type HeartFan = {
     reach: f64
 }
 
+export type HeartVertex = { x: f64, y: f64, shade: f64 }
+
+-- Clip a fan triangle at the fill boundary, interpolating its lighting so
+-- partial hearts keep the same surface as full hearts at any UI scale.
+function clip_triangle(vertices: {HeartVertex}, right: f64): {HeartVertex}
+    local clipped: {HeartVertex} = {}
+    local previous: HeartVertex = vertices[#vertices]
+    for vertex in vertices do
+        if (previous.x <= right) ~= (vertex.x <= right) then
+            local t: f64 = (right - previous.x) / (vertex.x - previous.x)
+            table.insert(
+                clipped,
+                {
+                    x = right,
+                    y = previous.y + (vertex.y - previous.y) * t,
+                    shade = previous.shade + (vertex.shade - previous.shade) * t
+                }
+            )
+        end
+        if vertex.x <= right then
+            table.insert(clipped, vertex)
+        end
+        previous = vertex
+    end
+    return clipped
+end
+
+function emit_vertex(graphics: ui.Graphics, vertex: HeartVertex): unit
+    graphics:emit_shaded_vertex(vertex.x, vertex.y, 0.0, 0.0, 0.0, vertex.shade)
+end
+
+function heart_fill(health: i32, pip: i32): f64
+    return math.max(
+        0.0,
+        math.min(1.0, (health::f64) / (run_module.health_per_heart::f64) - (pip::f64))
+    )
+end
+
 -- One rim vertex. Its brightness leans from the rim value toward the crown
 -- where it faces the light and away where it turns from it, and it only
 -- reaches the rim value at the crown's full reach: the cleft sits close to
 -- the crown, and giving it the tip's darkness would cut a seam down the
 -- middle of the one body this is meant to be.
-function emit_heart_rim(graphics: ui.Graphics, fan: HeartFan, t: f64): unit
+function heart_rim(fan: HeartFan, t: f64): HeartVertex
     local nx: f64 = heart_x(t)
     local ny: f64 = heart_y(t)
     local x: f64 = fan.origin_x + nx * fan.half
@@ -101,7 +138,7 @@ function emit_heart_rim(graphics: ui.Graphics, fan: HeartFan, t: f64): unit
     local dx: f64 = x - fan.crown_x
     local dy: f64 = y - fan.crown_y
     local along: f64 = math.min(1.0, math.sqrt(dx * dx + dy * dy) / fan.reach)
-    graphics:emit_shaded_vertex(x, y, 0.0, 0.0, 0.0, fan.crown + (lit - fan.crown) * along)
+    return { x = x, y = y, shade = fan.crown + (lit - fan.crown) * along }
 end
 
 -- A heart at a width, as one fan: brightest at its crown, falling to the rim,
@@ -115,7 +152,8 @@ function draw_heart(
     width: f64,
     color: string,
     rim: f64,
-    crown: f64
+    crown: f64,
+    fill: f64?
 ): unit
     local half: f64 = width * 0.5
     local origin_y: f64 = center_y - half * HEART_LIFT
@@ -137,17 +175,31 @@ function draw_heart(
     }
     local step: f64 = math.pi * 2.0 / (HEART_SEGMENTS::f64)
     graphics:set_color(color)
-    graphics:ensure_capacity(HEART_SEGMENTS * 3)
+    graphics:ensure_capacity(HEART_SEGMENTS * 6)
+    local fraction: f64 = fill or 1.0
+    local right: f64 = center_x - half + width * fraction
+    local center: HeartVertex = { x = crown_x, y = crown_y, shade = crown }
     for segment = 0::i32, HEART_SEGMENTS - 1 do
         local from: f64 = (segment::f64) * step
-        graphics:emit_shaded_vertex(crown_x, crown_y, 0.0, 0.0, 0.0, crown)
-        emit_heart_rim(graphics, fan, from)
-        emit_heart_rim(graphics, fan, from + step)
+        local a: HeartVertex = heart_rim(fan, from)
+        local b: HeartVertex = heart_rim(fan, from + step)
+        if fraction >= 1.0 then
+            emit_vertex(graphics, center)
+            emit_vertex(graphics, a)
+            emit_vertex(graphics, b)
+        else
+            local polygon = clip_triangle({center, a, b}, right)
+            for index = 2::i32, #polygon - 1 do
+                emit_vertex(graphics, polygon[1])
+                emit_vertex(graphics, polygon[index])
+                emit_vertex(graphics, polygon[index + 1])
+            end
+        end
     end
 end
 
-function draw_pip(graphics: ui.Graphics, center_x: f64, center_y: f64, held: bool): unit
-    if held then
+function draw_pip(graphics: ui.Graphics, center_x: f64, center_y: f64, fill: f64): unit
+    if fill >= 1.0 then
         graphics:set_color(HEART_INK)
         plate.halo(
             graphics,
@@ -161,10 +213,10 @@ function draw_pip(graphics: ui.Graphics, center_x: f64, center_y: f64, held: boo
         draw_heart(graphics, center_x, center_y, PIP_WIDTH, HEART_INK, 0.66, 1.30)
         return
     end
-    -- A spent heart keeps its own outline and loses its body, so the row still
-    -- says how many the run started with.
-    draw_heart(graphics, center_x, center_y, PIP_WIDTH, SPENT_INK, 1.0, 1.0)
-    draw_heart(graphics, center_x, center_y, PIP_WIDTH - 3.0, SPENT_HOLLOW, 1.0, 1.0)
+    draw_heart(graphics, center_x, center_y, PIP_WIDTH, SPENT_INK, 0.66, 1.30)
+    if fill > 0.0 then
+        draw_heart(graphics, center_x, center_y, PIP_WIDTH, HEART_INK, 0.66, 1.30, fill)
+    end
 end
 
 function draw_hearts(graphics: ui.Graphics, bounds: box.Rect, held: i32, most: i32): unit
@@ -174,7 +226,7 @@ function draw_hearts(graphics: ui.Graphics, bounds: box.Rect, held: i32, most: i
             graphics,
             bounds.x + PIP_WIDTH * 0.5 + (pip::f64) * PIP_PITCH,
             center_y,
-            pip < held
+            heart_fill(held, pip)
         )
     end
 end
@@ -202,12 +254,12 @@ function draw_purse(graphics: ui.Graphics, bounds: box.Rect, gold: i32): unit
     )
 end
 
-type VitalsPresentation = { hearts: i32, max_hearts: i32, gold: i32 }
+type VitalsPresentation = { health: i32, max_hearts: i32, gold: i32 }
 export type Stateful = { presentation: VitalsPresentation, root: ui.Node }
 
 function Stateful.new(state: game.View, run: run_module.View): Stateful
     local presentation: VitalsPresentation = {
-        hearts = run.hearts,
+        health = run.health,
         max_hearts = run.max_hearts,
         gold = state.player_points
     }
@@ -217,7 +269,7 @@ function Stateful.new(state: game.View, run: run_module.View): Stateful
         PIP_PITCH * (presentation.max_hearts::f64),
         ROW_HEIGHT,
         function(surface: ui.Surface, bounds: box.Rect): unit
-            draw_hearts(surface.graphics, bounds, presentation.hearts, presentation.max_hearts)
+            draw_hearts(surface.graphics, bounds, presentation.health, presentation.max_hearts)
         end
     )
     local purse_row: ui.Node = ui.Node.sized(
@@ -234,7 +286,7 @@ function Stateful.new(state: game.View, run: run_module.View): Stateful
 end
 
 function Stateful:present(state: game.View, run: run_module.View): unit
-    self.presentation.hearts = run.hearts
+    self.presentation.health = run.health
     self.presentation.max_hearts = run.max_hearts
     self.presentation.gold = state.player_points
 end
@@ -243,4 +295,11 @@ function node(state: game.View, run: run_module.View): ui.Node
     return Stateful.new(state, run).root
 end
 
-return { node = node, draw_heart = draw_heart, pip_width = PIP_WIDTH, row_height = ROW_HEIGHT }
+return {
+    clip_triangle = clip_triangle,
+    heart_fill = heart_fill,
+    node = node,
+    draw_heart = draw_heart,
+    pip_width = PIP_WIDTH,
+    row_height = ROW_HEIGHT
+}

@@ -10,6 +10,7 @@ local button = require("./button")
 local modal = require("./modal")
 local run_module = require("../run")
 local shop_ = require("../shop")
+local viewport_layout = require("../layout")
 
 type ShopState = shop_.State
 type Slot = shop_.Slot
@@ -122,11 +123,23 @@ function draw_row(
     end
 
     local slot: Slot = state.slots[index + 1]
+    local baseline: f64 = ROW_BASELINE
+    if slot.item:detail() ~= "" then
+        baseline = 23.0
+        ink.text(
+            surface.graphics,
+            slot.item:detail(),
+            row_bounds.x + ROW_PAD_X,
+            row_bounds.y + 39.0,
+            9.0,
+            shop_slot_color(slot, presentation.run)
+        )
+    end
     ink.text(
         surface.graphics,
         slot.item:describe(),
         row_bounds.x + ROW_PAD_X,
-        row_bounds.y + ROW_BASELINE,
+        row_bounds.y + baseline,
         ROW_TEXT_SIZE,
         shop_slot_color(slot, presentation.run)
     )
@@ -259,7 +272,7 @@ end
 
 function Stateful:draw(surface: ui.Surface, width: f64, height: f64): unit
     local size: box.Intrinsic = self.root:measure(surface.graphics)
-    local x: f64 = (width - size.preferred_width) * 0.5
+    local x: f64 = viewport_layout.map_overlay_x(width, size.preferred_width)
     local y: f64 = (height - size.preferred_height) * 0.5
     self.root:draw(surface, x, y, size.preferred_width, size.preferred_height)
 end

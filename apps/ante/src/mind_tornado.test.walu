@@ -1,0 +1,240 @@
+require("waluau:vitest")
+local game = require("./game")
+local fixture = require("../test/game_fixture")
+local screen_ = require("./game_screen")
+local spells = require("./spells/spell")
+local accessibility = require("./accessibility")
+
+type GameState = game.State
+
+function screen_for(kind: spells.SpellKind, level: i32): screen_.State
+    local screen = screen_.State.new()
+    screen.run.spells = {spells.Spell.new(kind, level)}
+    screen:deal_vault()
+    screen.presentation:skip()
+    fixture.set_player_points(screen.rules, 50)
+    return screen
+end
+
+function accessible_count(screen: screen_.State): i32
+    local count: i32 = 0
+    for item in accessibility.duel_state(screen).items do
+        if string.find(item.key, "opponent-card-", 1, true) ~= nil then
+            count += 1
+        end
+    end
+    return count
+end
+
+function cards_in(view: game.View): {game.Card}
+    local cards: {game.Card} = {}
+    for held in view.player_hand do
+        table.insert(cards, held.card)
+    end
+    for card in view.middle do
+        table.insert(cards, card)
+    end
+    for held in view.computer_hand do
+        table.insert(cards, held.card)
+    end
+    return cards
+end
+
+function occurrences(cards: {game.Card}, wanted: game.Card): i32
+    local count: i32 = 0
+    for card in cards do
+        if card.rank == wanted.rank and card.suit == wanted.suit then
+            count += 1
+        end
+    end
+    return count
+end
+
+describe(
+    "Mind Read and Tornado",
+    function()
+        it(
+            "reveals the whole current opponent hand and persists without revealing later draws",
+            function()
+                math.randomseed(141)
+                local screen = screen_for(spells.SpellKind.MindRead, 1)
+                while screen.rules:swap_open() do
+                    screen.rules:resolve_swap({}, {})
+                end
+                screen.presentation:skip()
+                expect(accessible_count(screen)):toBe(0)
+                screen:arm_spell(0)
+                expect(screen.ui.cast_slot == nil):toBe(true)
+                expect(screen.rules:gold()):toBe(45)
+                expect(accessible_count(screen)):toBe(5)
+                for held in screen.rules:view().computer_hand do
+                    expect(held.revealed == true):toBe(true)
+                end
+                expect(screen:can_cast(0)):toBe(false)
+                screen:arm_spell(0)
+                expect(screen.rules:gold()):toBe(45)
+
+                local saved = screen.rules:snapshot()
+                local restored: GameState? = GameState.restore(saved)
+                expect(restored ~= nil):toBe(true)
+                if restored ~= nil then
+                    local rules: GameState = restored::GameState
+                    expect(rules:snapshot()):toBe(saved)
+                    expect(rules:play(0, 1) ~= nil):toBe(true)
+                    local seen: i32 = 0
+                    for held in rules:view().computer_hand do
+                        if held.revealed == true then
+                            seen += 1
+                        end
+                    end
+                    expect(seen):toBe(3)
+                    local trick = rules:last_trick()
+                    if trick ~= nil then
+                        for held in (trick::game.Trick).computer_hand do
+                            expect(held.revealed == true):toBe(true)
+                        end
+                    end
+                end
+            end
+        )
+
+        it(
+            "rejects stale snapshots without reveal flags and charges nothing when unaffordable",
+            function()
+                local screen = screen_for(spells.SpellKind.MindRead, 1)
+                local legacy = string.gsub(screen.rules:snapshot(), ',"revealed":null', "")
+                expect(GameState.restore(legacy) == nil):toBe(true)
+                fixture.set_player_points(screen.rules, 4)
+                local before = screen.rules:snapshot()
+                screen:arm_spell(0)
+                expect(screen.rules:snapshot()):toBe(before)
+                expect(accessible_count(screen)):toBe(0)
+            end
+        )
+
+        it(
+            "samples each area without replacement, protects frozen cards, and conserves all cards",
+            function()
+                local crossed: bool = false
+                for level in {1::i32, 2::i32, 9::i32} do
+                    for seed = 1, 12 do
+                        math.randomseed(seed)
+                        local rules = GameState.new(
+                            false,
+                            {
+                                spells.Spell.new(spells.SpellKind.MindRead, 1),
+                                spells.Spell.new(spells.SpellKind.FreezeRay, 1),
+                                spells.Spell.new(spells.SpellKind.Tornado, level)
+                            },
+                            50
+                        )
+                        fixture.arrange_breach(
+                            rules,
+                            {
+                                { rank = 7, suit = 1 },
+                                { rank = 8, suit = 1 },
+                                { rank = 9, suit = 1 }
+                            },
+                            {
+                                { rank = 2, suit = 0 },
+                                { rank = 3, suit = 0 },
+                                { rank = 4, suit = 0 },
+                                { rank = 5, suit = 0 },
+                                { rank = 6, suit = 0 }
+                            },
+                            {
+                                { rank = 10, suit = 2 },
+                                { rank = 11, suit = 2 },
+                                { rank = 12, suit = 2 },
+                                { rank = 13, suit = 2 },
+                                { rank = 14, suit = 2 }
+                            }
+                        )
+                        local before = cards_in(rules:view())
+                        local deck = rules:view().deck_count
+                        local player: {game.Card} = {}
+                        for held in rules:view().player_hand do
+                            table.insert(player, held.card)
+                        end
+                        fixture.arrange_player(rules, player, {true, true, true, true, true})
+                        expect(rules:cast_spell(0, -1)):toBe(true)
+                        expect(rules:cast_spell(1, 1)):toBe(true)
+                        expect(rules:cast_spell(2, -1)):toBe(true)
+                        local view = rules:view()
+                        expect(#view.player_hand):toBe(5)
+                        expect(#view.middle):toBe(3)
+                        expect(#view.computer_hand):toBe(5)
+                        expect(view.deck_count):toBe(deck)
+                        expect(view.middle[2].rank):toBe(8)
+                        expect(view.middle[2].suit):toBe(1)
+                        expect(rules:is_frozen(1)):toBe(true)
+                        expect(rules:gold()):toBe(35)
+                        local after = cards_in(view)
+                        for card in before do
+                            expect(occurrences(after, card)):toBe(1)
+                        end
+                        local player_changed: i32 = 0
+                        local opponent_changed: i32 = 0
+                        local center_changed: i32 = 0
+                        for held in view.player_hand do
+                            if not held.known then
+                                player_changed += 1
+                            end
+                            if held.card.suit ~= 0 then
+                                crossed = true
+                            end
+                        end
+                        for held in view.computer_hand do
+                            if held.revealed ~= true then
+                                opponent_changed += 1
+                            end
+                        end
+                        for index, card in view.middle do
+                            if card.rank ~= 6 + index or card.suit ~= 1 then
+                                center_changed += 1
+                            end
+                        end
+                        local expected: i32 = level
+                        if expected > 5 then
+                            expected = 5
+                        end
+                        expect(player_changed):toBe(expected)
+                        expect(opponent_changed):toBe(expected)
+                        expect(center_changed <= level):toBe(true)
+                        expect(GameState.restore(rules:snapshot()) ~= nil):toBe(true)
+                    end
+                end
+                expect(crossed):toBe(true)
+            end
+        )
+
+        it(
+            "caps Tornado to shrinking boss hands and clears pending selections",
+            function()
+                local screen = screen_for(spells.SpellKind.Tornado, 9)
+                fixture.arrange_breach(
+                    screen.rules,
+                    {{ rank = 7, suit = 1 }, { rank = 8, suit = 1 }, { rank = 9, suit = 1 }},
+                    {{ rank = 2, suit = 0 }, { rank = 3, suit = 0 }},
+                    {{ rank = 10, suit = 2 }, { rank = 11, suit = 2 }}
+                )
+                screen.ui.play_picks = {0, 1}
+                screen.ui.swap_hand = {0}
+                screen.ui.swap_table_cards = {1}
+                local before = cards_in(screen.rules:view())
+                screen:arm_spell(0)
+                expect(screen.ui.cast_slot == nil):toBe(true)
+                expect(#screen.ui.play_picks):toBe(0)
+                expect(#screen.ui.swap_hand):toBe(0)
+                expect(#screen.ui.swap_table_cards):toBe(0)
+                local view = screen.rules:view()
+                expect(#view.player_hand):toBe(2)
+                expect(#view.computer_hand):toBe(2)
+                expect(#view.middle):toBe(3)
+                for card in before do
+                    expect(occurrences(cards_in(view), card)):toBe(1)
+                end
+            end
+        )
+    end
+)

@@ -19,7 +19,7 @@ local spells = require("./spells/spell")
 -- live. `gold` is what the live duel was dealt, not what it has left: the
 -- rules spend from their own pool, and a cleared duel hands its remainder
 -- back here — which is also the purse the intermission between duels shops
--- from. `hearts` is damaged by lost hands and, unlike a duel-local tally,
+-- from. `health` is damaged by lost hands and, unlike a duel-local tally,
 -- survives every cleared duel. `spells` is the loadout every duel of the run
 -- is fought with, in the order the spells were learned; `start_spell` is the one the menu picked, so a
 -- run that ends can start over carrying what it originally set out with rather
@@ -37,7 +37,7 @@ local spells = require("./spells/spell")
 export type State = {
     duel: i32,
     gold: i32,
-    hearts: i32,
+    health: i32,
     cleared: i32,
     spells: {game.Spell},
     start_spell: spells.SpellKind,
@@ -60,7 +60,9 @@ const MAX_SPELLS: i32 = 2
 -- Three lost hands across the whole run. A won duel repairs nothing: health is
 -- run state, just like the purse and loadout it carries through the shop.
 const MAX_HEARTS: i32 = 3
-const SNAPSHOT_SCHEMA: string = "duel-run-v6"
+const HEALTH_PER_HEART: i32 = 12
+const MAX_HEALTH: i32 = MAX_HEARTS * HEALTH_PER_HEART
+const SNAPSHOT_SCHEMA: string = "duel-run-v7"
 
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
 -- the starting spell the run sets out with, and the whole of its opening
@@ -74,7 +76,7 @@ function State.new(spell: spells.SpellKind, rush: bool): State
     return {
         duel = 1,
         gold = game.starting_gold,
-        hearts = MAX_HEARTS,
+        health = MAX_HEALTH,
         cleared = 0,
         spells = {spells.Spell.new(spell, 1)},
         start_spell = spell,
@@ -183,10 +185,10 @@ function outcome_walks_on(outcome: Outcome): bool
     return outcome == "advance" or outcome == "won"
 end
 
-function outcome_of(duel: i32, rush: bool, hearts: i32, finished: bool, cleared: bool): Outcome
+function outcome_of(duel: i32, rush: bool, health: i32, finished: bool, cleared: bool): Outcome
     -- Health can end the run during a duel before the rules report a verdict.
     -- It therefore outranks that verdict.
-    if hearts <= 0 then
+    if health <= 0 then
         return "lost-health"
     end
     if not finished then
@@ -218,7 +220,7 @@ export type View = {
     boss: bool,
     next_is_boss: bool,
     carried_gold: i32,
-    hearts: i32,
+    health: i32,
     max_hearts: i32,
     run_length: i32,
     outcome: Outcome
@@ -231,7 +233,7 @@ function State:view(outcome: Outcome): View
         boss = self:boss(),
         next_is_boss = self:next_is_boss(),
         carried_gold = self.gold,
-        hearts = self.hearts,
+        health = self.health,
         max_hearts = MAX_HEARTS,
         run_length = run_length(self.rush),
         outcome = outcome
@@ -246,7 +248,7 @@ end
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished duel decided is not this module's to decide again.
 function State:settle(finished: bool, cleared: bool, carried_gold: i32): Outcome
-    local outcome: Outcome = outcome_of(self.duel, self.rush, self.hearts, finished, cleared)
+    local outcome: Outcome = outcome_of(self.duel, self.rush, self.health, finished, cleared)
     if outcome == "none" then
         return outcome
     end
@@ -273,7 +275,7 @@ function State:restart(spell: spells.SpellKind, rush: bool): unit
     local fresh: State = State.new(spell, rush)
     self.duel = fresh.duel
     self.gold = fresh.gold
-    self.hearts = fresh.hearts
+    self.health = fresh.health
     self.cleared = fresh.cleared
     self.spells = fresh.spells
     self.start_spell = spell
@@ -290,11 +292,14 @@ end
 -- while repeated calls cannot take health negative.
 function State:lose_hand(lethal: bool?): bool
     if lethal == true then
-        self.hearts = 0
-    elseif self.hearts > 0 then
-        self.hearts -= 1
+        self.health = 0
+    elseif self.health > 0 then
+        self.health -= HEALTH_PER_HEART
+        if self.health < 0 then
+            self.health = 0
+        end
     end
-    return self.hearts == 0
+    return self.health == 0
 end
 
 -- Whether there is damage a potion could undo. A run at full health has
@@ -302,20 +307,19 @@ end
 -- rather than letting anything buy it back — so neither is a sale the shop
 -- should make.
 function State:can_heal(): bool
-    return self.hearts > 0 and self.hearts < MAX_HEARTS
+    return self.health > 0 and self.health < MAX_HEALTH
 end
 
--- Give back hearts a duel took, never past the pool the run opened with. This
--- is the one thing that moves health upward: nothing inside a duel repairs it
--- and clearing one does not either, so health only ever climbs by something
--- bought in the intermission.
-function State:heal(hearts: i32): bool
-    if hearts < 1 or not self:can_heal() then
+-- Give back health a duel took, never past the pool the run opened with. This
+-- serves both shop potions and Drain Life casts. Clearing a duel alone never
+-- repairs health.
+function State:heal(health: i32): bool
+    if health < 1 or not self:can_heal() then
         return false
     end
-    self.hearts += hearts
-    if self.hearts > MAX_HEARTS then
-        self.hearts = MAX_HEARTS
+    self.health += health
+    if self.health > MAX_HEALTH then
+        self.health = MAX_HEALTH
     end
     return true
 end
@@ -417,7 +421,7 @@ function State.restore(snapshot_value: string): State?
     end
     -- Zero is the terminal reveal before settle restarts the run; no run can
     -- have more health than it opened with or take damage below zero.
-    if restored.hearts < 0 or restored.hearts > MAX_HEARTS then
+    if restored.health < 0 or restored.health > MAX_HEALTH then
         return nil
     end
     -- A run always carries at least the spell it set out with, and never more
@@ -478,5 +482,7 @@ return {
     outcome_walks_on = outcome_walks_on,
     boss_every = BOSS_EVERY,
     max_spells = MAX_SPELLS,
-    max_hearts = MAX_HEARTS
+    max_hearts = MAX_HEARTS,
+    health_per_heart = HEALTH_PER_HEART,
+    max_health = MAX_HEALTH
 }

@@ -510,8 +510,12 @@ function Board:begin_frame(frame: Frame): unit
         )
         self.view:present_computer(
             index,
-            card.sealed(
+            card.look(
                 frame.view.computer_hand[index + 1].card,
+                false,
+                false,
+                frame.view.computer_hand[index + 1].revealed ~= true,
+                false,
                 frame.view.computer_hand[index + 1].known
             ),
             hidden
@@ -1360,7 +1364,14 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
         else
             card.draw_at(
                 surface,
-                card.sealed(trick.computer_hand[i + 1].card, trick.computer_hand[i + 1].known),
+                card.look(
+                    trick.computer_hand[i + 1].card,
+                    false,
+                    false,
+                    trick.computer_hand[i + 1].revealed ~= true,
+                    false,
+                    trick.computer_hand[i + 1].known
+                ),
                 slot.x,
                 slot.y
             )

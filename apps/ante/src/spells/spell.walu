@@ -1,7 +1,20 @@
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const DEFAULT_SPELL_COST: i32 = 5
 
-export enum SpellKind { Firebolt, FreezeRay, RaiseCard, Clone }
+export enum SpellKind {
+    Firebolt,
+    FreezeRay,
+    RaiseCard,
+    Clone,
+    DrainLife,
+    SecondWind,
+    Wither,
+    MindRead,
+    Tornado,
+    Oblivion,
+    ColorChange,
+    RankChange
+}
 
 function SpellKind.from(value: i32): SpellKind?
     if value == 1 then
@@ -15,6 +28,30 @@ function SpellKind.from(value: i32): SpellKind?
     end
     if value == 4 then
         return SpellKind.Clone
+    end
+    if value == 5 then
+        return SpellKind.DrainLife
+    end
+    if value == 6 then
+        return SpellKind.SecondWind
+    end
+    if value == 7 then
+        return SpellKind.Wither
+    end
+    if value == 8 then
+        return SpellKind.MindRead
+    end
+    if value == 9 then
+        return SpellKind.Tornado
+    end
+    if value == 10 then
+        return SpellKind.Oblivion
+    end
+    if value == 11 then
+        return SpellKind.ColorChange
+    end
+    if value == 12 then
+        return SpellKind.RankChange
     end
     return nil
 end
@@ -40,9 +77,53 @@ function SpellKind:__tostring(): string
         return "Raise Card"
     elseif self == SpellKind.Clone then
         return "Clone"
+    elseif self == SpellKind.DrainLife then
+        return "Drain Life"
+    elseif self == SpellKind.SecondWind then
+        return "Second Wind"
+    elseif self == SpellKind.Wither then
+        return "Wither"
+    elseif self == SpellKind.MindRead then
+        return "Mind Read"
+    elseif self == SpellKind.Tornado then
+        return "Tornado"
+    elseif self == SpellKind.Oblivion then
+        return "Oblivion"
+    elseif self == SpellKind.ColorChange then
+        return "Color Change"
+    elseif self == SpellKind.RankChange then
+        return "Rank Change"
     else
         return "Unknown Spell"
     end
+end
+
+-- Only these four are offered when starting a run; shops use the full enum.
+const STARTING_SPELL_COUNT: i32 = 4
+
+function SpellKind:is_untargeted(): bool
+    return self == SpellKind.DrainLife or self == SpellKind.SecondWind or self == SpellKind.MindRead or self == SpellKind.Tornado or self == SpellKind.Oblivion
+end
+
+function SpellKind:description(): string
+    if self == SpellKind.DrainLife then
+        return "Hand ranks -1 (min 2); heal 1 heart. Needs missing health."
+    elseif self == SpellKind.SecondWind then
+        return "Weakest hand card +level ranks (max Ace)."
+    elseif self == SpellKind.Wither then
+        return "Table card -level ranks (min 2)."
+    elseif self == SpellKind.MindRead then
+        return "Reveal all cards currently in the opponent hand."
+    elseif self == SpellKind.Tornado then
+        return "Mix up to level cards per area; frozen cards stay put."
+    elseif self == SpellKind.Oblivion then
+        return "Destroy exposed hand cards; draw hidden replacements."
+    elseif self == SpellKind.ColorChange then
+        return "Give a table card a random different color."
+    elseif self == SpellKind.RankChange then
+        return "Give a table card a random different rank."
+    end
+    return ""
 end
 
 export type Spell = { kind: SpellKind, cost: i32, level: i32 }
@@ -51,4 +132,4 @@ function Spell.new(kind: SpellKind, level: i32): Spell
     return { kind = kind, cost = DEFAULT_SPELL_COST, level = level }
 end
 
-return { DEFAULT_SPELL_COST = DEFAULT_SPELL_COST }
+return { DEFAULT_SPELL_COST = DEFAULT_SPELL_COST, starting_spell_count = STARTING_SPELL_COUNT }

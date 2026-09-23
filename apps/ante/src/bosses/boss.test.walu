@@ -116,13 +116,13 @@ describe(
         )
 
         it(
-            "makes an Executioner loss consume every remaining heart",
+            "makes an Executioner loss consume all remaining health",
             function(): unit
                 local state: game.State = boss(bosses.Kind.Executioner, 10)
                 local run_state: run.State = run.State.new(spells.SpellKind.Firebolt, true)
                 expect(state:loss_is_lethal()):toBe(true)
                 expect(run_state:lose_hand(state:loss_is_lethal())):toBe(true)
-                expect(run_state.hearts):toBe(0)
+                expect(run_state.health):toBe(0)
             end
         )
 

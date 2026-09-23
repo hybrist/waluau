@@ -3,6 +3,7 @@
 -- be checked without a canvas. Never pass a rules View to the browser: it
 -- includes concealed opponent cards that this presentation must not reveal.
 local engine = require("waluau:engine")
+local run_ = require("./run")
 local game = require("./game")
 local menu = require("./menu")
 local game_screen = require("./game_screen")
@@ -40,7 +41,7 @@ function help(items: {Item}): unit
     text(
         items,
         "help-run",
-        "Hearts are your lives and do not refill between duels. Gold and spells carry on. Spells spend gold; select a spell, then a table card to target it. Frozen table cards cannot be exchanged.",
+        "Hearts are your lives and do not refill between duels. Gold and spells carry on. Spells spend gold; select a spell, then a table card to target it. Drain Life, Second Wind, Mind Read, Tornado, and Oblivion cast immediately without a target. Frozen table cards cannot be exchanged.",
         nil
     )
     text(
@@ -53,6 +54,9 @@ function help(items: {Item}): unit
 end
 
 function spell_description(kind: spells.SpellKind): string
+    if kind:description() ~= "" then
+        return kind:description()
+    end
     if kind == spells.SpellKind.Firebolt then
         return "Burn and replace a table card."
     elseif kind == spells.SpellKind.FreezeRay then
@@ -76,7 +80,7 @@ function menu_state(screen: menu.State): State
         }
     end
     if screen.model.stage == "spell" then
-        for index = 1::i32, 4::i32 do
+        for index = 1::i32, spells.starting_spell_count do
             local maybe_kind: spells.SpellKind? = spells.SpellKind.from(index)
             assert(maybe_kind ~= nil)
             local kind: spells.SpellKind = maybe_kind::spells.SpellKind
@@ -229,11 +233,11 @@ function duel_state(screen: game_screen.State): State
     local resources: string = context .. " Duel " .. tostring(
         screen.run.duel
     ) .. ". Health " .. tostring(
-        screen.run.hearts
+        (screen.run.health::f64) / (run_.health_per_heart::f64)
     ) .. ". Gold " .. tostring(screen.rules:gold()) .. "."
     if screen:on_map() then
         resources = "Health " .. tostring(
-            screen.run.hearts
+            (screen.run.health::f64) / (run_.health_per_heart::f64)
         ) .. ". Gold " .. tostring(screen.run.gold) .. "."
         for index, slot in screen.shop.slots do
             button(
@@ -242,6 +246,7 @@ function duel_state(screen: game_screen.State): State
                 slot.item:describe() .. ", " .. tostring(slot.price) .. " gold",
                 not screen.shop:slot_available(screen.run, index - 1)
             )
+            items[#items].description = slot.item:detail()
         end
         button(items, "leave-shop", "Enter next duel", false)
         button(items, "restart", "Restart run", false)
@@ -480,14 +485,23 @@ function duel_state(screen: game_screen.State): State
             }
         )
     end
-    -- Even the known flag does not make an unplayed opponent card face-up on
-    -- the canvas. Only a completed reveal supplies opponent card identities.
-    text(
-        items,
-        "opponent",
-        "Opponent: " .. tostring(#view.computer_hand) .. " concealed cards.",
-        nil
-    )
+    local concealed: i32 = 0
+    for slot in view.computer_hand do
+        if slot.revealed ~= true then
+            concealed += 1
+        end
+    end
+    text(items, "opponent", "Opponent: " .. tostring(concealed) .. " concealed cards.", nil)
+    for index, slot in view.computer_hand do
+        if slot.revealed == true then
+            text(
+                items,
+                "opponent-card-" .. tostring(index),
+                "Opponent card " .. tostring(index) .. ": " .. card_name(slot.card),
+                nil
+            )
+        end
+    end
     text(
         items,
         "wagers",
@@ -522,7 +536,7 @@ function duel_state(screen: game_screen.State): State
                 description = spell_description(
                     spell.kind
                 ) .. " Costs " .. tostring(spell.cost) .. " gold.",
-                disabled = screen.intervention.active or screen.presentation:firebolt_pending() or not screen.rules:can_cast(
+                disabled = screen.intervention.active or screen.presentation:firebolt_pending() or not screen:can_cast(
                     index - 1
                 ),
                 selected = screen.ui.cast_slot == index - 1

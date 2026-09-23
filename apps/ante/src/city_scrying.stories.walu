@@ -51,7 +51,7 @@ local function load(): unit
 end
 
 local function update(dt: f64, _input: engine.Input): unit
-    if motion.value() > 0 then
+    if motion.value() > 0 and not engine.prefers_reduced_motion() then
         view.time += dt
     end
 end
@@ -59,14 +59,26 @@ end
 local function draw(graphics: engine.Graphics, _alpha: f64): unit
     -- Storybook can mount this module into a fresh renderer after teardown.
     -- A target belongs to the renderer that allocated it.
+    local density: f64 = math.min(graphics:on_screen_density(), 2.0)
+    local width: i32 = math.ceil(960.0 * density)::i32
+    local height: i32 = math.ceil(640.0 * density)::i32
     local owner: engine.Graphics? = view.owner
     if owner ~= nil then
         if (owner::engine.Graphics).disposed then
             view.target = nil
+        else
+            local previous = view.target
+            if previous ~= nil then
+                local target = previous::gpu.RenderTarget
+                if target.width ~= width or target.height ~= height then
+                    (owner::engine.Graphics):release_render_target(target)
+                    view.target = nil
+                end
+            end
         end
     end
     if view.target == nil then
-        local created: gpu.RenderTargetResult = graphics:create_render_target(960, 640)
+        local created: gpu.RenderTargetResult = graphics:create_smooth_render_target(width, height)
         if not created.ok then
             error("Scrying target: " .. created.error.message)
         end
@@ -83,7 +95,8 @@ local function draw(graphics: engine.Graphics, _alpha: f64): unit
                 error("Cannot bind scrying target")
             end
             graphics:clear("#cdd1b0")
-            graphics:push()
+            graphics:push_identity()
+            graphics:scale((target.width::f64) / 960.0, (target.height::f64) / 640.0)
             graphics:translate(480.0, 320.0)
             local scale: f64 = (zoom.value()::f64) / 100.0
             graphics:scale(scale, scale)

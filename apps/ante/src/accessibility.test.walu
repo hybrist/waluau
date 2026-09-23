@@ -246,3 +246,14 @@ describe(
         )
     end
 )
+
+it(
+    "announces partial health in hearts",
+    function()
+        local screen = screen_module.State.new()
+        screen.run.health = 18
+        expect(
+            string.find(labels(accessibility.duel_state(screen)), "Health 1.5.", 1, true) ~= nil
+        ):toBe(true)
+    end
+)

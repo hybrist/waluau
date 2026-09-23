@@ -36,7 +36,9 @@ export type SwapOutcome = {
 -- deck are secret, and only an exchange leaks one. Keeping the mark on the
 -- slot means removal, sorting, and snapshots can never desynchronize a card
 -- from its mark.
-export type HandSlot = { card: Card, known: bool }
+-- Mind Read exposes the current card, separately from the watched mark.
+-- Unset on fresh draws means concealed.
+export type HandSlot = { card: Card, known: bool, revealed: bool? }
 -- One spell the player carry, with the gold a single cast of it burns. The
 -- cost travels with the spell rather than being a constant of the kind: a run
 -- can upgrade the same spell between duels, and two player carrying Firebolt
@@ -224,7 +226,7 @@ end
 function clone_slots(slots: {HandSlot}): {HandSlot}
     local copy: {HandSlot} = {}
     for slot in slots do
-        table.insert(copy, { card = slot.card, known = slot.known })
+        table.insert(copy, { card = slot.card, known = slot.known, revealed = slot.revealed })
     end
     return copy
 end
@@ -1679,6 +1681,25 @@ function State:is_frozen(table_card: i32): bool
     return table_card >= 0 and table_card < #self.frozen_middle and self.frozen_middle[table_card + 1]
 end
 
+-- Both players can identify watched cards; Mind Read additionally exposes
+-- cards that have never passed through the center.
+export type OblivionTarget = { opponent: bool, index: i32, card: Card }
+
+function State:oblivion_targets(): {OblivionTarget}
+    local targets: {OblivionTarget} = {}
+    for index, held in self.player_hand do
+        if held.known or held.revealed == true then
+            table.insert(targets, { opponent = false, index = index - 1, card = held.card })
+        end
+    end
+    for index, held in self.computer_hand do
+        if held.known or held.revealed == true then
+            table.insert(targets, { opponent = true, index = index - 1, card = held.card })
+        end
+    end
+    return targets
+end
+
 -- Whether the spell in that loadout slot could be cast right now: the run is
 -- live, the slot holds a spell, and the player can pay its price. Where in the
 -- turn a cast is allowed is the input layer's decision; affordability is the
@@ -1686,6 +1707,41 @@ end
 function State:can_cast(slot: i32): bool
     if self.finished or slot < 0 or slot >= #self.spells then
         return false
+    end
+    local kind: SpellKind = self.spells[slot + 1].kind
+    if kind:is_untargeted() and #self.player_hand == 0 then
+        return false
+    end
+    if kind == spells.SpellKind.Oblivion then
+        local targets = self:oblivion_targets()
+        if #targets == 0 or #targets > #self.deck then
+            return false
+        end
+    end
+    if kind == spells.SpellKind.MindRead then
+        local hidden: bool = false
+        for held in self.computer_hand do
+            if held.revealed ~= true then
+                hidden = true
+            end
+        end
+        if not hidden then
+            return false
+        end
+    end
+    if kind == spells.SpellKind.Tornado and (#self.computer_hand == 0 or #self.middle == 0) then
+        return false
+    end
+    if kind == spells.SpellKind.SecondWind then
+        local useful: bool = false
+        for held in self.player_hand do
+            if held.card.rank < MAX_RANK then
+                useful = true
+            end
+        end
+        if not useful then
+            return false
+        end
     end
     return self.player_points >= self.spells[slot + 1].cost
 end
@@ -1696,14 +1752,17 @@ end
 -- spreading outward — right, left, right — so the aim always names the centre
 -- of what burns. An aim near an edge keeps spreading along the side that still
 -- has board, which is what makes a level worth its price wherever it is thrown
--- rather than only in the middle of the row. Every other spell takes the one
--- card it was aimed at, whatever its level.
+-- rather than only in the middle of the row. Other targeted spells take the one
+-- card they were aimed at; immediate spells return no table targets.
 --
 -- The answer is the presentation's too: the burn it choreographs and the
 -- reading a screen reader is given both come from this list, so there is one
 -- description of what a cast does rather than three.
 function State:cast_targets(slot: i32, table_card: i32): {i32}
     if not self:can_cast(slot) or table_card < 0 or table_card >= #self.middle then
+        return {}
+    end
+    if self.spells[slot + 1].kind:is_untargeted() then
         return {}
     end
     if self.spells[slot + 1].kind ~= spells.SpellKind.Firebolt then
@@ -1737,17 +1796,140 @@ function spread_targets(aim: i32, level: i32, count: i32): {i32}
     return targets
 end
 
+-- Pick distinct one-based slots. Frozen center cards are excluded before
+-- sampling; a short row contributes only what it has.
+function random_slots(count: i32, level: i32, frozen: {bool}): {i32}
+    local available: {i32} = {}
+    for index = 1, count do
+        if index > #frozen or not frozen[index] then
+            table.insert(available, index)
+        end
+    end
+    local chosen: {i32} = {}
+    while #chosen < level and #available > 0 do
+        table.insert(chosen, table.remove(available, math.random(#available)))
+    end
+    return chosen
+end
+
+function shuffle_battlefield(state: State, level: i32): unit
+    local player = random_slots(#state.player_hand, level, {})
+    local center = random_slots(#state.middle, level, state.frozen_middle)
+    local opponent = random_slots(#state.computer_hand, level, {})
+    local pool: {Card} = {}
+    for index in player do
+        table.insert(pool, state.player_hand[index].card)
+    end
+    for index in center do
+        table.insert(pool, state.middle[index])
+    end
+    for index in opponent do
+        table.insert(pool, state.computer_hand[index].card)
+    end
+    shuffle(pool)
+    -- Fresh slots erase knowledge of mixed cards; untouched slots retain both
+    -- their watched marks and Mind Read reveals. No card enters or leaves the deck.
+    for index in player do
+        state.player_hand[index] = { card = draw(pool), known = false }
+    end
+    for index in center do
+        state.middle[index] = draw(pool)
+    end
+    for index in opponent do
+        state.computer_hand[index] = { card = draw(pool), known = false }
+    end
+end
+
+-- A reroll is always a change: sample one of every other legal value and
+-- skip over the card's existing value in the ordered domain.
+function different_value(value: i32, minimum: i32, maximum: i32): i32
+    local replacement: i32 = minimum + math.random(maximum - minimum) - 1
+    if replacement >= value then
+        replacement += 1
+    end
+    return replacement
+end
+
 -- Pay for one cast of the spell in that slot. Returns false — charging
 -- nothing — when the slot is empty or the spell unaffordable, so a confirmed
 -- target only spends gold once this accepts.
 function State:cast_spell(slot: i32, table_card: i32): bool
-    if not self:can_cast(slot) or table_card < 0 or table_card >= #self.middle then
+    if not self:can_cast(slot) then
         return false
     end
     local spell: Spell = self.spells[slot + 1]
+    if not spell.kind:is_untargeted() then
+        if table_card < 0 or table_card >= #self.middle then
+            return false
+        end
+        if spell.kind == spells.SpellKind.Wither and self.middle[table_card + 1].rank == MIN_RANK then
+            return false
+        end
+    end
     self.player_points -= spell.cost
     self.cast_kind = spell.kind
-    if spell.kind == spells.SpellKind.FreezeRay then
+    if spell.kind == spells.SpellKind.Oblivion then
+        for target in self:oblivion_targets() do
+            local replacement: HandSlot = deal_slot(self.deck)
+            if target.opponent then
+                self.computer_hand[target.index + 1] = replacement
+            else
+                self.player_hand[target.index + 1] = replacement
+            end
+        end
+    elseif spell.kind == spells.SpellKind.MindRead then
+        for index, held in self.computer_hand do
+            self.computer_hand[index] = { card = held.card, known = held.known, revealed = true }
+        end
+    elseif spell.kind == spells.SpellKind.Tornado then
+        shuffle_battlefield(self, spell.level)
+    elseif spell.kind == spells.SpellKind.DrainLife then
+        for index, held in self.player_hand do
+            local rank: i32 = held.card.rank - 1
+            if rank < MIN_RANK then
+                rank = MIN_RANK
+            end
+            self.player_hand[index] = {
+                card = { rank = rank, suit = held.card.suit },
+                known = held.known
+            }
+        end
+    elseif spell.kind == spells.SpellKind.SecondWind then
+        local weakest: i32 = 1
+        for index, held in self.player_hand do
+            if held.card.rank < self.player_hand[weakest].card.rank then
+                weakest = index
+            end
+        end
+        local held: HandSlot = self.player_hand[weakest]
+        local rank: i32 = held.card.rank + spell.level
+        if rank > MAX_RANK then
+            rank = MAX_RANK
+        end
+        self.player_hand[weakest] = {
+            card = { rank = rank, suit = held.card.suit },
+            known = held.known
+        }
+    elseif spell.kind == spells.SpellKind.Wither then
+        local card: Card = self.middle[table_card + 1]
+        local rank: i32 = card.rank - spell.level
+        if rank < MIN_RANK then
+            rank = MIN_RANK
+        end
+        self.middle[table_card + 1] = { rank = rank, suit = card.suit }
+    elseif spell.kind == spells.SpellKind.ColorChange then
+        local card: Card = self.middle[table_card + 1]
+        self.middle[table_card + 1] = {
+            rank = card.rank,
+            suit = different_value(card.suit, MIN_SUIT, MAX_SUIT)
+        }
+    elseif spell.kind == spells.SpellKind.RankChange then
+        local card: Card = self.middle[table_card + 1]
+        self.middle[table_card + 1] = {
+            rank = different_value(card.rank, MIN_RANK, MAX_RANK),
+            suit = card.suit
+        }
+    elseif spell.kind == spells.SpellKind.FreezeRay then
         self:clear_frozen()
         self.frozen_middle[table_card + 1] = true
     end

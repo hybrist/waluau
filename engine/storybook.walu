@@ -37,6 +37,9 @@ export type Scene = {
     mousepressed: ((f64, f64, i32) -> unit)?,
     mousereleased: ((f64, f64, i32) -> unit)?,
     mousemoved: ((f64, f64, f64, f64) -> unit)?,
+    accessibility: (() -> browser.AccessibleState)?,
+    accessibility_activate: ((string) -> unit)?,
+    accessibility_focus: ((string) -> unit)?,
     -- Canvas size and clear color for this story, when the defaults do not
     -- frame it. One canvas serves the whole file and is resized between
     -- stories, so GPU resources a story file loads once stay valid.
@@ -84,7 +87,8 @@ type Mount = {
     width: u32,
     height: u32,
     background: string,
-    prepared: bool
+    prepared: bool,
+    accessible: bool
 }
 
 function scene_width(scene: Scene): u32
@@ -220,6 +224,45 @@ function start_session(mount: Mount): unit
         end
     end
 
+    -- Read the currently selected scene, just like input routing. The browser
+    -- retains the text panel across stories in this book.
+    local function accessibility(): browser.AccessibleState
+        prepare(mount)
+        local scene = mount.scene
+        if scene ~= nil then
+            local hook = (scene::Scene).accessibility
+            if hook ~= nil then
+                return hook()
+            end
+        end
+        return { heading = mount.name, status = "", items = {} }
+    end
+
+    local function accessibility_activate(key: string): unit
+        local scene = mount.scene
+        if scene ~= nil then
+            local hook = (scene::Scene).accessibility_activate
+            if hook ~= nil then
+                hook(key)
+            end
+        end
+    end
+
+    local function accessibility_focus(key: string): unit
+        local scene = mount.scene
+        if scene ~= nil then
+            local hook = (scene::Scene).accessibility_focus
+            if hook ~= nil then
+                hook(key)
+            end
+        end
+    end
+
+    local read_accessibility: (() -> browser.AccessibleState)? = nil
+    if mount.accessible then
+        read_accessibility = accessibility
+    end
+
     mount.session = browser.start(
         {
             title = mount.name,
@@ -238,7 +281,10 @@ function start_session(mount: Mount): unit
             keyreleased = keyreleased,
             mousepressed = mousepressed,
             mousereleased = mousereleased,
-            mousemoved = mousemoved
+            mousemoved = mousemoved,
+            accessibility = read_accessibility,
+            accessibility_activate = accessibility_activate,
+            accessibility_focus = accessibility_focus
         }
     )
 end
@@ -302,8 +348,14 @@ function publish(stories: {Story}): unit
         width = DEFAULT_WIDTH,
         height = DEFAULT_HEIGHT,
         background = DEFAULT_BACKGROUND,
-        prepared = false
+        prepared = false,
+        accessible = false
     }
+    for entry in stories do
+        if entry.scene.accessibility ~= nil then
+            mount.accessible = true
+        end
+    end
     for entry in stories do
         local name: string = entry.name
         local scene: Scene = entry.scene

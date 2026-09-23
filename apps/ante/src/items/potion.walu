@@ -32,11 +32,15 @@ function HealingPotion:can_use(run: RunState)
 end
 
 function HealingPotion:use(run: RunState)
-    run:heal(self.hearts)
+    run:heal(self.hearts * run_.health_per_heart)
 end
 
 function HealingPotion:describe(): string
     return "Healing Potion (+" .. self.hearts .. " heart)"
+end
+
+function HealingPotion:detail(): string
+    return "Restore 1 missing heart immediately."
 end
 
 function HealingPotion:accent(): string

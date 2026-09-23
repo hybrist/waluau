@@ -95,21 +95,25 @@ test('buys a spell between duels, carries resources, then loses and starts a fre
   await expect(page.getByRole('dialog', { name: 'Duel verdict', exact: true })).toBeVisible();
   await expect(status(page)).toContainText('Duel cleared. Standard run. Standard duel. Duel 1. Health 2. Gold 21.');
   await button(page, 'Continue run').click();
-  const clone = button(page, 'Clone (level 1), 4 gold');
-  const raise = button(page, 'Raise Card (level 1), 4 gold');
-  await expect(clone).toBeEnabled();
-  await expect(raise).toBeEnabled();
-  await clone.click();
+  // The shop catalog can grow without changing this purchase/carry journey.
+  const offers = page.getByRole('button', { name: /^.+ \(level 1\), 4 gold$/ });
+  await expect(offers).toHaveCount(2);
+  const purchase = offers.nth(0);
+  const other = offers.nth(1);
+  await expect(purchase).toBeEnabled();
+  await expect(other).toBeEnabled();
+  const spellName = (await purchase.getAttribute('aria-label')).replace(' (level 1), 4 gold', '');
+  await purchase.click();
   await expect(status(page)).toContainText('Health 2. Gold 17.');
-  await expect(clone).toBeDisabled();
+  await expect(purchase).toBeDisabled();
   // The two-spell loadout is full; the other kind cannot be purchased.
-  await expect(raise).toBeDisabled();
+  await expect(other).toBeDisabled();
   await button(page, 'Enter next duel').click();
   await ready(page);
   await expect(status(page)).toContainText('Duel 2. Health 2. Gold 17.');
   await expect(group(page, 'Spells').getByRole('button')).toHaveCount(2);
   await expect(group(page, 'Spells').getByRole('button', { name: 'Firebolt', exact: true })).toBeEnabled();
-  await expect(group(page, 'Spells').getByRole('button', { name: 'Clone', exact: true })).toBeEnabled();
+  await expect(group(page, 'Spells').getByRole('button', { name: spellName, exact: true })).toBeEnabled();
   await playHand(page, ['8 of red', '10 of red'], 'pair', 'Hand 1: Opponent wins.');
   await ready(page);
   await expect(status(page)).toContainText('Duel 2. Health 1. Gold 17.');

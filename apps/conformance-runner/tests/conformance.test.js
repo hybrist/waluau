@@ -1738,13 +1738,22 @@ describe('browser conformance', () => {
       };
       await expect.poll(() => steps, { timeout: 10_000 }).toContain('rendered');
       expect(asyncErrors).toEqual([]);
-      expect(steps).toEqual(['decoded', 'uploaded', 'rendered']);
+      expect(steps).toEqual(['decoded', 'density-checked', 'uploaded', 'rendered']);
       expect(fetchCount).toBe(1);
       expect(decodeCount).toBe(1);
       expect(pixelAt(20, 20)).toEqual([255, 0, 0, 255]);
       expect(pixelAt(56, 20)).toEqual([0, 255, 0, 255]);
       expect(pixelAt(90, 14)).toEqual([0, 0, 0, 255]);
       expect(pixelAt(100, 20)).toEqual([0, 0, 255, 255]);
+      // The smooth target: pure columns at its sides, a linear blend where
+      // they meet, which a nearest-sampled target would draw as a hard seam.
+      expect(pixelAt(146, 32)).toEqual([255, 0, 0, 255]);
+      expect(pixelAt(182, 32)).toEqual([0, 0, 255, 255]);
+      const seam = pixelAt(164, 32);
+      expect(seam[0]).toBeGreaterThan(80);
+      expect(seam[0]).toBeLessThan(180);
+      expect(seam[2]).toBeGreaterThan(80);
+      expect(seam[2]).toBeLessThan(180);
     } finally {
       cleanup();
     }

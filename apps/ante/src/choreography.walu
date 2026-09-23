@@ -622,6 +622,47 @@ function State:firebolt_resolved(
     begin_anims(self, anims, finish, "firebolt-replace")
 end
 
+-- Oblivion settles both hands together. Every destroyed card joins the spent
+-- pile once, and each emptied slot gets a concealed draw from the same deck.
+function State:oblivion_resolved(targets: {game.OblivionTarget}, view: game.View): unit
+    if #targets == 0 then
+        return
+    end
+    local anims: {render.Anim} = {}
+    local finish: f64 = 0.0
+    local ash_start: f64 = 0.0
+    for target in targets do
+        table.insert(self.session.discards, target.card)
+        local kind: render.Slot = render.slot_player
+        local faces: render.Face = render.faces_flip_up
+        local hand: {game.HandSlot} = view.player_hand
+        if target.opponent then
+            kind = render.slot_computer
+            faces = render.faces_down
+            hand = view.computer_hand
+        end
+        local deal_finish = push_deal(
+            layout.current(),
+            anims,
+            hand[target.index + 1].card,
+            kind,
+            target.index,
+            #hand,
+            faces,
+            0.0
+        )
+        local ash_finish = push_ash_reappearance(layout.current(), anims, target.card, ash_start)
+        ash_start += ASH_REAPPEAR_STEP
+        if deal_finish > finish then
+            finish = deal_finish
+        end
+        if ash_finish > finish then
+            finish = ash_finish
+        end
+    end
+    begin_anims(self, anims, finish, "deal")
+end
+
 function State:opening_deal(view: game.View): unit
     local count: i32 = #view.player_hand
     self.fan_parts = closed_fan_parts(count)

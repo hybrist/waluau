@@ -20,7 +20,8 @@ declare function game_gpu_font_from_resource(gl: WebGL2RenderingContext, resourc
 declare function game_gpu_render_target_create(
     gl: WebGL2RenderingContext,
     width: i32,
-    height: i32
+    height: i32,
+    smooth: bool
 ): i32
 declare function game_gpu_resource_ok(handle: i32): bool
 declare function game_gpu_resource_error_code(handle: i32): string
@@ -573,7 +574,7 @@ end
 -- pixels to show them with; a capture at logical size on a dense display
 -- hands back a visibly softer card than the one that was captured.
 function Graphics:on_screen_density(): f64
-    local base: i32 = #self.transforms - 6
+    local base: i32 = #self.transforms - 5
     local a: f64 = self.transforms[base]
     local b: f64 = self.transforms[base + 1]
     local c: f64 = self.transforms[base + 2]
@@ -1481,10 +1482,10 @@ function Graphics:texture_error(value: Texture): GraphicsError
     return gpu_error(value.handle)
 end
 
-function Graphics:create_render_target(width: i32, height: i32): RenderTargetResult
+function create_target(self: Graphics, width: i32, height: i32, smooth: bool): RenderTargetResult
     -- Framebuffer allocation also binds its backing texture.
     self:flush()
-    local handle: i32 = game_gpu_render_target_create(self.gl, width, height)
+    local handle: i32 = game_gpu_render_target_create(self.gl, width, height, smooth)
     table.insert(self.owned_gpu_resources, handle)
     self.current_texture = 0
     if not game_gpu_resource_ok(handle) then
@@ -1499,6 +1500,19 @@ function Graphics:create_render_target(width: i32, height: i32): RenderTargetRes
         target = { handle = handle, width = width, height = height, released = false },
         error = { code = "", message = "" }
     }
+end
+
+-- A target sampled texel for texel: a capture drawn back at the size it was
+-- taken, or through a mesh that keeps its pixels whole.
+function Graphics:create_render_target(width: i32, height: i32): RenderTargetResult
+    return create_target(self, width, height, false)
+end
+
+-- A target an effect will read off its texel grid: a swirl, a blur, a zoom.
+-- Linear filtering between texels turns what nearest sampling would render
+-- as a staircase into a smooth resample.
+function Graphics:create_smooth_render_target(width: i32, height: i32): RenderTargetResult
+    return create_target(self, width, height, true)
 end
 
 -- Views a render target's color storage as a sprite texture so effects can

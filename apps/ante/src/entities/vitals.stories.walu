@@ -1,0 +1,41 @@
+local storybook = require("waluau:engine/storybook")
+local ui = require("../ui/node")
+local ui_story = require("../ui/story")
+local run = require("../run")
+local game = require("../game")
+local spells = require("../spells/spell")
+local vitals = require("./vitals")
+
+local book = ui_story.Book.new()
+local health = storybook.range("health", 18, 0, 36, 1)
+local state = run.State.new(spells.SpellKind.Firebolt, false)
+local rules = game.State.new(false, state.spells, state.gold)
+local view = vitals.Stateful.new(rules:view(), state:view("none"))
+
+local function present(): unit
+    state.health = health.value()
+    view:present(rules:view(), state:view("none"))
+end
+
+local function node(): ui.Node
+    return view.root
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Partial hearts",
+            book:scene(
+                {
+                    node = node,
+                    present = present,
+                    width = 420,
+                    height = 240,
+                    scale = 4.0,
+                    background = "#0b0b12"
+                }
+            ),
+            {health.declaration}
+        )
+    }
+)

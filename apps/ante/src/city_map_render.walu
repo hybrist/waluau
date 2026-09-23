@@ -45,8 +45,10 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
         return
     end
     prepare_city(self, state)
-    local width: i32 = math.ceil(state.view_width)::i32
-    local height: i32 = math.ceil(state.view_height)::i32
+    -- Bound capture memory while matching the display and the caller's UI scale.
+    local density: f64 = math.min(graphics:on_screen_density(), 2.0)
+    local width: i32 = math.ceil(state.view_width * density)::i32
+    local height: i32 = math.ceil(state.view_height * density)::i32
     local owner = self.owner
     local previous = self.target
     if owner ~= nil then
@@ -67,12 +69,12 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
         end
     end
     if self.target == nil then
-        local created = graphics:create_render_target(width, height)
+        local created = graphics:create_smooth_render_target(width, height)
         if not created.ok then
             error("Scrying target: " .. created.error.message)
         end
         self.target = created.target
-        local route_created = graphics:create_render_target(width, height)
+        local route_created = graphics:create_smooth_render_target(width, height)
         if not route_created.ok then
             error("Route target: " .. route_created.error.message)
         end
@@ -90,8 +92,9 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
                 error("Cannot bind scrying target")
             end
             graphics:clear("#cdd1b0")
-            -- Capture in logical pixels even when the caller has scaled its UI.
+            -- Reset the caller's UI transform, then map logical coordinates into texels.
             graphics:push_identity()
+            graphics:scale((width::f64) / state.view_width, (height::f64) / state.view_height)
             graphics:translate(state.anchor_x, state.anchor_y)
             graphics:scale(
                 state.zoom * city_map.width / city.width,
@@ -107,8 +110,18 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
                 error("Cannot bind route target")
             end
             graphics:clear("#00000000")
-            route_render.draw(state, graphics, landmark)
+            route_render.draw(
+                state,
+                graphics,
+                landmark,
+                (width::f64) / state.view_width,
+                (height::f64) / state.view_height
+            )
             graphics:set_screen_target()
+            local clock: f64 = state.pan_clock
+            if engine.prefers_reduced_motion() then
+                clock = 0.0
+            end
             for pass = 0::i32, 1::i32 do
                 local bound = graphics:bind_imported_shader(
                     lens,
@@ -119,7 +132,7 @@ function State:draw(state: city_map.State, graphics: engine.Graphics, landmark: 
                         gpu.float_parameter("u_focus_x", state.anchor_x / state.view_width),
                         gpu.float_parameter("u_focus_y", 1.0 - state.anchor_y / state.view_height),
                         gpu.float_parameter("u_opacity", state.cover),
-                        gpu.float_parameter("u_clock", state.pan_clock),
+                        gpu.float_parameter("u_clock", clock),
                         gpu.float_parameter("u_strength", 1.0),
                         gpu.float_parameter("u_static_circle", 1.0),
                         gpu.float_parameter("u_peak_time", 0.3),

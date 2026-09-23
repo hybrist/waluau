@@ -126,13 +126,13 @@ describe(
                 expect(shop:slot_available(run, 0)):toBe(false)
                 expect(shop:confirm_choice(run)):toBe(false)
                 expect(run.gold):toBe(20)
-                expect(run.hearts):toBe(run_.max_hearts)
+                expect(run.health):toBe(run_.max_health)
                 expect(shop.slots[1].sold):toBe(false)
 
                 run:lose_hand()
                 expect(shop:slot_available(run, 0)):toBe(true)
                 expect(shop:confirm_choice(run)):toBe(false)
-                expect(run.hearts):toBe(run_.max_hearts)
+                expect(run.health):toBe(run_.max_health)
                 expect(run.gold):toBe(20 - potion_.price)
                 expect(shop.slots[1].sold):toBe(true)
             end
@@ -180,7 +180,7 @@ describe(
                     expect(visit:snapshot()):toBe(encoded)
                     -- Behavior survives the round trip, not just the caption.
                     visit.slots[1].item:use(run)
-                    expect(run.hearts):toBe(run_.max_hearts)
+                    expect(run.health):toBe(run_.max_health)
                 end
 
                 local empty: item_.Snapshot = { kind = "healing-potion", payload = '{"hearts":0}' }
@@ -249,5 +249,18 @@ describe(
                 end
             end
         )
+    end
+)
+
+it(
+    "restores twelve health with a potion from a partial heart",
+    function()
+        local run: RunState = RunState.new(SpellKind.Firebolt, false)
+        local potion = HealingPotion.new()
+        run.health = 18
+        potion:use(run)
+        expect(run.health):toBe(30)
+        potion:use(run)
+        expect(run.health):toBe(36)
     end
 )
