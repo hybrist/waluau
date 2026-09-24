@@ -12,13 +12,14 @@ local city_map = require("./city_map")
 local city_map_render = require("./city_map_render")
 local accessibility = require("./accessibility")
 local spells = require("./spells/spell")
+local bosses = require("./bosses/boss")
 
 type Phase = "board" | "targeting" | "casting"
 type Setup = {
     spell: spells.SpellKind,
     level: i32,
     gold: i32,
-    boss: bool,
+    boss: bosses.Kind?,
     seed: i32,
     phase: Phase,
     target: i32
@@ -50,7 +51,17 @@ local gold = storybook.range("gold", 20, 0, 100, 1)
 local duel_kind = storybook.select(
     "duel",
     0::i32,
-    {storybook.choice("Standard", 0::i32), storybook.choice("Boss", 1::i32)}
+    {
+        storybook.choice("Standard", 0::i32),
+        storybook.choice("Arch Mage", 1::i32),
+        storybook.choice("Pyromancer", 2::i32),
+        storybook.choice("The Jailer", 3::i32),
+        storybook.choice("Verdant Witch", 4::i32),
+        storybook.choice("The Usurer", 5::i32),
+        storybook.choice("The Executioner", 6::i32),
+        storybook.choice("Blind Dealer", 7::i32),
+        storybook.choice("Veiled Oracle", 8::i32)
+    }
 )
 local seed = storybook.range("seed", 12345, 1, 99999, 1)
 local phase = storybook.select(
@@ -68,6 +79,14 @@ function same_setup(left: Setup, right: Setup): bool
     return left.spell == right.spell and left.level == right.level and left.gold == right.gold and left.boss == right.boss and left.seed == right.seed and left.phase == right.phase and left.target == right.target
 end
 
+function selected_boss(): bosses.Kind?
+    local index: i32 = storybook.selected<i32>(duel_kind)
+    if index == 0 then
+        return nil
+    end
+    return bosses.all()[index]
+end
+
 function duel_scene(preset: spells.SpellKind, choose_spell: bool): storybook.Scene
     local city = city_map.State.new(41)
     local city_view = city_map_render.State.new()
@@ -77,7 +96,7 @@ function duel_scene(preset: spells.SpellKind, choose_spell: bool): storybook.Sce
         spell = preset,
         level = 1,
         gold = 20,
-        boss = false,
+        boss = nil,
         seed = 12345,
         phase = "board",
         target = 1
@@ -94,7 +113,7 @@ function duel_scene(preset: spells.SpellKind, choose_spell: bool): storybook.Sce
             spell = kind,
             level = level.value(),
             gold = gold.value(),
-            boss = storybook.selected<i32>(duel_kind) == 1,
+            boss = selected_boss(),
             seed = seed.value(),
             phase = storybook.selected<Phase>(phase),
             target = target.value()
@@ -108,7 +127,10 @@ function duel_scene(preset: spells.SpellKind, choose_spell: bool): storybook.Sce
         math.randomseed(setup.seed::f64)
         city = city_map.State.new(setup.seed)
         duel = game_screen.State.new()
-        duel:reset(city, setup.boss, setup.spell)
+        duel:reset(city, setup.boss ~= nil, setup.spell)
+        if setup.boss ~= nil then
+            duel.run.next_boss = setup.boss::bosses.Kind
+        end
         duel.run.gold = setup.gold
         duel.run.spells = {spells.Spell.new(setup.spell, setup.level)}
         duel:deal_vault()
