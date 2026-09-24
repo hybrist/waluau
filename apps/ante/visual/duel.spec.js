@@ -58,7 +58,7 @@ for (const [story, spell] of [
 
 test('sandbox controls configure boss, level, target and targeting phase; canvas restart preserves setup', async ({ page }) => {
   const canvas = await openDuel(page, 'sandbox', 'spell:0;level:3;gold:37;duel:1;seed:2468;phase:1;target:2');
-  await expect(status(page)).toContainText('Boss duel:');
+  await expect(status(page)).toContainText('Boss duel: Arch Mage.');
   await expect(status(page)).toContainText('Gold 37.');
   await expect(status(page)).toContainText('Firebolt targeting.');
   await expect(status(page)).toContainText('Targets:');
@@ -80,6 +80,27 @@ test('sandbox controls configure boss, level, target and targeting phase; canvas
   await expect(status(page)).toContainText('Firebolt targeting.');
   await showTextControls(page);
   expect(await labels(table(page))).toEqual(initial);
+});
+
+test('sandbox can deal every boss in the roster', async ({ page }) => {
+  await openDuel(page);
+  for (const [duel, boss] of [
+    [1, 'Arch Mage'],
+    [2, 'Pyromancer'],
+    [3, 'The Jailer'],
+    [4, 'Verdant Witch'],
+    [5, 'The Usurer'],
+    [6, 'The Executioner'],
+    [7, 'Blind Dealer'],
+    [8, 'Veiled Oracle'],
+  ]) {
+    await page.evaluate((value) => {
+      window.__STORYBOOK_ADDONS_CHANNEL__.emit('updateStoryArgs', {
+        storyId: 'duel--sandbox', updatedArgs: { duel: value },
+      });
+    }, duel);
+    await expect(status(page)).toContainText(`Boss duel: ${boss}.`);
+  }
 });
 
 test('casting phase applies the selected spell to the authored target', async ({ page }) => {
