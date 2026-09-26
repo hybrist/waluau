@@ -380,18 +380,20 @@ describe(
                 expect(state:view().player_hand[1].card.suit):toBe(old_middle.suit)
                 expect(state:view().middle[1].rank):toBe(old_hand.rank)
                 expect(state:view().middle[1].suit):toBe(old_hand.suit)
+                expect(state:view().middle[1].known == true):toBe(true)
+                expect(won_feint.outgoing[1].known == true):toBe(true)
                 expect(won_feint.dealt == nil):toBe(false)
                 expect(#state:view().middle):toBe(4)
                 expect(state:view().deck_count):toBe(old_deck_size - 1)
                 local visible_deck_count: i32 = state:view().deck_count
                 expect(visible_deck_count):toBe(old_deck_size - 1)
-                expect(state:view().player_hand[1].known):toBe(true)
-                expect(state:view().player_hand[2].known):toBe(false)
-                expect(state:view().player_hand[3].known):toBe(false)
-                expect(state:view().player_hand[4].known):toBe(false)
-                expect(state:view().player_hand[5].known):toBe(false)
+                expect(state:view().player_hand[1].card.known == true):toBe(true)
+                expect(state:view().player_hand[2].card.known == true):toBe(false)
+                expect(state:view().player_hand[3].card.known == true):toBe(false)
+                expect(state:view().player_hand[4].card.known == true):toBe(false)
+                expect(state:view().player_hand[5].card.known == true):toBe(false)
                 for i = 1::i32, 5::i32 do
-                    expect(state:view().computer_hand[i].known):toBe(false)
+                    expect(state:view().computer_hand[i].card.known == true):toBe(false)
                 end
 
                 expect(state:resolve_swap({1}, {1}) == nil):toBe(true)
@@ -413,7 +415,7 @@ describe(
                 local marked_card = state:view().middle[1]
                 state:resolve_swap({3}, {0})
                 expect(state:view().swap_winner):toBe(1)
-                expect(state:view().player_hand[4].known):toBe(true)
+                expect(state:view().player_hand[4].card.known == true):toBe(true)
                 finish_swap_phase(state)
                 local played: game.Trick? = state:play(0, 1)
                 assert(played ~= nil)
@@ -423,17 +425,17 @@ describe(
                 local trick = state:view().history[1]
                 local played_round: i32 = (played::game.Trick).round
                 expect(played_round):toBe(trick.round)
-                expect(trick.player_hand[4].known):toBe(true)
-                expect(trick.player_hand[2].known):toBe(false)
+                expect(trick.player_hand[4].card.known == true):toBe(true)
+                expect(trick.player_hand[2].card.known == true):toBe(false)
                 expect(trick.player_hand[4].card.rank):toBe(marked_card.rank)
                 expect(trick.player_hand[4].card.suit):toBe(marked_card.suit)
-                expect(state:view().player_hand[2].known):toBe(true)
-                expect(state:view().player_hand[1].known):toBe(false)
+                expect(state:view().player_hand[2].card.known == true):toBe(true)
+                expect(state:view().player_hand[1].card.known == true):toBe(false)
                 expect(state:view().player_hand[2].card.rank):toBe(marked_card.rank)
                 expect(state:view().player_hand[2].card.suit):toBe(marked_card.suit)
-                expect(state:view().player_hand[3].known):toBe(false)
-                expect(state:view().player_hand[4].known):toBe(false)
-                expect(state:view().player_hand[5].known):toBe(false)
+                expect(state:view().player_hand[3].card.known == true):toBe(false)
+                expect(state:view().player_hand[4].card.known == true):toBe(false)
+                expect(state:view().player_hand[5].card.known == true):toBe(false)
             end
         )
 
@@ -466,11 +468,11 @@ describe(
                 expect(state:view().player_hand[4].card.suit):toBe(1)
                 expect(state:view().player_hand[5].card.rank):toBe(3)
                 expect(state:view().player_hand[5].card.suit):toBe(2)
-                expect(state:view().player_hand[1].known):toBe(true)
-                expect(state:view().player_hand[2].known):toBe(false)
-                expect(state:view().player_hand[3].known):toBe(false)
-                expect(state:view().player_hand[4].known):toBe(false)
-                expect(state:view().player_hand[5].known):toBe(false)
+                expect(state:view().player_hand[1].card.known == true):toBe(true)
+                expect(state:view().player_hand[2].card.known == true):toBe(false)
+                expect(state:view().player_hand[3].card.known == true):toBe(false)
+                expect(state:view().player_hand[4].card.known == true):toBe(false)
+                expect(state:view().player_hand[5].card.known == true):toBe(false)
 
                 local color_order = state:sort_player_hand(true)
                 expect(color_order[1]):toBe(0)
@@ -488,8 +490,8 @@ describe(
                 expect(state:view().player_hand[4].card.suit):toBe(2)
                 expect(state:view().player_hand[5].card.rank):toBe(14)
                 expect(state:view().player_hand[5].card.suit):toBe(3)
-                expect(state:view().player_hand[1].known):toBe(true)
-                expect(state:view().player_hand[2].known):toBe(false)
+                expect(state:view().player_hand[1].card.known == true):toBe(true)
+                expect(state:view().player_hand[2].card.known == true):toBe(false)
                 expect(state:view().deck_count):toBe(deck_size)
                 expect(#state:view().middle):toBe(3)
                 expect(#state:view().computer_hand):toBe(5)
@@ -544,14 +546,14 @@ describe(
                 expect(state:view().swap_winner):toBe(-1)
                 expect(state:view().player_points):toBe(10)
                 for index in swap.hand_indices do
-                    expect(state:view().computer_hand[index + 1].known):toBe(true)
+                    expect(state:view().computer_hand[index + 1].card.known == true):toBe(true)
                 end
                 local marked_slots: i32 = 0
                 for i = 1::i32, 5::i32 do
-                    if state:view().computer_hand[i].known then
+                    if state:view().computer_hand[i].card.known == true then
                         marked_slots += 1
                     end
-                    expect(state:view().player_hand[i].known):toBe(false)
+                    expect(state:view().player_hand[i].card.known == true):toBe(false)
                 end
                 expect(marked_slots):toBe(3)
             end
@@ -663,11 +665,11 @@ describe(
                         restored:view().history[1].player_value
                     ):toBe(state:view().history[1].player_value)
                     expect(
-                        restored:view().player_hand[1].known
-                    ):toBe(state:view().player_hand[1].known)
+                        restored:view().player_hand[1].card.known == true
+                    ):toBe(state:view().player_hand[1].card.known == true)
                     expect(
-                        restored:view().computer_hand[1].known
-                    ):toBe(state:view().computer_hand[1].known)
+                        restored:view().computer_hand[1].card.known == true
+                    ):toBe(state:view().computer_hand[1].card.known == true)
                     expect(restored:view().swap_hand_indices[1]):toBe(2)
                     expect(restored:view().swap_middle_indices[1]):toBe(0)
                     expect(restored:view().spells[1].level):toBe(1)
