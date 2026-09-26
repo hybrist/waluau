@@ -91,6 +91,11 @@ The four `duel-*` baselines capture each spell launched at table card 2: Firebol
 at 1600 ms, and Freeze Ray, Raise Card, and Clone at 800 ms. They use the same
 explicit clock and resource barrier as the appearance fixtures above.
 
+`shop.spec.js` exercises the full-screen shop sandbox semantically: authored
+zero-to-four-spell loadouts, every possible scroll offer, potion availability,
+purchases, live args updates, and replay. It uses the production accessible
+controls rather than adding a story-only interaction surface.
+
 ## Baseline review and updates
 
 Use the exact image above even on macOS. Start a remote browser in one terminal:
