@@ -54,9 +54,9 @@ const BOSS_EVERY: i32 = 3
 -- seven-card battles.
 const RUN_LENGTH: i32 = 9
 const RUSH_LENGTH: i32 = 5
--- Two spells are as many as the player can hold ready at once — keys 1 and 2
--- in the duel. A full loadout cannot take on another kind.
-const MAX_SPELLS: i32 = 2
+-- The ability diamond exposes four cast keys. A full loadout cannot take on
+-- another kind, but scrolls can still raise a spell already in one of them.
+const MAX_SPELLS: i32 = 4
 -- Three lost hands across the whole run. A won duel repairs nothing: health is
 -- run state, just like the purse and loadout it carries through the shop.
 const MAX_HEARTS: i32 = 3
@@ -425,7 +425,7 @@ function State.restore(snapshot_value: string): State?
         return nil
     end
     -- A run always carries at least the spell it set out with, and never more
-    -- than the two the player can hold ready.
+    -- than the four the ability diamond can hold ready.
     if #restored.spells < 1 or #restored.spells > MAX_SPELLS then
         return nil
     end

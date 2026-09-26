@@ -234,33 +234,43 @@ describe(
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 state:settle(true, true, 30)
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 3))):toBe(true)
+                expect(
+                    state:learn_spell(spells.Spell.new(spells.SpellKind.FreezeRay, 2))
+                ):toBe(true)
+                expect(
+                    state:learn_spell(spells.Spell.new(spells.SpellKind.RaiseCard, 1))
+                ):toBe(true)
                 local encoded: string = state:snapshot()
                 local restored: run.State? = run.State.restore(encoded)
                 expect(restored == nil):toBe(false)
                 if restored ~= nil then
-                    expect(restored:spell_count()):toBe(2)
+                    expect(restored:spell_count()):toBe(4)
                     expect(restored.spells[1].kind):toBe(spells.SpellKind.Firebolt)
                     expect(restored.spells[1].cost):toBe(game.spell_cost)
                     expect(restored.spells[1].level):toBe(1)
                     expect(restored.spells[2].kind):toBe(spells.SpellKind.Clone)
                     expect(restored.spells[2].level):toBe(3)
+                    expect(restored.spells[3].kind):toBe(spells.SpellKind.FreezeRay)
+                    expect(restored.spells[3].level):toBe(2)
+                    expect(restored.spells[4].kind):toBe(spells.SpellKind.RaiseCard)
+                    expect(restored.spells[4].level):toBe(1)
                     expect(restored:snapshot()):toBe(encoded)
                 end
 
-                -- A loadout of three spells, or of none, is not a run this build could
+                -- A loadout of five spells, or of none, is not a run this build could
                 -- have produced, so restoring it is a normal refusal.
                 local empty: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 empty.spells = {}
                 expect(run.State.restore(empty:snapshot()) == nil):toBe(true)
                 local crowded: run.State = run.State.new(spells.SpellKind.Firebolt, false)
-                table.insert(
-                    crowded.spells,
-                    { kind = spells.SpellKind.Clone, cost = game.spell_cost, level = 1 }
-                )
-                table.insert(
-                    crowded.spells,
-                    { kind = spells.SpellKind.FreezeRay, cost = game.spell_cost, level = 1 }
-                )
+                for kind in {
+                    spells.SpellKind.Clone,
+                    spells.SpellKind.FreezeRay,
+                    spells.SpellKind.RaiseCard,
+                    spells.SpellKind.DrainLife
+                } do
+                    table.insert(crowded.spells, { kind = kind, cost = game.spell_cost, level = 1 })
+                end
                 expect(run.State.restore(crowded:snapshot()) == nil):toBe(true)
             end
         )
@@ -271,23 +281,30 @@ describe(
     "Ante Magic run loadout",
     function()
         it(
-            "adds a new spell while there is room and refuses to forget one when full",
+            "fills four spell slots and refuses to forget one for a fifth kind",
             function()
                 local state: run.State = run.State.new(spells.SpellKind.Firebolt, false)
                 expect(state:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 1))):toBe(true)
-                expect(state:spell_count()):toBe(2)
+                expect(
+                    state:learn_spell(spells.Spell.new(spells.SpellKind.FreezeRay, 1))
+                ):toBe(true)
+                expect(
+                    state:learn_spell(spells.Spell.new(spells.SpellKind.RaiseCard, 1))
+                ):toBe(true)
+                expect(state:spell_count()):toBe(4)
                 expect(state.spells[2].kind):toBe(spells.SpellKind.Clone)
                 expect(state.spells[2].cost):toBe(game.spell_cost)
                 expect(state.spells[2].level):toBe(1)
-                -- Two is as many as travel at once. A third kind cannot silently
-                -- replace either spell already bound to a cast key.
+                -- Four is as many as travel at once. A fifth kind cannot silently
+                -- replace any spell already bound to a cast key.
                 expect(
-                    state:learn_spell(spells.Spell.new(spells.SpellKind.RaiseCard, 1))
+                    state:learn_spell(spells.Spell.new(spells.SpellKind.DrainLife, 1))
                 ):toBe(false)
-                expect(state:spell_count()):toBe(2)
+                expect(state:spell_count()):toBe(4)
                 expect(state:carries(spells.SpellKind.Firebolt)):toBe(true)
                 expect(state:carries(spells.SpellKind.Clone)):toBe(true)
-                expect(state:carries(spells.SpellKind.RaiseCard)):toBe(false)
+                expect(state:carries(spells.SpellKind.RaiseCard)):toBe(true)
+                expect(state:carries(spells.SpellKind.DrainLife)):toBe(false)
             end
         )
 

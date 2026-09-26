@@ -45,12 +45,12 @@ on the board.
 Clearing the ninth vault wins the run — and does not stop it. The city and its
 sequence of vaults continue for as long as the run still has hearts.
 
-The robbers set out with the one spell the menu picked and can hold two ready at
-once, on keys 1 and 2. A visit to the shop stocks exactly two offers, drawn
+The robbers set out with the one spell the menu picked and can hold four ready at
+once, on keys 1 through 4. A visit to the shop stocks exactly two offers, drawn
 without replacement from one pool: a scroll for each of the twelve spells, plus a
 healing potion. A scroll for a known spell carries its next level; a scroll for
 a new kind starts at level one and takes the next free key. There is no separate
-learn-or-upgrade product and no trade prompt: once both keys are taken, a scroll
+learn-or-upgrade product and no trade prompt: once all four keys are taken, a scroll
 for another kind is unavailable rather than forgetting a spell the run already
 carries. The potion restores one heart and is unavailable at full health, which
 is the same rule wearing different clothes — an offer the run cannot take is
