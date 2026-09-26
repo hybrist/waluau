@@ -94,9 +94,11 @@ end
 
 local unavailable_run: RunState = make_run(SpellKind.Firebolt, 15, 3)
 unavailable_run:learn_spell(spells.Spell.new(SpellKind.Clone, 1))
+unavailable_run:learn_spell(spells.Spell.new(SpellKind.RaiseCard, 1))
+unavailable_run:learn_spell(spells.Spell.new(SpellKind.DrainLife, 1))
 local unavailable_shop: ShopState = ShopState.new(unavailable_run)
--- Two offers the run cannot take, for two different reasons: both keys are
--- already spoken for, and there is no damage for a potion to undo.
+-- Two offers the run cannot take, for two different reasons: all four keys are
+-- spoken for, and there is no damage for a potion to undo.
 unavailable_shop.slots = {
     { item = SpellScroll.new(SpellKind.FreezeRay, 1)::Item, price = 4, sold = false },
     { item = potion_.HealingPotion.new()::Item, price = potion_.price, sold = false }
