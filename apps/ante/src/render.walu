@@ -161,14 +161,13 @@ const HEADLINE_SIZE: f64 = 14.0
 -- is how a card joins or leaves the player's tilted fan without snapping
 -- upright at either end. Legs whose dest_kind names a board slot keep that
 -- slot empty until they vanish, so state that already changed is not revealed
--- ahead of the animation. `known` matches the slot the card is headed for, so a
--- table_card crossing into a hand carries its eye the whole way rather than sprouting
--- one the instant it lands. Most legs move an intact card; an ash-reappearance
--- leg stays at the discard anchor and rebuilds a burned card there instead.
+-- ahead of the animation. Knowledge travels on `card`, so a table card crossing
+-- into a hand carries its eye for the whole journey rather than sprouting one
+-- when it lands. Most legs move an intact card; an ash-reappearance leg stays
+-- at the discard anchor and rebuilds a burned card there instead.
 export type Anim = {
     card: game.Card,
     faces: Face,
-    known: bool,
     effect: AnimEffect,
     from: Point,
     to: Point,
@@ -493,7 +492,7 @@ function Board:begin_frame(frame: Frame): unit
                 index == frame.interaction.hand_focus,
                 frame.view.player_cards_hidden,
                 false,
-                frame.view.player_hand[index + 1].known
+                frame.view.player_hand[index + 1].card.known == true
             ),
             slot_hidden(frame.motion.anims, frame.motion.anim_clock, SLOT_PLAYER, index)
         )
@@ -516,7 +515,7 @@ function Board:begin_frame(frame: Frame): unit
                 false,
                 frame.view.computer_hand[index + 1].revealed ~= true,
                 false,
-                frame.view.computer_hand[index + 1].known
+                frame.view.computer_hand[index + 1].card.known == true
             ),
             hidden
         )
@@ -568,7 +567,7 @@ function Board:begin_frame(frame: Frame): unit
                 focused,
                 hidden or frame.view.middle_cards_hidden,
                 false,
-                false
+                frame.view.middle[index + 1].known == true
             ),
             power,
             frame.spell.clock,
@@ -710,6 +709,17 @@ end
 -- this leg projects the sheet itself instead of using the transform stack.
 -- The face is captured fresh each frame, the same bargain ash reappearance
 -- strikes: a throw is short and rare, and a captured card is exact.
+function throw_hidden(faces: Face, nominal_face_up: bool): bool
+    if faces == FACES_DOWN then
+        return true
+    elseif faces == FACES_UP then
+        return false
+    elseif faces == FACES_FLIP_DOWN then
+        return nominal_face_up
+    end
+    return not nominal_face_up
+end
+
 function draw_throw_card(surface: ui.Surface, anim: Anim, part: f64, sheet: card_warp.Mesh): unit
     local graphics = surface.graphics
     local clock: f64 = part * card_draw.land_end
@@ -726,10 +736,10 @@ function draw_throw_card(surface: ui.Surface, anim: Anim, part: f64, sheet: card
         arc = "very-late"
     }
     local pose: card_warp.Pose = throw:pose_at(clock)
-    local face_up: bool = throw:shows_face(clock)
+    local hidden: bool = throw_hidden(anim.faces, throw:shows_face(clock))
     local target: graphics_module.RenderTarget? = card.capture(
         surface,
-        card.look(anim.card, false, false, not face_up, false, anim.known)
+        card.look(anim.card, false, false, hidden, false, anim.card.known == true)
     )
     if target == nil then
         -- Without a capture there is no texture for the sheet; the plain
@@ -737,7 +747,7 @@ function draw_throw_card(surface: ui.Surface, anim: Anim, part: f64, sheet: card
         -- ready to be captured.
         card.draw_at(
             surface,
-            card.look(anim.card, false, false, not face_up, false, anim.known),
+            card.look(anim.card, false, false, hidden, false, anim.card.known == true),
             pose.center_x - card.width * 0.5,
             pose.center_y - card.height * 0.5
         )
@@ -749,7 +759,7 @@ function draw_throw_card(surface: ui.Surface, anim: Anim, part: f64, sheet: card
     -- source region is taken right to left.
     local source_x: f64 = 0.0
     local source_width: f64 = card.width
-    if face_up then
+    if not hidden then
         source_x = card.width
         source_width = -card.width
     end
@@ -817,7 +827,7 @@ function draw_anim_card(surface: ui.Surface, anim: Anim, clock: f64, sheet: card
     graphics:apply_transform(width_scale * lift, 0.0, 0.0, lift, 0.0, 0.0)
     card.draw_at(
         surface,
-        card.look(anim.card, false, false, hidden, false, anim.known),
+        card.look(anim.card, false, false, hidden, false, anim.card.known == true),
         -(card.width * 0.5),
         -(card.height * 0.5)
     )
@@ -1370,7 +1380,7 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
                     false,
                     trick.computer_hand[i + 1].revealed ~= true,
                     false,
-                    trick.computer_hand[i + 1].known
+                    trick.computer_hand[i + 1].card.known == true
                 ),
                 slot.x,
                 slot.y
@@ -1481,7 +1491,10 @@ function draw_resolution_board(board: Board, surface: ui.Surface, frame: Frame):
         else
             hand_fan.draw_slot(
                 surface,
-                card.sealed(trick.player_hand[i + 1].card, trick.player_hand[i + 1].known),
+                card.sealed(
+                    trick.player_hand[i + 1].card,
+                    trick.player_hand[i + 1].card.known == true
+                ),
                 fan,
                 i,
                 fan_parts[i + 1],
@@ -1817,6 +1830,7 @@ return {
     anim_effect_move = ANIM_EFFECT_MOVE,
     anim_effect_ash_reappear = ANIM_EFFECT_ASH_REAPPEAR,
     anim_effect_throw = ANIM_EFFECT_THROW,
+    throw_hidden = throw_hidden,
     -- The reveal's own burn reading, and the spell clocks the screen steers by.
     loss_burn_progress = loss_burn_progress,
     firebolt_burn_finished = powered_card.firebolt_burn_finished,

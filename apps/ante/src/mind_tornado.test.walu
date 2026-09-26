@@ -177,7 +177,7 @@ describe(
                         local opponent_changed: i32 = 0
                         local center_changed: i32 = 0
                         for held in view.player_hand do
-                            if not held.known then
+                            if held.card.known ~= true then
                                 player_changed += 1
                             end
                             if held.card.suit ~= 0 then

@@ -1,12 +1,20 @@
 ---
 name: delegated-pr-workflow
-description: Use when the user asks to use subagents, parallel agents, branch/PR-based execution, or the repo's established delegated workflow for implementation, investigation, verification, and merge-through-PR work.
+description: Use when the user asks to use subagents, parallel agents, or the repo's established delegated workflow for implementation, investigation, verification, and merge-through-PR work. Do not use merely because the user asks to create one PR from changes that already exist.
 ---
 
 # Delegated PR Workflow
 
 Use this workflow for multi-step repo work that should be split across subagents
 and merged through pull requests.
+
+## When Not to Use This Skill
+
+A request to create a single pull request from an existing working-tree change
+does not require delegation. Commit, push, and open that PR directly using the
+repository's normal contribution workflow. Use this skill only when the user
+explicitly asks for delegation or when the requested work itself needs multiple
+independent agents and PRs.
 
 ## Core Rules
 

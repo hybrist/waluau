@@ -444,7 +444,7 @@ function duel_state(screen: game_screen.State): State
             end
         end
         local description: string = ""
-        if ready and slot.known then
+        if ready and slot.card.known == true then
             description = "Known to the opponent."
         end
         table.insert(

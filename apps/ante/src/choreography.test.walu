@@ -1,11 +1,39 @@
 require("waluau:vitest")
 
 local choreography = require("./choreography")
+local game = require("./game")
+local render = require("./render")
 local spells = require("./spells/spell")
+local bosses = require("./bosses/boss")
 
 describe(
     "Ante Magic presentation choreography",
     function()
+        it(
+            "keeps Veiled Oracle center throws face down for their whole flight",
+            function()
+                local rules = game.State.new(
+                    true,
+                    {spells.Spell.new(spells.SpellKind.Firebolt, 1)},
+                    game.starting_gold,
+                    bosses.Kind.VeiledOracle
+                )
+                local state: choreography.State = choreography.State.new()
+                state:opening_deal(rules:view())
+
+                local center_deals: i32 = 0
+                for anim in state.session.anims do
+                    if anim.dest_kind == render.slot_middle then
+                        center_deals += 1
+                        expect(anim.faces):toBe(render.faces_down)
+                        expect(render.throw_hidden(anim.faces, false)):toBe(true)
+                        expect(render.throw_hidden(anim.faces, true)):toBe(true)
+                    end
+                end
+                expect(center_deals):toBe(3)
+            end
+        )
+
         it(
             "resets duel presentation through one initializer and retains scratch geometry",
             function()

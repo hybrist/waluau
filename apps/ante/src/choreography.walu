@@ -542,7 +542,6 @@ function push_deal(
         {
             card = card,
             faces = faces,
-            known = false,
             effect = effect,
             from = render.slot_pos(viewport, render.slot_deck, 0),
             to = render.slot_pos_at(viewport, kind, index, count),
@@ -731,7 +730,6 @@ function push_scoop(
         {
             card = card,
             faces = render.faces_up,
-            known = false,
             effect = render.anim_effect_move,
             from = from,
             to = gather,
@@ -751,7 +749,6 @@ function push_scoop(
         {
             card = card,
             faces = render.faces_up,
-            known = false,
             effect = render.anim_effect_move,
             from = gather,
             to = render.slot_pos(viewport, dest_kind, 0),
@@ -801,7 +798,6 @@ function push_ash_reappearance(
         {
             card = card,
             faces = render.faces_up,
-            known = false,
             effect = render.anim_effect_ash_reappear,
             from = pile,
             to = pile,
@@ -858,7 +854,6 @@ function push_hand_shifts(
             local to: render.Point = render.slot_pos_at(viewport, kind, new_index, new_count)
             if from.x ~= to.x or from.y ~= to.y then
                 local card: game.Card = live[new_index + 1].card
-                local known: bool = live[new_index + 1].known
                 local depart: f64 = start + SHIFT_STEP * (new_index::f64)
                 local land: f64 = depart + SHIFT_SECONDS
                 if land > finish then
@@ -869,7 +864,6 @@ function push_hand_shifts(
                     {
                         card = card,
                         faces = faces,
-                        known = known,
                         effect = render.anim_effect_move,
                         from = from,
                         to = to,
@@ -1172,7 +1166,6 @@ function State:swap(outcome: game.SwapOutcome): unit
             {
                 card = outgoing,
                 faces = leave_faces,
-                known = false,
                 effect = render.anim_effect_move,
                 from = leave,
                 to = hover,
@@ -1192,7 +1185,6 @@ function State:swap(outcome: game.SwapOutcome): unit
             {
                 card = outgoing,
                 faces = settle_faces,
-                known = false,
                 effect = render.anim_effect_move,
                 from = hover,
                 to = mid,
@@ -1212,7 +1204,6 @@ function State:swap(outcome: game.SwapOutcome): unit
             {
                 card = incoming,
                 faces = incoming_faces,
-                known = true,
                 effect = render.anim_effect_move,
                 from = mid,
                 to = render.slot_pos(layout.current(), render.slot_aside, k),
@@ -1232,7 +1223,6 @@ function State:swap(outcome: game.SwapOutcome): unit
             {
                 card = incoming,
                 faces = return_faces,
-                known = true,
                 effect = render.anim_effect_move,
                 from = render.slot_pos(layout.current(), render.slot_aside, k),
                 to = land,

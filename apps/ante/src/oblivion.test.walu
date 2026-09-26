@@ -78,7 +78,7 @@ describe(
                         replacement = after.player_hand[target.index + 1]
                     end
                     expect(same_card(replacement.card, target.card)):toBe(false)
-                    expect(replacement.known):toBe(false)
+                    expect(replacement.card.known == true):toBe(false)
                     expect(replacement.revealed == true):toBe(false)
                 end
                 expect(screen.presentation:is_animating()):toBe(true)

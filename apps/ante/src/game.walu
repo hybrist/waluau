@@ -11,7 +11,10 @@ type BossKind = bosses.Kind
 -- MAX_SUIT), a winner is -1 (Opponent), 0 (tie), or 1 (player), and a side
 -- is -1 (Opponent) or 1 (player). Snapshot restore checks these domains in
 -- valid_trick and State.restore.
-export type Card = { rank: i32, suit: i32 }
+-- Knowledge belongs to the physical card and travels wherever that card does.
+-- Unset is the fresh-deck state; true means the card has been exposed to the
+-- side that would otherwise see only its back.
+export type Card = { rank: i32, suit: i32, known: bool? }
 export type PairChoice = { first: i32, second: i32, value: i32, formation: {Card} }
 export type SwapChoice = {
     hand_indices: {i32},
@@ -30,15 +33,11 @@ export type SwapOutcome = {
     player_cards_hidden: bool,
     middle_cards_hidden: bool
 }
--- One slot of a hand: the card sitting there, plus whether the opponent has
--- watched it. `known` is set when the card arrived from the middle, which
--- both sides were looking at, so it is no longer secret; cards drawn off the
--- deck are secret, and only an exchange leaks one. Keeping the mark on the
--- slot means removal, sorting, and snapshots can never desynchronize a card
--- from its mark.
--- Mind Read exposes the current card, separately from the watched mark.
--- Unset on fresh draws means concealed.
-export type HandSlot = { card: Card, known: bool, revealed: bool? }
+-- A hand slot only owns temporary presentation state. Persistent knowledge is
+-- carried by the card itself, so swaps, sorting, rotation, and snapshots move
+-- the mark with the object instead of reconstructing it from a slot index.
+-- Mind Read exposes the current card without permanently marking it.
+export type HandSlot = { card: Card, revealed: bool? }
 -- One spell the player carry, with the gold a single cast of it burns. The
 -- cost travels with the spell rather than being a constant of the kind: a run
 -- can upgrade the same spell between duels, and two player carrying Firebolt
@@ -160,7 +159,7 @@ const BOSS_HAND_SIZE: i32 = 7
 const STARTING_GOLD: i32 = 10
 -- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "duel-state-v13"
+const SNAPSHOT_SCHEMA: string = "duel-state-v14"
 
 -- A loadout the caller cannot reach into afterwards. A duel is dealt the
 -- run's spells the way it is dealt its gold — as a reading of them, not as the
@@ -207,7 +206,7 @@ end
 -- A freshly dealt slot: replacements come off the sealed deck, so neither
 -- side has seen them yet.
 function deal_slot(deck: {Card}): HandSlot
-    return { card = draw(deck), known = false }
+    return { card = draw(deck) }
 end
 
 -- The bare cards of a hand, for the card-identity scoring and AI functions,
@@ -226,9 +225,17 @@ end
 function clone_slots(slots: {HandSlot}): {HandSlot}
     local copy: {HandSlot} = {}
     for slot in slots do
-        table.insert(copy, { card = slot.card, known = slot.known, revealed = slot.revealed })
+        table.insert(copy, { card = slot.card, revealed = slot.revealed })
     end
     return copy
+end
+
+function known_card(card: Card): Card
+    return { rank = card.rank, suit = card.suit, known = true }
+end
+
+function fresh_card(card: Card): Card
+    return { rank = card.rank, suit = card.suit }
 end
 
 -- Scores are packed as base-SCORE_RADIX digits: the category occupies the
@@ -683,12 +690,21 @@ function exchange_live(
     hand: {HandSlot},
     middle: {Card},
     hand_indices: {i32},
-    middle_indices: {i32}
+    middle_indices: {i32},
+    expose_outgoing: bool,
+    expose_incoming: bool
 ): unit
     assert(#hand_indices == #middle_indices)
     for i = ZERO, #hand_indices - ONE do
         local outgoing: Card = hand[hand_indices[i + 1] + 1].card
-        hand[hand_indices[i + 1] + 1] = { card = middle[middle_indices[i + 1] + 1], known = true }
+        if expose_outgoing then
+            outgoing = known_card(outgoing)
+        end
+        local incoming: Card = middle[middle_indices[i + 1] + 1]
+        if expose_incoming then
+            incoming = known_card(incoming)
+        end
+        hand[hand_indices[i + 1] + 1] = { card = incoming }
         middle[middle_indices[i + 1] + 1] = outgoing
     end
 end
@@ -1009,14 +1025,13 @@ end
 -- The changed cards are known because the Opponent watches the miracle too.
 function State:divine_intervention(target: i32): bool
     if target >= 0 and target < 3 then
-        self.middle[target + 1] = { rank = 10 + target, suit = 0 }
+        self.middle[target + 1] = known_card({ rank = 10 + target, suit = 0 })
         return true
     end
     local hand_index: i32 = target - 3
     if hand_index >= 0 and hand_index < 2 and hand_index < #self.player_hand then
         self.player_hand[hand_index + 1] = {
-            card = { rank = 13 + hand_index, suit = 0 },
-            known = true
+            card = known_card({ rank = 13 + hand_index, suit = 0 })
         }
         return true
     end
@@ -1085,7 +1100,7 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
     self.swap_hand_indices = {}
     self.swap_middle_indices = {}
     if self.swap_winner > 0 then
-        exchange_live(self.player_hand, self.middle, hand_indices, middle_indices)
+        exchange_live(self.player_hand, self.middle, hand_indices, middle_indices, true, true)
         self.swap_count = #hand_indices
         self.swap_hand_indices = hand_indices
         self.swap_middle_indices = middle_indices
@@ -1094,7 +1109,9 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): SwapOut
             self.computer_hand,
             self.middle,
             computer.hand_indices,
-            computer.middle_indices
+            computer.middle_indices,
+            false,
+            not (self.boss_kind or bosses.Kind.Vanilla):hides_middle_cards()
         )
         self.swap_count = #computer.hand_indices
         self.swap_hand_indices = computer.hand_indices
@@ -1539,7 +1556,7 @@ end
 function test_fresh_slots(cards: {Card}): {HandSlot}
     local slots: {HandSlot} = {}
     for card in cards do
-        table.insert(slots, { card = { rank = card.rank, suit = card.suit }, known = false })
+        table.insert(slots, { card = fresh_card(card) })
     end
     return slots
 end
@@ -1566,7 +1583,9 @@ end
 function State:test_arrange_player(player_hand: {Card}, player_known: {bool}): unit
     local slots: {HandSlot} = test_fresh_slots(player_hand)
     for index, known in player_known do
-        slots[index].known = known
+        if known then
+            slots[index].card = known_card(slots[index].card)
+        end
     end
     self.player_hand = slots
 end
@@ -1688,12 +1707,12 @@ export type OblivionTarget = { opponent: bool, index: i32, card: Card }
 function State:oblivion_targets(): {OblivionTarget}
     local targets: {OblivionTarget} = {}
     for index, held in self.player_hand do
-        if held.known or held.revealed == true then
+        if held.card.known == true or held.revealed == true then
             table.insert(targets, { opponent = false, index = index - 1, card = held.card })
         end
     end
     for index, held in self.computer_hand do
-        if held.known or held.revealed == true then
+        if held.card.known == true or held.revealed == true then
             table.insert(targets, { opponent = true, index = index - 1, card = held.card })
         end
     end
@@ -1830,13 +1849,13 @@ function shuffle_battlefield(state: State, level: i32): unit
     -- Fresh slots erase knowledge of mixed cards; untouched slots retain both
     -- their watched marks and Mind Read reveals. No card enters or leaves the deck.
     for index in player do
-        state.player_hand[index] = { card = draw(pool), known = false }
+        state.player_hand[index] = { card = fresh_card(draw(pool)) }
     end
     for index in center do
-        state.middle[index] = draw(pool)
+        state.middle[index] = fresh_card(draw(pool))
     end
     for index in opponent do
-        state.computer_hand[index] = { card = draw(pool), known = false }
+        state.computer_hand[index] = { card = fresh_card(draw(pool)) }
     end
 end
 
@@ -1879,7 +1898,7 @@ function State:cast_spell(slot: i32, table_card: i32): bool
         end
     elseif spell.kind == spells.SpellKind.MindRead then
         for index, held in self.computer_hand do
-            self.computer_hand[index] = { card = held.card, known = held.known, revealed = true }
+            self.computer_hand[index] = { card = held.card, revealed = true }
         end
     elseif spell.kind == spells.SpellKind.Tornado then
         shuffle_battlefield(self, spell.level)
@@ -1890,8 +1909,7 @@ function State:cast_spell(slot: i32, table_card: i32): bool
                 rank = MIN_RANK
             end
             self.player_hand[index] = {
-                card = { rank = rank, suit = held.card.suit },
-                known = held.known
+                card = { rank = rank, suit = held.card.suit, known = held.card.known }
             }
         end
     elseif spell.kind == spells.SpellKind.SecondWind then
@@ -1907,8 +1925,7 @@ function State:cast_spell(slot: i32, table_card: i32): bool
             rank = MAX_RANK
         end
         self.player_hand[weakest] = {
-            card = { rank = rank, suit = held.card.suit },
-            known = held.known
+            card = { rank = rank, suit = held.card.suit, known = held.card.known }
         }
     elseif spell.kind == spells.SpellKind.Wither then
         local card: Card = self.middle[table_card + 1]
@@ -1916,18 +1933,20 @@ function State:cast_spell(slot: i32, table_card: i32): bool
         if rank < MIN_RANK then
             rank = MIN_RANK
         end
-        self.middle[table_card + 1] = { rank = rank, suit = card.suit }
+        self.middle[table_card + 1] = { rank = rank, suit = card.suit, known = card.known }
     elseif spell.kind == spells.SpellKind.ColorChange then
         local card: Card = self.middle[table_card + 1]
         self.middle[table_card + 1] = {
             rank = card.rank,
-            suit = different_value(card.suit, MIN_SUIT, MAX_SUIT)
+            suit = different_value(card.suit, MIN_SUIT, MAX_SUIT),
+            known = card.known
         }
     elseif spell.kind == spells.SpellKind.RankChange then
         local card: Card = self.middle[table_card + 1]
         self.middle[table_card + 1] = {
             rank = different_value(card.rank, MIN_RANK, MAX_RANK),
-            suit = card.suit
+            suit = card.suit,
+            known = card.known
         }
     elseif spell.kind == spells.SpellKind.FreezeRay then
         self:clear_frozen()
