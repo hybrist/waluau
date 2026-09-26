@@ -257,3 +257,22 @@ it(
         ):toBe(true)
     end
 )
+
+it(
+    "announces every carried resource in the shop",
+    function()
+        local screen = screen_module.State.new()
+        screen.run.health = 18
+        screen.run.gold = 17
+        screen.run.spells[1].level = 2
+        screen.run:learn_spell(spells.Spell.new(spells.SpellKind.Clone, 1))
+        screen.shop:open_for(screen.run)
+
+        local status: string = accessibility.duel_state(screen).status
+        expect(string.find(status, "Health 1.5.", 1, true) ~= nil):toBe(true)
+        expect(string.find(status, "Gold 17.", 1, true) ~= nil):toBe(true)
+        expect(
+            string.find(status, "Spells Firebolt level 2, Clone level 1.", 1, true) ~= nil
+        ):toBe(true)
+    end
+)
