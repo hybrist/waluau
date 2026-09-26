@@ -1,0 +1,413 @@
+-- A playable shop visit using the production screen, city, and input adapters.
+-- Story controls author the run and both offers; no visible stock depends on a
+-- random roll. Changing that setup starts a fresh visit, while purchases and
+-- leaving the shop remain ordinary game actions.
+local engine = require("waluau:engine")
+local storybook = require("waluau:engine/storybook")
+local ui = require("./ui/node")
+local box = require("./ui/layout")
+local ui_story = require("./ui/story")
+local layout = require("./layout")
+local game_screen = require("./game_screen")
+local city_map = require("./city_map")
+local city_map_render = require("./city_map_render")
+local accessibility = require("./accessibility")
+local run_ = require("./run")
+local shop_ = require("./shop")
+local item_ = require("./items/item")
+local scroll_ = require("./items/scroll")
+local potion_ = require("./items/potion")
+local spells = require("./spells/spell")
+
+type Item = item_.Item
+type Slot = shop_.Slot
+type Setup = {
+    gold: i32,
+    hearts: i32,
+    duel: i32,
+    seed: i32,
+    known_1: i32,
+    known_1_level: i32,
+    known_2: i32,
+    known_2_level: i32,
+    known_3: i32,
+    known_3_level: i32,
+    known_4: i32,
+    known_4_level: i32,
+    offer_1: i32,
+    offer_2: i32
+}
+
+const WIDTH = 1000.0
+const HEIGHT = 750.0
+const POTION_CHOICE: i32 = 13
+local book = ui_story.Book.new()
+
+local gold = storybook.range("gold", 20, 0, 100, 1)
+local hearts = storybook.range("hearts", 2, 0, 3, 1)
+local duel = storybook.range("duel", 2, 1, 99, 1)
+local seed = storybook.range("seed", 12345, 1, 99999, 1)
+
+local known_1 = storybook.select(
+    "known spell 1",
+    1::i32,
+    {
+        storybook.choice("None", 0::i32),
+        storybook.choice("Firebolt", 1::i32),
+        storybook.choice("Freeze Ray", 2::i32),
+        storybook.choice("Raise Card", 3::i32),
+        storybook.choice("Clone", 4::i32),
+        storybook.choice("Drain Life", 5::i32),
+        storybook.choice("Second Wind", 6::i32),
+        storybook.choice("Wither", 7::i32),
+        storybook.choice("Mind Read", 8::i32),
+        storybook.choice("Tornado", 9::i32),
+        storybook.choice("Oblivion", 10::i32),
+        storybook.choice("Color Change", 11::i32),
+        storybook.choice("Rank Change", 12::i32)
+    }
+)
+local known_1_level = storybook.range("known spell 1 level", 1, 1, 5, 1)
+local known_2 = storybook.select(
+    "known spell 2",
+    0::i32,
+    {
+        storybook.choice("None", 0::i32),
+        storybook.choice("Firebolt", 1::i32),
+        storybook.choice("Freeze Ray", 2::i32),
+        storybook.choice("Raise Card", 3::i32),
+        storybook.choice("Clone", 4::i32),
+        storybook.choice("Drain Life", 5::i32),
+        storybook.choice("Second Wind", 6::i32),
+        storybook.choice("Wither", 7::i32),
+        storybook.choice("Mind Read", 8::i32),
+        storybook.choice("Tornado", 9::i32),
+        storybook.choice("Oblivion", 10::i32),
+        storybook.choice("Color Change", 11::i32),
+        storybook.choice("Rank Change", 12::i32)
+    }
+)
+local known_2_level = storybook.range("known spell 2 level", 1, 1, 5, 1)
+local known_3 = storybook.select(
+    "known spell 3",
+    0::i32,
+    {
+        storybook.choice("None", 0::i32),
+        storybook.choice("Firebolt", 1::i32),
+        storybook.choice("Freeze Ray", 2::i32),
+        storybook.choice("Raise Card", 3::i32),
+        storybook.choice("Clone", 4::i32),
+        storybook.choice("Drain Life", 5::i32),
+        storybook.choice("Second Wind", 6::i32),
+        storybook.choice("Wither", 7::i32),
+        storybook.choice("Mind Read", 8::i32),
+        storybook.choice("Tornado", 9::i32),
+        storybook.choice("Oblivion", 10::i32),
+        storybook.choice("Color Change", 11::i32),
+        storybook.choice("Rank Change", 12::i32)
+    }
+)
+local known_3_level = storybook.range("known spell 3 level", 1, 1, 5, 1)
+local known_4 = storybook.select(
+    "known spell 4",
+    0::i32,
+    {
+        storybook.choice("None", 0::i32),
+        storybook.choice("Firebolt", 1::i32),
+        storybook.choice("Freeze Ray", 2::i32),
+        storybook.choice("Raise Card", 3::i32),
+        storybook.choice("Clone", 4::i32),
+        storybook.choice("Drain Life", 5::i32),
+        storybook.choice("Second Wind", 6::i32),
+        storybook.choice("Wither", 7::i32),
+        storybook.choice("Mind Read", 8::i32),
+        storybook.choice("Tornado", 9::i32),
+        storybook.choice("Oblivion", 10::i32),
+        storybook.choice("Color Change", 11::i32),
+        storybook.choice("Rank Change", 12::i32)
+    }
+)
+local known_4_level = storybook.range("known spell 4 level", 1, 1, 5, 1)
+
+local offer_1 = storybook.select(
+    "offer 1",
+    1::i32,
+    {
+        storybook.choice("Firebolt scroll", 1::i32),
+        storybook.choice("Freeze Ray scroll", 2::i32),
+        storybook.choice("Raise Card scroll", 3::i32),
+        storybook.choice("Clone scroll", 4::i32),
+        storybook.choice("Drain Life scroll", 5::i32),
+        storybook.choice("Second Wind scroll", 6::i32),
+        storybook.choice("Wither scroll", 7::i32),
+        storybook.choice("Mind Read scroll", 8::i32),
+        storybook.choice("Tornado scroll", 9::i32),
+        storybook.choice("Oblivion scroll", 10::i32),
+        storybook.choice("Color Change scroll", 11::i32),
+        storybook.choice("Rank Change scroll", 12::i32),
+        storybook.choice("Healing Potion", 13::i32)
+    }
+)
+local offer_2 = storybook.select(
+    "offer 2",
+    13::i32,
+    {
+        storybook.choice("Firebolt scroll", 1::i32),
+        storybook.choice("Freeze Ray scroll", 2::i32),
+        storybook.choice("Raise Card scroll", 3::i32),
+        storybook.choice("Clone scroll", 4::i32),
+        storybook.choice("Drain Life scroll", 5::i32),
+        storybook.choice("Second Wind scroll", 6::i32),
+        storybook.choice("Wither scroll", 7::i32),
+        storybook.choice("Mind Read scroll", 8::i32),
+        storybook.choice("Tornado scroll", 9::i32),
+        storybook.choice("Oblivion scroll", 10::i32),
+        storybook.choice("Color Change scroll", 11::i32),
+        storybook.choice("Rank Change scroll", 12::i32),
+        storybook.choice("Healing Potion", 13::i32)
+    }
+)
+
+function same_setup(left: Setup, right: Setup): bool
+    return left.gold == right.gold and left.hearts == right.hearts and left.duel == right.duel and left.seed == right.seed and left.known_1 == right.known_1 and left.known_1_level == right.known_1_level and left.known_2 == right.known_2 and left.known_2_level == right.known_2_level and left.known_3 == right.known_3 and left.known_3_level == right.known_3_level and left.known_4 == right.known_4 and left.known_4_level == right.known_4_level and left.offer_1 == right.offer_1 and left.offer_2 == right.offer_2
+end
+
+function shop_scene(): storybook.Scene
+    local city = city_map.State.new(41)
+    local city_view = city_map_render.State.new()
+    local screen = game_screen.State.new()
+    local initialized = false
+    local previous: Setup = {
+        gold = 20,
+        hearts = 2,
+        duel = 2,
+        seed = 12345,
+        known_1 = 1,
+        known_1_level = 1,
+        known_2 = 0,
+        known_2_level = 1,
+        known_3 = 0,
+        known_3_level = 1,
+        known_4 = 0,
+        known_4_level = 1,
+        offer_1 = 1,
+        offer_2 = POTION_CHOICE
+    }
+
+    local function configuration(): Setup
+        return {
+            gold = gold.value(),
+            hearts = hearts.value(),
+            duel = duel.value(),
+            seed = seed.value(),
+            known_1 = storybook.selected<i32>(known_1),
+            known_1_level = known_1_level.value(),
+            known_2 = storybook.selected<i32>(known_2),
+            known_2_level = known_2_level.value(),
+            known_3 = storybook.selected<i32>(known_3),
+            known_3_level = known_3_level.value(),
+            known_4 = storybook.selected<i32>(known_4),
+            known_4_level = known_4_level.value(),
+            offer_1 = storybook.selected<i32>(offer_1),
+            offer_2 = storybook.selected<i32>(offer_2)
+        }
+    end
+
+    local function remember_spell(run: run_.State, choice: i32, level: i32): unit
+        local kind: spells.SpellKind? = spells.SpellKind.from(choice)
+        if kind == nil then
+            return
+        end
+        local known: spells.SpellKind = kind::spells.SpellKind
+        if not run:carries(known) then
+            table.insert(run.spells, spells.Spell.new(known, level))
+        end
+    end
+
+    local function offered_item(run: run_.State, choice: i32): Item
+        if choice == POTION_CHOICE then
+            return potion_.HealingPotion.new()::Item
+        end
+        local kind: spells.SpellKind = spells.SpellKind.from(choice) or spells.SpellKind.Firebolt
+        return scroll_.SpellScroll.new(kind, run:current_spell_level(kind) + 1)::Item
+    end
+
+    local function offered_slot(run: run_.State, choice: i32): Slot
+        local item: Item = offered_item(run, choice)
+        return { item = item, price = item:base_price(run), sold = false }
+    end
+
+    local function replay(): unit
+        local setup = configuration()
+        previous = setup
+        initialized = true
+        math.randomseed(setup.seed::f64)
+        city = city_map.State.new(setup.seed)
+        screen = game_screen.State.new()
+        screen.run.duel = setup.duel
+        screen.run.cleared = setup.duel - 1
+        screen.run.gold = setup.gold
+        screen.run.health = setup.hearts * run_.health_per_heart
+        screen.run.spells = {}
+        remember_spell(screen.run, setup.known_1, setup.known_1_level)
+        remember_spell(screen.run, setup.known_2, setup.known_2_level)
+        remember_spell(screen.run, setup.known_3, setup.known_3_level)
+        remember_spell(screen.run, setup.known_4, setup.known_4_level)
+        screen:deal_vault()
+        screen.presentation:skip()
+        screen.shop.open = true
+        screen.shop.cursor = 0
+        screen.shop.slots = {
+            offered_slot(screen.run, setup.offer_1),
+            offered_slot(screen.run, setup.offer_2)
+        }
+        screen.leaving_fence = false
+        layout.update(WIDTH, HEIGHT)
+        local viewport = layout.current()
+        city:resize(viewport.width, viewport.height)
+        screen:place_city(city)
+    end
+
+    local function sync_setup(): unit
+        if not initialized then
+            replay()
+        elseif not same_setup(previous, configuration()) then
+            replay()
+        end
+    end
+
+    local function update(dt: f64, input: engine.Input): unit
+        sync_setup()
+        if not book.assets.load_finished then
+            return
+        end
+        screen:steer_city(city)
+        screen:update(city, dt)
+        city:update(dt)
+    end
+
+    local function paint(surface: ui.Surface, bounds: box.Rect): unit
+        layout.update(WIDTH, HEIGHT)
+        local viewport = layout.current()
+        city:resize(viewport.width, viewport.height)
+        local graphics = surface.graphics
+        graphics:push()
+        graphics:scale(viewport.scale, viewport.scale)
+        if city.cover < 1.0 then
+            screen:draw_vault(surface)
+        end
+        if city:visible() then
+            city_view:draw(city, graphics, screen:landmark_stop())
+        end
+        if screen:fence_open() then
+            screen:draw_fence(city, viewport, surface)
+        end
+        graphics:pop()
+    end
+
+    local function keypressed(key: string): unit
+        sync_setup()
+        if key == "r" or key == "R" or key == "m" or key == "M" then
+            replay()
+        elseif screen:keypressed(city, key) == "exit" then
+            replay()
+        end
+    end
+
+    local function mousepressed(x: f64, y: f64, button: i32): unit
+        sync_setup()
+        screen:mousepressed(city, layout.canvas_x(x), layout.canvas_y(y), button)
+    end
+
+    local function mousereleased(x: f64, y: f64, button: i32): unit
+        sync_setup()
+        x = layout.canvas_x(x)
+        y = layout.canvas_y(y)
+        if screen:on_map() then
+            screen:mousereleased(city, x, y, button)
+        elseif button == 1 then
+            local action = screen.board:pointer_up(x, y, button)
+            if action.kind == "restart" or action.kind == "menu" then
+                replay()
+            else
+                screen:perform_board_action(city, action)
+            end
+        end
+    end
+
+    local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+        sync_setup()
+        screen:mousemoved(layout.canvas_x(x), layout.canvas_y(y))
+    end
+
+    local function accessible_state(): engine.AccessibleState
+        sync_setup()
+        local state = accessibility.duel_state(screen)
+        for item in state.items do
+            if item.key == "restart" then
+                item.label = "Replay scenario"
+            elseif item.key == "menu" then
+                item.label = "Return to scenario start"
+            end
+        end
+        return state
+    end
+
+    local function accessible_activate(key: string): unit
+        sync_setup()
+        if key == "restart" or key == "menu" then
+            replay()
+        elseif accessibility.duel_activate(screen, city, key) then
+            replay()
+        end
+    end
+
+    return book:scene(
+        {
+            node = function(): ui.Node
+                return ui.Node.sized(WIDTH, HEIGHT, paint)
+            end,
+            load = replay,
+            present = sync_setup,
+            update = update,
+            keypressed = keypressed,
+            mousepressed = mousepressed,
+            mousereleased = mousereleased,
+            mousemoved = mousemoved,
+            accessibility = accessible_state,
+            accessibility_activate = accessible_activate,
+            accessibility_focus = function(key: string): unit
+                accessibility.duel_focus(screen, key)
+            end,
+            width = WIDTH,
+            height = HEIGHT,
+            scale = 1.0,
+            background = "#09090b"
+        }
+    )
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Sandbox",
+            shop_scene(),
+            {
+                gold.declaration,
+                hearts.declaration,
+                duel.declaration,
+                seed.declaration,
+                known_1.declaration,
+                known_1_level.declaration,
+                known_2.declaration,
+                known_2_level.declaration,
+                known_3.declaration,
+                known_3_level.declaration,
+                known_4.declaration,
+                known_4_level.declaration,
+                offer_1.declaration,
+                offer_2.declaration
+            }
+        )
+    }
+)

@@ -319,6 +319,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `ui/presentation.test.walu` | Headless assertions for composition and the type-sized retained presenters. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |
 | `hand.stories.walu` | Storybook controls for the live hand-fan entity across card counts, selections, and focus positions. |
+| `shop.stories.walu` | Playable full-screen shop sandbox with authored run state, known spells, and stock. |
 | `entities/shop.stories.walu` | Storybook states and an interactive session for the retained shop entity. |
 | `ui/layout.stories.walu` | Storybook stories for the retained layout solver itself, on synthetic leaves. |
 | `.storybook/main.js` | Storybook configuration: the story glob and the compiler options stories are built with. |
@@ -472,6 +473,13 @@ standard or boss duel, seed, starting phase, and target table card. **duel /
 Firebolt**, **Freeze Ray**, **Raise Card**, and **Clone** fix the spell while
 keeping the other setup controls. Changing any setup control rebuilds the
 scenario; ordinary frames preserve your play.
+
+The **shop / Sandbox** story opens the production shop screen over its seeded
+city. It controls gold, hearts, duel, seed, up to four known spells and their
+levels, and both stock slots. Each slot can be any spell scroll or the healing
+potion; scroll levels are derived by the live shop rule from the configured
+loadout. Buying and leaving use the same keyboard, pointer, and accessible-text
+paths as the game, while **R** restores the authored visit.
 
 Click the canvas to use the game's keys: **1** arms the spell, arrows choose a
 table card, **Enter** casts, and **Escape** cancels. Mouse card and spell controls
