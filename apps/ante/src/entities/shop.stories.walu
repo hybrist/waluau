@@ -64,6 +64,7 @@ local function apply_sold(shop: ShopState, choice: SoldChoice): unit
 end
 
 local stock_run: RunState = make_run(SpellKind.Firebolt, 30, 2)
+stock_run:learn_spell(spells.Spell.new(SpellKind.Clone, 1))
 local stock_shop: ShopState = ShopState.new(stock_run)
 stock_shop.slots = slots(false, false)
 local stock_view: shop_entity.Stateful = shop_entity.Stateful.new(stock_shop, stock_run)

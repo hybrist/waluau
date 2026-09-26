@@ -239,6 +239,16 @@ function duel_state(screen: game_screen.State): State
         resources = "Health " .. tostring(
             (screen.run.health::f64) / (run_.health_per_heart::f64)
         ) .. ". Gold " .. tostring(screen.run.gold) .. "."
+        for index, spell in screen.run.spells do
+            local separator: string = " Spells "
+            if index > 1 then
+                separator = ", "
+            end
+            resources = resources .. separator .. spell.kind:__tostring() .. " level " .. tostring(
+                spell.level
+            )
+        end
+        resources = resources .. "."
         for index, slot in screen.shop.slots do
             button(
                 items,

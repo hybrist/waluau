@@ -300,6 +300,8 @@ return {
     heart_fill = heart_fill,
     node = node,
     draw_heart = draw_heart,
+    draw_hearts = draw_hearts,
+    draw_purse = draw_purse,
     pip_width = PIP_WIDTH,
     row_height = ROW_HEIGHT
 }

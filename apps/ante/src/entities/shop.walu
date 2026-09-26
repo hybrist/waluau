@@ -8,8 +8,10 @@ local ink = require("../ink")
 local label = require("./label")
 local button = require("./button")
 local modal = require("./modal")
+local vitals = require("./vitals")
 local run_module = require("../run")
 local shop_ = require("../shop")
+local spell_launch = require("../spell_launch")
 local viewport_layout = require("../layout")
 
 type ShopState = shop_.State
@@ -23,12 +25,24 @@ const PAD_BOTTOM: f64 = 24.0
 
 const TITLE_SIZE: f64 = 24.0
 const TITLE_INK: string = "#fbbf24"
-const GOLD_SIZE: f64 = 24.0
-const GOLD_INK: string = "#67e8f9"
-const ON_HAND_INK: string = "#155e75"
-const TARGET_SIZE: f64 = 9.0
-const GOLD_GAP: f64 = 2.0
-const HEADER_GAP: f64 = 24.0
+const HEADER_GAP: f64 = 14.0
+
+-- Buying is a comparison between what the run has and what the vendor offers,
+-- so the three carried resources stand together rather than leaving gold as a
+-- lone figure in the title. Hearts and the purse borrow the duel HUD's marks;
+-- spells use their school colour and include the level a scroll would change.
+const RESOURCES_HEIGHT: f64 = 68.0
+const RESOURCES_FILL: string = "#0d0d12"
+const RESOURCES_EDGE: string = "#3f3f46"
+const RESOURCES_LABEL_INK: string = "#71717a"
+const RESOURCES_LABEL_SIZE: f64 = 8.0
+const SPELL_SIZE: f64 = 9.0
+const HEARTS_WIDTH: f64 = 126.0
+const GOLD_WIDTH: f64 = 104.0
+const RESOURCE_PAD_X: f64 = 16.0
+const RESOURCE_LABEL_Y: f64 = 16.0
+const RESOURCE_VALUE_Y: f64 = 29.0
+const SPELL_LINE_PITCH: f64 = 18.0
 
 const ROW_WIDTH: f64 = 476.0
 const ROW_HEIGHT: f64 = 54.0
@@ -68,12 +82,60 @@ local ROW_LOOK: button.Look = {
 }
 
 type Presentation = { state: ShopState, run: RunState, pressed: i32 }
-export type Stateful = {
-    presentation: Presentation,
-    gold: label.Stateful,
-    row_nodes: {ui.Node},
-    root: ui.Node
-}
+export type Stateful = { presentation: Presentation, row_nodes: {ui.Node}, root: ui.Node }
+
+function draw_resource_rule(graphics: ui.Graphics, x: f64, y: f64): unit
+    graphics:set_color(RESOURCES_EDGE)
+    graphics:set_line_width(1.0)
+    graphics:line(x, y + 10.0, x, y + RESOURCES_HEIGHT - 10.0)
+end
+
+function draw_resource_label(graphics: ui.Graphics, value: string, x: f64, y: f64): unit
+    ink.text(graphics, value, x, y + RESOURCE_LABEL_Y, RESOURCES_LABEL_SIZE, RESOURCES_LABEL_INK)
+end
+
+function draw_resources(surface: ui.Surface, bounds: box.Rect, run: RunState): unit
+    local graphics = surface.graphics
+    graphics:set_color(RESOURCES_FILL)
+    graphics:fill_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+    graphics:set_color(RESOURCES_EDGE)
+    graphics:set_line_width(1.0)
+    graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+
+    local hearts_x: f64 = bounds.x + RESOURCE_PAD_X
+    local gold_x: f64 = bounds.x + HEARTS_WIDTH + RESOURCE_PAD_X
+    local spells_x: f64 = bounds.x + HEARTS_WIDTH + GOLD_WIDTH + RESOURCE_PAD_X
+    draw_resource_label(graphics, "HEARTS", hearts_x, bounds.y)
+    draw_resource_label(graphics, "GOLD", gold_x, bounds.y)
+    draw_resource_label(graphics, "SPELLS", spells_x, bounds.y)
+    draw_resource_rule(graphics, bounds.x + HEARTS_WIDTH, bounds.y)
+    draw_resource_rule(graphics, bounds.x + HEARTS_WIDTH + GOLD_WIDTH, bounds.y)
+
+    vitals.draw_hearts(
+        graphics,
+        box.rect(hearts_x, bounds.y + RESOURCE_VALUE_Y, HEARTS_WIDTH, vitals.row_height),
+        run.health,
+        run_module.max_hearts
+    )
+    vitals.draw_purse(
+        graphics,
+        box.rect(gold_x, bounds.y + RESOURCE_VALUE_Y, GOLD_WIDTH, vitals.row_height),
+        run.gold
+    )
+    for index, spell in run.spells do
+        local text: string = tostring(
+            index
+        ) .. "  " .. string.upper(spell.kind:__tostring()) .. "  LV " .. tostring(spell.level)
+        ink.text(
+            graphics,
+            text,
+            spells_x,
+            bounds.y + RESOURCE_VALUE_Y + (index::f64) * SPELL_LINE_PITCH,
+            SPELL_SIZE,
+            spell_launch.color(spell.kind)
+        )
+    end
+end
 
 function shop_slot_color(slot: Slot, run: RunState): string
     if slot.sold or slot.price > run.gold or not slot.item:can_use(run) then
@@ -195,7 +257,6 @@ function sync(view: Stateful, state: ShopState, run: RunState): unit
     assert(ROW_CAPACITY == shop_.DEFAULT_SHOP_ITEM_COUNT + 1)
     view.presentation.state = state
     view.presentation.run = run
-    view.gold:present(tostring(run.gold), GOLD_SIZE, GOLD_INK, label.align_right)
 
     -- A visit is its offers plus the way out, and `index` here is a table
     -- position rather than an offer number: the way out is row #slots + 1.
@@ -221,19 +282,14 @@ end
 
 function Stateful.new(state: ShopState, run: RunState): Stateful
     local presentation: Presentation = { state = state, run = run, pressed = -1 }
-    local gold: label.Stateful = label.Stateful.new(
-        tostring(run.gold),
-        GOLD_SIZE,
-        GOLD_INK,
-        label.align_right,
-        false
+    local header: ui.Node = label.left("THE SHOP", TITLE_SIZE, TITLE_INK)
+    local resources: ui.Node = ui.Node.sized(
+        ROW_WIDTH,
+        RESOURCES_HEIGHT,
+        function(surface: ui.Surface, bounds: box.Rect): unit
+            draw_resources(surface, bounds, presentation.run)
+        end
     )
-    local on_hand: ui.Node = label.right("GOLD ON HAND", TARGET_SIZE, ON_HAND_INK)
-    local right_col: ui.Node = ui.Node.down({ gap = GOLD_GAP, align = "end" }, {gold.root, on_hand})
-    local header: ui.Node = ui.Node.across(
-        { justify = "space-between", align = "start" },
-        {label.left("THE SHOP", TITLE_SIZE, TITLE_INK), right_col}
-    ):wide()
 
     local rows: {ui.Node} = {}
     for index = 0::i32, ROW_CAPACITY - 1 do
@@ -248,16 +304,19 @@ function Stateful.new(state: ShopState, run: RunState): Stateful
     end
     local row_list: ui.Node = ui.Node.flow(rows, box.column(0.0, "start", "stretch"))
     local body: ui.Node = ui.Node.flow(
-        {header, modal.rule(), ui.Node.gap(0.0, HEADER_GAP), row_list},
+        {
+            header,
+            ui.Node.gap(0.0, HEADER_GAP),
+            resources,
+            ui.Node.gap(0.0, HEADER_GAP),
+            modal.rule(),
+            ui.Node.gap(0.0, HEADER_GAP),
+            row_list
+        },
         body_style()
     )
     local root: ui.Node = ui.Node.layer({shell(), body}):min_width(PANEL_WIDTH)
-    local view: Stateful = {
-        presentation = presentation,
-        gold = gold,
-        row_nodes = rows,
-        root = root
-    }
+    local view: Stateful = { presentation = presentation, row_nodes = rows, root = root }
     sync(view, state, run)
     return view
 end
