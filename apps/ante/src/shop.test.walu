@@ -94,22 +94,50 @@ describe(
         )
 
         it(
-            "cannot forget a carried spell to make room for another",
+            "fills slots three and four, then allows only upgrades at full capacity",
             function()
                 local run: RunState = RunState.new(SpellKind.Firebolt, false)
-                expect(run:learn_spell(spell_.Spell.new(SpellKind.Clone, 1))):toBe(true)
-                local offered: SpellScroll = SpellScroll.new(SpellKind.FreezeRay, 1)
-                expect(offered:can_use(run)):toBe(false)
+                run.gold = 20
+                expect(run:learn_spell(spell_.Spell.new(SpellKind.FreezeRay, 1))):toBe(true)
 
                 local shop: ShopState = ShopState.new(run)
-                stock(shop, offered::Item, 4)
+                shop.slots = {
+                    {
+                        item = SpellScroll.new(SpellKind.RaiseCard, 1)::Item,
+                        price = 4,
+                        sold = false
+                    },
+                    { item = SpellScroll.new(SpellKind.Clone, 1)::Item, price = 4, sold = false }
+                }
+                shop.cursor = 0
+                expect(shop:slot_available(run, 0)):toBe(true)
+                expect(shop:slot_available(run, 1)):toBe(true)
+                shop:confirm_choice(run)
+                shop.cursor = 1
+                shop:confirm_choice(run)
+                expect(run:spell_count()):toBe(4)
+                expect(run:carries(SpellKind.RaiseCard)):toBe(true)
+                expect(run:carries(SpellKind.Clone)):toBe(true)
+
+                local fifth: SpellScroll = SpellScroll.new(SpellKind.DrainLife, 1)
+                local upgrade: SpellScroll = SpellScroll.new(SpellKind.Firebolt, 2)
+                shop.slots = {
+                    { item = fifth::Item, price = 4, sold = false },
+                    { item = upgrade::Item, price = 4, sold = false }
+                }
+                shop.cursor = 0
+                expect(shop:slot_available(run, 0)):toBe(false)
+                expect(shop:slot_available(run, 1)):toBe(true)
                 local gold: i32 = run.gold
                 shop:confirm_choice(run)
                 expect(run.gold):toBe(gold)
-                expect(run:spell_count()):toBe(2)
-                expect(run:carries(SpellKind.Firebolt)):toBe(true)
-                expect(run:carries(SpellKind.Clone)):toBe(true)
-                expect(run:carries(SpellKind.FreezeRay)):toBe(false)
+                expect(run:carries(SpellKind.DrainLife)):toBe(false)
+
+                shop.cursor = 1
+                shop:confirm_choice(run)
+                expect(run.gold):toBe(gold - 4)
+                expect(run.spells[1].level):toBe(2)
+                expect(run:spell_count()):toBe(4)
             end
         )
 
