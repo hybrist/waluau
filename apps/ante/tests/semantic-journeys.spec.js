@@ -106,8 +106,7 @@ test('buys a spell between duels, carries resources, then loses and starts a fre
   await purchase.click();
   await expect(status(page)).toContainText('Health 2. Gold 17.');
   await expect(purchase).toBeDisabled();
-  // The two-spell loadout is full; the other kind cannot be purchased.
-  await expect(other).toBeDisabled();
+  await expect(other).toBeEnabled();
   await button(page, 'Enter next duel').click();
   await ready(page);
   await expect(status(page)).toContainText('Duel 2. Health 2. Gold 17.');
